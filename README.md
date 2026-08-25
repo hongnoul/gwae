@@ -66,7 +66,7 @@ line shows the pending prefix.
 
 | Keys (`Ctrl-b` then...) | Action |
 | --- | --- |
-| `Ctrl-b` `h` / `l` / `k` / `j` | move focus across panes |
+| `Ctrl-b` `h` / `l` / `k` / `j` | move focus across panes (`j`/`k` cross strips; past the last strip creates a new empty one, niri-style) |
 | `Ctrl-b` `H` / `L` / `K` / `J` | move the focused pane |
 | `Ctrl-b` `c` / `r` | new column to the right / new row below |
 | `Ctrl-b` `;` | spawn a new agent pane to the right and focus it |

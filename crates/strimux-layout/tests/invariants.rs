@@ -71,7 +71,9 @@ proptest! {
         for a in actions {
             let _ = layout.apply(a, view(), follow());
             let row = layout.focused_row().unwrap();
-            assert!(layout.focus.column < row.columns.len());
+            // An empty focused strip (niri-style, freshly created or just
+            // emptied) is legal; otherwise the focus must index a column.
+            assert!(row.columns.is_empty() || layout.focus.column < row.columns.len());
             if let Some(col) = row.columns.get(layout.focus.column) {
                 assert!(layout.focus.pane < col.panes.len().max(1));
             }
@@ -393,4 +395,51 @@ proptest! {
             );
         }
     }
+}
+
+#[test]
+fn focus_down_past_last_strip_creates_one_and_up_reclaims_it() {
+    // niri workspace semantics: j past the end opens a fresh empty strip,
+    // a second j there is a no-op (the current strip is empty), and leaving
+    // the empty strip drops it again.
+    let mut layout = Layout::new(1);
+    assert_eq!(layout.rows.len(), 1);
+    let first = layout.focus.row;
+    let _ = layout.apply(Action::FocusDown, view(), follow());
+    assert_eq!(layout.rows.len(), 2, "empty strip created below");
+    let new_row = layout.focus.row;
+    assert_ne!(new_row, first);
+    assert!(layout.row_is_empty(new_row));
+    // No stacking of empty strips.
+    let _ = layout.apply(Action::FocusDown, view(), follow());
+    assert_eq!(layout.rows.len(), 2);
+    assert_eq!(layout.focus.row, new_row);
+    // Going back up discards the empty strip.
+    let _ = layout.apply(Action::FocusUp, view(), follow());
+    assert_eq!(layout.focus.row, first);
+    assert_eq!(layout.rows.len(), 1, "empty strip reclaimed on leave");
+}
+
+#[test]
+fn spawning_into_a_new_strip_keeps_it() {
+    let mut layout = Layout::new(1);
+    let first = layout.focus.row;
+    let _ = layout.apply(Action::FocusDown, view(), follow());
+    let _ = layout.apply(Action::NewColumn, view(), follow());
+    assert_eq!(layout.focused_row().unwrap().columns.len(), 1);
+    let _ = layout.apply(Action::FocusUp, view(), follow());
+    assert_eq!(layout.focus.row, first);
+    assert_eq!(layout.rows.len(), 2, "populated strip survives");
+}
+
+#[test]
+fn killing_the_last_pane_of_a_strip_leaves_the_focus_on_it_empty() {
+    let mut layout = Layout::new(1);
+    let _ = layout.apply(Action::FocusDown, view(), follow());
+    let _ = layout.apply(Action::NewColumn, view(), follow());
+    let strip = layout.focus.row;
+    let _ = layout.apply(Action::KillPane, view(), follow());
+    assert_eq!(layout.focus.row, strip);
+    assert!(layout.row_is_empty(strip));
+    assert_eq!(layout.rows.len(), 2);
 }

@@ -44,7 +44,7 @@ go to strimux, even with an agent focused.
 | Verb | Key | Semantics |
 |---|---|---|
 | focus left/right | `⌥+h/l` | move focus to adjacent column; scroll minimally |
-| focus up/down | `⌥+k/j` | move within column; cross row at edge |
+| focus up/down | `⌥+k/j` | move within column; cross strip at edge. Past the last strip a new empty strip is created (niri workspace semantics); an empty strip you leave is discarded, and you cannot create another while standing on an empty one |
 | move-pane left/right | `⌥+Shift+h/l` | swap column with neighbor |
 | move-pane up/down | `⌥+Shift+k/j` | move pane within column; cross row at edge |
 | new-column | `⌥+Enter` | new column right of focused (launcher) |

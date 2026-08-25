@@ -471,7 +471,16 @@ fn render_frame(
                     }
                 }
             }
-            draw_focus_frame(out, cols, boxr, sk);
+            // On an empty strip (a freshly created niri-style workspace)
+            // there are no live columns, so the focus lives on a placeholder
+            // box: frame it in the accent color so the strip never looks
+            // focus-less.
+            let color = if ranges.is_empty() && pcol == layout.focus.column {
+                focus_color
+            } else {
+                sk
+            };
+            draw_focus_frame(out, cols, boxr, color);
             let label = format!("{}.{}", layout.focus.row + 1, pcol + 1);
             let inner = Rect {
                 x: boxr.x + 1,

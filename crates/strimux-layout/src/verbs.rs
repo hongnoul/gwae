@@ -168,17 +168,34 @@ impl Layout {
             return Ok(self.focused_scroll());
         };
         if ti >= self.rows.len() {
-            return Ok(self.focused_scroll());
+            // niri-style dynamic strips: moving past the last strip creates a
+            // fresh empty one, but only when the current strip has something
+            // in it. That keeps a chain of empty strips from piling up.
+            if self.row_is_empty(self.focus.row) {
+                return Ok(self.focused_scroll());
+            }
+            self.new_row(format!("strip {}", self.rows.len() + 1));
         }
         let target_id = self.rows[ti].id;
         let x_center = self.focused_x_center(viewport.cols);
         let col = self.nearest_column(target_id, x_center, viewport.cols);
+        let from = self.focus.row;
         self.focus.row = target_id;
         self.focus.column = col;
         self.focus.pane = 0;
         self.clamp_focus_pane();
+        // Leaving an empty strip behind drops it, so only the strip you are
+        // standing on can ever be empty.
+        if from != target_id && self.row_is_empty(from) {
+            self.rows.retain(|r| r.id != from);
+        }
         self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
+    }
+
+    /// A strip with no columns: nothing lives on it yet.
+    pub fn row_is_empty(&self, row: RowId) -> bool {
+        self.row(row).map(|r| r.columns.is_empty()).unwrap_or(true)
     }
 
     fn nearest_column(&self, row: RowId, x: i32, vw: u16) -> usize {
@@ -360,8 +377,16 @@ impl Layout {
                 r.columns.remove(col);
             }
         }
-        // A row with zero columns disappears.
-        let row_emptied = self.row(row).map(|r| r.columns.is_empty()).unwrap_or(false);
+        // A row with zero columns disappears, unless it is the one the focus
+        // is standing on: an empty focused strip is a valid resting place
+        // (you can spawn into it), exactly like an empty niri workspace.
+        let row_emptied = self.row_is_empty(row) && self.focus.row != row;
+        // No panes anywhere: the grid is meaningless, so reset to a default
+        // layout rather than leaving an empty husk behind.
+        if self.panes.is_empty() {
+            *self = Layout::default();
+            return Ok(0);
+        }
         if row_emptied {
             self.rows.retain(|r| r.id != row);
             if self.rows.is_empty() {
