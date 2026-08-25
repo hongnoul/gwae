@@ -168,7 +168,7 @@ default_column_width = { preset = "quarter" }  # or { cells = 80 }
 scroll_margin = 2
 center_focus = false
 content_width = 0
-default_agent = "claude"          # ; spawns this
+default_agent = "claude"          # first pane + ; spawn this
 startup_panes = 1
 theme = "catppuccin-mocha"        # palette preset (see Appearance)
 # [theme]
@@ -199,7 +199,8 @@ Key reference (defaults in parentheses):
 | `scroll_margin` | int | `2` | Reserved under quantization (kept for future continuous mode) |
 | `center_focus` | bool | `false` | Center focused column at nearest quantized stop |
 | `content_width` | int | `0` | Logical pane width; `0` = follow column width (wrap). `>0` = horizontal overflow panned with `⌥+←/→` |
-| `default_agent` | string | *(unset)* | Command launched by `;`. Unset or missing means `;` opens the agent gateway, which offers the harnesses on your `PATH` and saves your pick |
+| `default_agent` | string | *(unset)* | Agent for the first pane and `;`. Unset means you get the selector, which saves your pick |
+| `agents` | array | `[]` | Extra commands to offer in the selector |
 | `startup_panes` | int | `1` | Quarter-width panes at launch; remainder shows as skeleton placeholders |
 | `theme` | string/table | `catppuccin-mocha` | Palette preset or `[theme]` table with `preset` + per-key overrides; see Appearance / `docs/CONFIG.md` |
 | `background` | color | theme `base` | Legacy alias for `theme.base` |

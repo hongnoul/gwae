@@ -36,7 +36,14 @@ impl Sandbox {
             let p = bin.join(a);
             // A stub that identifies itself, so a test can prove the gateway
             // really exec'd *this* harness and not something else.
-            std::fs::write(&p, format!("#!/bin/sh\necho AGENT-RAN:{a}\n")).expect("stub");
+            // Stay alive after announcing: a real harness holds the pane, and
+            // a stub that exits would make strimux quit (last pane gone) and
+            // wipe the alt screen before a test could read it.
+            std::fs::write(
+                &p,
+                format!("#!/bin/sh\necho AGENT-RAN:{a}\nexec sleep 60\n"),
+            )
+            .expect("stub");
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -59,9 +66,14 @@ impl Sandbox {
         std::fs::read_to_string(self.config_path()).unwrap_or_default()
     }
 
-    /// Run the full TUI, so `⌥+;` is exercised the way a user presses it.
+    /// Run the full TUI with an explicit first-pane command.
     fn spawn_tui(&self) -> Pty {
         self.spawn_with(&["run", "sleep 60"])
+    }
+
+    /// Run the full TUI exactly as a bare `strimux` launch does.
+    fn spawn_tui_bare(&self) -> Pty {
+        self.spawn_with(&["run"])
     }
 
     /// Run `strimux agent` in a PTY with only the sandbox's bin on PATH.
@@ -140,6 +152,35 @@ impl Pty {
             }
         }
         assert!(out.contains(needle), "never saw {needle:?} in:\n{out}");
+        out
+    }
+
+    /// Accumulate output until `done` holds, nudging the TUI with `poke` each
+    /// second. The startup HUD covers the middle of the screen and only lifts
+    /// on a keypress, so a test that needs the pane underneath has to ask more
+    /// than once: the first nudge can land before the pane has painted.
+    fn collect_until_poking(
+        &mut self,
+        timeout: Duration,
+        poke: &str,
+        done: impl Fn(&str) -> bool,
+    ) -> String {
+        let mut out = String::new();
+        let deadline = Instant::now() + timeout;
+        let mut next_poke = Instant::now();
+        while Instant::now() < deadline {
+            if done(&out) {
+                return out;
+            }
+            if Instant::now() >= next_poke {
+                self.send(poke);
+                next_poke = Instant::now() + Duration::from_millis(900);
+            }
+            if let Ok(b) = self.rx.recv_timeout(Duration::from_millis(200)) {
+                out.push_str(&String::from_utf8_lossy(&b));
+            }
+        }
+        assert!(done(&out), "condition never met in:\n{out}");
         out
     }
 
@@ -358,11 +399,11 @@ fn pressing_the_spawn_agent_key_opens_the_gateway_in_the_new_pane() {
     p.send("\x1b;");
     // The pane is a quarter of the screen, so the gateway's lines are wrapped
     // and split across cell-positioned writes; assert on fragments that fit.
-    // A quarter-width pane is ~24 columns, so the gateway's own header can
-    // scroll off; assert on the list itself, which is what must be reachable.
+    // A quarter-width pane gets the gateway's narrow layout, which keeps the
+    // list next to the prompt instead of scrolling it away.
     let seen = p.collect_until(Duration::from_secs(10), |raw| {
         let t = screen_text(raw);
-        t.contains("Found on your PATH") && t.contains("claude") && t.contains("just a shell")
+        t.contains("Pick an agent") && t.contains("Claude Code")
     });
     let text = screen_text(&seen);
     assert!(text.contains("1 Claude Code"), "got:\n{text}");
@@ -480,7 +521,11 @@ fn an_absolute_path_as_the_configured_agent_runs_without_a_prompt() {
 /// Install an executable stub that announces itself when run.
 fn stub(dir: &std::path::Path, name: &str) {
     let p = dir.join(name);
-    std::fs::write(&p, format!("#!/bin/sh\necho AGENT-RAN:{name}\n")).expect("stub");
+    std::fs::write(
+        &p,
+        format!("#!/bin/sh\necho AGENT-RAN:{name}\nexec sleep 60\n"),
+    )
+    .expect("stub");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -578,5 +623,87 @@ fn even_with_nothing_found_you_can_type_a_command() {
     p.send("zz\n");
     p.wait_for("AGENT-RAN:zz");
     assert!(sb.read_config().contains("default_agent = \"zz\""));
+    p.kill();
+}
+
+#[test]
+fn startup_pane_one_one_launches_the_configured_agent_directly() {
+    // Case 1 of 2: a preferred agent is configured, so the very first pane is
+    // that agent. No selector, no shell, nothing to type.
+    let sb = Sandbox::new(&["claude"]);
+    sb.write_config("default_agent = \"claude\"\n");
+    let p = sb.spawn_tui_bare();
+    let seen = p.collect_until(Duration::from_secs(15), |raw| {
+        screen_text(raw).contains("AGENT-RAN:claude")
+    });
+    let text = screen_text(&seen);
+    assert!(
+        !text.contains("Found on your PATH"),
+        "a configured agent must not show the selector; got:\n{text}"
+    );
+    p.kill();
+}
+
+#[test]
+fn startup_pane_one_one_shows_the_selector_when_no_agent_is_configured() {
+    // Case 2 of 2: nothing configured, so pane 1.1 is the selector itself.
+    let sb = Sandbox::new(&["claude", "aider"]);
+    let mut p = sb.spawn_tui_bare();
+    // Wait for the gateway to have painted, then dismiss the startup HUD,
+    // which covers the middle of the screen (ESC is swallowed by strimux, so
+    // it reaches no pane). What is left is what the user actually reads.
+    // ⌥+/ dismisses the startup HUD without reaching the pane.
+    let seen = p.collect_until_poking(Duration::from_secs(20), "\x1b/", |raw| {
+        let t = screen_text(raw);
+        t.contains("Claude Code") && t.contains("aider")
+    });
+    let text = screen_text(&seen);
+    assert!(text.contains("Pick an agent"), "got:\n{text}");
+
+    // And picking there works, exactly as it does for ⌥+;.
+    p.send("1\n");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline && !sb.read_config().contains("default_agent") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    assert!(
+        sb.read_config().contains("default_agent = \"claude\""),
+        "got:\n{}",
+        sb.read_config()
+    );
+    p.kill();
+}
+
+#[test]
+fn an_explicit_run_command_still_beats_the_gateway_in_pane_one_one() {
+    // Being specific must win: `strimux run <cmd>` is the user overriding the
+    // default behavior, not asking for an agent.
+    let sb = Sandbox::new(&["claude"]);
+    let mut p = sb.spawn_with(&["run", "sh"]);
+    std::thread::sleep(Duration::from_millis(700));
+    p.send("echo SHELL-IS-ALIVE\n");
+    let seen = p.collect_until(Duration::from_secs(15), |raw| {
+        screen_text(raw).contains("SHELL-IS-ALIVE")
+    });
+    assert!(
+        !screen_text(&seen).contains("Found on your PATH"),
+        "an explicit command must not be replaced by the gateway; got:\n{seen}"
+    );
+    p.kill();
+}
+
+#[test]
+fn startup_with_no_agents_at_all_still_lands_in_a_usable_shell() {
+    // The degenerate case: strimux must never open onto a dead first pane.
+    let sb = Sandbox::new(&[]);
+    let mut p = sb.spawn_tui_bare();
+    p.collect_until(Duration::from_secs(15), |raw| {
+        screen_text(raw).contains("No agent harness found")
+    });
+    p.send("\n");
+    p.send("echo SHELL-IS-ALIVE\n");
+    p.collect_until(Duration::from_secs(15), |raw| {
+        screen_text(raw).contains("SHELL-IS-ALIVE")
+    });
     p.kill();
 }

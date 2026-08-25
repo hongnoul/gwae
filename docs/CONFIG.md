@@ -11,7 +11,8 @@ default_column_width = { preset = "half" }   # or { cells = 80 }
 scroll_margin = 2
 center_focus = false
 content_width = 0
-default_agent = "claude"
+default_agent = "claude"           # first pane + ; launch this
+agents = ["my-agent-wrapper"]     # extra names for the selector
 theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal
 # or per-key overrides on top of a preset:
 # [theme]
@@ -111,7 +112,8 @@ and a config file that is not being applied at all points at the syntax error:
 | `scroll_margin` | integer | `2` | Cells of context kept visible around the focused column when scrolling. |
 | `center_focus` | bool | `false` | Always center the focused column (niri's centered mode) instead of scrolling minimally. |
 | `content_width` | integer | `0` | Logical grid content width (cells) of every pane, decoupled from the visible column width. Long lines up to this width do not wrap and can be revealed with horizontal pane scroll (`⌥+Left/Right`, the Option key on macOS). `0` (the default) follows the visible column width so lines wrap normally and there is no horizontal overflow to manage in a pane. |
-| `default_agent` | string | `""` (unset) | The agent harness command that `;` (spawn-agent) launches. When unset, or when the command is not on `PATH`, `;` opens the **agent gateway** instead: it lists the harnesses it found (`jcode`, `claude`, `codex`, `gemini`, `opencode`, `crush`, `aider`, `cursor-agent`, `amp`, `goose`), runs the one you pick, and writes it back here so the next `;` goes straight there. With nothing installed it explains that and opens a plain `$SHELL`. Run `strimux agent --print` to see the current resolution without changing anything. |
+| `default_agent` | string | `""` (unset) | The agent harness `;` launches, and what the **first pane** opens on at startup. When unset, or not on `PATH`, you get the **agent selector** instead: it lists harnesses it knows, anything agent-shaped found on your `PATH`, and anything in `agents`; pick one (or type any command) and it is saved here, so every later launch goes straight to it. With nothing found it opens a plain `$SHELL`. `strimux run <cmd>` overrides the first pane. See `strimux agent --print`. |
+| `agents` | array of strings | `[]` | Extra agent commands to offer in the selector, for a harness whose name strimux cannot guess (or a wrapper script of your own). Entries that are not installed are simply not listed. |
 | `startup_panes` | integer | `1` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (shown as skeleton placeholder boxes, or covered by `background` with `skeleton = false`). The default `1` opens a single terminal in the leftmost quarter. |
 | `theme` | string or table | `catppuccin-mocha` | Chrome color theme. A bare preset name (`theme = "tokyo-night"`) or a `[theme]` table with `preset` plus per-key overrides (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`). Presets: `catppuccin-mocha` (default), `catppuccin-latte`, `tokyo-night`, `gruvbox`, `nord`, `rose-pine`, `dracula`, `terminal` (inherits the host terminal's ANSI 0-15 palette; single-word aliases `mocha`, `latte`, `tokyo`, `gruvbox`, `nord`, `dracula`, `ansi` also accepted). Colors accept a 256-color index (`235`), hex RGB (`"#1e1e2e"`), or `"default"`. |
 | `[theme].preset` | string | `catppuccin-mocha` | Which built-in palette to start from (see `theme`). Unknown names fall back to `catppuccin-mocha` with a warning. |

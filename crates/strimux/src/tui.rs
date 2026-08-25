@@ -2692,16 +2692,28 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let initial = command.clone().unwrap_or_default();
     let gw = cols.max(1);
     let gh = rows.saturating_sub(chrome_rows(&cfg)).max(1);
-    // Spawn every pane in the initial strip. The first takes the requested
-    // `run` command (if any); the rest get the user's shell. Sort by id:
-    // `panes` is a HashMap, and unsorted iteration made *which pane runs the
-    // command* random (ids are allocated in column order, so id order is
-    // column order).
+    // Spawn every pane in the initial strip; the rest get the user's shell.
+    // Sort by id: `panes` is a HashMap, and unsorted iteration made *which
+    // pane runs the command* random (ids are allocated in column order, so id
+    // order is column order).
+    //
+    // Pane 1.1 is the agent gateway unless `run <cmd>` named something else.
+    // strimux exists to drive agents, so opening on a bare shell asked every
+    // user to type the harness name themselves on every launch; the gateway
+    // either goes straight to the configured agent (indistinguishable from
+    // launching it directly) or shows the selector. An explicit `run` command
+    // still wins, since that is the user being specific.
     let mut pane_ids: Vec<PaneId> = layout.panes.keys().copied().collect();
     pane_ids.sort_unstable();
+    let mut first_is_agent = false;
     for (i, pid) in pane_ids.iter().enumerate() {
         let cmd = if i == 0 {
-            initial.clone()
+            if initial.trim().is_empty() {
+                first_is_agent = true;
+                agent_gateway_cmd()
+            } else {
+                initial.clone()
+            }
         } else {
             String::new()
         };
@@ -2740,6 +2752,13 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // the agent gateway instead of a plain shell. A respawn re-resolves, so
     // installing a harness mid-session is picked up without a restart.
     let mut agent_panes: HashSet<PaneId> = HashSet::new();
+    // Pane 1.1 counts as an agent pane when it opened on the gateway, so a
+    // respawn re-resolves rather than dropping the user into a bare shell.
+    if first_is_agent {
+        if let Some(pid) = pane_ids.first() {
+            agent_panes.insert(*pid);
+        }
+    }
     // The title currently shown on the host terminal; we only write when it
     // changes so we don't spam the host with identical OSC sequences.
     let mut last_title: String = String::new();

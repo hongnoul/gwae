@@ -469,26 +469,58 @@ const CYAN: &str = "\x1b[36m";
 const YELLOW: &str = "\x1b[33m";
 const RESET: &str = "\x1b[0m";
 
+/// The pane's width in columns, for laying the picker out. Panes are often a
+/// quarter of the screen, so the full-width form does not fit and its most
+/// important part (the list) would scroll away above the prompt.
+fn term_cols() -> usize {
+    // 80 when there is no tty (a pipe, `--print` into a file): the wide form
+    // is the better default for something a human will read later.
+    crossterm::terminal::size()
+        .ok()
+        .map(|(c, _)| c as usize)
+        .filter(|c| *c > 0)
+        .unwrap_or(80)
+}
+
 /// Render the plan as the text the user sees, and return the choices that the
-/// on-screen numbers map to. Pure, so the exact UI is testable.
-pub fn render(plan: &Plan) -> (String, Vec<Found>) {
+/// on-screen numbers map to. Pure in `cols`, so the exact layout at any pane
+/// width is testable.
+pub fn render_at(plan: &Plan, cols: usize) -> (String, Vec<Found>) {
+    // Under ~50 columns (a quarter-width pane on a typical screen) the paths
+    // and the explanatory footer push the list off the top of the pane, which
+    // leaves the user staring at a prompt with no visible options. The narrow
+    // form drops both and keeps the choices adjacent to the prompt.
+    let narrow = cols < 50;
     let mut s = String::new();
     let choices = match plan {
         Plan::Configured(_) => Vec::new(),
         Plan::Missing { want, found } => {
-            s.push_str(&format!(
-                "{YELLOW}{BOLD}`{want}` is not installed.{RESET}\n{DIM}Your config asks for it, but it is not on PATH. Pick another:{RESET}\n\n"
-            ));
+            if narrow {
+                s.push_str(&format!(
+                    "{YELLOW}{BOLD}`{want}` is not installed.{RESET}\n"
+                ));
+            } else {
+                s.push_str(&format!(
+                    "{YELLOW}{BOLD}`{want}` is not installed.{RESET}\n{DIM}Your config asks for it, but it is not on PATH. Pick another:{RESET}\n\n"
+                ));
+            }
             found.clone()
         }
         Plan::Choose(found) => {
-            s.push_str(&format!(
-                "{BOLD}Which agent should {CYAN}⌥+;{RESET}{BOLD} launch?{RESET}\n{DIM}Found on your PATH:{RESET}\n\n"
-            ));
+            if narrow {
+                s.push_str(&format!("{BOLD}Pick an agent:{RESET}\n"));
+            } else {
+                s.push_str(&format!(
+                    "{BOLD}Which agent should {CYAN}⌥+;{RESET}{BOLD} launch?{RESET}\n{DIM}Found on your PATH:{RESET}\n\n"
+                ));
+            }
             found.clone()
         }
         Plan::NoneInstalled { want } => {
             match want {
+                Some(w) if narrow => {
+                    s.push_str(&format!("{YELLOW}{BOLD}`{w}` is not installed.{RESET}\n"))
+                }
                 Some(w) => s.push_str(&format!(
                     "{YELLOW}{BOLD}`{w}` is not installed{RESET}, and no other agent harness was found on your PATH.\n"
                 )),
@@ -496,14 +528,20 @@ pub fn render(plan: &Plan) -> (String, Vec<Found>) {
                     "{YELLOW}{BOLD}No agent harness found on your PATH.{RESET}\n"
                 )),
             }
-            s.push_str(&format!(
-                "{DIM}Looked for: {}, plus anything on PATH that looks like an agent.{RESET}\n\nInstall one and press {CYAN}⌥+;{RESET} again, or type its command now\nif it lives somewhere we did not look. {DIM}Enter alone opens a shell.{RESET}\n",
-                KNOWN_AGENTS
-                    .iter()
-                    .map(|(c, _)| *c)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+            if narrow {
+                s.push_str(&format!(
+                    "{DIM}Type its command, or Enter for a shell.{RESET}\n"
+                ));
+            } else {
+                s.push_str(&format!(
+                    "{DIM}Looked for: {}, plus anything on PATH that looks like an agent.{RESET}\n\nInstall one and press {CYAN}⌥+;{RESET} again, or type its command now\nif it lives somewhere we did not look. {DIM}Enter alone opens a shell.{RESET}\n",
+                    KNOWN_AGENTS
+                        .iter()
+                        .map(|(c, _)| *c)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             Vec::new()
         }
     };
@@ -515,20 +553,39 @@ pub fn render(plan: &Plan) -> (String, Vec<Found>) {
         } else {
             String::new()
         };
-        s.push_str(&format!(
-            "  {CYAN}{}{RESET}  {BOLD}{}{RESET}  {DIM}{}{RESET}{dflt}\n",
-            i + 1,
-            f.label,
-            f.path.display()
-        ));
+        if narrow {
+            s.push_str(&format!(
+                "  {CYAN}{}{RESET} {BOLD}{}{RESET}{dflt}\n",
+                i + 1,
+                f.label
+            ));
+        } else {
+            s.push_str(&format!(
+                "  {CYAN}{}{RESET}  {BOLD}{}{RESET}  {DIM}{}{RESET}{dflt}\n",
+                i + 1,
+                f.label,
+                f.path.display()
+            ));
+        }
     }
     if !choices.is_empty() {
-        s.push_str(&format!(
-            "  {CYAN}s{RESET}  {BOLD}just a shell{RESET}  {DIM}skip, don't save{RESET}\n\n{DIM}Not listed? Type the command itself (e.g. {RESET}{CYAN}hermes --resume{RESET}{DIM}).\nYour choice is saved to {} as `default_agent`, so ⌥+; goes straight there next time.{RESET}\n",
-            crate::config::Config::default_path().display()
-        ));
+        if narrow {
+            s.push_str(&format!(
+                "  {CYAN}s{RESET} {BOLD}shell{RESET}\n{DIM}...or type a command.{RESET}\n"
+            ));
+        } else {
+            s.push_str(&format!(
+                "  {CYAN}s{RESET}  {BOLD}just a shell{RESET}  {DIM}skip, don't save{RESET}\n\n{DIM}Not listed? Type the command itself (e.g. {RESET}{CYAN}hermes --resume{RESET}{DIM}).\nYour choice is saved to {} as `default_agent`, so ⌥+; goes straight there next time.{RESET}\n",
+                crate::config::Config::default_path().display()
+            ));
+        }
     }
     (s, choices)
+}
+
+/// [`render_at`] using the live terminal width.
+pub fn render(plan: &Plan) -> (String, Vec<Found>) {
+    render_at(plan, term_cols())
 }
 
 /// What the user typed at the picker.
@@ -971,6 +1028,43 @@ mod tests {
                 got.iter().map(|f| &f.cmd).collect::<Vec<_>>()
             );
         }
+    }
+
+    #[test]
+    fn a_narrow_pane_keeps_the_choices_next_to_the_prompt() {
+        // A quarter-width pane is ~24 columns. The wide form's paths and
+        // footer scroll the list off the top, leaving a prompt with no
+        // visible options, which is the one thing the picker must never do.
+        let plan = Plan::Choose(vec![found("claude"), found("aider")]);
+        let (wide, _) = render_at(&plan, 100);
+        let (narrow, _) = render_at(&plan, 24);
+        assert!(
+            narrow.lines().count() < wide.lines().count(),
+            "narrow must be shorter:\n{narrow}"
+        );
+        let plain = strip_ansi(&narrow);
+        // Everything needed to choose is still there.
+        assert!(plain.contains("1 claude"), "{plain}");
+        assert!(plain.contains("2 aider"), "{plain}");
+        assert!(plain.contains("(default)"), "{plain}");
+        assert!(plain.contains("s shell"), "{plain}");
+        assert!(plain.contains("type a command"), "{plain}");
+        // The long path and footer, which are what overflowed, are gone.
+        assert!(!plain.contains("/usr/bin/claude"), "{plain}");
+        assert!(!plain.contains("goes straight there"), "{plain}");
+        // And it fits: every line inside the pane width.
+        for l in plain.lines() {
+            assert!(l.chars().count() <= 24, "line too wide: {l:?}");
+        }
+    }
+
+    #[test]
+    fn the_narrow_none_installed_screen_still_says_what_to_do() {
+        let (narrow, _) = render_at(&Plan::NoneInstalled { want: None }, 24);
+        let plain = strip_ansi(&narrow);
+        assert!(plain.contains("No agent harness found"), "{plain}");
+        assert!(plain.contains("Type its command"), "{plain}");
+        assert!(plain.contains("Enter for a shell"), "{plain}");
     }
 
     #[test]

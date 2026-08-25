@@ -7,6 +7,23 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **The first pane opens on your agent, not a bare shell.** strimux exists to
+  drive agent harnesses, but every launch dropped you at a shell prompt to
+  type the harness name yourself. Pane 1.1 now runs the same agent gateway
+  `⌥+;` uses, so startup has exactly two outcomes: your configured agent is
+  already running, or you get the selector and pick one (which is then saved,
+  making every later launch the first case). `strimux run <cmd>` still wins,
+  since that is you being specific.
+
+- **Detection is no longer limited to an allowlist.** The picker only knew a
+  fixed list of harnesses, so anything newer than the release — or a personal
+  wrapper script — was invisible. It now merges three sources: `agents` from
+  your config, the names it can label, and a scan of `PATH` for agent-shaped
+  commands. You can also just type a command at the prompt. The scan skips
+  system directories, without which a stock macOS `PATH` offers `ssh-agent`,
+  `KernelEventAgent`, `b64encode` and the disk tool `gpt` above the real
+  entries.
+
 - **`⌥+;` now works before you have picked an agent.** It ran `default_agent`
   blind, so on a machine without that harness installed the pane's child died
   the instant it spawned and left a blank box with no explanation — the same
