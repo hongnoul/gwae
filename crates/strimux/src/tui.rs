@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use crossterm::cursor;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    KeyModifiers, KeyboardEnhancementFlags, ModifierKeyCode, MouseButton, MouseEvent,
+    MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -18,13 +19,28 @@ use crossterm::terminal::{
 };
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 use strimux_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport};
-use strimux_term::{CColor, Cell, Size as GridSize, TermGrid, Vt100Grid};
+use strimux_term::{CColor, Cell, KittyApcExtractor, Size as GridSize, TermGrid, Vt100Grid};
 
 use crate::config::Config;
 
-/// Rows reserved for bottom chrome. There is no status bar, so panes fill the
-/// full viewport height.
-const CHROME_ROWS: u16 = 0;
+fn chrome_rows(cfg: &Config) -> u16 {
+    cfg.minimap.chrome_rows()
+}
+
+fn has_attention(layout: &Layout) -> bool {
+    layout
+        .panes
+        .values()
+        .any(|p| matches!(p.status, PaneStatus::Idle | PaneStatus::Failed))
+}
+
+fn is_alt_modifier(ev: &KeyEvent) -> bool {
+    matches!(
+        ev.code,
+        KeyCode::Modifier(ModifierKeyCode::LeftAlt)
+            | KeyCode::Modifier(ModifierKeyCode::RightAlt)
+    )
+}
 
 /// How long a pane without OSC 133 shell integration must stay silent before
 /// the activity heuristic calls it idle ("wants attention") instead of
@@ -50,6 +66,10 @@ pub struct PtyPane {
     /// True once the child has spoken OSC 133; from then on the explicit
     /// protocol owns the status and the activity heuristic stands down.
     pub saw_osc133: bool,
+    /// Streaming scanner that recovers Kitty graphics APCs from this pane's
+    /// raw output so they can be forwarded to the host terminal (vt100
+    /// swallows them, which would otherwise leave images invisible).
+    pub apc: KittyApcExtractor,
 }
 
 /// Message a per-pane reader thread sends to the main loop.
@@ -137,6 +157,29 @@ fn scan_osc133(bytes: &[u8]) -> Option<PaneStatus> {
         }
     }
     status
+}
+
+/// Whether the terminal strimux itself runs in understands Kitty graphics.
+///
+/// Env-based, mirroring how jcode and ratatui-image decide: Kitty exports
+/// `KITTY_WINDOW_ID`, Kitty-protocol terminals (Ghostty, WezTerm's kitty mode)
+/// advertise via TERM/TERM_PROGRAM. `STRIMUX_KITTY_GRAPHICS=1/0` overrides
+/// detection either way (e.g. strimux inside ssh where env vars were dropped).
+fn host_supports_kitty_graphics() -> bool {
+    if let Ok(v) = std::env::var("STRIMUX_KITTY_GRAPHICS") {
+        return matches!(v.trim(), "1" | "true" | "yes" | "on");
+    }
+    if std::env::var_os("KITTY_WINDOW_ID").is_some() {
+        return true;
+    }
+    let term = std::env::var("TERM").unwrap_or_default().to_lowercase();
+    if term.contains("kitty") || term.contains("ghostty") {
+        return true;
+    }
+    let prog = std::env::var("TERM_PROGRAM")
+        .unwrap_or_default()
+        .to_lowercase();
+    prog.contains("kitty") || prog.contains("ghostty") || prog.contains("wezterm")
 }
 
 /// Strip control characters that could escape an OSC title sequence and clip
@@ -234,6 +277,7 @@ fn spawn_pane(
         h_scroll: 0,
         last_output: Instant::now(),
         saw_osc133: false,
+        apc: KittyApcExtractor::new(),
     })
 }
 
@@ -284,7 +328,19 @@ fn focused_pane_views(
     panes: &HashMap<PaneId, PtyPane>,
     inset: bool,
 ) -> Vec<PaneView> {
-    let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
+    focused_pane_views_with_chrome(layout, cols, rows, content_width, panes, inset, 0)
+}
+
+fn focused_pane_views_with_chrome(
+    layout: &Layout,
+    cols: u16,
+    rows: u16,
+    content_width: u16,
+    panes: &HashMap<PaneId, PtyPane>,
+    inset: bool,
+    chrome_rows: u16,
+) -> Vec<PaneView> {
+    let strip_h = rows.saturating_sub(chrome_rows).max(1);
     let b: i32 = if inset { 1 } else { 0 }; // border thickness
     let abs_ranges = layout
         .column_x_ranges(layout.focus.row, cols)
@@ -426,14 +482,12 @@ fn render_frame(
 
     let focused = focused_pane(layout);
     let mut focus_rect: Option<Rect> = None;
+    let mut focused_cursor_abs: Option<(u16, u16, bool)> = None; // (screen x,y, hide)
     for v in focused_pane_views(layout, cols, rows, content_width, panes, skeleton.is_some()) {
         let Some(pane) = panes.get_mut(&v.pid) else {
             continue;
         };
         let is_focus = focused == Some(v.pid);
-        if is_focus {
-            focus_rect = Some(v.rect);
-        }
         // The emulator size matches the visible content rect exactly. Without
         // the skeleton, panes are full-bleed (content spans the whole column);
         // with it, rects are inset 1 cell inside the frame so nothing a
@@ -448,6 +502,26 @@ fn render_frame(
                 continue;
             }
         };
+        if is_focus {
+            focus_rect = Some(v.rect);
+            // Map the emulator cursor into screen coords, accounting for the
+            // pane's content-window ([g_start, g_end) visible in rect).
+            let (cur_row, cur_col) = pane.grid.cursor_position();
+            let hide = pane.grid.hide_cursor();
+            // When scrolled back from live, the cursor is off-screen history:
+            // don't paint a stale block.
+            let live = pane.grid.scrollback_offset() == 0;
+            if live {
+                // Only paint when row is inside the visible rect and col inside the window.
+                let in_window = (cur_col as u16) >= g_start && (cur_col as u16) < g_end;
+                if in_window && cur_row < v.rect.h {
+                    let gx = cur_col as u16 - g_start;
+                    let sx = v.rect.x + gx;
+                    let sy = v.rect.y + cur_row;
+                    focused_cursor_abs = Some((sx, sy, hide));
+                }
+            }
+        }
         // Paint every cell of the visible rect so nothing from the previous
         // frame bleeds through ("paint overflow"). When `pane_window` reveals
         // fewer columns than the rect is wide (a pane clipped at the content or
@@ -489,7 +563,8 @@ fn render_frame(
     // are inset inside the frames (see focused_pane_views), so the frames
     // occupy the 1-cell ring around each content area and never cover it.
     if let Some(sk) = skeleton {
-        let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
+        let chrome = mm.chrome_rows();
+        let strip_h = rows.saturating_sub(chrome).max(1);
         let abs_ranges = layout
             .column_x_ranges(layout.focus.row, cols)
             .unwrap_or_default();
@@ -614,17 +689,68 @@ fn render_frame(
         }
         _ => {}
     }
-    // Overlay the minimap last so chrome always wins over pane content.
-    draw_minimap(out, cols, rows, layout, mm, focus_color);
+    // Chrome dispatch: reserved row (quasimode-aware) vs legacy overlay / edge ticks
+    match mm.mode {
+        crate::config::MinimapMode::Reserved | crate::config::MinimapMode::ReservedQuasimode => {
+            // Caller (run_tui) decides whether the row should actually paint based on alt_held/has_attention.
+            // render_frame itself paints the row whenever asked; alt_held==true or has_attention ensures visibility.
+            // Since render_frame doesn't know alt_held, it always paints when chrome==1 — the blank-row at rest is just background.
+            // To honor quasimode, run_tui will pass a Minimap with painted==false? Instead, we expose a helper:
+            // keep painting here always when chrome==1; run_tui-level alt tracking will request repaint only when state flips.
+            // For direct calls from tests we paint the row unconditionally when chrome==1 (covered below via draw_status_row).
+            // The run_tui loop will decide whether to leave the last row as background or call draw_status_row.
+            // We paint here based on mm.should_paint — but render_frame has no alt flag. So we default to painting when mode==Reserved,
+            // and when ReservedQuasimode we leave it to the loop. To keep tests honest, paint for both modes when no alt info is available.
+            if mm.mode == crate::config::MinimapMode::Reserved
+                || mm.mode == crate::config::MinimapMode::ReservedQuasimode
+            {
+                // At the render_frame level we have no Alt state; paint whenever caller hasn't indicated hidden.
+                // run_tui will blank after if needed — for now paint all chrome modes here.
+                // (Quasimode blanking is applied as a post-step in run_tui's dirty path.)
+                // We draw unconditionally here and let run_tui blank it if alt_held==false && !has_attention.
+                // So we need to know has_attention — compute here as fallback when not in quasimode loop.
+                // For simplicity, always draw_status_row when chrome>0; run_tui's outer logic will overwrite with background when hidden.
+                let chrome = mm.chrome_rows();
+                if chrome > 0 {
+                    draw_status_row(out, cols, rows, layout, mm, focus_color);
+                }
+            }
+        }
+        crate::config::MinimapMode::Overlay => {
+            draw_minimap(out, cols, rows, layout, mm, focus_color);
+        }
+        crate::config::MinimapMode::EdgeTicks => {
+            draw_edge_ticks(out, cols, rows, layout, mm, focus_color);
+        }
+        crate::config::MinimapMode::Off => {}
+    }
+    // Paint the focused pane's text cursor as a kitty-style block: inverse
+    // video on top of the pane's own cell so it reads exactly like the native
+    // terminal cursor. Only when the emulator's cursor is visible and live
+    // (not scrolled back) and not covered by chrome.
+    if let Some((sx, sy, hide)) = focused_cursor_abs {
+        if !hide && sy < rows {
+            let idx = sy as usize * cols as usize + sx as usize;
+            if let Some(c) = out.get_mut(idx) {
+                // Don't inverse the frame ring glyphs (they are the hairline).
+                // The cursor is always inside the pane rect; if we hit a frame
+                // glyph it's a stacked-gap case — just leave it.
+                let is_frame = matches!(c.ch, '╭' | '╮' | '╰' | '╯' | '─' | '│');
+                if !is_frame {
+                    c.style.inverse = !c.style.inverse;
+                }
+            }
+        }
+    }
 }
 
 /// Overlay a thin frame on the edge ring of `rect`: box-drawing glyphs
-/// (`╭─╮│╰╯`) with `color` as the foreground, instead of a full-cell
-/// background slab. The cell's existing background is preserved so the frame
-/// reads as a hairline over whatever is underneath. Single-row/column rects
-/// degrade to a plain `─`/`│` run. Only used where the ring cells are
-/// reserved chrome (skeleton frames, the stacked-pane gap ring); rings over
-/// live content use `tint_focus_ring` so no program output is covered.
+/// (`╭─╮│╰╯`) with `color` as the foreground, on a default background. The
+/// previous implementation preserved the underlying `background` fill (e.g.
+/// `Idx(235)`), which left a dim gray slab behind the thin red focus glyph.
+/// Resetting the ring cells to `Default` makes the hairline float on the same
+/// background as pane interiors and placeholder boxes, so only the red glyph
+/// remains.
 fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
     let stride = cols as usize;
     let w = rect.w as usize;
@@ -663,6 +789,7 @@ fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
         cell.ch = ch;
         cell.width = 1;
         cell.style.fg = color;
+        cell.style.bg = CColor::Default;
         cell.style.bold = false;
         cell.style.underline = false;
         cell.style.inverse = false;
@@ -777,6 +904,182 @@ fn draw_big_label(out: &mut [Cell], cols: u16, rect: Rect, label: &str, color: C
                     *c = Cell::default();
                     c.style.bg = color;
                 }
+            }
+        }
+    }
+}
+
+fn status_bg_for(s: PaneStatus) -> CColor {
+    match s {
+        PaneStatus::Running => CColor::Idx(24),
+        PaneStatus::Idle => CColor::Idx(130),
+        PaneStatus::Done => CColor::Idx(22),
+        PaneStatus::Failed => CColor::Idx(88),
+    }
+}
+fn status_fg_for(s: PaneStatus) -> CColor {
+    match s {
+        PaneStatus::Running => CColor::Idx(39),
+        PaneStatus::Idle => CColor::Idx(214),
+        PaneStatus::Done => CColor::Idx(40),
+        PaneStatus::Failed => CColor::Idx(196),
+    }
+}
+fn status_glyph_for(s: PaneStatus) -> char {
+    match s {
+        PaneStatus::Running => '\u{00bb}', // »
+        PaneStatus::Idle => '!',
+        PaneStatus::Done => '\u{2713}', // ✓
+        PaneStatus::Failed => '\u{2717}', // ✗
+    }
+}
+
+/// Reserved 1-line status row: `❯1» 2✓ [3!] 4»   ↕ 2 strips !1` rendered at y = rows-1.
+/// Never overwrites pane cells: panes end at strip_h = rows - chrome.
+fn draw_status_row(
+    out: &mut [Cell],
+    cols: u16,
+    rows: u16,
+    layout: &Layout,
+    mm: &crate::config::Minimap,
+    focus_color: CColor,
+) {
+    if rows == 0 {
+        return;
+    }
+    let y = (rows - 1) as usize;
+    let chrome = mm.chrome_rows();
+    if chrome == 0 {
+        return;
+    }
+    let bar_bg = CColor::Idx(234);
+    // Start with a solid bar background so untouched cells are chrome, not pane bg.
+    for x in 0..cols as usize {
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            *c = Cell { ch: ' ', style: strimux_term::Style { fg: CColor::Idx(245), bg: bar_bg, ..Default::default() }, width: 1, ..Default::default() };
+        }
+    }
+    let put = |out: &mut [Cell], x: usize, ch: char, fg: CColor, bg: CColor, bold: bool| {
+        if x >= cols as usize {
+            return;
+        }
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            *c = Cell { ch, width: 1, style: strimux_term::Style { fg, bg, bold, ..Default::default() }, ..*c };
+            // ensure single-width
+            if ch == '\u{276f}' { c.width = 1; } // ❯
+        }
+    };
+    // Build tile segments for focused row
+    let row = layout.focused_row();
+    let mut x = 0usize;
+    if let Some(r) = row {
+        for (ci, col) in r.columns.iter().enumerate() {
+            if x >= cols as usize {
+                break;
+            }
+            let is_focus = ci == layout.focus.column;
+            let pane_status = col.panes.first().and_then(|pid| layout.panes.get(pid)).map(|pane| pane.status).unwrap_or(PaneStatus::Running);
+            let bg = if is_focus { focus_color } else { status_bg_for(pane_status) };
+            let glyph = status_glyph_for(pane_status);
+            // Token like "❯1»" / "[3!]" / " 2✓"
+            let digit = char::from_digit(ci as u32 + 1, 10).unwrap_or('+');
+            // For non-focused first tile, we want " ❯" style start; simplify: first focused gets ❯ prefix, else just digits
+            let text = if is_focus && ci == 0 {
+                format!("{}{}{}", '\u{276f}', digit, glyph) // ❯1»
+            } else if is_focus {
+                format!("[{}{}]", digit, glyph)
+            } else {
+                format!(" {}{} ", digit, glyph)
+            };
+            for ch in text.chars() {
+                if x >= cols as usize { break; }
+                let fg = CColor::Idx(231);
+                put(out, x, ch, fg, bg, is_focus);
+                x += 1;
+            }
+            if x < cols as usize {
+                // inter-tile gap
+                put(out, x, ' ', CColor::Idx(245), bar_bg, false);
+                x += 1;
+            }
+        }
+        // Right side: strip counts + tallies
+        if mm.show_counts {
+            let other_rows = layout.rows.len().saturating_sub(1);
+            let mut segs: Vec<(String, CColor)> = Vec::new();
+            if other_rows > 0 {
+                segs.push((format!("\u{2195} {} ", other_rows), CColor::Idx(245))); // ↕ N
+            }
+            let mut counts = [0usize; 4];
+            let statuses = [PaneStatus::Running, PaneStatus::Idle, PaneStatus::Done, PaneStatus::Failed];
+            for pane in layout.panes.values() {
+                if let Some(i) = statuses.iter().position(|s| *s == pane.status) { counts[i]+=1; }
+            }
+            for (i, s) in statuses.iter().enumerate() {
+                if counts[i]>0 { segs.push((format!("{}{} ", status_glyph_for(*s), counts[i]), status_fg_for(*s))); }
+            }
+            let total_w: usize = segs.iter().map(|(s,_)| s.chars().count()).sum();
+            let mut rx = cols as usize;
+            if total_w < rx { rx -= total_w; } else { rx = x.max(cols as usize - total_w); }
+            // ensure we don't overwrite left tiles: start at max(x, rx)
+            let start = x.max(rx);
+            let mut cx = start;
+            for (text, fg) in segs {
+                for ch in text.chars() {
+                    if cx >= cols as usize { break; }
+                    put(out, cx, ch, fg, bar_bg, true);
+                    cx += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Edge-ticks chrome: single-cell marks on the bottom/right frame edges at true x-positions.
+fn draw_edge_ticks(
+    out: &mut [Cell],
+    cols: u16,
+    rows: u16,
+    layout: &Layout,
+    _mm: &crate::config::Minimap,
+    focus_color: CColor,
+) {
+    if cols == 0 || rows == 0 { return; }
+    let y = rows.saturating_sub(1) as usize;
+    let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap_or_default();
+    for (ci, (_s, _e)) in ranges.iter().enumerate() {
+        let col = match layout.focused_row().and_then(|r| r.columns.get(ci)) { Some(c)=>c, None=>continue };
+        let status = col.panes.first().and_then(|pid| layout.panes.get(pid)).map(|pane| pane.status).unwrap_or(PaneStatus::Running);
+        let bg = if ci == layout.focus.column { focus_color } else { status_bg_for(status) };
+        // Approx tick at column's left edge clamped
+        let x = ((*_s).min(cols as u32) as usize).min(cols as usize - 1);
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            c.ch = ' ';
+            c.style.bg = bg;
+            c.style.fg = CColor::Idx(231);
+        }
+        // Mark attention with '!' at tick neighbor if needed
+        if matches!(status, PaneStatus::Idle | PaneStatus::Failed) && x + 1 < cols as usize {
+            if let Some(c) = out.get_mut(y * cols as usize + x + 1) {
+                if c.style.bg == CColor::Default || c.style.bg == status_bg_for(status) {
+                    c.ch = status_glyph_for(status);
+                    c.style.bg = bg;
+                    c.style.fg = CColor::Idx(231);
+                }
+            }
+        }
+    }
+    // Right-edge strip ticks
+    let x = cols.saturating_sub(1) as usize;
+    for (ri, row) in layout.rows.iter().enumerate() {
+        let is_focus = row.id == layout.focus.row;
+        let needs = row.columns.iter().any(|c| c.panes.iter().any(|pid| layout.panes.get(pid).map(|pane| matches!(pane.status, PaneStatus::Idle | PaneStatus::Failed)).unwrap_or(false)));
+        if ri >= rows as usize { break; }
+        let bg = if is_focus { focus_color } else if needs { CColor::Idx(130) } else { CColor::Idx(240) };
+        if let Some(c) = out.get_mut(ri * cols as usize + x) {
+            // only overwrite border-ish cells (don't clobber pane content interior — but right edge is usually chrome)
+            if c.ch == ' ' || c.width==1 {
+                c.style.bg = bg;
             }
         }
     }
@@ -978,7 +1281,7 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
             }
             let style = cell.style;
             let mut run = String::new();
-            run.push(cell.ch);
+            cell.push_codepoints(&mut run);
             let mut end = x + 1;
             if cell.width == 1 && host_width_agrees(cell) {
                 while end < cc && out[y * cc + end].style == style {
@@ -986,7 +1289,7 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
                     if next.width != 1 || !host_width_agrees(next) {
                         break;
                     }
-                    run.push(next.ch);
+                    next.push_codepoints(&mut run);
                     end += 1;
                 }
             }
@@ -1301,6 +1604,23 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // overshoot is clamped at the margin and repaired on the next frame.
     let _ = stdout.write_all(b"\x1b[?7l");
     let _ = stdout.flush();
+    // Request Kitty keyboard protocol: bare Alt press/release (REPORT_ALL_KEYS)
+    // so the reserved-row quasimode (hold ⌥ to reveal) can see the hold
+    // itself, not just chords. Falls back gracefully if the terminal ignores it.
+    let kitty_keyboard = matches!(
+        execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES,
+            )
+        ),
+        Ok(())
+    );
+    if kitty_keyboard {
+        tracing::info!("kitty keyboard protocol enabled (bare Alt hover)");
+    }
     // Capture the mouse so wheel events land here instead of the host
     // terminal, where they scroll the host's own scrollback / prompt history
     // right past the layout we are drawing. We route each notch to the pane
@@ -1310,7 +1630,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             tracing::warn!("enable mouse: {e}");
         }
     }
-    let (cols, mut rows) = term_size().map_err(|e| {
+    // Whether the *host* terminal understands the Kitty graphics protocol.
+    // Gates APC passthrough: forwarding graphics sequences to a terminal that
+    // does not parse them would print base64 garbage over the frame.
+    let host_kitty_graphics = host_supports_kitty_graphics();
+    if host_kitty_graphics {
+        tracing::info!("host supports kitty graphics; pane image passthrough enabled");
+    }
+    let (mut cols, mut rows) = term_size().map_err(|e| {
         eprintln!("size: {e}");
         1
     })?;
@@ -1324,7 +1651,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     let initial = command.clone().unwrap_or_default();
     let gw = cols.max(1);
-    let gh = rows.saturating_sub(CHROME_ROWS).max(1);
+    let gh = rows.saturating_sub(chrome_rows(&cfg)).max(1);
     // Spawn every pane in the initial strip. The first takes the requested
     // `run` command (if any); the rest get the user's shell. Sort by id:
     // `panes` is a HashMap, and unsorted iteration made *which pane runs the
@@ -1361,6 +1688,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut last: Vec<Cell> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
     let mut dirty = true;
+    let mut alt_held = false;
+    let mut last_alt_held = false;
+    let mut last_has_attention = has_attention(&layout);
     // Pane ids created by the spawn-agent verb; these are (re)spawned running
     // the configured `default_agent` harness instead of a plain shell.
     let mut agent_panes: HashSet<PaneId> = HashSet::new();
@@ -1375,6 +1705,21 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     if let Some(p) = panes.get_mut(&pid) {
                         p.grid.feed(&bytes);
                         p.last_output = Instant::now();
+                        // Recover Kitty graphics APCs that vt100 swallows and
+                        // forward them verbatim to the host. Emitters use
+                        // virtual placements (U=1): the APC carries only image
+                        // data + id, and the on-screen position comes from
+                        // U+10EEEE placeholder cells painted through the grid,
+                        // so forwarding is position- and pane-safe (hidden
+                        // panes upload pixels but display nothing until their
+                        // placeholders are actually painted).
+                        if host_kitty_graphics {
+                            let apcs = p.apc.extract(&bytes);
+                            if !apcs.is_empty() {
+                                let _ = stdout.write_all(&apcs);
+                                let _ = stdout.flush();
+                            }
+                        }
                         // Explicit OSC 133 status beats the activity
                         // heuristic from the first marker onward.
                         if let Some(st) = scan_osc133(&bytes) {
@@ -1468,6 +1813,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         if event::poll(Duration::from_millis(10)).unwrap_or(false) {
             match event::read() {
                 Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Press => {
+                    // Bare Alt hold for quasimode: track before handle_key so chords don't double-count.
+                    let bare_alt = is_alt_modifier(&ke);
+                    if bare_alt {
+                        if !alt_held {
+                            alt_held = true;
+                            dirty = true;
+                        }
+                    }
                     if let Some(cmd) = handle_key(&ke) {
                         match cmd {
                             Cmd::Quit => break 'main,
@@ -1547,15 +1900,22 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         }
                     }
                 }
-                Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Release => {}
+                Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Release => {
+                    if is_alt_modifier(&ke) && alt_held {
+                        alt_held = false;
+                        dirty = true;
+                    }
+                }
                 Ok(Event::Mouse(me)) => {
-                    let views = focused_pane_views(
+                    let chrome = chrome_rows(&cfg);
+                    let views = focused_pane_views_with_chrome(
                         &layout,
                         cols,
                         rows,
                         cfg.content_width,
                         &panes,
                         cfg.skeleton,
+                        chrome,
                     );
                     if let Some((pid, gx, gy)) = pane_at(&views, me.column, me.row) {
                         if let Some(p) = panes.get_mut(&pid) {
@@ -1620,7 +1980,8 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         }
 
         // Resize grids & PTYs to match current geometry.
-        for v in focused_pane_views(&layout, cols, rows, cfg.content_width, &panes, cfg.skeleton) {
+        let chrome = chrome_rows(&cfg);
+        for v in focused_pane_views_with_chrome(&layout, cols, rows, cfg.content_width, &panes, cfg.skeleton, chrome) {
             let pid = v.pid;
             if let Some(p) = panes.get_mut(&pid) {
                 if p.grid.size()
@@ -1662,6 +2023,13 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
         }
 
+        // Track attention & alt flip for quasimode repaint
+        let cur_has_attention = has_attention(&layout);
+        if cur_has_attention != last_has_attention || alt_held != last_alt_held {
+            dirty = true;
+            last_has_attention = cur_has_attention;
+            last_alt_held = alt_held;
+        }
         if dirty {
             render_frame(
                 &mut frame,
@@ -1675,6 +2043,22 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 cfg.skeleton.then(|| cfg.skeleton_color.color()),
                 &cfg.minimap,
             );
+            // Quasimode: hide reserved row when Alt not held and no attention
+            let chrome = chrome_rows(&cfg);
+            if chrome > 0
+                && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
+                && !cfg.minimap.should_paint(alt_held, cur_has_attention)
+                && rows > 1
+            {
+                let y = (rows - 1) as usize;
+                let base = y * cols as usize;
+                // Blank chrome row to the background fill (no content)
+                for x in 0..cols as usize {
+                    if let Some(c) = frame.get_mut(base + x) {
+                        *c = Cell { ch: ' ', style: strimux_term::Style { bg: cfg.background.color(), ..Default::default() }, width: 1, ..Default::default() };
+                    }
+                }
+            }
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
             if !buf.is_empty() {
@@ -1696,6 +2080,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // Teardown: kill all panes, leave raw mode & alternate screen.
     for p in panes.values_mut() {
         let _ = p.child.kill();
+    }
+    if kitty_keyboard {
+        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
     }
     // Restore the host's autowrap before handing the terminal back.
     let _ = stdout.write_all(b"\x1b[?7h");
@@ -1936,6 +2323,33 @@ mod tests {
         // A column fully left of the viewport (col_x0 negative equivalent:
         // h_scroll cannot hold it, but a col offset past content is clipped).
         assert_eq!(pane_window(240, 0, 80, 240), None);
+    }
+
+    #[test]
+    fn paint_emits_combining_marks_with_base_glyph() {
+        // A cell holding a Kitty image placeholder (U+10EEEE) with row/col
+        // diacritics: the diacritics are what address the image, so they must
+        // reach the host bytes right after the base char.
+        let mut row = vec![Cell::default(); 3];
+        row[0].ch = '\u{10EEEE}';
+        row[0].combining[0] = '\u{0305}';
+        row[0].combining[1] = '\u{030D}';
+        // width() for U+10EEEE is None (unassigned plane), so the run is cut
+        // and printed alone; that must not drop the combining marks.
+        let last = vec![
+            Cell {
+                ch: 'x',
+                ..Cell::default()
+            };
+            3
+        ];
+        let mut buf = Vec::new();
+        assert!(paint(&mut buf, &row, &last, 3, 1));
+        let s = String::from_utf8(buf).unwrap();
+        assert!(
+            s.contains("\u{10EEEE}\u{0305}\u{030D}"),
+            "combining marks split from base: {s:?}"
+        );
     }
 
     #[test]
@@ -2439,6 +2853,7 @@ mod tests {
     fn no_map() -> crate::config::Minimap {
         crate::config::Minimap {
             show: false,
+            mode: crate::config::MinimapMode::Overlay,
             ..Default::default()
         }
     }

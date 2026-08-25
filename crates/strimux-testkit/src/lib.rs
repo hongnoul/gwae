@@ -74,4 +74,16 @@ impl TermGrid for FakeTerminal {
     fn title(&self) -> &str {
         &self.title
     }
+
+    fn cursor_position(&self) -> (u16, u16) {
+        (0, 0)
+    }
+
+    fn hide_cursor(&self) -> bool {
+        false
+    }
+
+    fn scrollback_offset(&self) -> usize {
+        0
+    }
 }
