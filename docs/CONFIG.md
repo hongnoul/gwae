@@ -12,6 +12,8 @@ scroll_margin = 2
 center_focus = false
 content_width = 0
 default_agent = "claude"
+background = "#1e1e2e"
+focus_color = "#7aa2f7"
 ```
 
 ## Keys
@@ -25,6 +27,7 @@ default_agent = "claude"
 | `default_agent` | string | `"jcode"` | The agent harness command that `;` (spawn-agent) launches. |
 | `startup_panes` | integer | `4` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (covered by `background`). `2` gives two quarter panes with the right half empty. |
 | `background` | color | `default` | Color of the empty (uncovered) background behind the panes. Accepted forms: a 256-color index (`235`), a hex RGB string (`"#1e1e2e"`), or the literal `"default"` (the terminal's own background, usually black). Pane content always paints over it. |
+| `focus_color` | color | `#7aa2f7` | Color of the 1-cell accent frame drawn around the focused pane (an overlay on the pane's edge cells; it never shifts or resizes the pane). Accepted forms match `background`. Set to `default` to draw with the terminal's own background. |
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.

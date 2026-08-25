@@ -35,6 +35,9 @@ pub struct Config {
     /// Color of the empty (uncovered) background behind the panes. Accepts a
     /// 256-color index (`236`), a hex RGB (`"#1e1e2e"`), or `"default"`.
     pub background: Background,
+    /// Color of the 1-cell accent frame drawn around the focused pane. Accepts
+    /// a 256-color index (`36`), a hex RGB (`"#7aa2f7"`), or `"default"`.
+    pub focus_color: Background,
 }
 
 impl Default for Config {
@@ -47,6 +50,7 @@ impl Default for Config {
             default_agent: "jcode".to_string(),
             startup_panes: 4,
             background: Background::default(),
+            focus_color: Background(CColor::Rgb(0x7a, 0xa2, 0xf7)),
         }
     }
 }
@@ -162,6 +166,20 @@ mod tests {
         let cfg = parse("");
         assert_eq!(cfg.startup_panes, 4);
         assert_eq!(cfg.background, Background::default());
+        assert_eq!(
+            cfg.focus_color,
+            Background(CColor::Rgb(0x7a, 0xa2, 0xf7))
+        );
+    }
+
+    #[test]
+    fn focus_color_parses() {
+        let cfg = parse("focus_color = 36");
+        assert_eq!(cfg.focus_color, Background(CColor::Idx(36)));
+        let cfg = parse("focus_color = \"#ff0000\"");
+        assert_eq!(cfg.focus_color, Background(CColor::Rgb(0xff, 0, 0)));
+        let cfg = parse("focus_color = \"default\"");
+        assert_eq!(cfg.focus_color, Background::default());
     }
 
     #[test]

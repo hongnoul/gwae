@@ -23,11 +23,6 @@ use crate::config::Config;
 /// full viewport height.
 const CHROME_ROWS: u16 = 0;
 
-/// Background tint applied to the focused pane so it reads as "active"
-/// without spending any layout cells on a border. Full-bleed panes keep every
-/// usable column; focus is shown purely by color, so nothing shifts or resizes.
-const FOCUS_TINT: CColor = CColor::Idx(237); // dark gray, visible against black bg
-
 /// True while the user is inside the `Ctrl-b` prefix and the next key is a
 /// strimux command rather than pane input. Works on every terminal, no
 /// Option-as-Alt config required.
@@ -294,6 +289,7 @@ fn pane_window(col_x0: u16, h_scroll: i32, w: u16, grid_cols: u16) -> Option<(u1
 }
 
 /// Build the full frame (cols x rows).
+#[allow(clippy::too_many_arguments)]
 fn render_frame(
     out: &mut Vec<Cell>,
     layout: &Layout,
@@ -302,6 +298,7 @@ fn render_frame(
     rows: u16,
     content_width: u16,
     background: CColor,
+    focus_color: CColor,
 ) {
     out.clear();
     out.resize((cols as usize) * (rows as usize), Cell::default());
@@ -316,14 +313,18 @@ fn render_frame(
     }
 
     let focused = focused_pane(layout);
+    let mut focus_rect: Option<Rect> = None;
     for v in focused_pane_views(layout, cols, rows, content_width, panes) {
         let Some(pane) = panes.get_mut(&v.pid) else {
             continue;
         };
         let is_focus = focused == Some(v.pid);
+        if is_focus {
+            focus_rect = Some(v.rect);
+        }
         // Panes are full-bleed: content spans the whole rect (no border inset),
         // so the emulator size matches the visible size exactly. Focus is shown
-        // as a background tint, never by shifting or resizing the pane.
+        // as an overlay, never by shifting or resizing the pane.
         pane.grid.resize(GridSize {
             cols: v.grid_cols,
             rows: v.grid_rows,
@@ -364,10 +365,48 @@ fn render_frame(
                         ..Cell::default()
                     };
                 }
-                if is_focus && cell.style.bg == CColor::Default {
-                    cell.style.bg = FOCUS_TINT;
-                }
                 out[idx] = cell;
+            }
+        }
+    }
+    // Overlay a 1-cell accent frame around the focused pane so it reads as
+    // "active" even over panes that paint their own background. The frame is
+    // an overlay onto already-rendered cells: it never shifts or resizes the
+    // pane, and it always wins over whatever the pane drew at the edge.
+    if let Some(rect) = focus_rect {
+        draw_focus_frame(out, cols, rect, focus_color);
+    }
+}
+
+/// Overlay a 1-cell frame on the edge ring of `rect` using `color`. Corner
+/// cells are handled once; single-row/column rects stay well-formed.
+fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
+    let stride = cols as usize;
+    let w = rect.w as usize;
+    let h = rect.h as usize;
+    let x0 = rect.x as usize;
+    let y0 = rect.y as usize;
+    let x1 = x0 + w - 1;
+    let y1 = y0 + h - 1;
+    // Top and bottom rows.
+    for x in x0..=x1 {
+        if let Some(c) = out.get_mut(y0 * stride + x) {
+            c.style.bg = color;
+        }
+        if h > 1 {
+            if let Some(c) = out.get_mut(y1 * stride + x) {
+                c.style.bg = color;
+            }
+        }
+    }
+    // Left and right columns (corners already painted above).
+    for y in (y0 + 1)..y1 {
+        if let Some(c) = out.get_mut(y * stride + x0) {
+            c.style.bg = color;
+        }
+        if w > 1 {
+            if let Some(c) = out.get_mut(y * stride + x1) {
+                c.style.bg = color;
             }
         }
     }
@@ -893,6 +932,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 rows,
                 cfg.content_width,
                 cfg.background.color(),
+                cfg.focus_color.color(),
             );
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
@@ -1036,6 +1076,35 @@ mod tests {
         // host's cursor advance across the wide glyph.
         assert!(s.contains("\u{1b}[1;3H"), "missing MoveTo before 'a': {s:?}");
     }
+
+    #[test]
+    fn draw_focus_frame_rings_the_rect() {
+        // 5x5 grid; frame the 3x3 rect at (1,1) -> rows 1..=3, cols 1..=3.
+        let mut out = vec![Cell { ch: '.', ..Cell::default() }; 25];
+        let accent = CColor::Idx(36);
+        draw_focus_frame(&mut out, 5, Rect { x: 1, y: 1, w: 3, h: 3 }, accent);
+        let cell = |x: usize, y: usize| out[y * 5 + x];
+        // Ring edge carries the accent; interior stays untouched.
+        for x in 1..=3 {
+            assert_eq!(cell(x, 1).style.bg, accent, "top edge x={x}");
+            assert_eq!(cell(x, 3).style.bg, accent, "bottom edge x={x}");
+        }
+        assert_eq!(cell(1, 2).style.bg, accent);
+        assert_eq!(cell(3, 2).style.bg, accent);
+        // Interior center: unchanged.
+        assert_eq!(cell(2, 2).style.bg, CColor::Default);
+        // Outside the rect: unchanged. Glyphs are preserved, not blanked.
+        assert_eq!(cell(0, 0).style.bg, CColor::Default);
+        assert_eq!(cell(0, 2).ch, '.');
+        assert_eq!(cell(2, 1).ch, '.', "frame keeps the underlying glyph");
+    }
+
+    #[test]
+    fn draw_focus_frame_single_cell_rect() {
+        let mut out = vec![Cell::default(); 1];
+        draw_focus_frame(&mut out, 1, Rect { x: 0, y: 0, w: 1, h: 1 }, CColor::Idx(1));
+        assert_eq!(out[0].style.bg, CColor::Idx(1));
+    }
 }
 
 #[test]
@@ -1069,21 +1138,21 @@ fn content_scroll_reveals_overflow_e2e() {
 
     // At scroll 0 the viewport shows content columns 0..79 (digits 1,2,...,0).
     panes.get_mut(&pid).unwrap().h_scroll = 0;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default);
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default);
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
     assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
     assert_eq!(out[77].ch, '8'); // content col 77 -> screen x=77
 
     // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
     panes.get_mut(&pid).unwrap().h_scroll = 60;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default);
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default);
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
     assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
     assert_eq!(out[77].ch, '8'); // content col 137 -> screen x=77
 
     // Past the 240-col content the window reveals blanks.
     panes.get_mut(&pid).unwrap().h_scroll = 200;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default);
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default);
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
     assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
     assert_eq!(out[45].ch, ' '); // past content end -> blank

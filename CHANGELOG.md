@@ -12,6 +12,11 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   grows past the edge keeps column sizes and **scrolls right** instead of
   shrinking all columns to fit. `⌥+r` (Option key on macOS) cycles the focused
   width `1/3 → 1/2 → 1/4`.
+- **Focused-pane accent frame**: the focused pane is now ringed with a 1-cell
+  accent frame (default `#7aa2f7`, themeable via `config.focus_color`) instead
+  of a faint gray background tint. The frame is an overlay on the pane's edge
+  cells, so it never shifts or resizes the pane, and it stays visible over
+  panes that paint their own background.
 - **Spawn an agent pane with `;`**: `Ctrl-b ;` / `⌥+;` (the Option key on macOS)
   spawns a new pane running the configured agent harness (`config.default_agent`,
   default `jcode`) at the rightmost of the focused strip and switches focus to
