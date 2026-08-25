@@ -18,10 +18,23 @@ layout core (`strimux-layout`) is property-tested; the emulator facade
 
 ## Build & install
 
+The easiest way is one command from the repo:
+
 ```sh
-cargo build --release          # -> target/release/strimux
-make install                   # copies it to ~/.cargo/bin/strimux (optional)
+# from inside the repo (installs to wherever `cargo` puts binaries, e.g. ~/.cargo/bin)
+cargo install --path crates/strimux
 ```
+
+If you already built a release binary and just want it on your PATH:
+
+```sh
+cargo build --release              # -> target/release/strimux
+make install                       # copies to a writable bin dir on your PATH
+```
+
+> `make install` picks the first writable `bin` directory on your PATH
+> (falling back to `~/.local/bin`), so `strimux` is runnable right away even
+> when `~/.cargo/bin` is not on your PATH.
 
 ## Usage
 
@@ -30,23 +43,31 @@ strimux                     # start a session with your $SHELL in the first pane
 strimux run "htop"          # start a session running a specific command
 ```
 
-Inside a session:
+Inside a session, navigation uses a `Ctrl-b` prefix so it works on **every**
+terminal with **zero configuration** (including macOS, where the Option key
+does not become Alt by default). Press `Ctrl-b`, then a command key; the status
+line shows the pending prefix.
 
-| Keys | Action |
+| Keys (`Ctrl-b` then...) | Action |
 | --- | --- |
-| `Alt+h` / `Alt+l` / `Alt+k` / `Alt+j` | move focus across panes |
-| `Alt+Shift+h/j/k/l` | move the focused pane |
-| `Alt+a` / `Alt+Enter` | new column to the right |
-| `Alt+s` | split the focused column below |
-| `Alt+r` / `Alt+z` | cycle column width |
-| `Alt+x` | kill the focused pane |
-| `Alt+Left` / `Alt+Right` | scroll the pane horizontally across overflow content |
-| `Alt+[` / `Alt+]` | scroll the row viewport left / right |
-| `Alt+1..9` | jump focus to a column |
-| `Alt+q` | quit (kills all panes) |
+| `Ctrl-b` `h` / `l` / `k` / `j` | move focus across panes |
+| `Ctrl-b` `H` / `L` / `K` / `J` | move the focused pane |
+| `Ctrl-b` `c` / `r` | new column to the right / new row below |
+| `Ctrl-b` `s` | split the focused column below |
+| `Ctrl-b` `z` | cycle column width |
+| `Ctrl-b` `x` | kill the focused pane |
+| `Ctrl-b` `,` / `.` | scroll the pane horizontally across overflow |
+| `Ctrl-b` `[` / `]` | scroll the row viewport left / right |
+| `Ctrl-b` `1..9` | jump focus to a column |
+| `Ctrl-b` `q` | quit (kills all panes) |
+| `Ctrl-b` `Ctrl-b` | send a literal `Ctrl-b` to the pane |
+| `Esc` | cancel the pending prefix |
 
-All other keys pass through to the focused pane. `Alt` is the universal
-modifier; no per-terminal config is needed.
+The equivalent `Alt` chords remain available for terminals where
+Option-as-Alt is configured (`Alt+hjkl` to focus, `Alt+Shift+hjkl` to move,
+`Alt+a` new column, `Alt+s` split, `Alt+z` width, `Alt+x` kill, `Alt+q` quit).
+
+All other keys pass through to the focused pane.
 
 ## Why
 

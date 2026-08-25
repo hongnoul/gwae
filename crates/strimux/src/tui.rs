@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::time::Duration;
 
@@ -22,6 +23,11 @@ use crate::config::Config;
 
 /// Bottom status/minimap chrome lines.
 const CHROME_ROWS: u16 = 1;
+
+/// True while the user is inside the `Ctrl-b` prefix and the next key is a
+/// strimux command rather than pane input. Works on every terminal, no
+/// Option-as-Alt config required.
+static IN_PREFIX: AtomicBool = AtomicBool::new(false);
 
 /// A PTY-backed pane: its emulator grid plus the I/O handles.
 pub struct PtyPane {
@@ -278,15 +284,19 @@ fn render_frame(
         .and_then(|id| panes.get(&id))
         .map(|p| p.h_scroll)
         .unwrap_or(0);
-    let mut st = format!(
-        " strimux | row:{} | scroll:{} px:{} | focus: col {} pane {} | cols {} | Alt+hjkl nav, Alt+Left/Right pane scroll, Alt+Enter new, Alt+x kill, Alt+q quit",
-        layout.focused_row().map(|r| r.name.as_str()).unwrap_or("?"),
-        scroll,
-        pscroll,
-        layout.focus.column,
-        layout.focus.pane,
-        layout.focused_row().map(|r| r.columns.len()).unwrap_or(0),
-    );
+    let mut st = if IN_PREFIX.load(Ordering::Relaxed) {
+        " strimux | PREFIX: h/l/k/j nav, H/L/K/J move, c col, r row, s split, x kill, z width, ,/. scroll, q quit | Esc cancel".to_string()
+    } else {
+        format!(
+            " strimux | row:{} | scroll:{} px:{} | focus: col {} pane {} | cols {} | Ctrl-b then h/l/k/j nav, Alt+hjkl also works",
+            layout.focused_row().map(|r| r.name.as_str()).unwrap_or("?"),
+            scroll,
+            pscroll,
+            layout.focus.column,
+            layout.focus.pane,
+            layout.focused_row().map(|r| r.columns.len()).unwrap_or(0),
+        )
+    };
     st = st.chars().take(cols as usize).collect();
     for (ci, c) in st.chars().enumerate() {
         out[base + ci] = Cell { ch: c, style };
@@ -366,6 +376,7 @@ enum Cmd {
     ScrollPane(i32),
     Input(Vec<u8>),
     Quit,
+    Repaint,
     None,
 }
 
@@ -415,7 +426,50 @@ fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
 fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     let alt = ev.modifiers.contains(KeyModifiers::ALT);
     let shift = ev.modifiers.contains(KeyModifiers::SHIFT);
+    let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
     use KeyCode::*;
+    // Prefix toggle: `Ctrl-b`. Always arrives on any terminal, no config.
+    if !alt && ctrl && matches!(ev.code, Char('b')) {
+        IN_PREFIX.store(true, Ordering::Relaxed);
+        return Some(Cmd::Repaint);
+    }
+    // Inside the prefix, the next key is a strimux command.
+    if IN_PREFIX.load(Ordering::Relaxed) {
+        IN_PREFIX.store(false, Ordering::Relaxed);
+        if ev.code == Esc {
+            return Some(Cmd::Repaint); // cancel prefix
+        }
+        if ctrl && matches!(ev.code, Char('b')) {
+            return Some(Cmd::Input(vec![0x02])); // literal Ctrl-b to the pane
+        }
+        let cmd = match ev.code {
+            Char('h') if shift => Action::MovePaneLeft,
+            Char('l') if shift => Action::MovePaneRight,
+            Char('k') if shift => Action::MovePaneUp,
+            Char('j') if shift => Action::MovePaneDown,
+            Char('h') => Action::FocusLeft,
+            Char('l') => Action::FocusRight,
+            Char('k') => Action::FocusUp,
+            Char('j') => Action::FocusDown,
+            Char('c') | Char('n') => Action::NewColumn,
+            Char('r') | Char('o') => Action::NewRow,
+            Char('s') | Char('-') => Action::SplitBelow,
+            Char('x') => Action::KillPane,
+            Char('z') | Char('=') => Action::CycleWidth,
+            Char(',') => return Some(Cmd::ScrollPane(-1)),
+            Char('.') => return Some(Cmd::ScrollPane(1)),
+            Char('<') => return Some(Cmd::ScrollPane(-16)),
+            Char('>') => return Some(Cmd::ScrollPane(16)),
+            Char('[') => return Some(Cmd::Scroll(-200)),
+            Char(']') => return Some(Cmd::Scroll(200)),
+            Char(c) if c.is_ascii_digit() => {
+                Action::JumpToColumn(c.to_digit(10).unwrap_or(1) as usize - 1)
+            }
+            Char('q') => return Some(Cmd::Quit),
+            _ => return Some(Cmd::None), // unknown prefix key just cancels
+        };
+        return Some(Cmd::Act(cmd));
+    }
     if !alt {
         // Escape must be a chord preamble only; forward everything else.
         if ev.code == Esc {
@@ -423,7 +477,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         }
         return Some(Cmd::Input(key_bytes(ev)));
     }
-    // Alt chords.
+    // Alt chords (work when the terminal sends Option as Meta).
     let cmd = match ev.code {
         Char('h') if shift => Action::MovePaneLeft,
         Char('l') if shift => Action::MovePaneRight,
@@ -581,6 +635,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                     }
                                 }
                             }
+                            Cmd::Repaint => dirty = true,
                             Cmd::None => {}
                         }
                     }
