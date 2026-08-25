@@ -1326,8 +1326,12 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let gw = cols.max(1);
     let gh = rows.saturating_sub(CHROME_ROWS).max(1);
     // Spawn every pane in the initial strip. The first takes the requested
-    // `run` command (if any); the rest get the user's shell.
-    let pane_ids: Vec<PaneId> = layout.panes.keys().copied().collect();
+    // `run` command (if any); the rest get the user's shell. Sort by id:
+    // `panes` is a HashMap, and unsorted iteration made *which pane runs the
+    // command* random (ids are allocated in column order, so id order is
+    // column order).
+    let mut pane_ids: Vec<PaneId> = layout.panes.keys().copied().collect();
+    pane_ids.sort_unstable();
     for (i, pid) in pane_ids.iter().enumerate() {
         let cmd = if i == 0 {
             initial.clone()
