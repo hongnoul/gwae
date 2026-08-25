@@ -252,8 +252,8 @@ impl Layout {
     fn move_pane_vertical(
         &mut self,
         dy: i32,
-        _viewport: Viewport,
-        _follow: FollowScroll,
+        viewport: Viewport,
+        follow: FollowScroll,
     ) -> LayoutResult<i32> {
         let row = self.focus.row;
         let col = self.focus.column;
@@ -268,18 +268,92 @@ impl Layout {
         } else {
             Some(p + 1)
         };
-        let Some(t) = target else {
-            return Ok(self.focused_scroll());
+        let Some(t) = target.filter(|t| *t < panes_len) else {
+            // At the top/bottom of the stack the pane leaves the strip
+            // entirely and lands on the neighboring one, niri-style
+            // "move window to workspace".
+            return self.move_pane_across_row(dy, viewport, follow);
         };
-        if t >= panes_len {
-            return Ok(self.focused_scroll());
-        }
         if let Some(row) = self.row_mut(row) {
             if let Some(c) = row.columns.get_mut(col) {
                 c.panes.swap(p, t);
             }
         }
         self.focus.pane = t;
+        Ok(self.focused_scroll())
+    }
+
+    /// Carry the focused pane to the strip above/below as a column of its own,
+    /// creating a new strip past the end (only from a non-empty one) and
+    /// discarding the source strip if the move emptied it.
+    fn move_pane_across_row(
+        &mut self,
+        dy: i32,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> LayoutResult<i32> {
+        let from = self.focus.row;
+        let col = self.focus.column;
+        let pane_idx = self.focus.pane;
+        let Some(pid) = self.focused_pane_id() else {
+            return Ok(self.focused_scroll());
+        };
+        let idx = self
+            .rows
+            .iter()
+            .position(|r| r.id == from)
+            .ok_or(LayoutError::UnknownRow(from))?;
+        let ti = if dy < 0 { idx.checked_sub(1) } else { Some(idx + 1) };
+        let Some(ti) = ti else {
+            return Ok(self.focused_scroll());
+        };
+        // A lone pane on its strip has nowhere new to go: moving it "past the
+        // end" would just recreate the same one-pane strip one slot down.
+        let lone = self
+            .row(from)
+            .map(|r| r.columns.len() == 1 && r.columns[0].panes.len() == 1)
+            .unwrap_or(false);
+        if ti >= self.rows.len() {
+            if lone {
+                return Ok(self.focused_scroll());
+            }
+            self.new_row(format!("strip {}", self.rows.len() + 1));
+        }
+        let target_id = self.rows[ti].id;
+        let width = self
+            .row(from)
+            .and_then(|r| r.columns.get(col))
+            .map(|c| c.width)
+            .unwrap_or(Width::DEFAULT);
+        // Remember the x-position before detaching; afterwards the column may
+        // be gone and the center would read as 0.
+        let x_center = self.focused_x_center(viewport.cols);
+        // Detach from the source strip, compacting away an emptied column.
+        if let Some(r) = self.row_mut(from) {
+            if let Some(c) = r.columns.get_mut(col) {
+                if pane_idx < c.panes.len() {
+                    c.panes.remove(pane_idx);
+                }
+            }
+            if r.columns.get(col).map(|c| c.panes.is_empty()).unwrap_or(false) {
+                r.columns.remove(col);
+            }
+        }
+        // Land beside the column nearest the old x-position on the target.
+        let at = if self.row_is_empty(target_id) {
+            0
+        } else {
+            self.nearest_column(target_id, x_center, viewport.cols) + 1
+        };
+        let landed = self.insert_column(target_id, at, width, vec![pid]);
+        self.focus.row = target_id;
+        self.focus.column = landed;
+        self.focus.pane = 0;
+        // An emptied source strip disappears, exactly as when focus leaves it.
+        if self.row_is_empty(from) {
+            self.rows.retain(|r| r.id != from);
+        }
+        self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
     }
 

@@ -317,6 +317,19 @@ fn pane_window(col_x0: u16, h_scroll: i32, w: u16, grid_cols: u16) -> Option<(u1
 
 /// Build the full frame (cols x rows).
 #[allow(clippy::too_many_arguments)]
+/// The 1-based *position* of the focused strip in the stack, used for the
+/// `strip.cell` addresses. Deliberately not the `RowId`: ids are monotonic
+/// allocation counters, so creating and discarding strips with j/k would make
+/// the visible label of the second strip climb (2, 3, 4, ...) forever.
+fn strip_number(layout: &Layout) -> usize {
+    layout
+        .rows
+        .iter()
+        .position(|r| r.id == layout.focus.row)
+        .unwrap_or(0)
+        + 1
+}
+
 fn render_frame(
     out: &mut Vec<Cell>,
     layout: &Layout,
@@ -450,6 +463,11 @@ fn render_frame(
         // showing the dimmer `background` fill, and each carries a big
         // `strip.cell` identifier centered in the box so empty cells are
         // addressable at a glance.
+        // Address strips by their *position* in the stack, not their row id:
+        // ids are monotonic allocation counters, so creating and discarding
+        // strips (j/k past the ends) would otherwise make the label drift
+        // upward (2, 3, 4, ...) for what is visibly always the second strip.
+        let strip_no = strip_number(layout);
         let quarter = (cols / 4).max(1);
         let mut pcol = ranges.len();
         while edge < cols {
@@ -481,7 +499,7 @@ fn render_frame(
                 sk
             };
             draw_focus_frame(out, cols, boxr, color);
-            let label = format!("{}.{}", layout.focus.row + 1, pcol + 1);
+            let label = format!("{}.{}", strip_no, pcol + 1);
             let inner = Rect {
                 x: boxr.x + 1,
                 y: boxr.y + 1,
@@ -1938,5 +1956,35 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
     assert_eq!(out[cols as usize - 1].ch, 'D', "rightmost cell is pane D");
     for p in panes.values_mut() {
         let _ = p.child.kill();
+    }
+}
+
+#[cfg(test)]
+mod strip_label_tests {
+    use super::*;
+    use strimux_layout::{Action, FollowScroll, Viewport};
+
+    #[test]
+    fn strip_number_tracks_position_not_row_id() {
+        let v = Viewport::new(80);
+        let f = FollowScroll::default();
+        let mut layout = Layout::new(1);
+        assert_eq!(strip_number(&layout), 1);
+        // Down into a fresh strip: it is the second strip, so "2".
+        let _ = layout.apply(Action::FocusDown, v, f);
+        assert_eq!(strip_number(&layout), 2);
+        // Bouncing up and down repeatedly allocates new row ids each time, but
+        // the label must stay 2 rather than drifting to 3, 4, 5 ...
+        for _ in 0..4 {
+            let _ = layout.apply(Action::FocusUp, v, f);
+            assert_eq!(strip_number(&layout), 1);
+            let _ = layout.apply(Action::FocusDown, v, f);
+            assert_eq!(strip_number(&layout), 2);
+        }
+        // A populated second strip plus a new third one keeps counting by
+        // position.
+        let _ = layout.apply(Action::NewColumn, v, f);
+        let _ = layout.apply(Action::FocusDown, v, f);
+        assert_eq!(strip_number(&layout), 3);
     }
 }

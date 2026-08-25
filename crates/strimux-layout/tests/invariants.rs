@@ -443,3 +443,30 @@ fn killing_the_last_pane_of_a_strip_leaves_the_focus_on_it_empty() {
     assert!(layout.row_is_empty(strip));
     assert_eq!(layout.rows.len(), 2);
 }
+
+#[test]
+fn move_pane_down_carries_it_to_a_new_strip() {
+    // Alt+Shift+j from the bottom of a stack sends the pane to the strip
+    // below, creating it when needed (niri "move window to workspace").
+    let mut layout = Layout::new(2);
+    let pid = layout.focused_pane_id().unwrap();
+    let _ = layout.apply(Action::MovePaneDown, view(), follow());
+    assert_eq!(layout.rows.len(), 2);
+    assert_eq!(layout.focused_pane_id(), Some(pid), "pane travels with focus");
+    assert_eq!(layout.focused_row().unwrap().columns.len(), 1);
+    // The source strip kept its other pane.
+    assert_eq!(layout.rows[0].columns.len(), 1);
+    // And back up again: the emptied strip is discarded.
+    let _ = layout.apply(Action::MovePaneUp, view(), follow());
+    assert_eq!(layout.rows.len(), 1);
+    assert_eq!(layout.focused_pane_id(), Some(pid));
+    assert_eq!(layout.rows[0].columns.len(), 2);
+}
+
+#[test]
+fn moving_a_lone_pane_off_its_strip_is_a_noop() {
+    let mut layout = Layout::new(1);
+    let before = layout.clone();
+    let _ = layout.apply(Action::MovePaneDown, view(), follow());
+    assert_eq!(layout, before, "a lone pane has nowhere new to go");
+}
