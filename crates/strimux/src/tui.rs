@@ -1359,7 +1359,6 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
         width_of("key", ACT, true),
         width_of("panes", ACT, false),
     ];
-    let pad: usize = 1;
     // Each cell is ` text `; columns joined by a vertical rule.
     let table_w: usize = w.iter().map(|c| c + 2).sum::<usize>() + 3;
     let cell = |text: &str, i: usize| -> String { format!(" {:<width$} ", text, width = w[i]) };
@@ -1369,7 +1368,7 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
             if i > 0 {
                 s.push(m);
             }
-            s.extend(std::iter::repeat('─').take(c + 2));
+            s.extend(std::iter::repeat_n('─', c + 2));
         }
         s
     };
@@ -4138,15 +4137,6 @@ mod tests {
     }
 
     #[test]
-    fn dump_hud_tmp() {
-        let layout = Layout::default();
-        let (cols, rows) = (80u16, 24u16);
-        let mut out = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(&mut out, cols, rows, &layout, &pal_accent(CColor::Rgb(1,2,3)));
-        for y in 0..rows { let l: String = (0..cols).map(|x| out[y as usize*cols as usize+x as usize].ch).collect(); println!("{}", l.trim_end()); }
-    }
-
-    #[test]
     fn center_hud_paints_centered_box_with_attention_hint() {
         // HUD flash: centered box with smart-jump hint + concise keybind cheat-sheet.
         let mut layout = Layout::default();
@@ -4206,6 +4196,34 @@ mod tests {
         assert!(
             all2.iter().any(|s| s.contains("hjkl")),
             "startup HUD shows cheat-sheet without attention, got {all2:?}"
+        );
+        // Spreadsheet shape: header row, ruled separator, aligned columns.
+        assert!(
+            all2.iter()
+                .any(|s| s.contains("key") && s.contains("navigate")),
+            "HUD has table headers, got {all2:?}"
+        );
+        assert!(
+            all2.iter().any(|s| s.contains('┼')),
+            "HUD has a ruled header separator, got {all2:?}"
+        );
+        let cols_at: Vec<Vec<usize>> = all2
+            .iter()
+            .filter(|s| {
+                s.contains('│') && s.contains("hjkl") || s.contains('│') && s.contains("split")
+            })
+            .map(|s| {
+                s.chars()
+                    .enumerate()
+                    .filter(|(_, c)| *c == '│')
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .collect();
+        assert!(cols_at.len() >= 2, "found body rows, got {all2:?}");
+        assert!(
+            cols_at.windows(2).all(|w| w[0] == w[1]),
+            "column rules align across rows: {cols_at:?}"
         );
         // Tiny viewport: nothing painted.
         let mut tiny = vec![Cell::default(); 10 * 4];
