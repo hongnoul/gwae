@@ -9,6 +9,7 @@
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::Read;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::mpsc::channel;
 use std::time::Duration;
 
@@ -27,14 +28,33 @@ fn frame_count(out: &[u8]) -> usize {
 /// Run the real strimux binary with `config_body` as its config file and
 /// return every byte it painted before it settled.
 fn paint_with_config(config_body: &str) -> String {
+    paint_with_config_raw(&format!(
+        // The HUD switch goes *after* the case's own body: TOML tables
+        // swallow every key that follows them, so prepending `[minimap]`
+        // would capture the case's top-level keys into that table instead.
+        "{config_body}\n[minimap]\nhud_on_attention_ms = 0\n"
+    ))
+}
+
+/// As [`paint_with_config`], but writes `config_body` to disk verbatim.
+///
+/// Used by the malformed-config case, which must not have anything appended
+/// to it (and cannot have the HUD disabled, since strimux discards the whole
+/// unparseable file and falls back to defaults).
+fn paint_with_config_raw(config_body: &str) -> String {
+    // A per-case config directory. The counter is what actually guarantees
+    // uniqueness: these tests run as threads of one process, so the pid is
+    // shared, and a wall-clock timestamp is not reliably distinct between
+    // threads that start together. Two cases landing on the same directory
+    // means one overwrites the other's config and asserts against the wrong
+    // theme.
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
         "strimux-theme-e2e-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        NEXT_ID.fetch_add(1, AtomicOrdering::Relaxed)
     ));
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("strimux")).expect("temp config dir");
     std::fs::write(dir.join("strimux/strimux.toml"), config_body).expect("write config");
 
@@ -57,7 +77,6 @@ fn paint_with_config(config_body: &str) -> String {
     let mut child = pair.slave.spawn_command(cmd).expect("spawn strimux");
     drop(pair.slave);
 
-    let mut writer = pair.master.take_writer().expect("writer");
     let mut reader = pair.master.try_clone_reader().expect("reader");
     let (tx, rx) = channel::<Vec<u8>>();
     std::thread::spawn(move || {
@@ -82,48 +101,14 @@ fn paint_with_config(config_body: &str) -> String {
     // seen, dismiss the HUD with a bare Escape and keep reading: the repaint
     // that follows redraws the cells it was covering, so every chrome color
     // is guaranteed to appear in the capture.
-    // Getting a *complete* picture of the chrome needs care: the painter only
-    // emits cells that changed, and a centered startup HUD covers part of the
-    // screen until a key is pressed, so a naive capture can miss colors that
-    // were never redrawn. Rather than guess at timings, drive the child into a
-    // known state: dismiss the HUD, then resize the PTY, which forces strimux
-    // to repaint every cell from scratch. Everything after that resize is a
-    // full, self-contained frame.
-    let settle = Duration::from_millis(400);
-    // Let the first frame and the startup HUD land.
-    std::thread::sleep(settle);
-    {
-        use std::io::Write;
-        // Escape dismisses the persistent startup HUD. Send it a few times:
-        // the very first write can land before the child's input loop is
-        // reading, in which case it is simply dropped.
-        for _ in 0..5 {
-            let _ = writer.write_all(b"\x1b");
-            let _ = writer.flush();
-            std::thread::sleep(Duration::from_millis(60));
-        }
-    }
-    std::thread::sleep(settle);
-    // Drain everything painted so far, so the capture below contains only the
-    // post-resize full repaint.
-    while rx.try_recv().is_ok() {}
-    pair
-        .master
-        .resize(PtySize {
-            rows: 24,
-            cols: 90,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .expect("resize");
-
+    // Collect until the paint goes quiet. The test config disables the
+    // startup HUD, so the first frame already contains the full chrome and
+    // nothing later covers it.
     let mut out = Vec::new();
     let mut idle = 0;
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
-        // A full repaint has landed once a frame is present and the stream
-        // has gone quiet again.
-        if frame_count(&out) >= 1 && idle >= 3 {
+        if frame_count(&out) >= 1 && idle >= 4 {
             break;
         }
         match rx.recv_timeout(Duration::from_millis(200)) {
@@ -314,7 +299,7 @@ fn terminal_theme_paints_no_hardcoded_colors() {
 #[test]
 fn an_unparseable_config_still_starts_with_default_colors() {
     // Bad TOML falls back to defaults rather than refusing to launch.
-    let painted = paint_with_config("this is not valid toml <<<\n");
+    let painted = paint_with_config_raw("this is not valid toml <<<\n");
     let (r, g, b) = MOCHA_ACCENT;
     assert!(
         painted.contains(&fg_seq(r, g, b)),
