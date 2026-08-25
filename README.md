@@ -83,7 +83,7 @@ line shows the pending prefix.
 The equivalent `⌥` (Option) chords remain available for terminals where
 the modifier arrives as Meta/Alt (`⌥+hjkl` to focus, `⌥+Shift+hjkl` to move,
 `⌥+a` new column, `⌥+;` spawn an agent pane, `⌥+s` split, `⌥+z` width,
-`⌥+x` kill, `⌥+q` quit).
+`⌥+x` / `⌥+q` kill the focused pane).
 
 All other keys pass through to the focused pane.
 

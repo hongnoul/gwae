@@ -11,6 +11,10 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   spawns a new pane running the configured agent harness (`config.default_agent`,
   default `jcode`) at the rightmost of the focused strip and switches focus to
   it. Configurable via `default_agent = "claude"` (or any command).
+- **Keybinding tweaks**: `⌥+q` now kills the focused pane (matching `⌥+x`)
+  instead of quitting; quit remains `Ctrl-b q`. On macOS the `⌥+;` / `⌥+q`
+  chords work out of the box (Option+`;` = `…`, Option+`q` = `œ`), no
+  Option-as-Alt needed.
 - **Hot module reload for development**: three new crates/bins let you develop
   strimux _inside_ strimux without ever killing your session. `strimux-core-api`
   is a stable boundary crate (hot core + host both compile against it);

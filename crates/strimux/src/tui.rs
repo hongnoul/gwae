@@ -407,6 +407,7 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
 }
 
 /// A decoded keyboard instruction.
+#[derive(Debug, PartialEq)]
 enum Cmd {
     Act(Action),
     Scroll(i32),
@@ -476,7 +477,8 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{2206}') => return Some(Cmd::Act(Action::FocusDown)), // ∆ (Option+j)
             Char('\u{2da}') => return Some(Cmd::Act(Action::FocusUp)),   // ˚ (Option+k)
             Char('\u{ac}') => return Some(Cmd::Act(Action::FocusRight)), // ¬ (Option+l)
-            Char('\u{ba}') => return Some(Cmd::Act(Action::SpawnAgent)), // º (Option+;)
+            Char('\u{2026}') => return Some(Cmd::Act(Action::SpawnAgent)), // … (Option+;)
+            Char('\u{153}') => return Some(Cmd::Act(Action::KillPane)),  // œ (Option+q)
             _ => {}
         }
     }
@@ -551,7 +553,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         Char(c) if c.is_ascii_digit() => {
             Action::JumpToColumn(c.to_digit(10).unwrap_or(1) as usize - 1)
         }
-        Char('q') => return Some(Cmd::Quit),
+        Char('q') => Action::KillPane,
         Char('[') => return Some(Cmd::Scroll(-200)),
         Char(']') => return Some(Cmd::Scroll(200)),
         Left if shift => return Some(Cmd::ScrollPane(-16)),
@@ -884,6 +886,25 @@ mod tests {
     fn pane_window_shows_leading_content() {
         // 240-col content, 80-col rect, no scroll: reveal [0, 80).
         assert_eq!(pane_window(0, 0, 80, 240), Some((0, 80)));
+    }
+
+    #[test]
+    fn handle_key_option_semicolon_spawns_agent() {
+        // macOS sends U+2026 (…) for Option+; when it doesn't translate to Meta.
+        let ev = KeyEvent::new(KeyCode::Char('\u{2026}'), KeyModifiers::NONE);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgent)));
+        // Terminals that deliver Option as Meta send ESC+; -> Alt+;.
+        let ev = KeyEvent::new(KeyCode::Char(';'), KeyModifiers::ALT);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgent)));
+    }
+
+    #[test]
+    fn handle_key_alt_q_kills_pane() {
+        let ev = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::ALT);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::KillPane)));
+        // macOS Option+q -> œ (U+0153) on the no-Meta path.
+        let ev = KeyEvent::new(KeyCode::Char('\u{153}'), KeyModifiers::NONE);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::KillPane)));
     }
 
     #[test]
