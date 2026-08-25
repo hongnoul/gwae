@@ -54,6 +54,30 @@ struct Rect {
     h: u16,
 }
 
+/// Detect terminal capability/status queries from a child and produce a reply
+/// sequence. Answers Device Attributes (DA) and Device Status Report (DSR) so
+/// shells like fish don't warn that they "could not read a response to the
+/// Primary Device Attribute query". Returns None when no query is present.
+fn query_reply(bytes: &[u8]) -> Option<Vec<u8>> {
+    // DA / DA1: ESC [ c or ESC [ 0;1;2c  ->  VT100 with advanced video option.
+    if bytes.windows(3).any(|w| w == b"\x1b[c")
+        || bytes
+            .windows(4)
+            .any(|w| w == b"\x1b[0c" || w == b"\x1b[1c" || w == b"\x1b[2c")
+    {
+        return Some(b"\x1b[?1;2c".to_vec());
+    }
+    // DSR operating status: ESC [ 5 n -> "OK".
+    if bytes.windows(4).any(|w| w == b"\x1b[5n") {
+        return Some(b"\x1b[0n".to_vec());
+    }
+    // DSR cursor position: ESC [ 6 n -> report row;col (1;1 is a safe answer).
+    if bytes.windows(4).any(|w| w == b"\x1b[6n") {
+        return Some(b"\x1b[1;1R".to_vec());
+    }
+    None
+}
+
 /// Spawn a PTY running `cmd` at the given grid size, wiring a reader thread.
 fn spawn_pane(
     id: PaneId,
@@ -428,6 +452,20 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     let shift = ev.modifiers.contains(KeyModifiers::SHIFT);
     let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
     use KeyCode::*;
+    // macOS Option+letter fallback: terminals that don't translate Option to
+    // Meta send these Unicode glyphs instead (US layout: h->˙ j->∆ k->˚ l->¬).
+    // Remap them to focus navigation so Option+hjkl works with zero config.
+    // Only fires when the char arrives as plain input (never when Option-as-Alt
+    // is set, which delivers ESC+h instead), so the two paths can't collide.
+    if !alt && !ctrl && !shift {
+        match ev.code {
+            Char('\u{2d9}') => return Some(Cmd::Act(Action::FocusLeft)),  // ˙ (Option+h)
+            Char('\u{2206}') => return Some(Cmd::Act(Action::FocusDown)), // ∆ (Option+j)
+            Char('\u{2da}') => return Some(Cmd::Act(Action::FocusUp)),    // ˚ (Option+k)
+            Char('\u{ac}') => return Some(Cmd::Act(Action::FocusRight)),  // ¬ (Option+l)
+            _ => {}
+        }
+    }
     // Prefix toggle: `Ctrl-b`. Always arrives on any terminal, no config.
     if !alt && ctrl && matches!(ev.code, Char('b')) {
         IN_PREFIX.store(true, Ordering::Relaxed);
@@ -563,17 +601,26 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut cols = cols.max(1);
     rows = rows.max(2);
     let mut layout = Layout::default();
-    let first_id = focused_pane(&layout).ok_or_else(|| { eprintln!("no focus"); 1 })?;
     let (tx, rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     let initial = command.clone().unwrap_or_default();
-    match spawn_pane(first_id, &initial, cols.max(1), rows.saturating_sub(CHROME_ROWS).max(1), tx.clone()) {
-        Ok(p) => { panes.insert(first_id, p); }
-        Err(e) => {
-            eprintln!("spawn: {e}");
-            let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
-            let _ = disable_raw_mode();
-            return Err(1);
+    let gw = cols.max(1);
+    let gh = rows.saturating_sub(CHROME_ROWS).max(1);
+    // Spawn every pane in the initial strip. The first takes the requested
+    // `run` command (if any); the rest get the user's shell.
+    let pane_ids: Vec<PaneId> = layout.panes.keys().copied().collect();
+    for (i, pid) in pane_ids.iter().enumerate() {
+        let cmd = if i == 0 { initial.clone() } else { String::new() };
+        match spawn_pane(*pid, &cmd, gw, gh, tx.clone()) {
+            Ok(p) => {
+                panes.insert(*pid, p);
+            }
+            Err(e) => {
+                eprintln!("spawn: {e}");
+                let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
+                let _ = disable_raw_mode();
+                return Err(1);
+            }
         }
     }
     let mut frame: Vec<Cell> = Vec::new();
@@ -587,6 +634,12 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 PaneMsg::Output(pid, bytes) => {
                     if let Some(p) = panes.get_mut(&pid) {
                         p.grid.feed(&bytes);
+                        // Answer terminal capability/status queries (fish's DA
+                        // probe etc.) so children don't warn or hang.
+                        if let Some(reply) = query_reply(&bytes) {
+                            let _ = p.writer.write_all(&reply);
+                            let _ = p.writer.flush();
+                        }
                         dirty = true;
                     }
                 }
@@ -622,7 +675,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                 let v = Viewport::new(cols);
                                 let f = FollowScroll { margin: cfg.scroll_margin, center: cfg.center_focus };
                                 let _ = layout.apply(a, v, f);
-                                if let Err(e) = sync_panes(&mut layout, &mut panes, &cfg, &tx, first_id) {
+                                if let Err(e) = sync_panes(&mut layout, &mut panes, &cfg, &tx, 0) {
                                     tracing::error!("sync panes: {e}");
                                 }
                                 dirty = true;

@@ -86,7 +86,14 @@ proptest! {
             let _ = layout.apply(a, view(), follow());
         }
         // No-shrink guarantee: movement and scrolling never resize any column.
-        assert_eq!(before, total_widths(&layout));
+        // MovePane may reorder differing-width columns, so compare the width
+        // multiset rather than the exact column order.
+        let mut before_sorted: Vec<String> = before.iter().map(|w| format!("{w:?}")).collect();
+        let mut after_sorted: Vec<String> =
+            total_widths(&layout).iter().map(|w| format!("{w:?}")).collect();
+        before_sorted.sort();
+        after_sorted.sort();
+        assert_eq!(before_sorted, after_sorted);
     }
 }
 

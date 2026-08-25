@@ -39,9 +39,13 @@ make install                       # copies to a writable bin dir on your PATH
 ## Usage
 
 ```sh
-strimux                     # start a session with your $SHELL in the first pane
-strimux run "htop"          # start a session running a specific command
+strimux                     # start a session: one strip of 4 quarter-width panes
+strimux run "htop"          # same 4 panes; the first runs htop, the rest your shell
 ```
+
+Launching opens a single **strip of 4 columns**, each `1/4` of the viewport
+width, each running your shell (`run` puts its command in the first pane).
+All four spawn up front so the screen is usable immediately.
 
 Inside a session, navigation uses a `Ctrl-b` prefix so it works on **every**
 terminal with **zero configuration** (including macOS, where the Option key

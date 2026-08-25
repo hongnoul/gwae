@@ -77,15 +77,22 @@ impl Default for Layout {
             next_pane: 0,
         };
         let row = layout.new_row("main".to_string());
-        let pane = layout.alloc_pane();
-        let col = layout.add_column(row, Width::DEFAULT, vec![pane]);
+        // A single strip of `INITIAL_STRIPS` panes, each 1/4 of the viewport.
+        let width = Width::Preset(crate::width::Preset::Quarter);
+        for _ in 0..Layout::INITIAL_STRIPS {
+            let pane = layout.alloc_pane();
+            layout.add_column(row, width, vec![pane]);
+        }
         layout.focus.row = row;
-        layout.focus.column = col;
+        layout.focus.column = 0;
         layout
     }
 }
 
 impl Layout {
+    /// The default number of equal-width panes on screen at first launch.
+    pub const INITIAL_STRIPS: usize = 4;
+
     pub fn alloc_pane(&mut self) -> PaneId {
         let id = self.next_pane;
         self.next_pane += 1;

@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 24f9ad0b61141e56c9a6a5df2b1e145039cbc506eac4fea9b271ddc1c75b68a7 # shrinks to actions = [SplitBelow, FocusLeft]
+cc 7a024e6401daaa0e03422e5d6024d77397641d502f8c9e9ae39b410018a6b5db # shrinks to actions = [MovePaneLeft, MovePaneLeft, MovePaneLeft, MovePaneLeft, MovePaneLeft, MovePaneLeft]
