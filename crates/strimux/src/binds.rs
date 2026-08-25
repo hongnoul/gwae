@@ -234,20 +234,20 @@ pub const BINDS: &[Bind] = &[
     },
     // -- panes -----------------------------------------------------------
     Bind {
-        trigger: Trigger::Chord('a'),
-        hint: "opens a column here",
-        glyph: None,
-        group: Group::Panes,
-        desc: "new column",
-        effect: Effect::Act(Action::NewColumn),
-    },
-    Bind {
         trigger: Trigger::Chord(';'),
         hint: "spawns an agent",
         glyph: Some('\u{2026}'),
         group: Group::Panes,
         desc: "new agent",
         effect: Effect::Act(Action::SpawnAgent),
+    },
+    Bind {
+        trigger: Trigger::ShiftChord(';'),
+        hint: "spawns an agent on a new strip",
+        glyph: Some('\u{da}'),
+        group: Group::Panes,
+        desc: "new agent row",
+        effect: Effect::Act(Action::SpawnAgentRow),
     },
     Bind {
         trigger: Trigger::Chord('s'),
@@ -274,16 +274,8 @@ pub const BINDS: &[Bind] = &[
         effect: Effect::Act(Action::ToggleFullWidth),
     },
     Bind {
-        trigger: Trigger::Chord('x'),
-        hint: "kills the focused pane",
-        glyph: None,
-        group: Group::Panes,
-        desc: "kill pane",
-        effect: Effect::Act(Action::KillPane),
-    },
-    Bind {
         trigger: Trigger::Chord('q'),
-        hint: "kills the focused pane too",
+        hint: "kills the focused pane",
         glyph: Some('\u{153}'),
         group: Group::Panes,
         desc: "kill pane",

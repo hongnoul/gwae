@@ -117,6 +117,7 @@ pub fn plan(f: Facts) -> Plan {
 /// Not asking when it is already installed is the point: a question whose
 /// only honest answer is "it is already done" teaches users that setup asks
 /// things it already knows.
+#[allow(dead_code)]
 pub fn worth_asking(f: Facts) -> bool {
     !matches!(plan(f), Plan::AlreadyInstalled)
 }

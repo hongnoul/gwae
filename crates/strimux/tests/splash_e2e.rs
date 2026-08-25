@@ -151,7 +151,9 @@ fn init_animates_the_title_card_before_the_first_question() {
     let sb = Sandbox::new("");
     // Stop once the flow has reached question 1: that proves both that the
     // card played and that it handed over.
-    let out = capture(&sb, &["init"], 80, 24, |s| strip_ansi(s).contains("[1/"));
+    let out = capture(&sb, &["init"], 80, 24, |s| {
+        strip_ansi(s).contains("Color theme")
+    });
     let plain = strip_ansi(&out);
 
     assert!(
@@ -168,12 +170,12 @@ fn init_animates_the_title_card_before_the_first_question() {
         "the tagline never resolved"
     );
     assert!(
-        plain.contains("[1/"),
+        plain.contains("Color theme"),
         "onboarding never got past the splash"
     );
     // Order matters: the card must come before the questions, not over them.
     let first_ink = plain.find(INK).unwrap();
-    let first_q = plain.find("[1/").unwrap();
+    let first_q = plain.find("Color theme").unwrap();
     assert!(first_ink < first_q, "the card painted after question 1");
 }
 
@@ -218,7 +220,7 @@ fn a_keypress_skips_the_card_immediately() {
     let started = Instant::now();
     let deadline = started + Duration::from_secs(20);
     while Instant::now() < deadline {
-        if strip_ansi(&String::from_utf8_lossy(&out)).contains("[1/") {
+        if strip_ansi(&String::from_utf8_lossy(&out)).contains("Color theme") {
             break;
         }
         if let Ok(b) = rx.recv_timeout(Duration::from_millis(100)) {
@@ -229,7 +231,7 @@ fn a_keypress_skips_the_card_immediately() {
     let _ = child.kill();
     let _ = child.wait();
     let plain = strip_ansi(&String::from_utf8_lossy(&out));
-    assert!(plain.contains("[1/"), "never reached question 1");
+    assert!(plain.contains("Color theme"), "never reached question 1");
     assert!(
         elapsed < Duration::from_secs(2),
         "keypress did not cut the card short ({elapsed:?})"

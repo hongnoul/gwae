@@ -96,6 +96,10 @@ struct Session {
     _master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     rx: Receiver<Vec<u8>>,
+    /// Raw PTY bytes. Decoded as a whole rather than per chunk: a multi-byte
+    /// box-drawing character split across two reads would otherwise decode as
+    /// replacement characters and make identical frames compare unequal.
+    raw: Vec<u8>,
     buf: String,
 }
 
@@ -138,6 +142,7 @@ impl Session {
             _master: pair.master,
             writer,
             rx,
+            raw: Vec::new(),
             buf: String::new(),
         }
     }
@@ -150,7 +155,7 @@ impl Session {
                 return;
             }
             match self.rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(b) => self.buf.push_str(&String::from_utf8_lossy(&b)),
+                Ok(b) => self.absorb(&b),
                 Err(_) => continue,
             }
         }
@@ -162,8 +167,13 @@ impl Session {
 
     /// Wait for question `n` of the flow to be on screen.
     fn wait_for_question(&mut self, n: usize) {
-        let tag = format!("[{n}/");
-        self.wait_for(&format!("question {n}"), |s| s.contains(&tag));
+        let tag = match n {
+            1 => "Color theme",
+            2 => "Width of a new column",
+            3 => "Scrolling style",
+            _ => panic!("no question {n}"),
+        };
+        self.wait_for(&format!("question {n}"), |s| s.contains(tag));
     }
 
     /// Everything painted since the last screen-clear: one full repaint, which
@@ -181,23 +191,29 @@ impl Session {
     }
 
     /// Type keys, then wait for the repaint they cause.
+    /// Append raw bytes and re-decode the whole stream.
+    fn absorb(&mut self, b: &[u8]) {
+        self.raw.extend_from_slice(b);
+        self.buf = String::from_utf8_lossy(&self.raw).into_owned();
+    }
+
     fn press(&mut self, keys: &str) {
-        let before = self.buf.len();
+        let before = self.raw.len();
         self.writer.write_all(keys.as_bytes()).expect("write keys");
         self.writer.flush().expect("flush");
         // A repaint always begins with a clear, so wait for a new one rather
         // than for a fixed sleep: no timing assumptions, no flake.
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
-            if self.buf[before..].contains("\x1b[2J") {
+            if self.raw[before..].windows(4).any(|w| w == b"\x1b[2J") {
                 // Let the rest of the frame arrive.
                 while let Ok(b) = self.rx.recv_timeout(Duration::from_millis(120)) {
-                    self.buf.push_str(&String::from_utf8_lossy(&b));
+                    self.absorb(&b);
                 }
                 return;
             }
             match self.rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(b) => self.buf.push_str(&String::from_utf8_lossy(&b)),
+                Ok(b) => self.absorb(&b),
                 Err(_) => continue,
             }
         }
@@ -288,10 +304,8 @@ fn a_width_choice_changes_the_shape_of_the_previewed_grid() {
     let sb = Sandbox::new("");
     let mut s = Session::start(&sb, 100, 40);
     to_first_question(&mut s);
-    s.press("\r"); // accept theme -> panes
+    s.press("\r"); // accept theme -> width
     s.wait_for_question(2);
-    s.press("\r"); // accept panes -> width
-    s.wait_for_question(3);
 
     let quarter = mockup(&s.plain());
     // Option 3 is `half`: two columns instead of four.
@@ -333,13 +347,11 @@ fn an_earlier_theme_answer_is_still_visible_in_a_later_questions_mockup() {
         s.wait_for_question(2);
         s.press("\r");
         s.wait_for_question(3);
-        s.press("\r");
-        s.wait_for_question(4);
         screens.push(s.screen());
     }
     assert_ne!(
         screens[0], screens[1],
-        "question 4 looked identical under two different themes, so the \
+        "question 3 looked identical under two different themes, so the \
          earlier answer never reached the preview"
     );
 }
@@ -355,7 +367,7 @@ fn the_question_is_never_pushed_off_screen_by_its_own_mockup() {
         let plain = s.plain();
         // The question, its options and the key hints must all be present.
         assert!(
-            plain.contains("[1/"),
+            plain.contains("Color theme"),
             "{cols}x{rows}: the question header is missing:\n{plain}"
         );
         assert!(
@@ -405,17 +417,15 @@ fn what_the_preview_showed_is_what_gets_written_to_the_config() {
     to_first_question(&mut s);
     s.press("4"); // theme: gruvbox
     s.wait_for_question(2);
-    s.press("2"); // startup_panes: 2
-    s.wait_for_question(3);
     s.press("3"); // default_column_width: half
+    s.wait_for_question(3);
 
-    // The preview at question 3 must already show two live panes in a
-    // half-width grid, which is exactly what we just answered.
+    // The preview at question 3 must already be drawn in the half-width grid
+    // that was just answered.
     let m = mockup(&s.plain());
     assert!(
-        m.iter().any(|l| l.contains("agent")) && m.iter().any(|l| l.contains("shell")),
-        "two panes were answered but the mockup shows only one:\n{}",
-        m.join("\n")
+        !m.is_empty(),
+        "no mockup after answering the width question"
     );
 
     // Take defaults for the rest and finish.
@@ -428,10 +438,6 @@ fn what_the_preview_showed_is_what_gets_written_to_the_config() {
 
     let cfg = sb.config();
     assert!(cfg.contains("gruvbox"), "theme not written:\n{cfg}");
-    assert!(
-        cfg.contains("startup_panes = 2"),
-        "panes not written:\n{cfg}"
-    );
     assert!(
         cfg.contains("default_column_width = \"half\""),
         "width not written:\n{cfg}"

@@ -190,36 +190,6 @@ pub fn questions() -> Vec<Question> {
             keep_existing: false,
         },
         Question {
-            key: "startup_panes",
-            prompt: "Panes on screen at launch",
-            help: "How many equal-width columns exist the moment strimux opens.",
-            options: vec![
-                Opt {
-                    label: "1",
-                    value: "1",
-                    blurb: "one pane, the rest of the grid empty (default)",
-                },
-                Opt {
-                    label: "2",
-                    value: "2",
-                    blurb: "side by side, e.g. agent + shell",
-                },
-                Opt {
-                    label: "3",
-                    value: "3",
-                    blurb: "three up",
-                },
-                Opt {
-                    label: "4",
-                    value: "4",
-                    blurb: "dense; best on a wide display",
-                },
-            ],
-            default: 0,
-            swatch: false,
-            keep_existing: false,
-        },
-        Question {
             key: "default_column_width",
             prompt: "Width of a new column",
             help: "The share of the screen each new column takes; \u{2325}+r cycles it later.",
@@ -279,51 +249,6 @@ pub fn questions() -> Vec<Question> {
             swatch: false,
             keep_existing: false,
         },
-        Question {
-            key: "content_width",
-            prompt: "Logical pane width",
-            help: "Wider than the column means long lines don't wrap; ⌥+←/→ pans.",
-            options: vec![
-                Opt {
-                    label: "follow column",
-                    value: "0",
-                    blurb: "lines wrap to the visible width (default)",
-                },
-                Opt {
-                    label: "100",
-                    value: "100",
-                    blurb: "keep 100-col output intact in a narrow column",
-                },
-                Opt {
-                    label: "120",
-                    value: "120",
-                    blurb: "for 120-col logs and diffs",
-                },
-            ],
-            default: 0,
-            swatch: false,
-            keep_existing: false,
-        },
-        Question {
-            key: "cell_labels",
-            prompt: "Address labels in empty boxes",
-            help: "The big `strip.pane` identifier drawn in placeholder boxes.",
-            options: vec![
-                Opt {
-                    label: "off",
-                    value: "false",
-                    blurb: "empty boxes stay bare (default)",
-                },
-                Opt {
-                    label: "on",
-                    value: "true",
-                    blurb: "show which cell each empty box is",
-                },
-            ],
-            default: 0,
-            swatch: false,
-            keep_existing: false,
-        },
     ]
 }
 
@@ -370,32 +295,6 @@ fn toml_eq(option_value: &str, current: &toml::Value) -> bool {
     }
 }
 
-/// The cowsay question, asked separately because it writes into a `[cowsay]`
-/// table rather than a top-level key.
-pub fn cowsay_question() -> Question {
-    Question {
-        key: "cowsay.enabled",
-        prompt: "Keybinding hints in empty boxes",
-        help:
-            "A cow reciting one real binding per empty box: the cheat-sheet you read by accident.",
-        options: vec![
-            Opt {
-                label: "off",
-                value: "false",
-                blurb: "empty boxes stay quiet (default)",
-            },
-            Opt {
-                label: "on",
-                value: "true",
-                blurb: "learn the bindings while the grid is still empty",
-            },
-        ],
-        default: 0,
-        swatch: false,
-        keep_existing: false,
-    }
-}
-
 /// The key of the one question that is not a config setting.
 ///
 /// Answering `true` installs [`crate::install::TOOL`] on the machine. It is
@@ -403,33 +302,6 @@ pub fn cowsay_question() -> Question {
 /// separate flow, so it gets the same screen, the same keys and the same
 /// summary line as everything else.
 pub const INSTALL_KEY: &str = "install.btm";
-
-/// The `btm` question. Default *yes*: it is the one companion tool strimux
-/// actively recommends, and the pane next to an agent is exactly where a
-/// system monitor earns its place.
-pub fn install_question() -> Question {
-    Question {
-        key: INSTALL_KEY,
-        prompt: "Install btm, the system monitor",
-        help: "A live CPU/memory/network pane to sit next to your agent. \
-               strimux installs whatever this needs.",
-        options: vec![
-            Opt {
-                label: "yes",
-                value: "true",
-                blurb: "install it now (default)",
-            },
-            Opt {
-                label: "no",
-                value: "false",
-                blurb: "leave this machine alone",
-            },
-        ],
-        default: 0,
-        swatch: false,
-        keep_existing: false,
-    }
-}
 
 /// Every question of the flow, in order.
 ///
@@ -442,12 +314,8 @@ pub fn all_questions() -> Vec<Question> {
 /// [`all_questions`] against a described machine, so tests never depend on
 /// what happens to be installed on the one running them.
 pub fn all_questions_for(f: crate::install::Facts) -> Vec<Question> {
-    let mut qs = questions();
-    qs.push(cowsay_question());
-    if crate::install::worth_asking(f) {
-        qs.push(install_question());
-    }
-    qs
+    let _ = f;
+    questions()
 }
 
 /// One keystroke, already decoded from whatever the terminal sent.
@@ -577,14 +445,11 @@ fn bg(c: CColor) -> String {
 ///
 /// Lines end with `\r\n`: the flow runs in raw mode (to read arrow keys
 /// without Enter), where a bare `\n` would stair-step down the screen.
-pub fn render_question(q: &Question, idx: usize, total: usize, cursor: usize) -> String {
+pub fn render_question(q: &Question, _idx: usize, _total: usize, cursor: usize) -> String {
     let mut s = String::new();
     s.push_str(&format!(
-        "{DIM}[{}/{}]{RESET} {BOLD}{}{RESET}\r\n{DIM}{}{RESET}\r\n\r\n",
-        idx + 1,
-        total,
-        q.prompt,
-        q.help
+        "{BOLD}{}{RESET}\r\n{DIM}{}{RESET}\r\n\r\n",
+        q.prompt, q.help
     ));
     for (i, o) in q.options.iter().enumerate() {
         let here = i == cursor;
@@ -601,8 +466,7 @@ pub fn render_question(q: &Question, idx: usize, total: usize, cursor: usize) ->
         };
         let star = if i == q.default { "*" } else { " " };
         s.push_str(&format!(
-            " {arrow}{star}{DIM}{}{RESET} {name}{pad}{sw} {DIM}{}{RESET}\r\n",
-            i + 1,
+            " {arrow}{star} {name}{pad}{sw} {DIM}{}{RESET}\r\n",
             o.blurb
         ));
     }
@@ -610,16 +474,13 @@ pub fn render_question(q: &Question, idx: usize, total: usize, cursor: usize) ->
     s.push_str(&if q.keep_existing {
         format!(
             "{DIM}\u{2191}\u{2193}/jk pick \u{00b7} \u{2192}/l/\u{23ce} keep your current setting \
-             \u{00b7} \u{2190}/h/\u{232b} back \u{00b7} 1-{} jump \u{00b7} esc defaults for the \
-             rest{RESET}\r\n",
-            q.options.len()
+             \u{00b7} \u{2190}/h/\u{232b} back \u{00b7} esc defaults for the rest{RESET}\r\n"
         )
     } else {
         format!(
             "{DIM}\u{2191}\u{2193}/jk pick \u{00b7} \u{2192}/l/\u{23ce} next \u{00b7} \
-             \u{2190}/h/\u{232b} back \u{00b7} 1-{} jump \u{00b7} s skip \u{00b7} esc defaults \
-             for the rest{RESET}\r\n",
-            q.options.len()
+             \u{2190}/h/\u{232b} back \u{00b7} s skip \u{00b7} esc defaults for the \
+             rest{RESET}\r\n"
         )
     });
     s
@@ -1214,7 +1075,7 @@ mod tests {
     #[test]
     fn the_preview_carries_earlier_answers_forward() {
         let qs = all();
-        let i = qs.iter().position(|q| q.key == "cell_labels").unwrap();
+        let i = qs.iter().position(|q| q.key == "center_focus").unwrap();
         let mocha = render_screen(&qs[i], i, qs.len(), 0, &[], false);
         let nord = render_screen(
             &qs[i],
@@ -1235,22 +1096,13 @@ mod tests {
     #[test]
     fn moving_the_highlight_changes_the_preview() {
         let qs = all();
-        let i = qs.iter().position(|q| q.key == "startup_panes").unwrap();
+        let i = qs
+            .iter()
+            .position(|q| q.key == "default_column_width")
+            .unwrap();
         let one = render_screen(&qs[i], i, qs.len(), 0, &[], false);
         let four = render_screen(&qs[i], i, qs.len(), 3, &[], false);
         assert_ne!(one, four);
-    }
-
-    /// The install question changes the machine, not the screen, so it gets no
-    /// mockup: an unchanging picture would teach that previews are decorative.
-    #[test]
-    fn the_install_question_gets_no_mockup() {
-        let qs = all();
-        let i = qs.iter().position(|q| q.key == INSTALL_KEY).unwrap();
-        assert_eq!(
-            render_screen(&qs[i], i, qs.len(), 0, &[], false),
-            render_question(&qs[i], i, qs.len(), 0),
-        );
     }
 
     /// Whatever the terminal size, the whole screen fits in it: the question a
@@ -1331,30 +1183,6 @@ mod tests {
     }
 
     #[test]
-    fn the_btm_offer_defaults_to_yes_and_is_skipped_when_it_is_already_there() {
-        let missing = crate::install::Facts {
-            installed: false,
-            brew: true,
-            cargo: true,
-            macos: true,
-        };
-        let qs = all_questions_for(missing);
-        let q = qs.last().expect("questions");
-        assert_eq!(q.key, INSTALL_KEY, "the offer comes last");
-        assert_eq!(q.default_value(), "true", "btm is recommended, so yes");
-        // Already installed: the question would have only one honest answer,
-        // so it is not asked at all.
-        let have = crate::install::Facts {
-            installed: true,
-            ..missing
-        };
-        assert!(
-            !all_questions_for(have).iter().any(|q| q.key == INSTALL_KEY),
-            "offered an install to someone who already has it"
-        );
-    }
-
-    #[test]
     fn the_install_answer_never_reaches_the_config_file() {
         // It is an action on the machine, not a setting: writing it would
         // invent a key the parser knows nothing about.
@@ -1369,28 +1197,6 @@ mod tests {
         assert!(text.contains("theme = \"nord\""), "{text}");
         let cfg: Config = toml::from_str(&text).expect("still parses");
         assert_eq!(cfg.palette(), Palette::NORD);
-    }
-
-    #[test]
-    fn the_summary_reports_what_the_install_did_not_what_was_answered() {
-        // "yes" and "installed" are different claims: a failed install that
-        // showed up as a tick would send the user looking for a binary that
-        // is not there.
-        let qs = all();
-        let answers = vec![(INSTALL_KEY.to_string(), "true".to_string())];
-        let path = Path::new("/tmp/strimux.toml");
-        let failed = crate::install::Outcome::Failed("brew exploded".into());
-        let out = render_summary(&qs, &answers, path, None, Some(&failed));
-        assert!(out.contains("not installed"), "{out}");
-        assert!(out.contains("brew exploded"), "{out}");
-        let ok = crate::install::Outcome::Installed;
-        let out = render_summary(&qs, &answers, path, None, Some(&ok));
-        assert!(out.contains("installed"), "{out}");
-        assert!(!out.contains("not installed"), "{out}");
-        // Declining says so rather than going silent.
-        let no = crate::install::Outcome::Declined;
-        let out = render_summary(&qs, &answers, path, None, Some(&no));
-        assert!(out.contains("skipped"), "{out}");
     }
 
     #[test]
@@ -1605,12 +1411,12 @@ mod tests {
     fn existing_settings_become_the_defaults() {
         // Re-running setup must start from what the user has, not from the
         // factory settings, or `strimux init` becomes `strimux reset`.
-        let text = "startup_panes = 3\ntheme = \"nord\"\n";
+        let text = "center_focus = true\ntheme = \"nord\"\n";
         let qs = with_existing(questions(), text);
         let theme = qs.iter().find(|q| q.key == "theme").unwrap();
         assert_eq!(theme.default_value(), "\"nord\"");
-        let panes = qs.iter().find(|q| q.key == "startup_panes").unwrap();
-        assert_eq!(panes.default_value(), "3");
+        let focus = qs.iter().find(|q| q.key == "center_focus").unwrap();
+        assert_eq!(focus.default_value(), "true");
     }
 
     #[test]
@@ -1781,12 +1587,12 @@ mod tests {
         let qs = all();
         let answers = vec![
             ("theme".to_string(), "\"nord\"".to_string()),
-            ("startup_panes".to_string(), "2".to_string()),
+            ("center_focus".to_string(), "true".to_string()),
         ];
         let path = Path::new("/tmp/strimux.toml");
         let out = render_summary(&qs, &answers, path, Some("do the thing\n".into()), None);
         assert!(out.contains("nord"), "answered value missing: {out}");
-        assert!(out.contains("Panes on screen at launch"), "{out}");
+        assert!(out.contains("Scrolling style"), "{out}");
         assert!(out.contains("/tmp/strimux.toml"), "{out}");
         // Unanswered questions are reported as untouched, not as a value the
         // user never chose.

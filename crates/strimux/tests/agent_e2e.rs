@@ -54,17 +54,6 @@ impl Sandbox {
         Sandbox { dir, bin }
     }
 
-    /// Drop an executable stub onto the sandbox's PATH.
-    fn write_stub(&self, name: &str, body: &str) {
-        let p = self.bin.join(name);
-        std::fs::write(&p, body).expect("stub");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        }
-    }
-
     /// As [`Sandbox::spawn`], but with the `btm` offer live, so a case can
     /// drive the install against its own stubbed package manager.
     fn spawn_allowing_install(&self, args: &[&str]) -> Pty {
@@ -825,7 +814,7 @@ fn the_summary_screen_reports_what_landed_in_the_file() {
     let seen = p.wait_for("strimux is configured");
     for line in [
         "Color theme",
-        "Panes on screen at launch",
+        "Scrolling style",
         "Width of a new column",
         "catppuccin-mocha",
     ] {
@@ -890,9 +879,6 @@ fn first_run_configures_the_whole_terminal_not_just_the_agent() {
     // we prove the *highlight* is what lands in the file, not the default.
     p.wait_for("Color theme");
     p.send("jjjj\r");
-    // Panes: a digit needs no Enter at all.
-    p.wait_for("Panes on screen at launch");
-    p.send("2");
     // Everything else: defaults, then dismiss the summary.
     p.send("q");
 
@@ -910,14 +896,9 @@ fn first_run_configures_the_whole_terminal_not_just_the_agent() {
         "answered theme; got:\n{cfg}"
     );
     assert!(
-        cfg.contains("startup_panes = 2"),
-        "answered panes; got:\n{cfg}"
-    );
-    assert!(
         cfg.contains("center_focus = "),
         "defaults written too; got:\n{cfg}"
     );
-    assert!(cfg.contains("[cowsay]"), "table answers land; got:\n{cfg}");
     toml::from_str::<toml::Value>(&cfg).expect("generated config is valid TOML");
     p.kill();
 }
@@ -948,90 +929,6 @@ fn onboarding_happens_exactly_once() {
 }
 
 #[test]
-fn saying_yes_to_btm_installs_it_and_the_summary_reports_the_result() {
-    // The one answer that changes the machine rather than a file. Driven with
-    // a stub `brew` on the sandbox PATH, so the real command path runs (the
-    // plan picks Brew, `brew install bottom` is executed, the result is
-    // probed) without installing anything on the machine running the tests.
-    let sb = Sandbox::new(&["claude"]);
-    let marker = sb.dir.join("brew-ran.txt");
-    // The stub records its arguments, then produces the binary the installer
-    // was supposed to produce, so the post-install PATH probe finds it.
-    sb.write_stub(
-        "brew",
-        &format!(
-            "#!/bin/sh\necho \"$@\" > {}\nprintf '#!/bin/sh\\nexit 0\\n' > {}/btm\nchmod +x {}/btm\n",
-            marker.display(),
-            sb.bin.display(),
-            sb.bin.display()
-        ),
-    );
-    let mut p = sb.spawn_allowing_install(&[]);
-    p.wait_for("Which agent");
-    p.send("1\n");
-    // `q` defaults every *remaining* question, but the btm offer is an action
-    // on the machine, so drive to it explicitly: Enter through the questions
-    // before it, taking each default.
-    p.wait_for("Color theme");
-    for _ in 0..7 {
-        p.send("\r");
-        std::thread::sleep(Duration::from_millis(120));
-    }
-    let at_offer = p.wait_for("Install btm");
-    assert!(at_offer.contains("install it now"), "got:\n{at_offer}");
-    p.send("\r");
-    let seen = p.wait_for("strimux is configured");
-    assert!(
-        seen.contains("Install btm"),
-        "the install is reported on the summary; got:\n{seen}"
-    );
-    assert!(
-        seen.contains("installed") && !seen.contains("not installed"),
-        "should report success; got:\n{seen}"
-    );
-    // The package manager really was invoked, with the formula name (which is
-    // `bottom`, not the `btm` the binary is called).
-    let ran = std::fs::read_to_string(&marker).unwrap_or_default();
-    assert!(ran.contains("install bottom"), "brew args were: {ran:?}");
-    p.press_done();
-    p.kill();
-}
-
-#[test]
-fn saying_no_to_btm_leaves_the_machine_alone() {
-    // The default is yes, so "no" has to actually be reachable and actually
-    // do nothing: a stub that records any invocation proves it.
-    let sb = Sandbox::new(&["claude"]);
-    let marker = sb.dir.join("brew-ran.txt");
-    sb.write_stub(
-        "brew",
-        &format!("#!/bin/sh\necho \"$@\" > {}\n", marker.display()),
-    );
-    let mut p = sb.spawn_allowing_install(&[]);
-    p.wait_for("Which agent");
-    p.send("1\n");
-    p.wait_for("Color theme");
-    for _ in 0..7 {
-        p.send("\r");
-        std::thread::sleep(Duration::from_millis(120));
-    }
-    p.wait_for("Install btm");
-    // Move off the default and take it: down, then Enter.
-    p.send("j\r");
-    let seen = p.wait_for("strimux is configured");
-    assert!(
-        seen.contains("skipped"),
-        "should report skipped; got:\n{seen}"
-    );
-    assert!(
-        !marker.exists(),
-        "answering no still ran the package manager"
-    );
-    p.press_done();
-    p.kill();
-}
-
-#[test]
 fn a_machine_that_already_has_btm_is_never_asked() {
     // A question whose only honest answer is "it is already done" teaches
     // users that setup asks things it already knows.
@@ -1047,35 +944,5 @@ fn a_machine_that_already_has_btm_is_never_asked() {
         "offered an install to someone who already has it; got:\n{seen}"
     );
     p.press_done();
-    p.kill();
-}
-
-#[test]
-fn a_failed_btm_install_says_so_instead_of_claiming_success() {
-    // The dangerous outcome: a tick next to "Install btm" when nothing was
-    // installed sends the user looking for a binary that is not there. A stub
-    // brew that exits non-zero stands in for the real failure modes (no
-    // network, a formula rename, a broken prefix).
-    let sb = Sandbox::new(&["claude"]);
-    sb.write_stub("brew", "#!/bin/sh\nexit 1\n");
-    let mut p = sb.spawn_allowing_install(&[]);
-    p.wait_for("Which agent");
-    p.send("1\n");
-    p.wait_for("Color theme");
-    for _ in 0..7 {
-        p.send("\r");
-        std::thread::sleep(Duration::from_millis(120));
-    }
-    p.wait_for("Install btm");
-    p.send("\r");
-    let seen = p.wait_for("strimux is configured");
-    assert!(
-        seen.contains("not installed"),
-        "a failed install must not read as a success; got:\n{seen}"
-    );
-    // ...and setup still finishes: a package manager falling over must not
-    // block the user from reaching their harness.
-    p.press_done();
-    p.wait_for("AGENT-RAN:claude");
     p.kill();
 }
