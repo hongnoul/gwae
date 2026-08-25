@@ -428,15 +428,38 @@ impl Layout {
     fn apply_scroll(&mut self, delta: i32, viewport: Viewport) -> i32 {
         // Clamp to the strip extent so scrolling never reveals background past
         // the last column's right edge.
-        let max_scroll = self
-            .column_x_ranges(self.focus.row, viewport.cols)
-            .and_then(|r| r.last().map(|(_, e)| *e as i32 - viewport.cols as i32))
-            .unwrap_or(0)
-            .max(0);
+        let max_scroll = self.max_scroll(viewport);
         if let Some(r) = self.row_mut(self.focus.row) {
             r.scroll_x = (r.scroll_x + delta).clamp(0, max_scroll);
         }
         self.focused_scroll()
+    }
+
+    /// The largest valid `scroll_x` for the focused row at this viewport:
+    /// `max(0, strip_end - viewport_cols)`.
+    pub fn max_scroll(&self, viewport: Viewport) -> i32 {
+        self.column_x_ranges(self.focus.row, viewport.cols)
+            .and_then(|r| r.last().map(|(_, e)| *e as i32 - viewport.cols as i32))
+            .unwrap_or(0)
+            .max(0)
+    }
+
+    /// Re-clamp every row's stored scroll into the valid range for `viewport`.
+    /// Call after external geometry changes (e.g. a terminal resize): a scroll
+    /// that was valid at the old width can overshoot the strip at the new one
+    /// and would otherwise reveal background at the right edge.
+    pub fn clamp_scrolls(&mut self, viewport: Viewport) {
+        let row_ids: Vec<_> = self.rows.iter().map(|r| r.id).collect();
+        for id in row_ids {
+            let max = self
+                .column_x_ranges(id, viewport.cols)
+                .and_then(|r| r.last().map(|(_, e)| *e as i32 - viewport.cols as i32))
+                .unwrap_or(0)
+                .max(0);
+            if let Some(row) = self.row_mut(id) {
+                row.scroll_x = row.scroll_x.clamp(0, max);
+            }
+        }
     }
 
     fn apply_jump(

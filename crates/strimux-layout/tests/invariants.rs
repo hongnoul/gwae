@@ -306,6 +306,33 @@ fn overflowing_strip_scroll_clamps_to_last_column_edge() {
     assert_eq!(scroll, total - vp.cols as i32);
 }
 
+#[test]
+fn clamp_scrolls_snaps_back_after_viewport_widens() {
+    // A scroll valid at a narrow viewport can overshoot after the terminal
+    // widens (the strip grows slower than the viewport when columns are
+    // viewport-relative fractions of a *smaller* whole in absolute terms).
+    // clamp_scrolls must pull it back so no background is revealed.
+    let q = Width::Preset(Preset::Quarter);
+    let mut layout = layout_with_widths(&[q, q, q, q, q, q]);
+    let narrow = Viewport::new(80);
+    for _ in 0..5 {
+        let _ = layout.apply(Action::FocusRight, narrow, follow());
+    }
+    assert!(layout.row(layout.focus.row).unwrap().scroll_x > 0);
+    // Simulate a resize to a much wider terminal where all 6 columns fit...
+    // (6 quarters = 1.5x viewport, so they never all fit; use max_scroll.)
+    let wide = Viewport::new(300);
+    layout.clamp_scrolls(wide);
+    let scroll = layout.row(layout.focus.row).unwrap().scroll_x;
+    assert!(scroll <= layout.max_scroll(wide), "stale scroll not clamped");
+    let ranges = layout.column_x_ranges(layout.focus.row, wide.cols).unwrap();
+    let total = ranges.last().unwrap().1 as i32;
+    assert!(
+        scroll + (wide.cols as i32) <= total || scroll == 0,
+        "viewport extends past strip: background revealed"
+    );
+}
+
 /// Any mix of preset columns tiles contiguously, each boundary lands within
 /// one cell of its exact fractional position, and a strip whose nominal
 /// shares sum to <= 1 never overflows the viewport.

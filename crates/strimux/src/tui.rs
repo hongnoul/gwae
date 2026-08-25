@@ -216,10 +216,21 @@ fn focused_pane_views(
     panes: &HashMap<PaneId, PtyPane>,
 ) -> Vec<PaneView> {
     let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
-    let scroll = layout.focused_row().map(|r| r.scroll_x).unwrap_or(0);
     let ranges = layout
         .column_x_ranges(layout.focus.row, cols)
         .unwrap_or_default();
+    // Re-clamp the stored scroll against the *current* strip extent at paint
+    // time. The layout clamps on every verb, but `scroll_x` can go stale
+    // between verbs (e.g. the terminal was resized wider, shrinking the strip
+    // relative to the viewport); trusting it verbatim would shift the strip
+    // left and reveal background on the right until the next focus change.
+    let total = ranges.last().map(|r| r.1 as i32).unwrap_or(0);
+    let max_scroll = (total - cols as i32).max(0);
+    let scroll = layout
+        .focused_row()
+        .map(|r| r.scroll_x)
+        .unwrap_or(0)
+        .clamp(0, max_scroll);
     let mut out = Vec::new();
     for (ci, (s, e)) in ranges.into_iter().enumerate() {
         let sx = s as i32 - scroll;
@@ -905,6 +916,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         // is dropped or coalesced. Re-measuring here guarantees the panes stay
         // full-bleed to the actual right margin.
         if refresh_size(&mut cols, &mut rows) {
+            layout.clamp_scrolls(Viewport::new(cols));
             dirty = true;
         }
 
@@ -970,6 +982,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 Ok(Event::Resize(c, r)) => {
                     cols = c.max(1);
                     rows = r.max(2);
+                    // A wider terminal shrinks the strip relative to the
+                    // viewport; drop any now-invalid scroll immediately so the
+                    // strip snaps back to full bleed on the next paint.
+                    layout.clamp_scrolls(Viewport::new(cols));
                     dirty = true;
                 }
                 Ok(_) => {}
