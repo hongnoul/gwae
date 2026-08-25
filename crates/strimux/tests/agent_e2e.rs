@@ -355,14 +355,8 @@ fn a_configured_but_missing_harness_names_it_and_offers_what_exists() {
     let sb = Sandbox::new(&["codex"]);
     sb.write_config("default_agent = \"jcode\"\n");
     let mut p = sb.spawn(&[]);
-    let seen = p.wait_for("`jcode` is not installed");
-    // The offer list may land in a later write than the headline on a slow
-    // machine; wait for it rather than asserting on the first paint.
-    let seen = if seen.contains("codex") {
-        seen
-    } else {
-        p.wait_for_all(&["`jcode` is not installed", "codex"])
-    };
+    // Headline and offer list paint across several writes; wait for both.
+    let seen = p.wait_for_all(&["`jcode` is not installed", "codex"]);
     assert!(
         seen.contains("codex"),
         "must offer the alternative; got:\n{seen}"
@@ -516,14 +510,8 @@ fn a_bare_enter_takes_the_listed_default() {
     // save it exactly as an explicit "1" would.
     let sb = Sandbox::new(&["claude", "aider"]);
     let mut p = sb.spawn(&[]);
-    let seen = p.wait_for("Which agent");
-    // The label may land in a later write than the question on a slow
-    // machine, so wait for it rather than asserting on the first paint.
-    let seen = if seen.contains("(default)") {
-        seen
-    } else {
-        p.wait_for_all(&["Which agent", "(default)"])
-    };
+    // Question and default label paint across several writes; wait for both.
+    let seen = p.wait_for_all(&["Which agent", "(default)"]);
     assert!(
         seen.contains("(default)"),
         "the default must be labeled; got:\n{seen}"
