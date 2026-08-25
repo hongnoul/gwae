@@ -15,6 +15,12 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   viewport exactly, each within 1 cell of its ideal share.
 
 ### Added
+- **Panes close naturally on process exit**: when a pane's child process ends
+  (shell `exit`, agent quits, crash), the pane is removed from the layout and
+  the strip collapses exactly like `⌥+q`: columns compact leftward and focus
+  **fills left first** (the left neighbor, or the pane above in a stack).
+  Closing the last pane quits strimux. Previously an exited pane lingered as a
+  dead frozen pane and `⌥+q` was the only way to clear it.
 - **Fixed-width panes**: every column now renders at its own fixed preset
   fraction of the viewport (new columns default to `1/4`), and a strip that
   grows past the edge keeps column sizes and **scrolls right** instead of

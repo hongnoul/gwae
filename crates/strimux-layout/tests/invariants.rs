@@ -157,6 +157,72 @@ fn new_spawn_scrolls_the_new_pane_into_view() {
     assert!(e as i32 - scroll_after >= 0);
 }
 
+#[test]
+fn kill_pane_fills_left_first() {
+    // Killing a middle column collapses the strip and focus lands on the
+    // LEFT neighbor, never the column that slid in from the right.
+    let mut layout = Layout::default(); // 4 columns
+    let _ = layout.apply(Action::FocusRight, view(), follow());
+    let _ = layout.apply(Action::FocusRight, view(), follow()); // focus col 2
+    let n = layout.focused_row().unwrap().columns.len();
+    let left_pid = layout.focused_row().unwrap().columns[1].panes[0];
+    let _ = layout.apply(Action::KillPane, view(), follow());
+    let row = layout.focused_row().unwrap();
+    assert_eq!(row.columns.len(), n - 1, "column collapsed");
+    assert_eq!(layout.focus.column, 1, "focus fills left");
+    assert_eq!(row.columns[layout.focus.column].panes[0], left_pid);
+}
+
+#[test]
+fn close_pane_removes_by_id_and_compacts() {
+    // Closing a non-focused pane by id (its process exited) compacts columns
+    // and keeps the focus on the same pane it was on.
+    let mut layout = Layout::default(); // 4 columns, focus col 0
+    let _ = layout.apply(Action::FocusRight, view(), follow());
+    let _ = layout.apply(Action::FocusRight, view(), follow()); // focus col 2
+    let focused = layout.focused_pane_id().unwrap();
+    let dead = layout.focused_row().unwrap().columns[0].panes[0];
+    let _ = layout.apply(Action::ClosePane(dead), view(), follow());
+    let row = layout.focused_row().unwrap();
+    assert_eq!(row.columns.len(), 3, "column collapsed");
+    // Focus followed its pane left by one slot after compaction.
+    assert_eq!(layout.focus.column, 1);
+    assert_eq!(layout.focused_pane_id(), Some(focused));
+    assert!(layout.locate_pane(dead).is_none(), "dead pane fully gone");
+    assert!(!layout.panes.contains_key(&dead), "pane record dropped");
+}
+
+#[test]
+fn close_focused_pane_in_stack_prefers_pane_above() {
+    // In a stacked column, closing the focused lower pane moves focus up
+    // (fill-left-first generalized: prefer the earlier neighbor).
+    let mut layout = Layout::default();
+    let _ = layout.apply(Action::SplitBelow, view(), follow()); // focus pane 1
+    let above = layout.focused_row().unwrap().columns[0].panes[0];
+    let focused = layout.focused_pane_id().unwrap();
+    let _ = layout.apply(Action::ClosePane(focused), view(), follow());
+    assert_eq!(layout.focus.pane, 0);
+    assert_eq!(layout.focused_pane_id(), Some(above));
+}
+
+#[test]
+fn close_unknown_pane_is_noop() {
+    let mut layout = Layout::default();
+    let before = layout.clone();
+    let _ = layout.apply(Action::ClosePane(9999), view(), follow());
+    assert_eq!(layout, before);
+}
+
+#[test]
+fn close_last_pane_resets_to_default() {
+    let mut layout = Layout::new(1);
+    let pid = layout.focused_pane_id().unwrap();
+    let _ = layout.apply(Action::ClosePane(pid), view(), follow());
+    // The layout never ends up empty; it resets to the default grid.
+    assert!(!layout.rows.is_empty());
+    assert!(layout.focused_pane_id().is_some());
+}
+
 /// Build a single-row layout whose columns have exactly `widths`.
 fn layout_with_widths(widths: &[Width]) -> Layout {
     let mut layout = Layout::new(1);

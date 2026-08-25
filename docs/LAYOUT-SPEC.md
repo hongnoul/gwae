@@ -30,7 +30,10 @@ coordinate.
    right** (revealed by follow-focus) instead of shrinking every column.
 3. Pane logical width = column width; logical height = its share of strip height.
 4. Terminal window resize changes the focused row's height (unavoidable).
-5. Order of columns on a row is total; no gaps (compaction on close).
+5. Order of columns on a row is total; no gaps (compaction on close). A pane
+   whose process exits closes the same way as kill-pane: the column collapses
+   and focus fills **left first** (left neighbor, or the pane above in a
+   stack). The last pane exiting quits strimux.
 6. Rows never auto-relocate or reorder.
 
 ## Verbs (default keys)

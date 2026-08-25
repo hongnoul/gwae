@@ -9,7 +9,7 @@
 use crate::model::Layout;
 use crate::viewport::{follow_focus_scroll, Viewport};
 use crate::width::Width;
-use crate::{FollowScroll, LayoutError, LayoutResult, RowId};
+use crate::{FollowScroll, LayoutError, LayoutResult, PaneId, RowId};
 
 /// A single user-initiated layout action. Represents one keypress verb.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +25,9 @@ pub enum Action {
     CycleWidth,
     SplitBelow,
     KillPane,
+    /// Close a specific pane by id (e.g. its process exited), collapsing the
+    /// layout exactly like `KillPane` does for the focused pane.
+    ClosePane(PaneId),
     NewColumn,
     NewRow,
     SpawnAgent,
@@ -64,7 +67,8 @@ impl Layout {
             Action::MovePaneDown => self.move_pane_vertical(1, viewport, follow),
             Action::CycleWidth => Ok(self.apply_cycle_width()),
             Action::SplitBelow => self.apply_split_below(),
-            Action::KillPane => self.apply_kill_pane(),
+            Action::KillPane => self.apply_kill_pane(viewport, follow),
+            Action::ClosePane(pid) => self.apply_close_pane(pid, viewport, follow),
             Action::NewColumn => Ok(self.apply_new_column(viewport, follow)),
             Action::NewRow => Ok(self.apply_new_row(viewport, follow)),
             Action::SpawnAgent => Ok(self.apply_new_column(viewport, follow)),
@@ -293,10 +297,39 @@ impl Layout {
     }
 }
 impl Layout {
-    fn apply_kill_pane(&mut self) -> LayoutResult<i32> {
+    fn apply_kill_pane(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
         let row = self.focus.row;
         let col = self.focus.column;
         let pane_idx = self.focus.pane;
+        self.remove_pane_at(row, col, pane_idx, viewport, follow)
+    }
+
+    /// Close a pane wherever it lives (used when its process exits). A pane
+    /// that is already gone from the layout is a no-op, so a late `Exited`
+    /// message after an explicit kill can never remove the wrong pane.
+    fn apply_close_pane(
+        &mut self,
+        pid: PaneId,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> LayoutResult<i32> {
+        let Some((row, col, pane_idx)) = self.locate_pane(pid) else {
+            return Ok(self.focused_scroll());
+        };
+        self.remove_pane_at(row, col, pane_idx, viewport, follow)
+    }
+
+    /// Remove the pane at `(row, col, pane_idx)` and collapse the layout:
+    /// columns compact leftward (no gaps, invariant 5) and focus always
+    /// **fills left first**, landing on the left neighbor when one exists.
+    fn remove_pane_at(
+        &mut self,
+        row: RowId,
+        col: usize,
+        pane_idx: usize,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> LayoutResult<i32> {
         let removed = {
             let r = self.row_mut(row).ok_or(LayoutError::UnknownRow(row))?;
             let c = r
@@ -309,10 +342,14 @@ impl Layout {
                 None
             }
         };
-        if removed.is_none() {
+        let Some(removed) = removed else {
             return Ok(self.focused_scroll());
-        }
-        // Clean up empty columns and rows; never leave gaps (invariant 4).
+        };
+        self.panes.remove(&removed);
+        // Was the closed pane the focused one? Remember before indices shift.
+        let was_focused = self.focus.row == row && self.focus.column == col
+            && self.focus.pane == pane_idx;
+        // Clean up empty columns and rows; never leave gaps (invariant 5).
         let col_emptied = self
             .row(row)
             .and_then(|r| r.columns.get(col))
@@ -322,8 +359,6 @@ impl Layout {
             if let Some(r) = self.row_mut(row) {
                 r.columns.remove(col);
             }
-            let cols = self.row(row).map(|r| r.columns.len()).unwrap_or(0);
-            self.focus.column = self.focus.column.min(cols.saturating_sub(1));
         }
         // A row with zero columns disappears.
         let row_emptied = self.row(row).map(|r| r.columns.is_empty()).unwrap_or(false);
@@ -333,18 +368,36 @@ impl Layout {
                 *self = Layout::default();
                 return Ok(0);
             }
-            self.focus.row = self.rows[0].id;
-            self.focus.column = 0;
-            self.focus.pane = 0;
+            if self.focus.row == row {
+                self.focus.row = self.rows[0].id;
+                self.focus.column = 0;
+                self.focus.pane = 0;
+                self.refocus_scroll(viewport, follow);
+            }
             return Ok(self.focused_scroll());
         }
         if self.focus.row == row {
-            let max = self
-                .focused_row()
-                .and_then(|r| r.columns.get(self.focus.column))
-                .map(|c| c.panes.len())
-                .unwrap_or(1);
-            self.focus.pane = self.focus.pane.min(max.saturating_sub(1));
+            if was_focused {
+                // Fill left first: prefer the left neighbor column (or the
+                // pane above within a stacked column) over the one that slid
+                // into the closed slot from the right.
+                if col_emptied {
+                    self.focus.column = col.saturating_sub(1);
+                    self.focus.pane = 0;
+                } else {
+                    self.focus.pane = pane_idx.saturating_sub(1);
+                }
+            } else if col_emptied && self.focus.column > col {
+                // Compaction shifted the focused column one slot left.
+                self.focus.column -= 1;
+            } else if !col_emptied && self.focus.column == col && self.focus.pane > pane_idx {
+                // Same for a pane above the focus within the same column.
+                self.focus.pane -= 1;
+            }
+            let cols = self.row(row).map(|r| r.columns.len()).unwrap_or(1);
+            self.focus.column = self.focus.column.min(cols.saturating_sub(1));
+            self.clamp_focus_pane();
+            self.refocus_scroll(viewport, follow);
         }
         Ok(self.focused_scroll())
     }
