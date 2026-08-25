@@ -7,6 +7,7 @@
 mod cli;
 mod config;
 mod cowsay;
+mod keys;
 mod theme;
 mod tui;
 
@@ -42,7 +43,10 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
         }
         Command::Setup => {
             println!("strimux setup: no per-terminal bindings installed yet (M4).");
-            println!("  Alt is the universal $mod and needs no config.");
+            println!(
+                "  {} is the universal $mod and needs no config.",
+                keys::mod_key()
+            );
             Ok(())
         }
         Command::Doctor => {

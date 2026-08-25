@@ -6,6 +6,7 @@
 //! comments here.
 
 use crate::theme::{Palette, ThemeSpec};
+use crate::keys;
 use serde::de::{self, Visitor};
 use serde::Deserialize;
 use std::fmt;
@@ -310,18 +311,30 @@ pub struct Cowsay {
 
 impl Default for Cowsay {
     fn default() -> Self {
+        // Every hint names a binding that `tui::handle_key` actually
+        // implements, spelled with the platform's own modifier name (`⌥` on
+        // macOS, `Alt` elsewhere) via [`crate::keys`], so an empty box never
+        // teaches a key that does nothing or a glyph the user's keyboard
+        // doesn't have.
+        let m = keys::chord;
         Cowsay {
             enabled: true,
-            // Keybinding hints, matching the ⌥ HUD cheat-sheet.
             messages: vec![
-                "Alt-Enter opens a column here".to_string(),
-                "Press c for a new pane".to_string(),
-                "Press ; to spawn an agent".to_string(),
-                "hjkl moves focus".to_string(),
-                "Press s to split this column".to_string(),
-                "1-9 jumps straight to a column".to_string(),
-                "Press r to cycle this column's width".to_string(),
-                "Alt+/ toggles the cheat-sheet".to_string(),
+                format!("{} opens a column here", m(keys::enter_key())),
+                format!("{} spawns an agent", m(";")),
+                format!("{} moves focus", m("hjkl")),
+                format!("{} splits this column", m("s")),
+                format!("{} jumps to a column", m("1-9")),
+                format!("{} cycles this column's width", m("r")),
+                format!("{} toggles full width", m("f")),
+                format!("{} jumps to the pane that needs you", m("g")),
+                format!("{} kills the focused pane", m("x")),
+                format!("{} previews themes", m("t")),
+                format!(
+                    "{} starts a new row",
+                    m(&format!("{}{}", keys::shift_key(), keys::enter_key()))
+                ),
+                format!("{} toggles this cheat-sheet", m("/")),
             ],
         }
     }
@@ -401,6 +414,44 @@ mod tests {
             !cfg.cowsay.messages.is_empty(),
             "default messages must exist or the cow never draws"
         );
+    }
+
+    #[test]
+    fn cowsay_defaults_name_the_platform_modifier() {
+        // The hints are the only keybinding docs many users ever read, so they
+        // must speak the local keyboard's vocabulary: `⌥` on macOS, `Alt`
+        // elsewhere, never both and never the wrong one.
+        let cfg = parse("");
+        let m = keys::mod_key();
+        for msg in &cfg.cowsay.messages {
+            assert!(msg.contains(m), "hint {msg:?} does not mention {m:?}");
+        }
+        let other = if cfg!(target_os = "macos") { "Alt" } else { "⌥" };
+        for msg in &cfg.cowsay.messages {
+            assert!(
+                !msg.contains(other),
+                "hint {msg:?} uses the other platform's modifier name"
+            );
+        }
+    }
+
+    #[test]
+    fn cowsay_defaults_do_not_teach_dead_keys() {
+        // Regressions guarded: `⌥+c` ("new pane") was never implemented, and
+        // the hints once told users to "press c"/"press ;" with no modifier at
+        // all, which just types the letter into the focused pane.
+        let cfg = parse("");
+        let m = keys::mod_key();
+        for msg in &cfg.cowsay.messages {
+            assert!(
+                !msg.contains(&format!("{m}+c")),
+                "hint {msg:?} names the nonexistent new-pane binding"
+            );
+            assert!(
+                !msg.to_lowercase().starts_with("press "),
+                "hint {msg:?} omits the modifier"
+            );
+        }
     }
 
     #[test]
