@@ -64,7 +64,7 @@ strimux                     # default: one strip, one 1/4-width pane + skeleton 
 strimux run "claude"        # command runs in column 0 (deterministic), rest are shells ($SHELL)
 strimux new -- htop         # (subcommand form) new column in a fresh session
 strimux setup               # optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty)
-strimux doctor              # diagnostics: terminal caps + $mod decoding
+strimux doctor              # diagnostics: config + theme validity, layout smoke
 ```
 
 The default layout is **one strip, one quarter-width column**. Skeleton placeholders tile the empty right side so the 4-column container always reads (each shows a big `strip.cell` address). Set `startup_panes` to open more panes immediately. New columns appear to the **right of the focused pane**, not at the strip end.

@@ -129,14 +129,31 @@ impl Config {
     /// which win so that pre-theme config files keep behaving exactly as they
     /// did.
     pub fn palette(&self) -> Palette {
-        let (mut p, bad) = self.theme.0.resolve();
+        let (p, bad) = self.palette_checked();
         if let Some(name) = bad {
             tracing::warn!(
-                "unknown theme {name:?}; using {}. Available: {}",
-                "catppuccin-mocha",
+                "unknown theme {name:?}; using catppuccin-mocha. Available: {}",
                 Palette::NAMES.join(", ")
             );
         }
+        p
+    }
+
+    /// The configured theme name, for display. `"catppuccin-mocha"` when the
+    /// config does not name one, since that is the preset actually used.
+    pub fn theme_name(&self) -> String {
+        match self.theme.0.preset {
+            Some(n) => n.as_str().to_string(),
+            None => "catppuccin-mocha (default)".to_string(),
+        }
+    }
+
+    /// As [`Config::palette`], but also returns the offending name when the
+    /// configured theme was not recognized, so callers that can actually show
+    /// the user something (`strimux doctor`) can report it rather than
+    /// dropping it into a log nobody reads.
+    pub fn palette_checked(&self) -> (Palette, Option<String>) {
+        let (mut p, bad) = self.theme.0.resolve();
         if let Some(c) = self.background {
             p.base = c.color();
         }
@@ -146,7 +163,7 @@ impl Config {
         if let Some(c) = self.skeleton_color {
             p.overlay = c.color();
         }
-        p
+        (p, bad)
     }
 
     /// Load config from `path`, falling back to defaults if the file is

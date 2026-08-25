@@ -46,10 +46,35 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
         }
         Command::Doctor => {
             println!("strimux doctor:");
-            println!("  config: {}", Config::default_path().display());
+            let path = Config::default_path();
+            println!("  config: {}", path.display());
+            println!("  config file: {}", config_file_status(&path));
+            let (_, bad_theme) = cfg.palette_checked();
+            match bad_theme {
+                Some(name) => {
+                    println!("  theme: UNKNOWN {name:?} -> falling back to catppuccin-mocha");
+                    println!("    available: {}", theme::Palette::NAMES.join(", "));
+                }
+                None => println!("  theme: {} [ok]", cfg.theme_name()),
+            }
             println!("  layout smoke: {}", layout_smoke());
             Ok(())
         }
+    }
+}
+
+/// Whether the config file exists and parses, for `doctor`.
+///
+/// A malformed file is silently ignored at startup (strimux falls back to
+/// defaults rather than refusing to launch), so `doctor` is the only place a
+/// user can find out their config is not being applied.
+fn config_file_status(path: &std::path::Path) -> String {
+    match std::fs::read_to_string(path) {
+        Err(_) => "not present (using defaults) [ok]".to_string(),
+        Ok(text) => match toml::from_str::<toml::Value>(&text) {
+            Ok(_) => "parses [ok]".to_string(),
+            Err(e) => format!("INVALID, so it is being ignored entirely: {e}"),
+        },
     }
 }
 

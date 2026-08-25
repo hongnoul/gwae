@@ -36,6 +36,38 @@ show_counts = true
 hud_on_attention_ms = 2500
 ```
 
+## Checking your config
+
+A config file that fails to parse is **ignored entirely** (strimux falls back to
+defaults rather than refusing to launch), and an unknown `theme` name silently
+falls back to `catppuccin-mocha`. Both are easy to miss, so `doctor` reports
+them:
+
+```sh
+strimux doctor
+```
+
+```
+strimux doctor:
+  config: /home/you/.config/strimux/strimux.toml
+  config file: parses [ok]
+  theme: nord [ok]
+  layout smoke: columns 4 -> 5 on default row [ok]
+```
+
+A typo'd theme name is called out along with the valid names:
+
+```
+  theme: UNKNOWN "tokyonight-storm" -> falling back to catppuccin-mocha
+    available: catppuccin-mocha, catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal
+```
+
+and a config file that is not being applied at all points at the syntax error:
+
+```
+  config file: INVALID, so it is being ignored entirely: TOML parse error at line 2, column 6
+```
+
 ## Keys
 
 | Key | Type | Default | Meaning |
