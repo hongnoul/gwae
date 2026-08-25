@@ -62,6 +62,12 @@ impl Width {
 
     /// Resolve this width to a concrete number of cells given the viewport
     /// width. Always returns at least 1 cell.
+    ///
+    /// Note: for laying out a strip of columns, prefer
+    /// `Layout::column_x_ranges`, which rounds *cumulative boundaries* so
+    /// preset columns tile the viewport exactly. Summing per-column `cells`
+    /// values overshoots by up to `d-1` cells when the viewport is not
+    /// divisible by the preset denominator.
     pub fn cells(self, viewport_cols: u16) -> u16 {
         match self {
             Width::Preset(p) => {
@@ -72,6 +78,20 @@ impl Width {
                 cells.clamp(1, viewport_cols as u32) as u16
             }
             Width::Cells(c) => c.max(1),
+        }
+    }
+
+    /// This width in *twelfths of a cell* given the viewport width. Twelfths
+    /// are exact for every preset denominator (2, 3, 4 all divide 12), so a
+    /// strip can accumulate column positions without rounding drift and round
+    /// only at each column boundary (see `Layout::column_x_ranges`).
+    pub fn twelfths(self, viewport_cols: u16) -> u64 {
+        match self {
+            Width::Preset(p) => {
+                let (n, d) = p.ratio();
+                (viewport_cols as u64) * (n as u64) * (12 / d as u64)
+            }
+            Width::Cells(c) => (c.max(1) as u64) * 12,
         }
     }
 }

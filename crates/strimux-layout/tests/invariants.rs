@@ -6,7 +6,7 @@
 //!   3. Focus is always within the focused row's column bounds.
 
 use proptest::prelude::*;
-use strimux_layout::{Action, FollowScroll, Layout, Viewport, Width};
+use strimux_layout::{Action, FollowScroll, Layout, Preset, Viewport, Width};
 
 fn follow() -> FollowScroll {
     FollowScroll::default()
@@ -155,4 +155,94 @@ fn new_spawn_scrolls_the_new_pane_into_view() {
     let (s, e) = layout.focused_range(view().cols).unwrap();
     assert!(s as i32 - scroll_after < view().cols as i32, "new pane off-screen");
     assert!(e as i32 - scroll_after >= 0);
+}
+
+/// Build a single-row layout whose columns have exactly `widths`.
+fn layout_with_widths(widths: &[Width]) -> Layout {
+    let mut layout = Layout::new(1);
+    if let Some(row) = layout.row_mut(layout.focus.row) {
+        row.columns.clear();
+    }
+    let row = layout.focus.row;
+    for w in widths {
+        let pane = layout.alloc_pane();
+        layout.add_column(row, *w, vec![pane]);
+    }
+    layout
+}
+
+#[test]
+fn four_quarters_tile_the_viewport_exactly() {
+    // The motivating bug: on widths not divisible by 4 (342 -> ceil = 86*4 =
+    // 344), per-column ceil rounding pushed the rightmost pane past the edge.
+    let q = Width::Preset(Preset::Quarter);
+    let layout = layout_with_widths(&[q, q, q, q]);
+    for cols in [341u16, 342, 343, 344, 80, 81, 82, 83, 120] {
+        let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
+        assert_eq!(ranges.first().unwrap().0, 0);
+        assert_eq!(
+            ranges.last().unwrap().1,
+            cols as u32,
+            "4x quarter must end exactly at the right edge for cols={cols}"
+        );
+        // Adjacent columns tile with no gaps or overlaps.
+        for w in ranges.windows(2) {
+            assert_eq!(w[0].1, w[1].0, "gap/overlap at cols={cols}");
+        }
+        // Each column is within 1 cell of its ideal quarter share.
+        for (s, e) in &ranges {
+            let w = (e - s) as i32;
+            let ideal = cols as f64 / 4.0;
+            assert!(
+                (w as f64 - ideal).abs() <= 1.0,
+                "column width {w} deviates >1 from ideal {ideal} at cols={cols}"
+            );
+        }
+    }
+}
+
+/// Any mix of preset columns tiles contiguously, each boundary lands within
+/// one cell of its exact fractional position, and a strip whose nominal
+/// shares sum to <= 1 never overflows the viewport.
+fn preset_width() -> impl Strategy<Value = Width> {
+    prop_oneof![
+        Just(Width::Preset(Preset::Quarter)),
+        Just(Width::Preset(Preset::Third)),
+        Just(Width::Preset(Preset::Half)),
+    ]
+}
+
+proptest! {
+    #[test]
+    fn column_ranges_tile_without_drift(
+        widths in prop::collection::vec(preset_width(), 1..8),
+        cols in 20u16..500,
+    ) {
+        let layout = layout_with_widths(&widths);
+        let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
+        // Contiguous tiling from x=0.
+        prop_assert_eq!(ranges[0].0, 0);
+        for w in ranges.windows(2) {
+            prop_assert_eq!(w[0].1, w[1].0);
+        }
+        // Every boundary is within 1 cell of its exact fractional position,
+        // so rounding error never accumulates across the strip.
+        let mut exact12 = 0u64; // position in twelfths of a cell
+        for (i, (_, e)) in ranges.iter().enumerate() {
+            exact12 += widths[i].twelfths(cols);
+            let ideal = exact12 as f64 / 12.0;
+            prop_assert!(
+                ((*e as f64) - ideal).abs() <= 1.0,
+                "boundary {} drifted from ideal {} (cols={})", e, ideal, cols
+            );
+        }
+        // A strip that nominally fits (shares sum to <= 1) never overflows.
+        let total12: u64 = widths.iter().map(|w| w.twelfths(cols)).sum();
+        if total12 <= (cols as u64) * 12 {
+            prop_assert!(
+                ranges.last().unwrap().1 <= cols as u32,
+                "strip overflows viewport: {:?} cols={}", ranges, cols
+            );
+        }
+    }
 }

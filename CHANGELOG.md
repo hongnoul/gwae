@@ -6,6 +6,14 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 
 ## [Unreleased]
 
+### Fixed
+- **Rightmost pane no longer overflows the viewport**: column x-positions are
+  now computed by rounding *cumulative boundaries* (accumulated in exact
+  twelfths of a cell) instead of summing per-column `ceil` widths. On viewport
+  widths not divisible by 4, four quarter columns previously came out 1-3
+  cells too wide and the excess clipped the rightmost pane; they now tile the
+  viewport exactly, each within 1 cell of its ideal share.
+
 ### Added
 - **Fixed-width panes**: every column now renders at its own fixed preset
   fraction of the viewport (new columns default to `1/4`), and a strip that

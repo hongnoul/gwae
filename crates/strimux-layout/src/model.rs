@@ -144,6 +144,26 @@ impl Layout {
         self.row(self.focus.row)
     }
 
+    /// The id of the currently focused pane, if the focus points at one.
+    pub fn focused_pane_id(&self) -> Option<PaneId> {
+        self.focused_row()
+            .and_then(|r| r.columns.get(self.focus.column))
+            .and_then(|c| c.panes.get(self.focus.pane))
+            .copied()
+    }
+
+    /// Locate a pane anywhere in the grid: `(row id, column index, pane index)`.
+    pub fn locate_pane(&self, pid: PaneId) -> Option<(RowId, usize, usize)> {
+        for row in &self.rows {
+            for (ci, col) in row.columns.iter().enumerate() {
+                if let Some(pi) = col.panes.iter().position(|p| *p == pid) {
+                    return Some((row.id, ci, pi));
+                }
+            }
+        }
+        None
+    }
+
     pub fn column_x_ranges(&self, row: RowId, viewport_cols: u16) -> Option<Vec<(u32, u32)>> {
         let row = self.row(row)?;
         // Each column renders at its own width: preset fractions are a *fixed
@@ -151,12 +171,23 @@ impl Layout {
         // exist. Columns therefore keep their size as the strip grows and any
         // overflow extends past the right edge, where follow-focus scrolling
         // reveals it, rather than every column shrinking to fit.
-        let mut x = 0u32;
+        //
+        // Positions accumulate in twelfths of a cell (exact for the preset
+        // denominators 2/3/4) and each column *boundary* is rounded to the
+        // nearest cell. Rounding boundaries instead of widths means the
+        // rounding error never accumulates: four 1/4 columns tile the
+        // viewport exactly instead of each rounding up and pushing the
+        // rightmost column past the right edge.
+        let mut x12 = 0u64;
+        let mut prev = 0u32;
         let mut out = Vec::with_capacity(row.columns.len());
         for col in &row.columns {
-            let w = col.width.cells(viewport_cols) as u32;
-            out.push((x, x + w));
-            x += w;
+            x12 += col.width.twelfths(viewport_cols);
+            // Round-half-up to the nearest cell boundary, but never collapse
+            // a column to zero width (`Width::cells` guarantees >= 1 too).
+            let end = (((x12 + 6) / 12) as u32).max(prev + 1);
+            out.push((prev, end));
+            prev = end;
         }
         Some(out)
     }
