@@ -158,7 +158,7 @@ struct PaneView {
 /// Compute visible pane views for the focused row.
 fn focused_pane_views(layout: &Layout, cols: u16, rows: u16) -> Vec<PaneView> {
     let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
-    let scroll = layout.focused_row().map(|r| r.scroll_x).unwrap_or(0) as i32;
+    let scroll = layout.focused_row().map(|r| r.scroll_x).unwrap_or(0);
     let ranges = layout
         .column_x_ranges(layout.focus.row, cols)
         .unwrap_or_default();
@@ -227,7 +227,7 @@ fn render_frame(
                 if idx >= out.len() {
                     continue;
                 }
-                out[idx] = pane.grid.cell(gi as u16, gy as u16);
+                out[idx] = pane.grid.cell(gi as u16, gy);
             }
         }
     }
@@ -340,7 +340,7 @@ fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
         KeyCode::Char(c) => {
             if ctrl {
                 let lc = c.to_ascii_lowercase();
-                if ('a'..='z').contains(&lc) {
+                if lc.is_ascii_lowercase() {
                     out.push(lc as u8 - b'a' + 1);
                 } else {
                     out.extend_from_slice(&[b'^', c as u8, b'\n']);
@@ -358,8 +358,8 @@ fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
         KeyCode::Backspace => out.push(0x7f),
         KeyCode::Tab => out.extend_from_slice(b"\t"),
         KeyCode::Esc => out.push(0x1b),
-        KeyCode::Left => out.extend_from_slice(if alt { b"\x1b[D" } else { b"\x1b[D" }),
-        KeyCode::Right => out.extend_from_slice(if alt { b"\x1b[C" } else { b"\x1b[C" }),
+        KeyCode::Left => out.extend_from_slice(b"\x1b[D"),
+        KeyCode::Right => out.extend_from_slice(b"\x1b[C"),
         KeyCode::Up => out.extend_from_slice(b"\x1b[A"),
         KeyCode::Down => out.extend_from_slice(b"\x1b[B"),
         KeyCode::Home => out.extend_from_slice(b"\x1b[H"),
@@ -579,7 +579,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     }
 
     // Teardown: kill all panes, leave raw mode & alternate screen.
-    for (_, p) in panes.iter_mut() {
+    for p in panes.values_mut() {
         let _ = p.child.kill();
     }
     let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);

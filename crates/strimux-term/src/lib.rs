@@ -5,17 +5,12 @@
 //! hosted grid (ADR-004 remains open for `alacritty_terminal` vs `wezterm-term`).
 
 /// A terminal color.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CColor {
+    #[default]
     Default,
     Idx(u8),
     Rgb(u8, u8, u8),
-}
-
-impl Default for CColor {
-    fn default() -> Self {
-        CColor::Default
-    }
 }
 
 /// An SGR style applied to a cell.
