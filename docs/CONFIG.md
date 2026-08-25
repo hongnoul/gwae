@@ -16,7 +16,6 @@ background = "#1e1e2e"
 focus_color = "#ff0000"
 skeleton = true
 skeleton_color = "#ffffff"
-cell_labels = true
 ```
 
 ## Keys
@@ -33,7 +32,6 @@ cell_labels = true
 | `focus_color` | color | `#ff0000` | Color of the 1-cell accent frame drawn around the focused box (an overlay on the pane's edge cells; it never shifts or resizes the pane). Accepted forms match `background`. Set to `default` to draw with the terminal's own background. |
 | `skeleton` | bool | `true` | Draw the skeleton: a 1-cell frame around every column box at full strip height, so the four-column container always reads. Pane content is inset 1 cell inside its frame, so the frame never covers anything a program draws. With fewer columns than fit, placeholder quarter-width boxes tile the empty right side; their interiors use the default (pane) background rather than `background`, so empty grids are not dimmed, and each shows a big block-font `strip.cell` identifier centered in the box. The focused box's frame uses `focus_color` instead of `skeleton_color`. |
 | `skeleton_color` | color | `#ffffff` | Color of the skeleton frames around unfocused boxes. Accepted forms match `background`. |
-| `cell_labels` | bool | `true` | Draw each box's tmux-style `strip.cell` address (e.g. `1.2`, strip 1 cell 2, both 1-based) inline in the top frame row of its skeleton box, centered. The label sits on the frame itself, so it never covers pane content. Requires `skeleton`. |
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.

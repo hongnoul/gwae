@@ -47,9 +47,6 @@ pub struct Config {
     /// Color of the skeleton frames around unfocused boxes. Accepts the same
     /// forms as `background`. Default: white.
     pub skeleton_color: Background,
-    /// Draw each box's tmux-style `strip.cell` address (e.g. `1.2`) inline in
-    /// the top frame row of its skeleton box. Requires `skeleton`.
-    pub cell_labels: bool,
     /// The minimap: a small bottom-right grid showing each strip (row) and its
     /// panes (columns), with the focused strip and column highlighted.
     pub minimap: Minimap,
@@ -68,7 +65,6 @@ impl Default for Config {
             focus_color: Background(CColor::Rgb(0xff, 0x00, 0x00)),
             skeleton: true,
             skeleton_color: Background(CColor::Rgb(0xff, 0xff, 0xff)),
-            cell_labels: true,
             minimap: Minimap::default(),
         }
     }
@@ -230,9 +226,6 @@ mod tests {
 
     #[test]
     fn skeleton_parses() {
-        let cfg = parse("cell_labels = false");
-        assert!(!cfg.cell_labels);
-        assert!(parse("").cell_labels, "cell labels on by default");
         let cfg = parse("skeleton = false");
         assert!(!cfg.skeleton);
         let cfg = parse("skeleton_color = \"#333333\"");
