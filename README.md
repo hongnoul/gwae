@@ -9,8 +9,8 @@
 - **Agent-aware, zero instrumentation.** Speaks the standard **OSC 133** protocol only. Panes stay ordinary PTYs. The minimap tints by status and `⌥+g` jumps to the one that needs you.
 - **Single process, no daemon.** No socket, no attach/detach. Crashing one pane's emulator can't take the TUI down. Persistence is each harness's own `--resume`.
 - **Kitty graphics passthrough.** `kitten icat` and jcode screenshots render inside their pane — APC sequences forwarded verbatim and clipped to the pane rect.
-- **Mouse that helps.** Wheel scrolls the pane under the cursor (its own scrollback), not the host terminal. Click to focus, drag to copy. `less` without mouse reporting gets arrow keys; typing snaps back to live.
-- **Catppuccin Mocha by default.** Base `#1e1e2e`, focus sapphire `#74c7ec`, skeleton overlay `#6c7086`. Every color is themeable, 8 presets ship, `⌥+t` previews them live, and saving the config re-themes the running session without restarting a single pane.
+- **Mouse that helps.** Click to focus, drag to copy. A pane running a full-screen app that asked for mouse reporting gets every event forwarded verbatim in its own coordinates, so the wheel behaves inside vim or an agent TUI exactly as it would natively.
+- **Catppuccin Mocha by default.** Base `#1e1e2e`, focus sapphire `#74c7ec`, overlay `#6c7086`. Every color is themeable, 8 presets ship, `⌥+t` previews them live, and saving the config re-themes the running session without restarting a single pane.
 
 ```sh
 cargo install --path crates/strimux   # or: cargo build --release && make install
@@ -29,7 +29,7 @@ What works today and is interactively dogfoodable:
 - Single-process, multi-pane PTY renderer: spawns real PTYs, composes every pane into one 2D cell buffer, diffs and paints with synchronized-update markers. Full 300×80 repaint ~0.05 ms.
 - Pure layout core (`strimux-layout`) with quantized scrolling, fixed-width columns, niri-style dynamic strips and cross-strip pane moves. Covered by `proptest` invariants and render-frame tests.
 - Emulator facade (`strimux-term`) behind `TermGrid`, unit-tested; E2E tests drive the real binary through a live PTY (minimap status, smart-jump, natural pane close, 342-col wobble test).
-- Agent dashboard minimap (OSC 133 + quiet-heuristic fallback), smart-jump, skeleton chrome with inset content and kitty-like block cursor, mouse capture, Kitty graphics forwarding, wide-glyph / SGR-attribute fixes.
+- Agent dashboard minimap (OSC 133 + quiet-heuristic fallback), smart-jump, opt-in skeleton chrome with inset content, kitty-like block cursor, mouse capture, Kitty graphics forwarding, wide-glyph / SGR-attribute fixes.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/LAYOUT-SPEC.md`](docs/LAYOUT-SPEC.md) (normative), and [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -60,9 +60,10 @@ make install                 # picks ~/.cargo/bin, /opt/homebrew/bin, ~/.local/b
 ## Quick start
 
 ```sh
-strimux                     # default: one strip, one 1/4-width pane + skeleton placeholders
+strimux                     # default: one strip, one 1/4-width pane + placeholder boxes
 strimux run "claude"        # command runs in column 0 (deterministic), rest are shells ($SHELL)
 strimux new -- htop         # (subcommand form) new column in a fresh session
+strimux init                # guided setup: theme, layout, chrome, btm (safe to re-run)
 strimux setup               # optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty)
 strimux doctor              # diagnostics: config + theme validity, layout smoke
 ```
@@ -99,7 +100,7 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | `⌥+Shift+q` | Force-quit strimux — opens a centered confirmation overlay; press `⌥+Shift+q` again (or `⏎`) to kill every pane, any other key cancels |
 | click | Left-click focuses the clicked pane |
 | drag | Left-drag inside a pane selects text (inverse highlight) and copies it on release. Panes that grab the mouse (vim, agent TUIs) keep it, so hold `Shift` there to select instead |
-| wheel | Scrolls pane scrollback under cursor; `Shift+wheel` etc. forwarded as SGR when pane wants mouse, else translated to `↑`/`↓` for alt-screen pagers |
+| wheel | Forwarded as SGR to a pane that asked for mouse reporting (vim, agent TUIs), so it behaves natively there. strimux claims no wheel of its own |
 
 All other keys pass through to the focused pane. Closing a pane by `exit` / process death behaves identically to `kill-pane`.
 
@@ -153,7 +154,7 @@ Kill-switch `minimap.show = false` still respected.
 
 ## Appearance
 
-- **Skeleton** (`skeleton = true`): 1-cell frame around every column box at full strip height, so the container always reads even with one pane. Content is inset 1 cell so the frame never covers what a program draws. Placeholders show big block-font `strip.cell` addresses. Focus frame uses the theme's `accent`, others use `overlay`.
+- **Skeleton** (`skeleton = true`, **off by default**): 1-cell frame around every column box at full strip height, with content inset 1 cell so the frame never covers what a program draws. Opt in by hand; setup does not ask. Full-bleed (the default) panes run to the edge of their column and focus is an accent background tint. Either way, placeholder boxes tile the empty right side and can show block-font `strip.cell` addresses (`cell_labels`) and keybinding hints (`[cowsay]`).
 - **Focus**: accent hairline (never shifts layout) + kitty-like inverse block cursor at the focused pane's vt100 cursor.
 - **Palette**: Catppuccin Mocha by default — base `#1e1e2e`, overlay `#6c7086`, accent `#74c7ec` (sapphire, distinct from red `Failed`). Pick a preset with `theme = "nord"` (also `catppuccin-latte`, `tokyo-night`, `gruvbox`, `rose-pine`, `dracula`, `terminal` which inherits the host's ANSI 0-15), or override any key in `[theme]` (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`). Minimap tiles at 60% muted accents, summary at full. Legacy `background`/`focus_color`/`skeleton_color` still work as aliases for `theme.base`/`accent`/`overlay`. All colors as `256-index`, `#rrggbb`, or `"default"`.
 - **Pane geometry**: window-anchored column boundaries + quantized stops mean the same four `1/4` columns paint identically at every scroll stop even at hostile widths like 342 cols (verified E2E).
@@ -162,10 +163,42 @@ Kill-switch `minimap.show = false` still respected.
 
 ## Configuration
 
+The first time `⌥+;` (or the first pane) opens the agent gateway, strimux runs
+a short guided setup. It opens with a one-second animated title card (the
+wordmark wipes in, painted in the palette you are about to be asked about; any
+key skips it, and it only greets you on a genuine first run), then after
+picking your harness you get one question per screen: theme (with live color
+swatches), panes at launch, column width, scroll style, logical pane width,
+cell labels, keybinding hints, and finally an offer to install
+[`btm`](https://github.com/ClementTsang/bottom), the system monitor that makes
+a good neighbour to an agent pane.
+
+`↑↓` or `j`/`k` picks an option, `→`/`l`/`⏎` moves to the next question,
+`←`/`h`/`⌫` goes back to the previous one, a digit selects without Enter, `s`
+skips a question and `esc` takes the defaults for the rest. The flow ends on a
+summary screen listing every setting as it now stands and the file it landed
+in; `⏎` leaves it, `⌫` goes back to fix an answer.
+
+Two things are deliberately *not* questions. Input latency
+(`input_poll_ms`) has one right answer, so it is applied silently before the
+first question is drawn, and anything only you can change (kitty or macOS
+settings) is reported once on the summary rather than interrupting the flow.
+Installing `btm` needs Homebrew on macOS, so a yes installs that too rather
+than asking about a package manager you may never have heard of; it is skipped
+entirely if you already have `btm`, and `STRIMUX_NO_INSTALL=1` turns the offer
+off for unattended runs.
+
+Setup runs once. `strimux init` re-runs it any time (defaults become whatever
+your config currently says, so accepting every default changes nothing),
+`strimux init --print` shows every question without asking, and
+`strimux init --print-splash` dumps every frame of the title card. The card is
+plain SGR over full repaints, so it animates correctly whether it runs on a
+bare terminal or inside a strimux pane.
+
 File: `$XDG_CONFIG_HOME/strimux/strimux.toml` (or `~/.config/strimux/strimux.toml`). TOML, all keys optional. See [`docs/CONFIG.md`](docs/CONFIG.md) (generated from code).
 
 ```toml
-default_column_width = { preset = "quarter" }  # or { cells = 80 }
+default_column_width = "quarter"  # or "half", "two-thirds", "full", or 80 (cells)
 scroll_margin = 2
 center_focus = false
 content_width = 0
@@ -176,13 +209,12 @@ theme = "catppuccin-mocha"        # palette preset (see Appearance)
 # preset = "nord"
 # accent = "#ff0000"              # override any key on top of the preset
 # overlay = "#665c54"
-skeleton = true
+# skeleton = true                 # off by default: 1-cell inset frames
 # legacy aliases (override theme when set):
 # background = "#1e1e2e"          # -> theme.base
 # focus_color = "#74c7ec"         # -> theme.accent
 # skeleton_color = "#6c7086"      # -> theme.overlay
-mouse = true
-scroll_lines = 3
+cell_labels = false
 
 [minimap]
 show = true
@@ -202,14 +234,14 @@ Key reference (defaults in parentheses):
 | `content_width` | int | `0` | Logical pane width; `0` = follow column width (wrap). `>0` = horizontal overflow panned with `⌥+←/→` |
 | `default_agent` | string | *(unset)* | Agent for the first pane and `;`. Unset means you get the selector, which saves your pick |
 | `agents` | array | `[]` | Extra commands to offer in the selector |
-| `startup_panes` | int | `1` | Quarter-width panes at launch; remainder shows as skeleton placeholders |
+| `startup_panes` | int | `1` | Quarter-width panes at launch; the remainder shows as placeholder boxes |
 | `theme` | string/table | `catppuccin-mocha` | Palette preset or `[theme]` table with `preset` + per-key overrides; see Appearance / `docs/CONFIG.md` |
 | `background` | color | theme `base` | Legacy alias for `theme.base` |
 | `focus_color` | color | theme `accent` | Legacy alias for `theme.accent` |
-| `skeleton` | bool | `true` | Draw column frames + placeholders |
+| `skeleton` | bool | `false` | Draw 1-cell inset column frames. Hand-edit only; setup does not ask |
 | `skeleton_color` | color | theme `overlay` | Legacy alias for `theme.overlay` |
-| `mouse` | bool | `true` | Capture wheel/click for pane scrollback |
-| `scroll_lines` | int | `3` | Rows per wheel notch |
+| `cell_labels` | bool | `false` | Block-font `strip.pane` addresses in placeholder boxes |
+| `onboarded` | bool | *(unset)* | Written by setup so it is offered once; delete to be offered again |
 | `minimap.show` | bool | `true` | Master kill-switch |
 | `minimap.mode` | enum | `off` | Chrome presentation (`off`=only centered Alt HUD/minimap, `overlay`=corner, `edge_ticks`=frame ticks; legacy `reserved`/`reserved_quasimode` parse as `off`) |
 | `minimap.max_width` | int | `32` | Width of `overlay` and centered Alt minimap |

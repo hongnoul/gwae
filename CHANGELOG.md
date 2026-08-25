@@ -7,6 +7,18 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **Onboarding offers to install `btm`.** The last question of the guided setup
+  offers [bottom](https://github.com/ClementTsang/bottom), the system monitor
+  that makes a good permanent neighbour to an agent pane, defaulting to yes. On
+  macOS a yes installs Homebrew first when it is missing: that is strimux's
+  implementation detail, so it happens silently rather than becoming a second
+  question about a package manager the user may never have heard of. The offer
+  is skipped entirely when `btm` is already installed (a question whose only
+  honest answer is "already done" teaches people that setup asks things it
+  already knows), and `STRIMUX_NO_INSTALL=1` turns it off for unattended runs.
+  The summary reports what actually happened on the machine, not what was
+  answered: "yes" and "installed" are different claims.
+
 - **`strimux tune` reports input latency across all three layers.** A keystroke
   crosses macOS, your terminal, and strimux — and strimux twice, since what
   you see is the program's echo making the return trip. Tuning only strimux's
@@ -63,6 +75,32 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   jumps feel exactly as they did.
 
 ### Changed
+- **Onboarding is one question per screen, driven with the arrow keys.** The
+  guided setup was a single long transcript of numbered lists that scrolled
+  past as you answered, and every question needed a number followed by Enter.
+  It now clears to one question at a time: `↑↓` or `j`/`k` moves the highlight,
+  `→`/`l`/`⏎` goes to the next question, `←`/`h`/`⌫` goes *back* to the
+  previous one with your earlier answer still selected, and a digit picks an
+  option outright without an Enter. The flow ends on a summary screen listing
+  every setting as it now stands and the file it landed in — itself a step you
+  can back out of, so an answer you regret on the way out is fixable without
+  re-running setup.
+
+- **Latency tuning is applied silently, before the first question.** It used to
+  be a prompt at the end of onboarding, which asked users to adjudicate a
+  number they cannot evaluate. `input_poll_ms` has exactly one right answer, so
+  strimux now sets it in its own config file before setup draws anything, and
+  the summary screen reports only what is left for the user to do (kitty and
+  macOS settings, which strimux will never edit for them).
+
+- **The inset skeleton frames now ship off.** Framing every column and insetting
+  its content by a cell is a strong look, and it was both the default and a
+  setup question. Panes are now full-bleed out of the box, with focus shown as
+  an accent background tint; `skeleton = true` brings the frames back for
+  anyone who wants them, and setup no longer asks. Placeholder boxes are no
+  longer coupled to the frames, so an empty grid still shows where panes go
+  (and still advertises the keybindings via `[cowsay]`) either way.
+
 - **`default_agent` now defaults to unset rather than `"jcode"`.** Defaulting
   to one vendor's harness meant every user who had not installed *that* tool
   hit the dead-pane path above on their first `⌥+;`. Unset is now a normal
@@ -76,6 +114,17 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   not even exist in the terminal font. Both surfaces resolve key names through
   a new `keys` module, so they read `Alt+g` / `Enter` off macOS and can never
   disagree with each other.
+
+### Removed
+- **Mouse wheel scrollback, and the `mouse` / `scroll_lines` keys.** strimux
+  captured the wheel to scroll the pane under the cursor, which meant it also
+  had to translate the wheel into arrow keys for alt-screen pagers, and it put
+  two knobs in the config (and two questions in setup) for behavior most users
+  never asked to change. The wheel now goes to a child that requested mouse
+  reporting, verbatim in its own coordinates, and nowhere else; scrollback
+  moves by keyboard. Mouse capture itself stays on, since click-to-focus and
+  drag-to-copy depend on it. Old configs keep loading: the keys are simply no
+  longer read.
 
 ### Fixed
 - **Hints no longer teach bindings that do not exist.** The default cowsay list
