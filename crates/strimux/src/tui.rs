@@ -987,12 +987,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     if let Some(p) = panes.get_mut(&pid) {
                         p.alive = false;
                     }
-                    let total: usize = layout
-                        .rows
-                        .iter()
-                        .flat_map(|r| r.columns.iter())
-                        .map(|c| c.panes.len())
-                        .sum();
+                    let total = layout_pane_count(&layout);
                     let in_layout = layout.locate_pane(pid).is_some();
                     if in_layout && total <= 1 {
                         break 'main;
@@ -1057,6 +1052,12 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                     margin: cfg.scroll_margin,
                                     center: cfg.center_focus,
                                 };
+                                // Closing the last pane leaves nothing to show,
+                                // so strimux exits instead of resurrecting a
+                                // fresh default layout.
+                                if a == Action::KillPane && layout_pane_count(&layout) <= 1 {
+                                    break 'main;
+                                }
                                 let _ = layout.apply(a, v, f);
                                 // A spawn-agent verb ends focused on the new
                                 // rightmost column; mark its pane so sync spawns
@@ -1191,6 +1192,16 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
     let _ = disable_raw_mode();
     Ok(())
+}
+
+/// Total number of panes currently present in the layout.
+fn layout_pane_count(layout: &Layout) -> usize {
+    layout
+        .rows
+        .iter()
+        .flat_map(|r| r.columns.iter())
+        .map(|c| c.panes.len())
+        .sum()
 }
 
 /// The currently focused pane id.
