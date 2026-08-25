@@ -2317,7 +2317,11 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                     | KeyCode::Char('\u{d2}')
                             );
                         if alt_chord {
-                            chord_alt_until = Some(Instant::now() + Duration::from_millis(600));
+                            // Short window so tapping Option+h for navigation
+                            // doesn't linger 600ms after release. Hold stays
+                            // visible via repeats (each chord refreshes) but
+                            // vanishes ~180ms after the last chord.
+                            chord_alt_until = Some(Instant::now() + Duration::from_millis(180));
                             dirty = true;
                         }
                     }
@@ -2403,6 +2407,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Release => {
                     if is_alt_modifier(&ke) && bare_alt_held {
                         bare_alt_held = false;
+                        // Bare release means the physical key is up — drop the
+                        // fallback window too so a preceding Alt+hjkl chord
+                        // doesn't linger after the hold is gone.
+                        chord_alt_until = None;
                         dirty = true;
                     } else if ke.modifiers.contains(KeyModifiers::ALT) || is_alt_modifier(&ke) {
                         // Keep chord hold alive until its timeout expires.
@@ -3711,7 +3719,11 @@ mod tests {
         assert!(has_frame, "HUD box frame painted");
         // Whole buffer must contain both the attention hint and keybind lines.
         let all: Vec<String> = (0..rows)
-            .map(|y| (0..cols).map(|x| out[y as usize * cols as usize + x as usize].ch).collect())
+            .map(|y| {
+                (0..cols)
+                    .map(|x| out[y as usize * cols as usize + x as usize].ch)
+                    .collect()
+            })
             .collect();
         assert!(
             all.iter().any(|s| s.contains("needs you")),
@@ -3736,7 +3748,11 @@ mod tests {
         let mut out2 = vec![Cell::default(); cols as usize * rows as usize];
         draw_center_hud(&mut out2, cols, rows, &layout, frame_color);
         let all2: Vec<String> = (0..rows)
-            .map(|y| (0..cols).map(|x| out2[y as usize * cols as usize + x as usize].ch).collect())
+            .map(|y| {
+                (0..cols)
+                    .map(|x| out2[y as usize * cols as usize + x as usize].ch)
+                    .collect()
+            })
             .collect();
         assert!(
             all2.iter().any(|s| s.contains("hjkl")),
@@ -3803,6 +3819,47 @@ mod tests {
             .iter()
             .any(|c| c.style.bg != CColor::Default && c.ch != ' ');
         assert!(any, "overlay draws tiles even with hidden quasimode row");
+    }
+
+    #[test]
+    fn draw_center_minimap_paints_centered_dashboard() {
+        let mut layout = Layout::default();
+        let r2 = layout.new_row("two".to_string());
+        let p = layout.alloc_pane();
+        layout.add_column(r2, strimux_layout::Width::Cells(20), vec![p]);
+        // Mark one pane failed so we can assert status tint appears.
+        let pid = *layout.panes.keys().next().unwrap();
+        layout.panes.get_mut(&pid).unwrap().status = PaneStatus::Failed;
+        let mm = crate::config::Minimap {
+            mode: crate::config::MinimapMode::ReservedQuasimode,
+            ..Default::default()
+        };
+        let cols: u16 = 80;
+        let rows: u16 = 24;
+        let mut out = vec![Cell::default(); cols as usize * rows as usize];
+        draw_center_minimap(&mut out, cols, rows, &layout, &mm, CColor::Idx(36));
+        let has_frame = out
+            .iter()
+            .any(|c| c.ch == '╭' || c.ch == '╮' || c.ch == '╰' || c.ch == '╯');
+        assert!(has_frame, "center minimap frame painted");
+        // At least one digit + status glyph from the minimap tiles should be visible.
+        let all: String = out.iter().map(|c| c.ch).collect();
+        assert!(
+            all.contains('1') || all.contains('2'),
+            "digit tile present, got {all:?}"
+        );
+        assert!(
+            all.contains('✗') || all.contains('»'),
+            "status glyph present, got {all:?}"
+        );
+        // Single-pane layout hides it.
+        let single = Layout::new(1);
+        let mut out2 = vec![Cell::default(); 40 * 8];
+        draw_center_minimap(&mut out2, 40, 8, &single, &mm, CColor::Idx(36));
+        assert!(
+            out2.iter().all(|c| c.ch == ' '),
+            "no center map for one pane"
+        );
     }
 }
 
