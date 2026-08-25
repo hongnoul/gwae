@@ -2165,6 +2165,24 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
                 }
             });
         }
+        // ⌥+Shift+q and ⌥+Shift+? are the only shifted chords outside hjkl.
+        // Everything else below is an *unshifted* chord: `logical_char` folds
+        // case, so without this guard ⌥+Shift+s would be indistinguishable from
+        // ⌥+s and strimux would split the column instead of forwarding the key.
+        // That silently ate chords the focused pane owns (jcode binds
+        // ⌥+Shift+s to copy), so shifted variants fall through to the pane.
+        if shift && !matches!(c, 'q' | '/' | '?') {
+            // Forward the shifted codepoint. Some terminals report Shift as a
+            // modifier bit alongside the *unshifted* char; `key_bytes` encodes
+            // `ev.code` verbatim and has no shift handling for `Char`, so the
+            // pane would receive ESC+'s' and see a plain ⌥+s. Re-apply the
+            // shift here so the pane sees ESC+'S' either way.
+            let mut ev = *ev;
+            if let KeyCode::Char(raw) = ev.code {
+                ev.code = KeyCode::Char(raw.to_ascii_uppercase());
+            }
+            return Some(Cmd::Input(key_bytes(&ev)));
+        }
         let act = match c {
             'a' => Some(Action::NewColumn),
             ';' => Some(Action::SpawnAgent),
@@ -3277,6 +3295,40 @@ mod tests {
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::MovePaneLeft)));
         let ev = KeyEvent::new(KeyCode::Char('K'), KeyModifiers::ALT);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::MovePaneUp)));
+    }
+
+    #[test]
+    fn alt_shift_letter_is_forwarded_not_swallowed_as_the_unshifted_chord() {
+        // Regression: ⌥+Shift+s used to case-fold to 's' and split the column,
+        // stealing a chord the focused pane owns (jcode copies with ⌥+Shift+s).
+        // Both encodings a terminal may send must reach the pane as ESC+'S'.
+        for ev in [
+            KeyEvent::new(KeyCode::Char('S'), KeyModifiers::ALT | KeyModifiers::SHIFT),
+            // Kitty REPORT_ALTERNATE_KEYS consumes the shift bit.
+            KeyEvent::new(KeyCode::Char('S'), KeyModifiers::ALT),
+            // Terminals that keep the unshifted codepoint plus a SHIFT bit.
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT | KeyModifiers::SHIFT),
+        ] {
+            assert_eq!(
+                handle_key(&ev),
+                Some(Cmd::Input(b"\x1bS".to_vec())),
+                "{ev:?} should be forwarded to the pane"
+            );
+        }
+        // The unshifted chord still splits.
+        let ev = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SplitBelow)));
+        // Caps Lock is not Shift: ⌥+CapsLock+s must still split.
+        let ev = KeyEvent::new_with_kind_and_state(
+            KeyCode::Char('S'),
+            KeyModifiers::ALT,
+            KeyEventKind::Press,
+            KeyEventState::CAPS_LOCK,
+        );
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SplitBelow)));
+        // The two intentional shifted chords keep working.
+        let ev = KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert_eq!(handle_key(&ev), Some(Cmd::Quit));
     }
 
     #[test]
