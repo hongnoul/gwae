@@ -377,3 +377,57 @@ fn pressing_the_spawn_agent_key_opens_the_gateway_in_the_new_pane() {
     );
     p.kill();
 }
+
+#[test]
+fn a_bare_enter_takes_the_listed_default() {
+    // The prompt offers Enter as a shortcut, so it must land on entry #1 and
+    // save it exactly as an explicit "1" would.
+    let sb = Sandbox::new(&["claude", "aider"]);
+    let mut p = sb.spawn(&[]);
+    let seen = p.wait_for("Which agent");
+    assert!(
+        seen.contains("(default)"),
+        "the default must be labeled; got:\n{seen}"
+    );
+
+    p.send("\n");
+    p.wait_for("AGENT-RAN:claude");
+    assert!(sb.read_config().contains("default_agent = \"claude\""));
+    p.kill();
+}
+
+#[test]
+fn a_bad_entry_reprompts_instead_of_giving_up() {
+    // A typo must not drop the user into a shell silently; the pane keeps
+    // asking, since the whole point is to leave them with a working agent.
+    let sb = Sandbox::new(&["claude"]);
+    let mut p = sb.spawn(&[]);
+    p.wait_for("Which agent");
+    p.send("9\n");
+    p.wait_for("Enter 1-1");
+    p.send("banana\n");
+    p.wait_for("Enter 1-1");
+    p.send("1\n");
+    p.wait_for("AGENT-RAN:claude");
+    p.kill();
+}
+
+#[test]
+fn a_non_tty_never_wedges_the_pane_waiting_for_input() {
+    // Belt and braces: if stdin is not a terminal the gateway must fall
+    // straight through to a shell rather than block forever on a read.
+    let sb = Sandbox::new(&["claude"]);
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_strimux"))
+        .arg("agent")
+        .env("XDG_CONFIG_HOME", &sb.dir)
+        .env("PATH", format!("{}:/bin:/usr/bin", sb.bin.display()))
+        .env("SHELL", "/bin/sh")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .expect("run agent with no tty");
+    // It exec'd a shell, which with no stdin exits immediately and cleanly.
+    assert!(out.status.success(), "status: {:?}", out.status);
+    assert!(!sb.read_config().contains("default_agent"));
+}

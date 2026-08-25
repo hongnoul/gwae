@@ -304,8 +304,15 @@ pub fn render(plan: &Plan) -> (String, Vec<Found>) {
         }
     };
     for (i, f) in choices.iter().enumerate() {
+        // Enter takes the first entry, so it has to be labeled as such: an
+        // unmarked default is one the user only discovers by triggering it.
+        let dflt = if i == 0 {
+            format!("  {DIM}(default){RESET}")
+        } else {
+            String::new()
+        };
         s.push_str(&format!(
-            "  {CYAN}{}{RESET}  {BOLD}{}{RESET}  {DIM}{}{RESET}\n",
+            "  {CYAN}{}{RESET}  {BOLD}{}{RESET}  {DIM}{}{RESET}{dflt}\n",
             i + 1,
             f.label,
             f.path.display()
@@ -507,6 +514,10 @@ mod tests {
         assert!(plain.find("1  claude") < plain.find("2  codex"));
         // "just a shell" is always an out, so the pane is never a dead end.
         assert!(plain.contains("just a shell"));
+        // Enter picks the first entry, so the list must say which that is.
+        assert!(plain.contains("1  claude"));
+        let dflt = plain.find("(default)").expect("default marked");
+        assert!(dflt > plain.find("1  claude").unwrap() && dflt < plain.find("2  codex").unwrap());
         assert_eq!(choices.len(), 2);
         // A resolved config renders nothing at all.
         let (text, choices) = render(&Plan::Configured("jcode".into()));

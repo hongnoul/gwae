@@ -2550,7 +2550,8 @@ fn sync_panes(
         }
     });
     // Spawn missing panes. Agent panes (created via the spawn-agent verb) run
-    // the configured `default_agent` harness; everything else gets the shell.
+    // the agent gateway, which becomes the harness; everything else gets the
+    // shell.
     for pid in wanted {
         if panes.contains_key(&pid) {
             continue;
@@ -2736,7 +2737,8 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut hud_active: bool = true;
     let mut last_has_attention = has_attention(&layout);
     // Pane ids created by the spawn-agent verb; these are (re)spawned running
-    // the configured `default_agent` harness instead of a plain shell.
+    // the agent gateway instead of a plain shell. A respawn re-resolves, so
+    // installing a harness mid-session is picked up without a restart.
     let mut agent_panes: HashSet<PaneId> = HashSet::new();
     // The title currently shown on the host terminal; we only write when it
     // changes so we don't spam the host with identical OSC sequences.
