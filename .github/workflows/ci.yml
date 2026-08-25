@@ -31,3 +31,22 @@ jobs:
         run: cargo check --workspace
       - name: test
         run: cargo test --workspace
+
+  windows:
+    # Windows is a launch-differentiating claim (the whole tmux-based competing
+    # tier is Unix-only), so the build must not be allowed to rot. Runtime
+    # ConPTY behaviour is still verified by hand in M3; this job only guarantees
+    # the tree keeps compiling for the MSVC target.
+    name: windows build
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: check
+        run: cargo check --workspace
+      - name: clippy
+        run: cargo clippy --workspace -- -D warnings
