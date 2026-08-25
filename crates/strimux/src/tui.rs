@@ -656,7 +656,7 @@ fn render_frame(
                 w: boxr.w.saturating_sub(2),
                 h: boxr.h.saturating_sub(2),
             };
-            draw_big_label(out, cols, inner, &label, CColor::Idx(240));
+            draw_big_label(out, cols, inner, &label, CColor::Rgb(0x58, 0x5b, 0x70));
             pcol += 1;
             edge += w;
         }
@@ -910,19 +910,21 @@ fn draw_big_label(out: &mut [Cell], cols: u16, rect: Rect, label: &str, color: C
 }
 
 fn status_bg_for(s: PaneStatus) -> CColor {
+    // Catppuccin Mocha accent tints, darkened for white (Idx 231) text contrast.
     match s {
-        PaneStatus::Running => CColor::Idx(24),
-        PaneStatus::Idle => CColor::Idx(130),
-        PaneStatus::Done => CColor::Idx(22),
-        PaneStatus::Failed => CColor::Idx(88),
+        PaneStatus::Running => CColor::Rgb(0x52, 0x6c, 0x96), // blue #89b4fa @ 0.6
+        PaneStatus::Idle => CColor::Rgb(0x96, 0x6b, 0x51),    // peach #fab387 @ 0.6
+        PaneStatus::Done => CColor::Rgb(0x63, 0x88, 0x60),    // green #a6e3a1 @ 0.6
+        PaneStatus::Failed => CColor::Rgb(0x91, 0x53, 0x64),  // red #f38ba8 @ 0.6
     }
 }
 fn status_fg_for(s: PaneStatus) -> CColor {
+    // Bright Mocha accents for summary counts.
     match s {
-        PaneStatus::Running => CColor::Idx(39),
-        PaneStatus::Idle => CColor::Idx(214),
-        PaneStatus::Done => CColor::Idx(40),
-        PaneStatus::Failed => CColor::Idx(196),
+        PaneStatus::Running => CColor::Rgb(0x89, 0xb4, 0xfa),
+        PaneStatus::Idle => CColor::Rgb(0xfa, 0xb3, 0x87),
+        PaneStatus::Done => CColor::Rgb(0xa6, 0xe3, 0xa1),
+        PaneStatus::Failed => CColor::Rgb(0xf3, 0x8b, 0xa8),
     }
 }
 fn status_glyph_for(s: PaneStatus) -> char {
@@ -952,11 +954,11 @@ fn draw_status_row(
     if chrome == 0 {
         return;
     }
-    let bar_bg = CColor::Idx(234);
+    let bar_bg = CColor::Rgb(0x18, 0x18, 0x25);
     // Start with a solid bar background so untouched cells are chrome, not pane bg.
     for x in 0..cols as usize {
         if let Some(c) = out.get_mut(y * cols as usize + x) {
-            *c = Cell { ch: ' ', style: strimux_term::Style { fg: CColor::Idx(245), bg: bar_bg, ..Default::default() }, width: 1, ..Default::default() };
+            *c = Cell { ch: ' ', style: strimux_term::Style { fg: CColor::Rgb(0xa6, 0xad, 0xc8), bg: bar_bg, ..Default::default() }, width: 1, ..Default::default() };
         }
     }
     let put = |out: &mut [Cell], x: usize, ch: char, fg: CColor, bg: CColor, bold: bool| {
@@ -999,7 +1001,7 @@ fn draw_status_row(
             }
             if x < cols as usize {
                 // inter-tile gap
-                put(out, x, ' ', CColor::Idx(245), bar_bg, false);
+                put(out, x, ' ', CColor::Rgb(0xa6, 0xad, 0xc8), bar_bg, false);
                 x += 1;
             }
         }
@@ -1008,7 +1010,7 @@ fn draw_status_row(
             let other_rows = layout.rows.len().saturating_sub(1);
             let mut segs: Vec<(String, CColor)> = Vec::new();
             if other_rows > 0 {
-                segs.push((format!("\u{2195} {} ", other_rows), CColor::Idx(245))); // ↕ N
+                segs.push((format!("\u{2195} {} ", other_rows), CColor::Rgb(0xa6, 0xad, 0xc8))); // ↕ N
             }
             let mut counts = [0usize; 4];
             let statuses = [PaneStatus::Running, PaneStatus::Idle, PaneStatus::Done, PaneStatus::Failed];
@@ -1075,7 +1077,7 @@ fn draw_edge_ticks(
         let is_focus = row.id == layout.focus.row;
         let needs = row.columns.iter().any(|c| c.panes.iter().any(|pid| layout.panes.get(pid).map(|pane| matches!(pane.status, PaneStatus::Idle | PaneStatus::Failed)).unwrap_or(false)));
         if ri >= rows as usize { break; }
-        let bg = if is_focus { focus_color } else if needs { CColor::Idx(130) } else { CColor::Idx(240) };
+        let bg = if is_focus { focus_color } else if needs { CColor::Rgb(0x96, 0x6b, 0x51) } else { CColor::Rgb(0x6c, 0x70, 0x86) };
         if let Some(c) = out.get_mut(ri * cols as usize + x) {
             // only overwrite border-ish cells (don't clobber pane content interior — but right edge is usually chrome)
             if c.ch == ' ' || c.width==1 {
@@ -1107,23 +1109,21 @@ fn draw_minimap(
     if !mm.show || (layout.panes.len() <= 1 && layout.rows.len() <= 1) {
         return;
     }
-    /// Muted background per status: dark enough to stay chrome, distinct
-    /// enough to triage at a glance.
+    /// Catppuccin Mocha muted backgrounds / bright foregrounds (shared with status_bg_for).
     fn status_bg(s: PaneStatus) -> CColor {
         match s {
-            PaneStatus::Running => CColor::Idx(24), // deep blue: working
-            PaneStatus::Idle => CColor::Idx(130),   // amber: wants attention
-            PaneStatus::Done => CColor::Idx(22),    // green: finished ok
-            PaneStatus::Failed => CColor::Idx(88),  // red: finished non-zero
+            PaneStatus::Running => CColor::Rgb(0x52, 0x6c, 0x96),
+            PaneStatus::Idle => CColor::Rgb(0x96, 0x6b, 0x51),
+            PaneStatus::Done => CColor::Rgb(0x63, 0x88, 0x60),
+            PaneStatus::Failed => CColor::Rgb(0x91, 0x53, 0x64),
         }
     }
-    /// Bright foreground per status, for the summary counts.
     fn status_fg(s: PaneStatus) -> CColor {
         match s {
-            PaneStatus::Running => CColor::Idx(39),
-            PaneStatus::Idle => CColor::Idx(214),
-            PaneStatus::Done => CColor::Idx(40),
-            PaneStatus::Failed => CColor::Idx(196),
+            PaneStatus::Running => CColor::Rgb(0x89, 0xb4, 0xfa),
+            PaneStatus::Idle => CColor::Rgb(0xfa, 0xb3, 0x87),
+            PaneStatus::Done => CColor::Rgb(0xa6, 0xe3, 0xa1),
+            PaneStatus::Failed => CColor::Rgb(0xf3, 0x8b, 0xa8),
         }
     }
     /// Single-width status glyph (every one is width 1 per unicode-width, so
@@ -1204,7 +1204,7 @@ fn draw_minimap(
         }
         // Segments: (text, fg). The total is dim; each tally is colored.
         let mut segs: Vec<(String, CColor)> =
-            vec![(format!("{}", layout.panes.len()), CColor::Idx(245))];
+            vec![(format!("{}", layout.panes.len()), CColor::Rgb(0xa6, 0xad, 0xc8))];
         for (i, s) in statuses.iter().enumerate() {
             if counts[i] > 0 {
                 segs.push((format!(" {}{}", status_glyph(*s), counts[i]), status_fg(*s)));
@@ -1213,7 +1213,7 @@ fn draw_minimap(
         let total_w: usize = segs.iter().map(|(t, _)| t.chars().count()).sum();
         let y = oy - 1;
         let mut x = cols.saturating_sub(total_w as u16);
-        let bar_bg = CColor::Idx(234);
+        let bar_bg = CColor::Rgb(0x18, 0x18, 0x25);
         for (text, fg) in segs {
             for ch in text.chars() {
                 put(out, x, y, ch, fg, bar_bg, true);
@@ -2691,9 +2691,9 @@ mod tests {
             CColor::Default,
             "other strip is painted chrome"
         );
-        // Fresh panes are Running: a deep-blue tint carrying a `»` glyph at
+        // Fresh panes are Running: a muted Mocha blue tint carrying a `»` glyph at
         // the tile's right edge.
-        assert_eq!(other.style.bg, CColor::Idx(24), "running tint");
+        assert_eq!(other.style.bg, CColor::Rgb(0x52, 0x6c, 0x96), "running tint");
         let other_end = cell(8 + 31, 7);
         assert_eq!(other_end.ch, '»', "status glyph at the tile end");
         // The focused strip carries a chevron in the gutter left of the map.
@@ -2774,9 +2774,9 @@ mod tests {
         // Map: ox=8, oy=6. Strip 1 has 4 tiles of 8 cells each.
         let (ox, y) = (8usize, 6usize);
         assert_eq!(cell(ox, y).style.bg, accent, "tile 1 focused");
-        assert_eq!(cell(ox + 8, y).style.bg, CColor::Idx(22), "tile 2 done");
-        assert_eq!(cell(ox + 16, y).style.bg, CColor::Idx(88), "tile 3 failed");
-        assert_eq!(cell(ox + 24, y).style.bg, CColor::Idx(130), "tile 4 idle");
+        assert_eq!(cell(ox + 8, y).style.bg, CColor::Rgb(0x63, 0x88, 0x60), "tile 2 done");
+        assert_eq!(cell(ox + 16, y).style.bg, CColor::Rgb(0x91, 0x53, 0x64), "tile 3 failed");
+        assert_eq!(cell(ox + 24, y).style.bg, CColor::Rgb(0x96, 0x6b, 0x51), "tile 4 idle");
         // Tiles carry their ⌥+digit address and end-of-tile status glyph.
         assert_eq!(cell(ox + 8, y).ch, '2');
         assert_eq!(cell(ox + 15, y).ch, '✓', "done glyph");
@@ -2999,7 +2999,7 @@ mod tests {
         let cols: u16 = 80;
         let rows: u16 = 12;
         let dim = CColor::Idx(235);
-        let label = CColor::Idx(240);
+        let label = CColor::Rgb(0x58, 0x5b, 0x70);
         let mut out = Vec::new();
         render_frame(
             &mut out,
@@ -3052,7 +3052,7 @@ mod tests {
             w: 6,
             h: 4,
         };
-        draw_big_label(&mut out, cols, rect, "1.1", CColor::Idx(240));
+        draw_big_label(&mut out, cols, rect, "1.1", CColor::Rgb(0x58, 0x5b, 0x70));
         assert!(
             out.iter().all(|c| c.style.bg == CColor::Default),
             "no partial label may be painted"
@@ -3316,9 +3316,9 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
             cols,
             rows,
             0,
-            CColor::Idx(100),
-            CColor::Idx(200),
-            Some(CColor::Idx(240)),
+            CColor::Rgb(0x1e, 0x1e, 0x2e),
+            CColor::Rgb(0x74, 0xc7, 0xec),
+            Some(CColor::Rgb(0x6c, 0x70, 0x86)),
             &crate::config::Minimap::default(),
         );
         let y = 2usize;
