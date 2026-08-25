@@ -23,9 +23,6 @@ strimux (one process)
 | `strimux-layout` | lib | **the pure core**. 2D grid of strips (rows/columns/panes) + verbs + scroll math. No I/O, no async, no PTY. Property-tested. |
 | `strimux-term` | lib | emulator facade behind a `TermGrid` trait (ADR-004), damage tracking |
 | `strimux-testkit` | lib | fake PTYs, scripted terminals, snapshot harness |
-| `strimux-hmr` | bin | hot-reload **host**: owns the session (raw mode, input, frame buffer, state) and `dlopen`s the core, swapping it on rebuild |
-| `strimux-core` | cdylib | hot-swappable **core** (`handle_key` / `render`) loaded by the host; rebuilt and swapped at runtime |
-| `strimux-core-api` | lib | the stable HMR boundary both host and core compile against; never recompiled on a reload |
 
 `strimux-layout` depends only on `std` + `serde`. `strimux-term` isolates the
 emulator-crate choice behind `TermGrid`; swapping `alacritty_terminal` <-> `wezterm-term`

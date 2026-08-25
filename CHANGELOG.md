@@ -11,8 +11,8 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   painter reset attributes once per row but SGR codes are additive, so an
   underlined/bold run (e.g. a popup's underlined entries) leaked its
   attributes into every later run on that row, drawing underlines out to the
-  right screen edge. Both painters (tui and hmr) now reset attributes at the
-  start of every style run.
+  right screen edge. The painter now resets attributes at the start of every
+  style run.
 - **Rightmost pane no longer overflows the viewport**: column x-positions are
   now computed by rounding *cumulative boundaries* (accumulated in exact
   twelfths of a cell) instead of summing per-column `ceil` widths. On viewport
@@ -45,15 +45,6 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   instead of quitting; quit remains `Ctrl-b q`. On macOS the `⌥+;` / `⌥+q`
   chords work out of the box (Option+`;` = `…`, Option+`q` = `œ`), no
   Option-as-Alt needed.
-- **Hot module reload for development**: three new crates/bins let you develop
-  strimux _inside_ strimux without ever killing your session. `strimux-core-api`
-  is a stable boundary crate (hot core + host both compile against it);
-  `strimux-core` is a `cdylib` implementing that core; `strimux-hmr` is a host
-  that `dlopen`s the core and hot-swaps it on rebuild. Session state (focus,
-  layout) lives in the host, so reloads are lossless. `make dev-hmr` watches
-  the core sources and rebuilds the dylib on every save; `make hmr` (or
-  `strimux-hmr`) runs the host that hot-reloads it. macOS `dlopen` caching is
-  handled by loading a fresh-copied dylib each generation.
 - **M0 renderer**: single-process, multi-pane PTY cell renderer. The `strimux`
   binary spawns real panes, composes them into one 2D cell buffer, diffs and
   paints frames, and streams pane output live. Full 300x80 repaint measured at

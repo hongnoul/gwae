@@ -30,21 +30,6 @@ install: build
 check:
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
 
-## Build the core dylib (for hot reload) and the release binary.
-core:
-	$(CARGO) build -p strimux-core
-
-## Run the hot-reload host `strimux-hmr` (loads target/debug/libstrimux_core).
-hmr: core
-	$(CARGO) build -p strimux --bin strimux-hmr
-	$(CARGO) run -p strimux --bin strimux-hmr
-
-## Watch crates/strimux-core/src and rebuild the core dylib on every save, so
-## a running `strimux-hmr` hot-reloads. Run this in one pane and
-## `make hmr` (or `strimux-hmr`) in another.
-dev-hmr:
-	./scripts/develop-hmr.sh
-
 ## Run all workspace tests.
 test:
 	$(CARGO) test --workspace
