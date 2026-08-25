@@ -1,0 +1,36 @@
+name: Bug report
+description: Something is broken. Please include the Alt+Shift+d layout dump.
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: layout-dump
+    attributes:
+      label: Layout dump
+      description: The JSON from Alt+Shift+d (or your best description of the layout).
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      description: Terminal name + version (e.g. Ghostty 1.0, kitty 0.35, iTerm2 3.5).
+      placeholder: Ghostty 1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [macOS, Linux, Windows]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Steps to reproduce, ideally with the exact key chords.

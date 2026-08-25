@@ -1,0 +1,29 @@
+name: e2e
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # nightly
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  e2e:
+    name: PTY integration tests
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --workspace
+      - name: Run e2e
+        run: |
+          cargo test --workspace --test '*' -- --ignored
+          cargo test -p strimux-layout
+      # Real-shell scripted-terminal E2E lands with the M0 spike (tests/ dir).

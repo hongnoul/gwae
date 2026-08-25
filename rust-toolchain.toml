@@ -1,0 +1,4 @@
+# Pinned stable toolchain for the whole workspace.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

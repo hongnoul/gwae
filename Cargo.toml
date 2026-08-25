@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/strimux",
+    "crates/strimux-layout",
+    "crates/strimux-term",
+    "crates/strimux-testkit",
+]
+# Workspace-wide version (SemVer) is defined under [workspace.package].
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+repository = "https://github.com/hongnoul/strimux"
+license = "MIT"
+
+[workspace.dependencies]
+# --- PTY spawn/resize (ConPTY on Windows). Same crate family as jcode-desktop. ---
+portable-pty = "0.9"
+
+# --- Terminal I/O + input decode. crossterm is the default; termwiz may win ADR-004. ---
+crossterm = "0.28"
+
+# --- Emulator crate (ADR-004). Decided in M0; one of these wins the `TermGrid` trait.
+#    Left commented until the prototype. Do NOT add both to the graph. ---
+# alacritty_terminal = "0.25"
+# wezterm-term = "0.31"
+
+# --- Config ---
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# --- CLI ---
+clap = { version = "4", features = ["derive"] }
+
+# --- Observability ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# --- Testing ---
+proptest = "1"
+insta = "1"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[profile.dev]
+opt-level = 1

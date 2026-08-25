@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discussions
+    url: https://github.com/hongnoul/strimux/discussions
+    about: Ask questions and chat here.

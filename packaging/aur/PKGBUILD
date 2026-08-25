@@ -1,0 +1,16 @@
+# Maintainer: hongnoul
+# AUR PKGBUILD template. Filled in at first release.
+pkgname=strimux-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="niri's scrolling tiling for your CLI agents, in any terminal"
+arch=('x86_64' 'aarch64')
+url="https://github.com/hongnoul/strimux"
+license=('MIT')
+depends=()
+source=("$pkgname-$pkgver-x86_64-unknown-linux-musl.tar.gz::https://github.com/hongnoul/strimux/releases/download/v$pkgver/$pkgname-v$pkgver-x86_64-unknown-linux-musl.tar.gz")
+sha256sums=('PENDING')
+
+package() {
+  install -Dm755 strimux "$pkgdir/usr/bin/strimux"
+}

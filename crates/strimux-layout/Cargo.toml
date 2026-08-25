@@ -1,0 +1,18 @@
+[package]
+name = "strimux-layout"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "strimux pure layout core: the infinite 2D grid of strips (no-I/O)"
+
+[lib]
+name = "strimux_layout"
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = "1"
