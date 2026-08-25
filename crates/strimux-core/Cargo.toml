@@ -1,0 +1,14 @@
+[package]
+name = "strimux-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "strimux hot-swappable core (cdylib) loaded and swapped at runtime by the HMR host"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+strimux-core-api = { path = "../strimux-core-api" }

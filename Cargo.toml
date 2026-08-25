@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/strimux",
+    "crates/strimux-core",
+    "crates/strimux-core-api",
     "crates/strimux-layout",
     "crates/strimux-term",
     "crates/strimux-testkit",
@@ -37,6 +39,9 @@ clap = { version = "4", features = ["derive"] }
 # --- Observability ---
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# --- Hot reload (HMR host) ---
+libloading = "0.8"
 
 # --- Testing ---
 proptest = "1"

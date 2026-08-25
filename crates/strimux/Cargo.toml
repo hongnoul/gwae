@@ -12,6 +12,10 @@ default-run = "strimux"
 name = "strimux"
 path = "src/main.rs"
 
+[[bin]]
+name = "strimux-hmr"
+path = "src/bin/hmr.rs"
+
 [dependencies]
 clap = { workspace = true }
 serde = { workspace = true }
@@ -21,5 +25,7 @@ tracing-subscriber = { workspace = true }
 strimux-layout = { path = "../strimux-layout" }
 strimux-term = { path = "../strimux-term" }
 strimux-testkit = { path = "../strimux-testkit" }
+strimux-core-api = { path = "../strimux-core-api" }
 portable-pty = { workspace = true }
 crossterm = { workspace = true }
+libloading = { workspace = true }

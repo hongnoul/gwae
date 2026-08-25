@@ -7,6 +7,15 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **Hot module reload for development**: three new crates/bins let you develop
+  strimux _inside_ strimux without ever killing your session. `strimux-core-api`
+  is a stable boundary crate (hot core + host both compile against it);
+  `strimux-core` is a `cdylib` implementing that core; `strimux-hmr` is a host
+  that `dlopen`s the core and hot-swaps it on rebuild. Session state (focus,
+  layout) lives in the host, so reloads are lossless. `make dev-hmr` watches
+  the core sources and rebuilds the dylib on every save; `make hmr` (or
+  `strimux-hmr`) runs the host that hot-reloads it. macOS `dlopen` caching is
+  handled by loading a fresh-copied dylib each generation.
 - **M0 renderer**: single-process, multi-pane PTY cell renderer. The `strimux`
   binary spawns real panes, composes them into one 2D cell buffer, diffs and
   paints frames, and streams pane output live. Full 300x80 repaint measured at

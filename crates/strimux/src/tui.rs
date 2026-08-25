@@ -8,14 +8,12 @@ use std::time::Duration;
 
 use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size as term_size, EnterAlternateScreen,
     LeaveAlternateScreen,
 };
-use crossterm::execute;
-use portable_pty::{
-    native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize,
-};
+use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 use strimux_layout::{Action, FollowScroll, Layout, PaneId, Viewport};
 use strimux_term::{CColor, Cell, Size as GridSize, Style, TermGrid, Vt100Grid};
 
@@ -93,9 +91,7 @@ fn spawn_pane(
         pixel_width: 0,
         pixel_height: 0,
     };
-    let pair = pty
-        .openpty(size)
-        .map_err(|e| format!("openpty: {e}"))?;
+    let pair = pty.openpty(size).map_err(|e| format!("openpty: {e}"))?;
     let master = pair.master;
     let slave = pair.slave;
     let argv = if cmd.trim().is_empty() {
@@ -112,9 +108,7 @@ fn spawn_pane(
     }
     cb.env("STRIMUX_PANE", id.to_string());
     cb.env("TERM", "xterm-256color");
-    let child = slave
-        .spawn_command(cb)
-        .map_err(|e| format!("spawn: {e}"))?;
+    let child = slave.spawn_command(cb).map_err(|e| format!("spawn: {e}"))?;
     drop(slave);
 
     let mut reader = master
@@ -140,9 +134,7 @@ fn spawn_pane(
         }
     });
 
-    master
-        .resize(size)
-        .map_err(|e| format!("resize: {e}"))?;
+    master.resize(size).map_err(|e| format!("resize: {e}"))?;
 
     Ok(PtyPane {
         master,
@@ -181,11 +173,11 @@ fn shell_split(cmd: &str) -> Vec<String> {
 /// One visible pane on screen: where to draw it and which grid slice to show.
 struct PaneView {
     pid: PaneId,
-    rect: Rect,          // screen rect (already clipped to viewport horizontally)
-    col_x0: u16,         // grid column at the left edge of `rect` (before content scroll)
-    h_scroll: i32,       // pane content scroll in cells
-    grid_cols: u16,      // full logical content width of the grid
-    grid_rows: u16,      // vertical size of the grid
+    rect: Rect,     // screen rect (already clipped to viewport horizontally)
+    col_x0: u16,    // grid column at the left edge of `rect` (before content scroll)
+    h_scroll: i32,  // pane content scroll in cells
+    grid_cols: u16, // full logical content width of the grid
+    grid_rows: u16, // vertical size of the grid
 }
 
 /// Compute visible pane views for the focused row.
@@ -232,7 +224,12 @@ fn focused_pane_views(
             let h_scroll = panes.get(pid).map(|p| p.h_scroll).unwrap_or(0);
             out.push(PaneView {
                 pid: *pid,
-                rect: Rect { x: left, y, w: wv, h },
+                rect: Rect {
+                    x: left,
+                    y,
+                    w: wv,
+                    h,
+                },
                 col_x0,
                 h_scroll,
                 grid_cols,
@@ -274,10 +271,16 @@ fn render_frame(
     out.resize((cols as usize) * (rows as usize), Cell::default());
 
     for v in focused_pane_views(layout, cols, rows, content_width, panes) {
-        let Some(pane) = panes.get_mut(&v.pid) else { continue };
+        let Some(pane) = panes.get_mut(&v.pid) else {
+            continue;
+        };
         // Keep the emulator at its full logical content width; only reflow vertically.
-        pane.grid.resize(GridSize { cols: v.grid_cols, rows: v.grid_rows });
-        let Some((g_start, g_end)) = pane_window(v.col_x0, v.h_scroll, v.rect.w, v.grid_cols) else {
+        pane.grid.resize(GridSize {
+            cols: v.grid_cols,
+            rows: v.grid_rows,
+        });
+        let Some((g_start, g_end)) = pane_window(v.col_x0, v.h_scroll, v.rect.w, v.grid_cols)
+        else {
             continue;
         };
         for gy in 0..v.rect.h {
@@ -339,15 +342,11 @@ fn crossterm_color(c: CColor) -> crossterm::style::Color {
 }
 
 /// Diff and paint `out` vs `last` into `buf`. Returns true if anything changed.
-fn paint(
-    buf: &mut Vec<u8>,
-    out: &[Cell],
-    last: &[Cell],
-    cols: u16,
-    rows: u16,
-) -> bool {
-    use crossterm::style::{Attribute, Print, SetAttribute, SetBackgroundColor, SetForegroundColor};
+fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -> bool {
     use crossterm::queue;
+    use crossterm::style::{
+        Attribute, Print, SetAttribute, SetBackgroundColor, SetForegroundColor,
+    };
     let cc = cols as usize;
     let mut dirty = false;
     for y in 0..rows as usize {
@@ -356,7 +355,11 @@ fn paint(
             continue;
         }
         dirty = true;
-        let _ = queue!(buf, cursor::MoveTo(0, y as u16), SetAttribute(Attribute::Reset));
+        let _ = queue!(
+            buf,
+            cursor::MoveTo(0, y as u16),
+            SetAttribute(Attribute::Reset)
+        );
         // Group cells into style runs and print each run.
         let mut x = 0usize;
         while x < cc {
@@ -459,10 +462,10 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     // is set, which delivers ESC+h instead), so the two paths can't collide.
     if !alt && !ctrl && !shift {
         match ev.code {
-            Char('\u{2d9}') => return Some(Cmd::Act(Action::FocusLeft)),  // ˙ (Option+h)
+            Char('\u{2d9}') => return Some(Cmd::Act(Action::FocusLeft)), // ˙ (Option+h)
             Char('\u{2206}') => return Some(Cmd::Act(Action::FocusDown)), // ∆ (Option+j)
-            Char('\u{2da}') => return Some(Cmd::Act(Action::FocusUp)),    // ˚ (Option+k)
-            Char('\u{ac}') => return Some(Cmd::Act(Action::FocusRight)),  // ¬ (Option+l)
+            Char('\u{2da}') => return Some(Cmd::Act(Action::FocusUp)),   // ˚ (Option+k)
+            Char('\u{ac}') => return Some(Cmd::Act(Action::FocusRight)), // ¬ (Option+l)
             _ => {}
         }
     }
@@ -585,19 +588,23 @@ fn sync_panes(
     Ok(())
 }
 
-
-
 /// Run the interactive TUI.
 pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     use std::io;
     let mut stdout = io::stdout();
-    enable_raw_mode().map_err(|e| { eprintln!("raw mode: {e}"); 1 })?;
+    enable_raw_mode().map_err(|e| {
+        eprintln!("raw mode: {e}");
+        1
+    })?;
     if let Err(e) = execute!(stdout, EnterAlternateScreen, cursor::Hide) {
         eprintln!("enter alt screen: {e}");
         let _ = disable_raw_mode();
         return Err(1);
     }
-    let (cols, mut rows) = term_size().map_err(|e| { eprintln!("size: {e}"); 1 })?;
+    let (cols, mut rows) = term_size().map_err(|e| {
+        eprintln!("size: {e}");
+        1
+    })?;
     let mut cols = cols.max(1);
     rows = rows.max(2);
     let mut layout = Layout::default();
@@ -610,7 +617,11 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // `run` command (if any); the rest get the user's shell.
     let pane_ids: Vec<PaneId> = layout.panes.keys().copied().collect();
     for (i, pid) in pane_ids.iter().enumerate() {
-        let cmd = if i == 0 { initial.clone() } else { String::new() };
+        let cmd = if i == 0 {
+            initial.clone()
+        } else {
+            String::new()
+        };
         match spawn_pane(*pid, &cmd, gw, gh, tx.clone()) {
             Ok(p) => {
                 panes.insert(*pid, p);
@@ -660,7 +671,11 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                             Cmd::Quit => break 'main,
                             Cmd::Scroll(d) => {
                                 let v = Viewport::new(cols);
-                                let _ = layout.apply(Action::ScrollViewport(d), v, FollowScroll::default());
+                                let _ = layout.apply(
+                                    Action::ScrollViewport(d),
+                                    v,
+                                    FollowScroll::default(),
+                                );
                                 dirty = true;
                             }
                             Cmd::ScrollPane(d) => {
@@ -673,7 +688,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                             }
                             Cmd::Act(a) => {
                                 let v = Viewport::new(cols);
-                                let f = FollowScroll { margin: cfg.scroll_margin, center: cfg.center_focus };
+                                let f = FollowScroll {
+                                    margin: cfg.scroll_margin,
+                                    center: cfg.center_focus,
+                                };
                                 let _ = layout.apply(a, v, f);
                                 if let Err(e) = sync_panes(&mut layout, &mut panes, &cfg, &tx, 0) {
                                     tracing::error!("sync panes: {e}");
@@ -710,8 +728,16 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         for v in focused_pane_views(&layout, cols, rows, cfg.content_width, &panes) {
             let pid = v.pid;
             if let Some(p) = panes.get_mut(&pid) {
-                if p.grid.size() != (GridSize { cols: v.grid_cols, rows: v.grid_rows }) {
-                    p.grid.resize(GridSize { cols: v.grid_cols, rows: v.grid_rows });
+                if p.grid.size()
+                    != (GridSize {
+                        cols: v.grid_cols,
+                        rows: v.grid_rows,
+                    })
+                {
+                    p.grid.resize(GridSize {
+                        cols: v.grid_cols,
+                        rows: v.grid_rows,
+                    });
                     dirty = true;
                 }
                 let _ = p.master.resize(PtySize {
@@ -724,7 +750,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         }
 
         if dirty {
-            render_frame(&mut frame, &layout, &mut panes, cols, rows, cfg.content_width);
+            render_frame(
+                &mut frame,
+                &layout,
+                &mut panes,
+                cols,
+                rows,
+                cfg.content_width,
+            );
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
             if !buf.is_empty() {
@@ -822,22 +855,22 @@ fn content_scroll_reveals_overflow_e2e() {
     // At scroll 0 the viewport shows content columns 0..80 (digits 1,2,...,0).
     panes.get_mut(&pid).unwrap().h_scroll = 0;
     render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
-    assert_eq!(out[0].ch, '1');   // content col 0  -> i=1
-    assert_eq!(out[9].ch, '0');   // content col 9  -> i=10
-    assert_eq!(out[79].ch, '0');  // content col 79 -> i=80
+    assert_eq!(out[0].ch, '1'); // content col 0  -> i=1
+    assert_eq!(out[9].ch, '0'); // content col 9  -> i=10
+    assert_eq!(out[79].ch, '0'); // content col 79 -> i=80
 
     // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
     panes.get_mut(&pid).unwrap().h_scroll = 60;
     render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
-    assert_eq!(out[0].ch, '1');   // content col 60 -> i=61
-    assert_eq!(out[1].ch, '2');   // content col 61 -> i=62
-    assert_eq!(out[79].ch, '0');  // content col 139 -> i=140
+    assert_eq!(out[0].ch, '1'); // content col 60 -> i=61
+    assert_eq!(out[1].ch, '2'); // content col 61 -> i=62
+    assert_eq!(out[79].ch, '0'); // content col 139 -> i=140
 
     // Past the 240-col content the window reveals blanks.
     panes.get_mut(&pid).unwrap().h_scroll = 200;
     render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
-    assert_eq!(out[0].ch, '1');   // content col 200 -> i=201
-    assert_eq!(out[40].ch, ' ');  // content col 240 does not exist
+    assert_eq!(out[0].ch, '1'); // content col 200 -> i=201
+    assert_eq!(out[40].ch, ' '); // content col 240 does not exist
     assert_eq!(out[79].ch, ' ');
 
     let _ = panes.get_mut(&pid).unwrap().child.kill();

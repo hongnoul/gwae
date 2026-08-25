@@ -32,7 +32,10 @@ pub struct Cell {
 
 impl Default for Cell {
     fn default() -> Self {
-        Cell { ch: ' ', style: Style::default() }
+        Cell {
+            ch: ' ',
+            style: Style::default(),
+        }
     }
 }
 
@@ -81,13 +84,20 @@ pub struct Vt100Grid {
 impl Vt100Grid {
     pub fn new(size: Size) -> Self {
         let parser = vt100::Parser::new(size.rows, size.cols, 10_000);
-        Vt100Grid { parser, rows: size.rows, cols: size.cols }
+        Vt100Grid {
+            parser,
+            rows: size.rows,
+            cols: size.cols,
+        }
     }
 }
 
 impl TermGrid for Vt100Grid {
     fn size(&self) -> Size {
-        Size { cols: self.cols, rows: self.rows }
+        Size {
+            cols: self.cols,
+            rows: self.rows,
+        }
     }
 
     fn resize(&mut self, size: Size) {
@@ -99,7 +109,12 @@ impl TermGrid for Vt100Grid {
     fn feed(&mut self, bytes: &[u8]) -> Vec<Damage> {
         // vt100 does not report incremental damage, so we re-render the whole grid.
         self.parser.process(bytes);
-        vec![Damage { x: 0, y: 0, w: self.cols, h: self.rows }]
+        vec![Damage {
+            x: 0,
+            y: 0,
+            w: self.cols,
+            h: self.rows,
+        }]
     }
 
     fn cell(&self, x: u16, y: u16) -> Cell {
@@ -139,7 +154,12 @@ impl TermGrid for NullGrid {
         self.size = size;
     }
     fn feed(&mut self, _bytes: &[u8]) -> Vec<Damage> {
-        vec![Damage { x: 0, y: 0, w: self.size.cols, h: self.size.rows }]
+        vec![Damage {
+            x: 0,
+            y: 0,
+            w: self.size.cols,
+            h: self.size.rows,
+        }]
     }
     fn cell(&self, _x: u16, _y: u16) -> Cell {
         Cell::default()
@@ -154,7 +174,15 @@ mod tests {
     fn vt100_feed_writes_cells() {
         let mut g = Vt100Grid::new(Size { cols: 20, rows: 5 });
         let dmg = g.feed(b"hello");
-        assert_eq!(dmg, vec![Damage { x: 0, y: 0, w: 20, h: 5 }]);
+        assert_eq!(
+            dmg,
+            vec![Damage {
+                x: 0,
+                y: 0,
+                w: 20,
+                h: 5
+            }]
+        );
         assert_eq!(g.size(), Size { cols: 20, rows: 5 });
         assert_eq!(g.cell(0, 0).ch, 'h');
         assert_eq!(g.cell(4, 0).ch, 'o');

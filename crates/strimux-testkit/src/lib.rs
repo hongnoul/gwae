@@ -60,6 +60,9 @@ impl TermGrid for FakeTerminal {
             .and_then(|r| r.get(x as usize))
             .copied()
             .unwrap_or(' ');
-        Cell { ch, style: Style::default() }
+        Cell {
+            ch,
+            style: Style::default(),
+        }
     }
 }

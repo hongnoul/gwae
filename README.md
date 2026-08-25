@@ -97,6 +97,29 @@ cargo fmt --all
 Layout invariants live as `proptest` properties in
 `crates/strimux-layout/tests/invariants.rs`.
 
+### Hot module reload (develop strimux inside strimux)
+
+strimux ships a small hot-reload scaffold so you can edit its own code from
+inside a running session (e.g. with jcode) and see the change live, without the
+session ever dying:
+
+```sh
+make dev-hmr      # pane 1: watches crates/strimux-core/src, rebuilds the dylib on save
+make hmr          # pane 2: the host; hot-swaps the core whenever the dylib changes
+```
+
+- The **host** (`strimux-hmr`) owns raw mode, input, the frame buffer, and all
+  session state (focus, layout). It `dlopen`s `target/debug/libstrimux_core.dylib`.
+- The **core** (`crates/strimux-core`, a `cdylib`) holds the logic you iterate
+  on: `handle_key` and `render`. Session state is borrowed in per call, so a
+  swap is lossless.
+- `strimux-core-api` is the stable boundary both compile against; it never
+  recompiles on a reload, keeping each cycle a fast one-crate rebuild.
+
+Edit a core file, save, and the running host shows the new behavior in under a
+second. Bump `LABEL` in `crates/strimux-core` to visibly confirm the swap in the
+status line. `q` quits the host.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
