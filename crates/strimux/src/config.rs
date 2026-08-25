@@ -68,10 +68,11 @@ impl Default for Config {
             content_width: 0,
             default_agent: "jcode".to_string(),
             startup_panes: 1,
-            background: Background::default(),
-            focus_color: Background(CColor::Rgb(0xff, 0x00, 0x00)),
+            // Catppuccin Mocha defaults: base #1e1e2e, sapphire #74c7ec, overlay0 #6c7086.
+            background: Background(CColor::Rgb(0x1e, 0x1e, 0x2e)),
+            focus_color: Background(CColor::Rgb(0x74, 0xc7, 0xec)),
             skeleton: true,
-            skeleton_color: Background(CColor::Rgb(0xff, 0xff, 0xff)),
+            skeleton_color: Background(CColor::Rgb(0x6c, 0x70, 0x86)),
             minimap: Minimap::default(),
             mouse: true,
             scroll_lines: 3,
@@ -276,14 +277,16 @@ mod tests {
     fn defaults_apply_when_omitted() {
         let cfg = parse("");
         assert_eq!(cfg.startup_panes, 1);
-        assert_eq!(cfg.background, Background::default());
-        assert_eq!(cfg.focus_color, Background(CColor::Rgb(0xff, 0, 0)));
+        // Catppuccin Mocha defaults: background base (#1e1e2e), focus sapphire
+        // (#74c7ec), skeleton overlay0 (#6c7086).
+        assert_eq!(cfg.background, Background(CColor::Rgb(0x1e, 0x1e, 0x2e)));
+        assert_eq!(cfg.focus_color, Background(CColor::Rgb(0x74, 0xc7, 0xec)));
         assert!(cfg.skeleton, "skeleton frames on by default");
         assert!(cfg.mouse, "mouse captured by default");
         assert_eq!(cfg.scroll_lines, 3);
         assert_eq!(
             cfg.skeleton_color,
-            Background(CColor::Rgb(0xff, 0xff, 0xff))
+            Background(CColor::Rgb(0x6c, 0x70, 0x86))
         );
     }
 
