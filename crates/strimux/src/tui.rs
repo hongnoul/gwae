@@ -1777,6 +1777,15 @@ fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
 
 /// Map a key event to a command. Returns None when it is a pass-through.
 fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
+    // Bare modifier press/release (Alt, Shift, Ctrl, Super, etc.) must never
+    // become pane input. With the Kitty keyboard protocol a lone Option press
+    // arrives as `Modifier(LeftAlt)` with the Alt bit set; the previous
+    // fallthrough turned that into `key_bytes() == ESC` and cleared the
+    // focused pane's line editor (e.g. jcode). Treat every pure modifier key
+    // as a no-op — quasimode tracking is handled in run_tui, not here.
+    if matches!(ev.code, KeyCode::Modifier(_)) {
+        return Some(Cmd::None);
+    }
     let alt = ev.modifiers.contains(KeyModifiers::ALT);
     let shift = physical_shift(ev);
     let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
@@ -2912,6 +2921,54 @@ mod tests {
             KeyEventState::CAPS_LOCK,
         );
         assert_eq!(handle_key(&ev), Some(Cmd::Input(b"A".to_vec())));
+    }
+
+    #[test]
+    fn bare_modifier_never_sends_input_to_pane() {
+        // With the Kitty keyboard protocol a lone Option press arrives as
+        // `Modifier(LeftAlt)` with the Alt bit set. The old fallthrough
+        // treated it as Meta+<nothing> -> a bare ESC, which clears jcode's
+        // line editor (e.g. pressing Option to hold quasimode erased the
+        // input line). Every pure modifier press/release must be a no-op.
+        for code in [
+            KeyCode::Modifier(ModifierKeyCode::LeftAlt),
+            KeyCode::Modifier(ModifierKeyCode::RightAlt),
+            KeyCode::Modifier(ModifierKeyCode::LeftShift),
+            KeyCode::Modifier(ModifierKeyCode::RightShift),
+            KeyCode::Modifier(ModifierKeyCode::LeftControl),
+            KeyCode::Modifier(ModifierKeyCode::RightControl),
+            KeyCode::Modifier(ModifierKeyCode::LeftSuper),
+            KeyCode::Modifier(ModifierKeyCode::RightSuper),
+        ] {
+            let mods = if matches!(
+                code,
+                KeyCode::Modifier(ModifierKeyCode::LeftAlt)
+                    | KeyCode::Modifier(ModifierKeyCode::RightAlt)
+            ) {
+                KeyModifiers::ALT
+            } else {
+                KeyModifiers::NONE
+            };
+            let ev = KeyEvent::new(code, mods);
+            assert_eq!(
+                handle_key(&ev),
+                Some(Cmd::None),
+                "bare modifier {code:?} must not become pane input"
+            );
+            // Must not consume a Ctrl-b prefix either (quasimode hold while
+            // in prefix should keep the prefix alive for the next real key).
+            IN_PREFIX.store(true, Ordering::Relaxed);
+            assert_eq!(
+                handle_key(&ev),
+                Some(Cmd::None),
+                "bare modifier {code:?} must not consume prefix"
+            );
+            assert!(
+                IN_PREFIX.load(Ordering::Relaxed),
+                "prefix survives bare modifier {code:?}"
+            );
+            IN_PREFIX.store(false, Ordering::Relaxed);
+        }
     }
 
     #[test]
