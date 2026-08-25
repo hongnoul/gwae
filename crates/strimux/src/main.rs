@@ -13,6 +13,7 @@ mod install;
 mod keys;
 mod latency;
 mod onboard;
+mod preview;
 mod select;
 mod splash;
 mod theme;

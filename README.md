@@ -192,6 +192,14 @@ than asking about a package manager you may never have heard of; it is skipped
 entirely if you already have `btm`, and `STRIMUX_NO_INSTALL=1` turns the offer
 off for unattended runs.
 
+Every question that changes what the screen looks like is drawn *with* a live
+mockup of the grid underneath it: the real palette, the real column widths,
+repainted on every keypress. Picking `two-thirds` shows you a two-thirds
+column, and picking a theme shows you that theme, so the choice is a picture
+rather than a word you have to already know. The mockup reflects the answers
+you have already given, shrinks on a short terminal, and is dropped entirely
+before it would ever push the question itself off the screen.
+
 Setup runs once. `strimux init` re-runs it any time (defaults become whatever
 your config currently says, so accepting every default changes nothing),
 `strimux init --print` shows every question without asking, and

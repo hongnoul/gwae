@@ -625,6 +625,76 @@ pub fn render_question(q: &Question, idx: usize, total: usize, cursor: usize) ->
     s
 }
 
+/// One question *plus* the live mockup of what its highlighted option would
+/// do. This is the screen a user actually sees.
+///
+/// Split from [`render_question`] rather than folded into it so the pure
+/// question text stays independently testable, and so a question that changes
+/// nothing visible (the `btm` install offer) can simply be rendered without a
+/// picture instead of being given a misleading one.
+///
+/// The preview reflects **every answer so far**, not just this question: by
+/// the time the flow asks about cell labels, the mockup is already wearing the
+/// theme and the column width the user picked, so each answer is judged in the
+/// setup it will actually live in.
+pub fn render_screen(
+    q: &Question,
+    idx: usize,
+    total: usize,
+    cursor: usize,
+    answered_so_far: &[(String, String)],
+    crlf: bool,
+) -> String {
+    let mut s = render_question(q, idx, total, cursor);
+    let Some(mut prefs) = previewable(q, answered_so_far) else {
+        return s;
+    };
+    // The highlighted option, applied on top: the picture shows what pressing
+    // Enter right now would produce, which is the entire point of a preview.
+    prefs.apply(q.key, q.options[cursor].value);
+    let art = crate::preview::render(&prefs, crlf);
+    let nl = if crlf { "\r\n" } else { "\n" };
+    s.push_str(nl);
+    s.push_str(&art);
+    s
+}
+
+/// [`render_screen`] with an explicit mockup height, or none at all.
+///
+/// `height` is what [`crate::preview::fits`] decided this terminal can spare.
+pub fn render_sized(
+    q: &Question,
+    idx: usize,
+    total: usize,
+    cursor: usize,
+    answered_so_far: &[(String, String)],
+    height: Option<usize>,
+) -> String {
+    let mut s = render_question(q, idx, total, cursor);
+    let (Some(h), Some(mut prefs)) = (height, previewable(q, answered_so_far)) else {
+        return s;
+    };
+    prefs.apply(q.key, q.options[cursor].value);
+    s.push_str("\r\n");
+    s.push_str(&crate::preview::render_h(&prefs, h, true));
+    s
+}
+
+/// The preview state for a question, or `None` when a picture would be a lie.
+///
+/// A question earns a mockup only if the mockup can *answer* it. `install.btm`
+/// changes the machine, not the screen, and drawing an unchanged grid under it
+/// would quietly teach the user that the preview is decorative.
+fn previewable(
+    q: &Question,
+    answered_so_far: &[(String, String)],
+) -> Option<crate::preview::Prefs> {
+    if q.key == INSTALL_KEY {
+        return None;
+    }
+    Some(crate::preview::Prefs::from_pairs(answered_so_far))
+}
+
 /// The whole flow as text, for `strimux init --print` and for docs.
 ///
 /// Every question, including the `btm` offer that a machine which already has
@@ -637,9 +707,14 @@ pub fn render_all() -> String {
     });
     let n = qs.len();
     let mut s = String::new();
+    // Answers accumulate exactly as they would in a real run that accepted
+    // every default, so `--print` shows the flow a new user is walked through
+    // rather than n unrelated screens.
+    let mut so_far: Vec<(String, String)> = Vec::new();
     for (i, q) in qs.iter().enumerate() {
-        s.push_str(&render_question(q, i, n, q.default));
+        s.push_str(&render_screen(q, i, n, q.default, &so_far, true));
         s.push_str("\r\n");
+        so_far.push((q.key.to_string(), q.default_value().to_string()));
     }
     s
 }
@@ -851,6 +926,17 @@ fn term_cols() -> u16 {
     crossterm::terminal::size().map(|(c, _)| c).unwrap_or(80)
 }
 
+/// The rows a question itself occupies: prompt, help, blank, one per option,
+/// blank, key hints.
+fn question_rows(q: &Question) -> usize {
+    q.options.len() + 5
+}
+
+/// The terminal size, defaulting to a conservative 80x24.
+fn term_size() -> (u16, u16) {
+    crossterm::terminal::size().unwrap_or((80, 24))
+}
+
 /// The palette the flow paints itself in: whatever the config already says,
 /// so a re-run of `strimux init` opens in the theme the user picked last time.
 fn current_palette(text: &str) -> Palette {
@@ -944,7 +1030,22 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
         }
 
         let q = &qs[at];
-        draw(&render_question(q, at, total, cursors[at]));
+        // Only answers *before* this question feed the preview; the current
+        // one is supplied by the highlight, so moving the cursor repaints.
+        let so_far = answered(&qs[..at], &chosen[..at]);
+        let (cols, rows) = term_size();
+        // Re-measured every frame, not once at startup: a user who resizes
+        // mid-flow gets a preview sized for the window they are looking at.
+        // The mockup shrinks before it disappears, and disappears before the
+        // question it is illustrating scrolls off the top.
+        draw(&render_sized(
+            q,
+            at,
+            total,
+            cursors[at],
+            &so_far,
+            crate::preview::fits(cols, rows, question_rows(q)),
+        ));
         let Some(key) = read_key() else {
             // EOF (a closed pipe, a terminal going away): take the defaults
             // for everything still unanswered rather than half-writing.
@@ -1106,6 +1207,84 @@ mod tests {
             cargo: true,
             macos: true,
         })
+    }
+
+    /// The preview under a question reflects the answers already given, so a
+    /// theme picked on screen 1 is what screen 5 is judged in.
+    #[test]
+    fn the_preview_carries_earlier_answers_forward() {
+        let qs = all();
+        let i = qs.iter().position(|q| q.key == "cell_labels").unwrap();
+        let mocha = render_screen(&qs[i], i, qs.len(), 0, &[], false);
+        let nord = render_screen(
+            &qs[i],
+            i,
+            qs.len(),
+            0,
+            &[("theme".to_string(), "\"nord\"".to_string())],
+            false,
+        );
+        assert_ne!(
+            mocha, nord,
+            "an earlier theme answer did not reach the preview"
+        );
+    }
+
+    /// Moving the highlight repaints the preview: that is what makes it a
+    /// preview rather than a picture of the default.
+    #[test]
+    fn moving_the_highlight_changes_the_preview() {
+        let qs = all();
+        let i = qs.iter().position(|q| q.key == "startup_panes").unwrap();
+        let one = render_screen(&qs[i], i, qs.len(), 0, &[], false);
+        let four = render_screen(&qs[i], i, qs.len(), 3, &[], false);
+        assert_ne!(one, four);
+    }
+
+    /// The install question changes the machine, not the screen, so it gets no
+    /// mockup: an unchanging picture would teach that previews are decorative.
+    #[test]
+    fn the_install_question_gets_no_mockup() {
+        let qs = all();
+        let i = qs.iter().position(|q| q.key == INSTALL_KEY).unwrap();
+        assert_eq!(
+            render_screen(&qs[i], i, qs.len(), 0, &[], false),
+            render_question(&qs[i], i, qs.len(), 0),
+        );
+    }
+
+    /// Whatever the terminal size, the whole screen fits in it: the question a
+    /// user is answering must never be scrolled off by its own illustration.
+    #[test]
+    fn no_screen_ever_overflows_the_terminal_it_was_sized_for() {
+        let qs = all();
+        for rows in 10u16..=60 {
+            for cols in [70u16, 80, 100, 140] {
+                for (i, q) in qs.iter().enumerate() {
+                    let h = crate::preview::fits(cols, rows, question_rows(q));
+                    let screen = render_sized(q, i, qs.len(), 0, &[], h);
+                    let lines = screen.matches("\r\n").count();
+                    // A question with more options than the terminal has rows
+                    // does not fit with or without a preview; what must hold
+                    // is that the *preview never makes it worse*, i.e. it is
+                    // only ever drawn when there was room to spare.
+                    let bare = render_question(q, i, qs.len(), 0).matches("\r\n").count();
+                    if bare <= rows as usize {
+                        assert!(
+                            lines <= rows as usize,
+                            "{cols}x{rows} q={} drew {lines} lines (bare {bare})",
+                            q.key
+                        );
+                    } else {
+                        assert_eq!(
+                            h, None,
+                            "{cols}x{rows} q={} previewed despite not fitting bare",
+                            q.key
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
