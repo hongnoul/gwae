@@ -7,6 +7,10 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Fixed
+- **Pane close keeps the focus position**: closing a pane (`⌥+q` or process
+  exit) used to always shift focus to the left neighbor. Focus now stays in
+  the same slot, taking over the column that compacts in from the right, and
+  only moves left when the closed pane was the rightmost one.
 - **SGR attributes no longer bleed across a row ("line overflow")**: the
   painter reset attributes once per row but SGR codes are additive, so an
   underlined/bold run (e.g. a popup's underlined entries) leaked its
@@ -24,7 +28,9 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 - **Panes close naturally on process exit**: when a pane's child process ends
   (shell `exit`, agent quits, crash), the pane is removed from the layout and
   the strip collapses exactly like `⌥+q`: columns compact leftward and focus
-  **fills left first** (the left neighbor, or the pane above in a stack).
+  **stays in the same slot**, landing on the column that slides in from the
+  right (or the pane above in a stack), and only falls to the left neighbor
+  when nothing is left to the right.
   Closing the last pane quits strimux. Previously an exited pane lingered as a
   dead frozen pane and `⌥+q` was the only way to clear it.
 - **Fixed-width panes**: every column now renders at its own fixed preset

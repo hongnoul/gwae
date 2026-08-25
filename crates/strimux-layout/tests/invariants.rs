@@ -166,18 +166,26 @@ fn new_spawn_scrolls_the_new_pane_into_view() {
 }
 
 #[test]
-fn kill_pane_fills_left_first() {
-    // Killing a middle column collapses the strip and focus lands on the
-    // LEFT neighbor, never the column that slid in from the right.
+fn kill_pane_keeps_slot_then_falls_left() {
+    // Killing a middle column collapses the strip and focus stays in the same
+    // slot (the column that slid in from the right). Only the rightmost
+    // column falls back to the left neighbor.
     let mut layout = Layout::default(); // 4 columns
     let _ = layout.apply(Action::FocusRight, view(), follow());
     let _ = layout.apply(Action::FocusRight, view(), follow()); // focus col 2
     let n = layout.focused_row().unwrap().columns.len();
-    let left_pid = layout.focused_row().unwrap().columns[1].panes[0];
+    let right_pid = layout.focused_row().unwrap().columns[3].panes[0];
     let _ = layout.apply(Action::KillPane, view(), follow());
     let row = layout.focused_row().unwrap();
     assert_eq!(row.columns.len(), n - 1, "column collapsed");
-    assert_eq!(layout.focus.column, 1, "focus fills left");
+    assert_eq!(layout.focus.column, 2, "focus keeps its slot");
+    assert_eq!(row.columns[layout.focus.column].panes[0], right_pid);
+
+    // Now the focus is on the rightmost column: killing it must fall left.
+    let left_pid = layout.focused_row().unwrap().columns[1].panes[0];
+    let _ = layout.apply(Action::KillPane, view(), follow());
+    assert_eq!(layout.focus.column, 1, "no column to the right, fall left");
+    let row = layout.focused_row().unwrap();
     assert_eq!(row.columns[layout.focus.column].panes[0], left_pid);
 }
 

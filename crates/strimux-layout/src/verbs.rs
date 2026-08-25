@@ -419,8 +419,9 @@ impl Layout {
     }
 
     /// Remove the pane at `(row, col, pane_idx)` and collapse the layout:
-    /// columns compact leftward (no gaps, invariant 5) and focus always
-    /// **fills left first**, landing on the left neighbor when one exists.
+    /// columns compact leftward (no gaps, invariant 5) and focus **keeps its
+    /// slot**: the column that slides in from the right takes the focus, and
+    /// only when nothing remains to the right does focus fall left.
     fn remove_pane_at(
         &mut self,
         row: RowId,
@@ -499,7 +500,15 @@ impl Layout {
                 // pane above within a stacked column) over the one that slid
                 // into the closed slot from the right.
                 if col_emptied {
-                    self.focus.column = col.saturating_sub(1);
+                    // Stay in the same screen position: the column that slid
+                    // in from the right takes the closed slot. Only when
+                    // nothing is left to the right does focus fall leftward.
+                    let cols = self.row(row).map(|r| r.columns.len()).unwrap_or(0);
+                    self.focus.column = if col < cols {
+                        col
+                    } else {
+                        col.saturating_sub(1)
+                    };
                     self.focus.pane = 0;
                 } else {
                     self.focus.pane = pane_idx.saturating_sub(1);
