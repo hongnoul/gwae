@@ -486,6 +486,7 @@ fn render_frame(
     skeleton: bool,
     mm: &crate::config::Minimap,
     cow: &crate::config::Cowsay,
+    cell_labels: bool,
 ) {
     // Every chrome color in this function comes from the palette; the
     // skeleton frame color is just `pal.overlay`, kept in a local so the
@@ -681,7 +682,9 @@ fn render_frame(
                 w: boxr.w.saturating_sub(2),
                 h: boxr.h.saturating_sub(2),
             };
-            draw_placeholder_contents(out, cols, inner, &label, pal.label, cow, strip_no, pcol);
+            draw_placeholder_contents(
+                out, cols, inner, &label, pal.label, cow, strip_no, pcol, cell_labels,
+            );
             pcol += 1;
             edge += w;
         }
@@ -929,6 +932,7 @@ fn draw_placeholder_contents(
     cow: &crate::config::Cowsay,
     strip_no: usize,
     pcol: usize,
+    cell_labels: bool,
 ) {
     let art = if cow.enabled {
         crate::cowsay::message_for(&cow.messages, strip_no, pcol)
@@ -938,33 +942,38 @@ fn draw_placeholder_contents(
         Vec::new()
     };
     // 5 rows of block font, then a blank spacer row, then the art.
-    const LABEL_H: u16 = 5;
+    const LABEL_H_FULL: u16 = 5;
+    let label_h: u16 = if cell_labels { LABEL_H_FULL } else { 0 };
     let art_h = art.len() as u16;
-    let fits = !art.is_empty() && rect.h >= LABEL_H + 1 + art_h;
+    let fits = !art.is_empty() && rect.h >= label_h + 1 + art_h;
     if !fits {
-        draw_big_label(out, cols, rect, label, color);
+        if cell_labels {
+            draw_big_label(out, cols, rect, label, color);
+        }
         return;
     }
-    let total = LABEL_H + 1 + art_h;
+    let total = label_h + 1 + art_h;
     let top = rect.y + (rect.h - total) / 2;
-    draw_big_label(
-        out,
-        cols,
-        Rect {
-            x: rect.x,
-            y: top,
-            w: rect.w,
-            h: LABEL_H,
-        },
-        label,
-        color,
-    );
+    if cell_labels {
+        draw_big_label(
+            out,
+            cols,
+            Rect {
+                x: rect.x,
+                y: top,
+                w: rect.w,
+                h: label_h,
+            },
+            label,
+            color,
+        );
+    }
     draw_art(
         out,
         cols,
         Rect {
             x: rect.x,
-            y: top + LABEL_H + 1,
+            y: top + label_h + 1,
             w: rect.w,
             h: art_h,
         },
@@ -2777,6 +2786,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 cfg.skeleton,
                 &cfg.minimap,
                 &cfg.cowsay,
+                cfg.cell_labels,
             );
             if show_hud {
                 draw_center_hud(&mut frame, cols, rows, &layout, &pal);
@@ -3857,6 +3867,7 @@ mod tests {
             true,
             &no_map(),
             &no_cow(),
+            true,
         );
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
         assert_eq!(ranges.len(), 4);
@@ -3939,6 +3950,7 @@ mod tests {
             true,
             &no_map(),
             &no_cow(),
+            true,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
         // Placeholder boxes cover [40,60) and [60,80): white thin frames all
@@ -3976,6 +3988,7 @@ mod tests {
             true,
             &no_map(),
             &no_cow(),
+            true,
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
         // Placeholder interiors are default-bg, never the dim background.
@@ -4025,6 +4038,7 @@ mod tests {
             true,
             &no_map(),
             cow,
+            true,
         );
         (0..rows)
             .map(|y| {
@@ -4082,6 +4096,7 @@ mod tests {
             true,
             &no_map(),
             &cow,
+            true,
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
         let painted = (61..89u16)
@@ -4421,6 +4436,7 @@ fn content_scroll_reveals_overflow_e2e() {
             enabled: false,
             messages: Vec::new(),
         },
+        true,
     );
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
     assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
@@ -4442,6 +4458,7 @@ fn content_scroll_reveals_overflow_e2e() {
             enabled: false,
             messages: Vec::new(),
         },
+        true,
     );
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
     assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
@@ -4463,6 +4480,7 @@ fn content_scroll_reveals_overflow_e2e() {
             enabled: false,
             messages: Vec::new(),
         },
+        true,
     );
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
     assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
@@ -4549,6 +4567,7 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
             enabled: false,
             messages: Vec::new(),
         },
+        true,
     );
     // The top row shows each pane's letter across its exact range: the
     // rightmost screen cell belongs to pane 'D' and no boundary bleeds.
@@ -4651,6 +4670,7 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
                 enabled: false,
                 messages: Vec::new(),
             },
+            true,
         );
         let y = 2usize;
         (0..cols)

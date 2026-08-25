@@ -5,8 +5,8 @@
 //! M0 and grows with the layout. `docs/CONFIG.md` is generated from the doc
 //! comments here.
 
-use crate::theme::{Palette, ThemeSpec};
 use crate::keys;
+use crate::theme::{Palette, ThemeSpec};
 use serde::de::{self, Visitor};
 use serde::Deserialize;
 use std::fmt;
@@ -81,6 +81,9 @@ pub struct Config {
     /// Cowsay art drawn in empty placeholder boxes, under the big cell
     /// identifier.
     pub cowsay: Cowsay,
+    /// Draw the big `strip.pane` identifier in empty placeholder boxes. Set
+    /// to `false` for a bare skeleton with no address labels.
+    pub cell_labels: bool,
     /// Milliseconds to wait in `event::poll` before checking PTY output and
     /// repainting. Lower values reduce perceived typing and backspace latency
     /// at the cost of more frequent wakeups. Default is 2ms (from 10ms) for
@@ -111,6 +114,7 @@ impl Default for Config {
             mouse: true,
             scroll_lines: 3,
             cowsay: Cowsay::default(),
+            cell_labels: true,
             input_poll_ms: default_input_poll_ms(),
         }
     }
@@ -316,26 +320,9 @@ impl Default for Cowsay {
         // macOS, `Alt` elsewhere) via [`crate::keys`], so an empty box never
         // teaches a key that does nothing or a glyph the user's keyboard
         // doesn't have.
-        let m = keys::chord;
         Cowsay {
             enabled: true,
-            messages: vec![
-                format!("{} opens a column here", m(keys::enter_key())),
-                format!("{} spawns an agent", m(";")),
-                format!("{} moves focus", m("hjkl")),
-                format!("{} splits this column", m("s")),
-                format!("{} jumps to a column", m("1-9")),
-                format!("{} cycles this column's width", m("r")),
-                format!("{} toggles full width", m("f")),
-                format!("{} jumps to the pane that needs you", m("g")),
-                format!("{} kills the focused pane", m("x")),
-                format!("{} previews themes", m("t")),
-                format!(
-                    "{} starts a new row",
-                    m(&format!("{}{}", keys::shift_key(), keys::enter_key()))
-                ),
-                format!("{} toggles this cheat-sheet", m("/")),
-            ],
+            messages: crate::binds::cowsay_hints(),
         }
     }
 }
