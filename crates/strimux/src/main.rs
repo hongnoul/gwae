@@ -9,6 +9,7 @@ mod cli;
 mod config;
 mod cowsay;
 mod keys;
+mod select;
 mod theme;
 mod tui;
 

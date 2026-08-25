@@ -9,7 +9,7 @@
 - **Agent-aware, zero instrumentation.** Speaks the standard **OSC 133** protocol only. Panes stay ordinary PTYs. The minimap tints by status and `⌥+g` jumps to the one that needs you.
 - **Single process, no daemon.** No socket, no attach/detach. Crashing one pane's emulator can't take the TUI down. Persistence is each harness's own `--resume`.
 - **Kitty graphics passthrough.** `kitten icat` and jcode screenshots render inside their pane — APC sequences forwarded verbatim and clipped to the pane rect.
-- **Mouse that helps.** Wheel scrolls the pane under the cursor (its own scrollback), not the host terminal. Click to focus. `less` without mouse reporting gets arrow keys; typing snaps back to live.
+- **Mouse that helps.** Wheel scrolls the pane under the cursor (its own scrollback), not the host terminal. Click to focus, drag to copy. `less` without mouse reporting gets arrow keys; typing snaps back to live.
 - **Catppuccin Mocha by default.** Base `#1e1e2e`, focus sapphire `#74c7ec`, skeleton overlay `#6c7086`. Every color is themeable, 8 presets ship, `⌥+t` previews them live, and saving the config re-themes the running session without restarting a single pane.
 
 ```sh
@@ -97,6 +97,7 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | `⌥+/` or `⌥+?` (`÷` / `¿` on macOS) | **Toggle the cheat-sheet HUD** — same overlay shown at startup; any other key dismisses it |
 | `⌥+Shift+q` | Force-quit strimux — opens a centered confirmation overlay; press `⌥+Shift+q` again (or `⏎`) to kill every pane, any other key cancels |
 | click | Left-click focuses the clicked pane |
+| drag | Left-drag inside a pane selects text (inverse highlight) and copies it on release. Panes that grab the mouse (vim, agent TUIs) keep it, so hold `Shift` there to select instead |
 | wheel | Scrolls pane scrollback under cursor; `Shift+wheel` etc. forwarded as SGR when pane wants mouse, else translated to `↑`/`↓` for alt-screen pagers |
 
 All other keys pass through to the focused pane. Closing a pane by `exit` / process death behaves identically to `kill-pane`.
@@ -262,7 +263,7 @@ Read before filing a feature request:
 
 - **No daemon / detach / attach.** Your agents already `--resume`.
 - No free 2D canvas — we are a structured grid of strips.
-- No floating panes, no mouse-driven chrome beyond scroll/click-to-focus, no plugin system, no overview zoom (post-1.0).
+- No floating panes, no mouse-driven chrome beyond scroll/click-to-focus/drag-to-copy, no plugin system, no overview zoom (post-1.0).
 
 The hot-module-reload scaffold briefly lived in-tree to develop strimux inside strimux; it was removed — the shipped binary never depended on it and it drifted from the real painter.
 
