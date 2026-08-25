@@ -67,12 +67,6 @@ pub struct Config {
     ///
     /// Legacy alias for `theme.accent`; when set it overrides the theme.
     pub focus_color: Option<Background>,
-    /// Draw the skeleton: a 1-cell inset frame around every column box (full
-    /// strip height), which insets pane content by a cell on every side. Off
-    /// by default - panes are full-bleed and focus is a plain accent frame -
-    /// and only ever enabled by writing `skeleton = true` by hand. The focused
-    /// box's frame uses `focus_color` instead of `skeleton_color`.
-    pub skeleton: bool,
     /// Color of the skeleton frames around unfocused boxes. Accepts the same
     /// forms as `background`.
     ///
@@ -113,7 +107,6 @@ impl Default for Config {
             theme: ThemeSpec::default(),
             background: None,
             focus_color: None,
-            skeleton: false,
             skeleton_color: None,
             minimap: Minimap::default(),
             cowsay: Cowsay::default(),
@@ -517,10 +510,10 @@ mod tests {
     }
 
     #[test]
-    fn skeleton_parses() {
-        assert!(!parse("").skeleton, "inset frames are opt-in");
-        let cfg = parse("skeleton = true");
-        assert!(cfg.skeleton);
+    fn skeleton_color_parses() {
+        // `skeleton` is no longer a key: the frames are the only look. A
+        // stale `skeleton = ...` in an old config is ignored, not an error.
+        let _ = parse("skeleton = false");
         let cfg = parse("skeleton_color = \"#333333\"");
         assert_eq!(cfg.palette().overlay, CColor::Rgb(0x33, 0x33, 0x33));
     }

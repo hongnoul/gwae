@@ -392,9 +392,9 @@ struct PaneView {
 
 /// Compute visible pane views for the focused row.
 ///
-/// With `inset` (skeleton mode) every pane's rect is shrunk by 1 cell on all
-/// sides of its column box so content sits *inside* the frame instead of
-/// being overlaid by it: nothing a program draws is ever covered.
+/// With `inset` (always true in the renderer) every pane's rect is shrunk by
+/// 1 cell on all sides of its column box so content sits *inside* the frame
+/// instead of being overlaid by it: nothing a program draws is ever covered.
 fn focused_pane_views(
     layout: &Layout,
     cols: u16,
@@ -556,7 +556,6 @@ fn render_frame(
     rows: u16,
     content_width: u16,
     pal: &Palette,
-    skeleton: bool,
     mm: &crate::config::Minimap,
     cow: &crate::config::Cowsay,
     cell_labels: bool,
@@ -567,7 +566,6 @@ fn render_frame(
     // `Option`-shaped call sites below read the same as they used to.
     let background = pal.base;
     let focus_color = pal.accent;
-    let skeleton: Option<CColor> = skeleton.then_some(pal.overlay);
     out.clear();
     out.resize((cols as usize) * (rows as usize), Cell::default());
     // Paint the uncovered background first so any cell not overwritten by a
@@ -582,8 +580,7 @@ fn render_frame(
 
     let focused = focused_pane(layout);
     let mut focused_cursor_abs: Option<(u16, u16, bool)> = None; // (screen x,y, hide)
-    let pane_views =
-        focused_pane_views(layout, cols, rows, content_width, panes, skeleton.is_some());
+    let pane_views = focused_pane_views(layout, cols, rows, content_width, panes, true);
     // The ring follows the *layout*, not the pty: a pane whose process has not
     // been spawned (or has already exited) still occupies its rect and can
     // still be focused, so take the rect from the view list rather than from
@@ -597,10 +594,9 @@ fn render_frame(
             continue;
         };
         let is_focus = focused == Some(v.pid);
-        // The emulator size matches the visible content rect exactly. Without
-        // the skeleton, panes are full-bleed (content spans the whole column);
-        // with it, rects are inset 1 cell inside the frame so nothing a
-        // program draws is ever covered.
+        // The emulator size matches the visible content rect exactly: rects
+        // are inset 1 cell inside the column frame so nothing a program draws
+        // is ever covered.
         pane.grid.resize(GridSize {
             cols: v.grid_cols,
             rows: v.grid_rows,
@@ -703,15 +699,12 @@ fn render_frame(
         .and_then(|r| r.columns.get(layout.focus.column))
         .map(|c| c.panes.len() > 1)
         .unwrap_or(false);
-    // Placeholder boxes tile the empty right side whether or not the inset
-    // frames are on: an empty grid must show where the next pane will go, and
-    // (with `cowsay`) advertise the key that puts one there. Only the frame
-    // glyphs are gated on `skeleton`; the boxes' *contents* are not.
+    // Placeholder boxes tile the empty right side: an empty grid must show
+    // where the next pane will go, and (with `cowsay`) advertise the key that
+    // puts one there.
     {
-        let sk = skeleton.unwrap_or(pal.overlay);
-        // With no frames the box is full-bleed, exactly like a live pane, so
-        // its contents get the whole span instead of a 1-cell inset.
-        let inset: u16 = if skeleton.is_some() { 1 } else { 0 };
+        let sk = pal.overlay;
+        let inset: u16 = 1;
         let chrome = mm.chrome_rows();
         let strip_h = rows.saturating_sub(chrome).max(1);
         let abs_ranges = layout
@@ -766,24 +759,20 @@ fn render_frame(
                 // and clearing it here would also wipe the left neighbour's
                 // shared edge. Reset to the default (pane) background so an
                 // empty box reads exactly like a live one.
-                // Only the framed look resets the interior to the pane
-                // background, so a boxed placeholder reads exactly like a live
-                // pane. Full-bleed, the empty right side is genuinely
-                // uncovered and must keep showing `background`, which is the
-                // only place that key is ever visible.
-                if skeleton.is_some() {
-                    for y in inset..boxr.h.saturating_sub(inset) {
-                        let row = (boxr.y + y) as usize * cols as usize;
-                        for x in inset..boxr.w.saturating_sub(inset) {
-                            if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
-                                *c = Cell::default();
-                            }
+                for y in inset..boxr.h.saturating_sub(inset) {
+                    let row = (boxr.y + y) as usize * cols as usize;
+                    for x in inset..boxr.w.saturating_sub(inset) {
+                        if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
+                            *c = Cell::default();
+                            // Keep the themed backdrop: a placeholder box is
+                            // empty chrome, not a pane, so its interior must
+                            // blend with `theme.base` rather than punching a
+                            // hole of the terminal's own background through it.
+                            c.style.bg = background;
                         }
                     }
                 }
-                if skeleton.is_some() {
-                    canvas.rect(boxr, color, prio);
-                }
+                canvas.rect(boxr, color, prio);
                 let inner = Rect {
                     x: boxr.x + inset,
                     y: boxr.y + inset,
@@ -805,9 +794,6 @@ fn render_frame(
                 );
                 continue;
             }
-            if skeleton.is_none() {
-                continue;
-            }
             canvas.rect(boxr, color, prio);
             // Stacked panes: the 1-cell gap between two panes of a column is
             // a shared horizontal rule that tees into the column's verticals,
@@ -821,20 +807,13 @@ fn render_frame(
             }
         }
     }
-    // Without the skeleton, focus is a 1-cell accent frame overlaid on the
-    // focused pane's edge cells (the historical full-bleed look). With the
-    // skeleton, the focused *column's* frame is already the accent color and
-    // content is inset, so the overlay would only cover content: for a
-    // stacked column, promote the focused pane's own ring to the accent in
-    // the canvas, where it merges with the column frame instead of stamping
-    // over it.
-    match (skeleton, focus_rect) {
-        // Full-bleed mode: the ring lands on live pane content, so tint the
-        // background instead of writing glyphs over the program's own text.
-        (None, Some(rect)) => tint_focus_ring(out, cols, rect, focus_color),
-        // Skeleton mode with a split column: the container frame stays chrome,
-        // so ring the focused split itself.
-        (Some(_), Some(rect)) if focused_col_split => {
+    // The focused *column's* frame is already the accent color and content is
+    // inset, so an overlay would only cover content. For a stacked column the
+    // container frame stays chrome, so promote the focused pane's own ring to
+    // the accent in the canvas, where it merges with the column frame instead
+    // of stamping over it.
+    match focus_rect {
+        Some(rect) if focused_col_split => {
             {
                 // Grow the rect by 1 so the ring lands on the frame/gap cells
                 // around the pane, not on its content.
@@ -1123,38 +1102,6 @@ fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
     put(out, y1 * stride + x1, '╯', color);
 }
 
-/// Tint the background of the edge ring of `rect` with `color`, preserving
-/// the glyphs underneath. Used when the ring overlays live pane content
-/// (full-bleed mode), where writing frame glyphs would cover program output.
-fn tint_focus_ring(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
-    let stride = cols as usize;
-    let w = rect.w as usize;
-    let h = rect.h as usize;
-    let x0 = rect.x as usize;
-    let y0 = rect.y as usize;
-    let x1 = x0 + w - 1;
-    let y1 = y0 + h - 1;
-    for x in x0..=x1 {
-        if let Some(c) = out.get_mut(y0 * stride + x) {
-            c.style.bg = color;
-        }
-        if h > 1 {
-            if let Some(c) = out.get_mut(y1 * stride + x) {
-                c.style.bg = color;
-            }
-        }
-    }
-    for y in (y0 + 1)..y1 {
-        if let Some(c) = out.get_mut(y * stride + x0) {
-            c.style.bg = color;
-        }
-        if w > 1 {
-            if let Some(c) = out.get_mut(y * stride + x1) {
-                c.style.bg = color;
-            }
-        }
-    }
-}
 
 /// 3x5 block-font glyphs for the characters a cell identifier can contain
 /// (digits and the `,`/`.` separators). Each glyph is 5 rows of 3 bits, MSB left.
@@ -1305,10 +1252,16 @@ fn draw_art(out: &mut [Cell], cols: u16, rect: Rect, lines: &[String], color: CC
             }
             let idx = y as usize * cols as usize + x as usize;
             if let Some(c) = out.get_mut(idx) {
+                // Only the glyph and its color are ours: the cell keeps the
+                // background the box was filled with, so the art blends into
+                // the themed backdrop instead of stamping a differently
+                // colored rectangle over it.
+                let bg = c.style.bg;
                 *c = Cell {
                     ch,
                     style: strimux_term::Style {
                         fg: color,
+                        bg,
                         ..Default::default()
                     },
                     width: 1,
@@ -3203,7 +3156,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         rows,
                         cfg.content_width,
                         &panes,
-                        cfg.skeleton,
+                        true,
                         chrome,
                     );
                     // A drag that wanders outside the pane (or off-screen)
@@ -3350,7 +3303,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             rows,
             cfg.content_width,
             &panes,
-            cfg.skeleton,
+            true,
             chrome,
         ) {
             let pid = v.pid;
@@ -3432,7 +3385,6 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 rows,
                 cfg.content_width,
                 &pal,
-                cfg.skeleton,
                 &cfg.minimap,
                 &cfg.cowsay,
                 cfg.cell_labels,
@@ -4313,13 +4265,14 @@ mod tests {
             rows,
             0,
             &Palette::default(),
-            false,
             &no_map(),
             &no_cow(),
             false,
             Some(&sel),
         );
-        let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
+        // Content is inset 1 cell inside the column frame, so grid (0,0)
+        // lands at screen (1,1).
+        let at = |x: u16, y: u16| out[(y + 1) as usize * cols as usize + (x + 1) as usize];
         // "hello" is inverted, both ends inclusive; the space after is not.
         for x in 0..=4u16 {
             assert!(at(x, 0).style.inverse, "cell {x} should be highlighted");
@@ -4863,7 +4816,6 @@ mod tests {
             rows,
             0,
             &pal_of(CColor::Default, red, white),
-            true,
             &no_map(),
             &no_cow(),
             true,
@@ -4950,7 +4902,6 @@ mod tests {
             rows,
             0,
             &pal_of(CColor::Default, red, white),
-            true,
             &no_map(),
             &no_cow(),
             true,
@@ -5012,7 +4963,6 @@ mod tests {
             rows,
             0,
             &pal_of(CColor::Default, red, white),
-            true,
             &no_map(),
             &no_cow(),
             true,
@@ -5069,7 +5019,6 @@ mod tests {
                 rows,
                 0,
                 &pal_of(CColor::Default, red, white),
-                true,
                 &no_map(),
                 &no_cow(),
                 true,
@@ -5181,7 +5130,6 @@ mod tests {
             rows,
             0,
             &pal_of(CColor::Default, CColor::Rgb(0xff, 0, 0), white),
-            true,
             &no_map(),
             &no_cow(),
             true,
@@ -5223,9 +5171,11 @@ mod tests {
 
     #[test]
     fn placeholder_boxes_are_not_dimmed_and_show_cell_identifiers() {
-        // Empty placeholder boxes read like live panes: their interiors are
-        // reset to the default background (not the dim `background` fill) and
-        // a big block-font `strip.cell` identifier is centered in each.
+        // Empty placeholder boxes are chrome, not panes: their interiors carry
+        // the themed backdrop (`theme.base`, the same fill as the rest of the
+        // strimux background) rather than punching the terminal's own default
+        // background through, and a big block-font `strip.cell` identifier is
+        // centered in each.
         let layout = Layout::new(2); // boxes 3 and 4 are placeholders
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let cols: u16 = 80;
@@ -5241,17 +5191,23 @@ mod tests {
             rows,
             0,
             &pal_of(dim, CColor::Rgb(0xff, 0, 0), CColor::Rgb(0xff, 0xff, 0xff)),
-            true,
             &no_map(),
             &no_cow(),
             true,
             None,
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
-        // Placeholder interiors are default-bg, never the dim background.
+        // Placeholder interiors blend with the surrounding backdrop: every
+        // interior cell is either the themed base or the identifier's own
+        // pixels, never the terminal's default background (which would read
+        // as a differently colored rectangle punched into the grid).
         for x in 41..59 {
             for y in 1..rows - 1 {
-                assert_ne!(bg(x, y), dim, "dim background leaked at ({x},{y})");
+                let b = bg(x, y);
+                assert!(
+                    b == dim || b == label,
+                    "placeholder interior does not blend at ({x},{y}): {b:?}"
+                );
             }
         }
         // The identifier is drawn in the label color somewhere inside each
@@ -5292,7 +5248,6 @@ mod tests {
                 CColor::Rgb(0xff, 0, 0),
                 CColor::Rgb(0xff, 0xff, 0xff),
             ),
-            true,
             &no_map(),
             cow,
             true,
@@ -5337,7 +5292,6 @@ mod tests {
                     CColor::Rgb(0xff, 0, 0),
                     CColor::Rgb(0xff, 0xff, 0xff),
                 ),
-                true,
                 &no_map(),
                 &cow,
                 true,
@@ -5417,7 +5371,6 @@ mod tests {
             rows,
             0,
             &pal_of(CColor::Idx(235), CColor::Rgb(0xff, 0, 0), label),
-            true,
             &no_map(),
             &cow,
             true,
@@ -5461,6 +5414,47 @@ mod tests {
         assert!(
             !text.contains("^__^"),
             "a narrow box must not draw a clipped cow:\n{text}"
+        );
+    }
+
+    #[test]
+    fn cow_art_keeps_the_boxs_background() {
+        // Regression: the art was written with a fresh `Style`, so every cow
+        // glyph carried `CColor::Default` as its background and the block read
+        // as a gray rectangle floating over the themed backdrop. The art must
+        // inherit whatever background the box was filled with.
+        let cols: u16 = 120;
+        let rows: u16 = 24;
+        let layout = Layout::new(2);
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let base = CColor::Idx(235);
+        let cow = crate::config::Cowsay {
+            enabled: true,
+            messages: vec!["moo".to_string()],
+        };
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            &pal_of(base, CColor::Rgb(0xff, 0, 0), CColor::Rgb(0xff, 0xff, 0xff)),
+            &no_map(),
+            &cow,
+            true,
+            None,
+        );
+        let art: Vec<Cell> = out
+            .iter()
+            .copied()
+            .filter(|c| matches!(c.ch, '^' | '(' | ')' | 'o' | '_' | 'w' | '|'))
+            .collect();
+        assert!(!art.is_empty(), "no cow was painted");
+        assert!(
+            art.iter().all(|c| c.style.bg == base),
+            "cow glyphs do not sit on the themed background"
         );
     }
 
@@ -5995,7 +5989,6 @@ mod tests {
                     rows,
                     0,
                     &pal_of(CColor::Default, red, white),
-                    true,
                     &no_map(),
                     &no_cow(),
                     true,
@@ -6072,7 +6065,6 @@ fn content_scroll_reveals_overflow_e2e() {
         10,
         240,
         &Palette::default(),
-        false,
         &crate::config::Minimap::default(),
         &crate::config::Cowsay {
             enabled: false,
@@ -6081,9 +6073,12 @@ fn content_scroll_reveals_overflow_e2e() {
         true,
         None,
     );
-    assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
-    assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
-    assert_eq!(out[77].ch, '8'); // content col 77 -> screen x=77
+    // Content is inset 1 cell inside the column frame: grid (x,0) is at
+    // screen (x + 1, 1).
+    let at = |out: &Vec<Cell>, x: usize| out[80 + 1 + x].ch;
+    assert_eq!(at(&out, 0), '1'); // content col 0 -> first content cell
+    assert_eq!(at(&out, 9), '0'); // content col 9
+    assert_eq!(at(&out, 77), '8'); // content col 77
 
     // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
     panes.get_mut(&pid).unwrap().h_scroll = 60;
@@ -6095,7 +6090,6 @@ fn content_scroll_reveals_overflow_e2e() {
         10,
         240,
         &Palette::default(),
-        false,
         &crate::config::Minimap::default(),
         &crate::config::Cowsay {
             enabled: false,
@@ -6104,9 +6098,9 @@ fn content_scroll_reveals_overflow_e2e() {
         true,
         None,
     );
-    assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
-    assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
-    assert_eq!(out[77].ch, '8'); // content col 137 -> screen x=77
+    assert_eq!(at(&out, 0), '1'); // content col 60
+    assert_eq!(at(&out, 1), '2'); // content col 61
+    assert_eq!(at(&out, 77), '8'); // content col 137
 
     // Past the 240-col content the window reveals blanks.
     panes.get_mut(&pid).unwrap().h_scroll = 200;
@@ -6118,7 +6112,6 @@ fn content_scroll_reveals_overflow_e2e() {
         10,
         240,
         &Palette::default(),
-        false,
         &crate::config::Minimap::default(),
         &crate::config::Cowsay {
             enabled: false,
@@ -6127,9 +6120,9 @@ fn content_scroll_reveals_overflow_e2e() {
         true,
         None,
     );
-    assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
-    assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
-    assert_eq!(out[45].ch, ' '); // past content end -> blank
+    assert_eq!(at(&out, 0), '1'); // content col 200
+    assert_eq!(at(&out, 39), '0'); // content col 239
+    assert_eq!(at(&out, 45), ' '); // past content end -> blank
 
     let _ = panes.get_mut(&pid).unwrap().child.kill();
 }
@@ -6206,7 +6199,6 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
         rows,
         0,
         &Palette::default(),
-        false,
         &crate::config::Minimap::default(),
         &crate::config::Cowsay {
             enabled: false,
@@ -6215,18 +6207,30 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
         true,
         None,
     );
-    // The top row shows each pane's letter across its exact range: the
-    // rightmost screen cell belongs to pane 'D' and no boundary bleeds.
+    // The first content row shows each pane's letter across its column's
+    // interior: the frame owns the boundary cells, content never bleeds past
+    // them, and the rightmost column reaches the screen edge.
+    let row1 = cols as usize; // screen row 1: the first content row
     for (i, (s, e)) in ranges.iter().enumerate() {
-        for x in *s..*e {
+        for x in (*s + 1)..(*e - 1) {
             assert_eq!(
-                out[x as usize].ch, fills[i],
+                out[row1 + x as usize].ch,
+                fills[i],
                 "screen x={x} must show pane {} content",
                 fills[i]
             );
         }
     }
-    assert_eq!(out[cols as usize - 1].ch, 'D', "rightmost cell is pane D");
+    assert_eq!(
+        out[cols as usize - 1].ch,
+        '╮',
+        "the rightmost column's frame reaches the screen edge"
+    );
+    assert_eq!(
+        out[row1 + cols as usize - 2].ch,
+        'D',
+        "pane D's content runs up to its frame"
+    );
     for p in panes.values_mut() {
         let _ = p.child.kill();
     }
@@ -6310,7 +6314,6 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
             rows,
             0,
             &Palette::default(),
-            true,
             &crate::config::Minimap::default(),
             &crate::config::Cowsay {
                 enabled: false,
@@ -6359,3 +6362,4 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
         let _ = p.child.kill();
     }
 }
+

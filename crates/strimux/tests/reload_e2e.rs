@@ -104,17 +104,13 @@ impl Session {
     }
 }
 
-/// Turn the inset skeleton frames on for a case body.
+/// A case body, unchanged.
 ///
 /// These cases read the live theme off the frame glyphs, which carry every
-/// palette key as a *foreground* color. strimux ships full-bleed (no frames,
-/// focus is a background tint), so the reload cases opt the frames back on.
-/// The key goes first because a body opening a TOML table would swallow it.
-///
-/// The malformed-TOML case is unaffected: a file strimux cannot parse is
-/// ignored whole, frames or no frames.
+/// palette key as a *foreground* color. The frames are the only look, so
+/// nothing has to be turned on for them to appear.
 fn with_frames(body: &str) -> String {
-    format!("skeleton = true\n{body}")
+    body.to_string()
 }
 
 /// The SGR foreground sequence for a 24-bit color. The skeleton frames are

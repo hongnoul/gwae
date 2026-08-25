@@ -26,17 +26,10 @@ impl Session {
             NEXT_ID.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(dir.join("strimux")).expect("temp config dir");
-        // `skeleton = true` first: these cases read the live theme off the
-        // frame glyphs, which carry every palette key as a *foreground* color.
-        // strimux ships full-bleed (focus is a background tint and there are
-        // no frames), so the picker cases opt the frames back on. It goes
-        // before `config` because a body opening a TOML table would otherwise
-        // swallow it.
-        std::fs::write(
-            dir.join("strimux/strimux.toml"),
-            format!("skeleton = true\n{config}"),
-        )
-        .expect("write config");
+        // These cases read the live theme off the frame glyphs, which carry
+        // every palette key as a *foreground* color. The frames are always
+        // drawn, so the config body is written as-is.
+        std::fs::write(dir.join("strimux/strimux.toml"), config).expect("write config");
 
         let pair = native_pty_system()
             .openpty(PtySize {

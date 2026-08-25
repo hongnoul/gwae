@@ -29,7 +29,7 @@ What works today and is interactively dogfoodable:
 - Single-process, multi-pane PTY renderer: spawns real PTYs, composes every pane into one 2D cell buffer, diffs and paints with synchronized-update markers. Full 300×80 repaint ~0.05 ms.
 - Pure layout core (`strimux-layout`) with quantized scrolling, fixed-width columns, niri-style dynamic strips and cross-strip pane moves. Covered by `proptest` invariants and render-frame tests.
 - Emulator facade (`strimux-term`) behind `TermGrid`, unit-tested; E2E tests drive the real binary through a live PTY (minimap status, smart-jump, natural pane close, 342-col wobble test).
-- Agent dashboard minimap (OSC 133 + quiet-heuristic fallback), smart-jump, opt-in skeleton chrome with inset content, kitty-like block cursor, mouse capture, Kitty graphics forwarding, wide-glyph / SGR-attribute fixes.
+- Agent dashboard minimap (OSC 133 + quiet-heuristic fallback), smart-jump, skeleton chrome with inset content, kitty-like block cursor, mouse capture, Kitty graphics forwarding, wide-glyph / SGR-attribute fixes.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/LAYOUT-SPEC.md`](docs/LAYOUT-SPEC.md) (normative), and [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -156,7 +156,7 @@ Kill-switch `minimap.show = false` still respected.
 
 ## Appearance
 
-- **Skeleton** (`skeleton = true`, **off by default**): 1-cell frame around every column box at full strip height, with content inset 1 cell so the frame never covers what a program draws. Opt in by hand; setup does not ask. Full-bleed (the default) panes run to the edge of their column and focus is an accent background tint. Either way, placeholder boxes tile the empty right side and can show block-font `strip.cell` addresses (`cell_labels`) and keybinding hints (`[cowsay]`).
+- **Skeleton** (always on, no key): 1-cell frame around every column box at full strip height, with content inset 1 cell so the frame never covers what a program draws. The focused box's frame is the accent color. Placeholder boxes tile the empty right side and can show block-font `strip.cell` addresses (`cell_labels`) and keybinding hints (`[cowsay]`).
 - **Focus**: accent hairline (never shifts layout) + kitty-like inverse block cursor at the focused pane's vt100 cursor.
 - **Palette**: Catppuccin Mocha by default — base `#1e1e2e`, overlay `#6c7086`, accent `#74c7ec` (sapphire, distinct from red `Failed`). Pick a preset with `theme = "nord"` (also `catppuccin-latte`, `tokyo-night`, `gruvbox`, `rose-pine`, `dracula`, `terminal` which inherits the host's ANSI 0-15), or override any key in `[theme]` (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`). Minimap tiles at 60% muted accents, summary at full. Legacy `background`/`focus_color`/`skeleton_color` still work as aliases for `theme.base`/`accent`/`overlay`. All colors as `256-index`, `#rrggbb`, or `"default"`.
 - **Pane geometry**: window-anchored column boundaries + quantized stops mean the same four `1/4` columns paint identically at every scroll stop even at hostile widths like 342 cols (verified E2E).
@@ -213,7 +213,6 @@ theme = "catppuccin-mocha"        # palette preset (see Appearance)
 # preset = "nord"
 # accent = "#ff0000"              # override any key on top of the preset
 # overlay = "#665c54"
-# skeleton = true                 # off by default: 1-cell inset frames
 # legacy aliases (override theme when set):
 # background = "#1e1e2e"          # -> theme.base
 # focus_color = "#74c7ec"         # -> theme.accent

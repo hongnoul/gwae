@@ -312,9 +312,14 @@ fn typing_snaps_a_scrolled_back_pane_to_the_live_bottom() {
 
     s.send(b"echo BACK-AT-PROMPT");
     s.settle(2.0);
-    // Compared with the newlines stripped: the echoed text is wrapped at the
-    // pane edge, so it is one string on screen but several rows in the grid.
-    let flat: String = s.render().chars().filter(|c| *c != '\n').collect();
+    // Compared with the newlines, frame glyphs and padding stripped: the
+    // echoed text wraps at the pane edge, so it is one string on screen but
+    // several rows in the grid, each row separated by the column frames.
+    let flat: String = s
+        .render()
+        .chars()
+        .filter(|c| !c.is_whitespace() && !"│─╭╮╰╯├┤┬┴┼".contains(*c))
+        .collect();
     assert!(
         flat.contains("BACK-AT-PROMPT"),
         "typing did not snap the pane back to live\n{}",

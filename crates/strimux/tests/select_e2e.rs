@@ -90,9 +90,9 @@ fn drag_highlights_pane_text_and_copies_it_to_the_clipboard() {
     std::fs::create_dir_all(dir.join("strimux")).expect("config dir");
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).expect("stub bin dir");
-    // Panes are full-bleed by default (the inset skeleton is opt-in), so pane
-    // grid cell (x, y) is screen cell (x, y) and the coordinates below are the
-    // ones a user's mouse would really report.
+    // Pane content is inset 1 cell inside its column frame, so pane grid cell
+    // (x, y) is screen cell (x + 1, y + 1); the coordinates below are the ones
+    // a user's mouse would really report.
     std::fs::write(
         dir.join("strimux/strimux.toml"),
         "[minimap]\nshow = false\n",
@@ -188,13 +188,14 @@ fn drag_highlights_pane_text_and_copies_it_to_the_clipboard() {
         String::from_utf8_lossy(&boot).escape_debug()
     );
 
-    // Drag across "HELLO-STRIMUX" (13 cells, columns 0..=12 of row 0).
+    // Drag across "HELLO-STRIMUX" (13 cells, grid columns 0..=12 of grid row
+    // 0, i.e. screen columns 1..=13 of screen row 1).
     let mut painted = Vec::new();
-    writer.write_all(press(0, 0).as_bytes()).expect("press");
+    writer.write_all(press(1, 1).as_bytes()).expect("press");
     writer.flush().ok();
-    writer.write_all(drag(6, 0).as_bytes()).expect("drag");
+    writer.write_all(drag(7, 1).as_bytes()).expect("drag");
     writer.flush().ok();
-    writer.write_all(drag(12, 0).as_bytes()).expect("drag end");
+    writer.write_all(drag(13, 1).as_bytes()).expect("drag end");
     writer.flush().ok();
     drain_until_quiet(&rx, &mut painted, 4);
 
@@ -214,7 +215,7 @@ fn drag_highlights_pane_text_and_copies_it_to_the_clipboard() {
 
     // Release: this is what copies.
     writer
-        .write_all(release(12, 0).as_bytes())
+        .write_all(release(13, 1).as_bytes())
         .expect("release");
     writer.flush().ok();
     let mut after = Vec::new();

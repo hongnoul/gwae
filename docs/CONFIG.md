@@ -26,7 +26,6 @@ theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-la
 # preset = "nord"
 # accent = "#ff0000"
 # overlay = "#665c54"
-skeleton = false             # true draws the 1-cell inset column frames
 # legacy aliases (override theme.* when set):
 # background = "#1e1e2e"     # -> theme.base
 # focus_color = "#74c7ec"    # -> theme.accent
@@ -62,7 +61,7 @@ Everything else here is hand-edit only, deliberately:
 * `input_poll_ms` has exactly one right answer, so setup **applies it
   silently** before the first question rather than asking. Settings that only
   you can change (kitty, macOS) are reported once on the summary screen.
-* `skeleton`, `[minimap]` geometry and `scroll_margin` are niche tastes; a
+* `[minimap]` geometry and `scroll_margin` are niche tastes; a
   setup flow long enough to cover them is one nobody finishes.
 * `btm` is not a config key at all - it is an action on the machine, so it is
   never written to this file. On macOS a yes installs Homebrew first if it is
@@ -80,7 +79,7 @@ panes already exist), so changing it still needs a restart. `default_agent` is
 read fresh by the agent gateway each time `;` opens a pane, so editing it (or
 letting the gateway save your pick) applies to the *next* agent pane without a
 restart; panes already running a harness keep running it. Everything read every
-frame - colors, `skeleton`, `[minimap]`, scroll behavior - takes effect
+frame - colors, `[minimap]`, scroll behavior - takes effect
 immediately.
 
 A config that fails to parse mid-edit (an editor saving between keystrokes)
@@ -142,7 +141,7 @@ and a config file that is not being applied at all points at the syntax error:
 | `content_width` | integer | `0` | Logical grid content width (cells) of every pane, decoupled from the visible column width. Long lines up to this width do not wrap and can be revealed with horizontal pane scroll (`⌥+Left/Right`, the Option key on macOS). `0` (the default) follows the visible column width so lines wrap normally and there is no horizontal overflow to manage in a pane. |
 | `default_agent` | string | `""` (unset) | The agent harness `;` launches, and what the **first pane** opens on at startup. When unset, or not on `PATH`, you get the **agent selector** instead: it lists harnesses it knows, anything agent-shaped found on your `PATH`, and anything in `agents`; pick one (or type any command) and it is saved here, so every later launch goes straight to it. With nothing found it opens a plain `$SHELL`. `strimux run <cmd>` overrides the first pane. See `strimux agent --print`. |
 | `agents` | array of strings | `[]` | Extra agent commands to offer in the selector, for a harness whose name strimux cannot guess (or a wrapper script of your own). Entries that are not installed are simply not listed. |
-| `startup_panes` | integer | `1` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (shown as skeleton placeholder boxes, or covered by `background` with `skeleton = false`). The default `1` opens a single terminal in the leftmost quarter. |
+| `startup_panes` | integer | `1` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (shown as skeleton placeholder boxes). The default `1` opens a single terminal in the leftmost quarter. |
 | `theme` | string or table | `catppuccin-mocha` | Chrome color theme. A bare preset name (`theme = "tokyo-night"`) or a `[theme]` table with `preset` plus per-key overrides (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`). Presets: `catppuccin-mocha` (default), `catppuccin-latte`, `tokyo-night`, `gruvbox`, `nord`, `rose-pine`, `dracula`, `terminal` (inherits the host terminal's ANSI 0-15 palette; single-word aliases `mocha`, `latte`, `tokyo`, `gruvbox`, `nord`, `dracula`, `ansi` also accepted). Colors accept a 256-color index (`235`), hex RGB (`"#1e1e2e"`), or `"default"`. |
 | `[theme].preset` | string | `catppuccin-mocha` | Which built-in palette to start from (see `theme`). Unknown names fall back to `catppuccin-mocha` with a warning. |
 | `[theme].base` | color | preset | Empty (uncovered) background behind the panes. |
@@ -158,7 +157,6 @@ and a config file that is not being applied at all points at the syntax error:
 | `background` | color | preset `base` | **Legacy alias for `theme.base`**. When set it overrides the resolved theme's `base`, so existing configs with `background = "#1e1e2e"` keep behaving as before. New configs should use `theme` / `[theme]`. |
 | `focus_color` | color | preset `accent` | **Legacy alias for `theme.accent`**. Overrides the theme's `accent`; use `[theme] accent = ...` for new configs. |
 | `skeleton_color` | color | preset `overlay` | **Legacy alias for `theme.overlay`**. Overrides the theme's `overlay`; use `[theme] overlay = ...` for new configs. |
-| `skeleton` | bool | `false` | **Off by default, and never asked about by `strimux init`**: the inset frames are a taste, so they are opt-in from this file alone. When `true`: draw the skeleton: a 1-cell frame around every column box at full strip height, so the four-column container always reads. Pane content is inset 1 cell inside its frame, so the frame never covers anything a program draws. With fewer columns than fit, placeholder quarter-width boxes tile the empty right side; their interiors use the default (pane) background rather than `background`, so empty grids are not dimmed, and each shows a big block-font `strip.cell` identifier centered in the box. The focused box's frame uses `focus_color` instead of `skeleton_color`. |
 | `input_poll_ms` | integer | `2` | Set to `1` **silently by `strimux init`**, before the first question: it has exactly one right answer, so it is not worth a question. Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. strimux sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. `1` is the recommended value; run `strimux tune` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit (the same digit `⌥+1..9` jumps to). Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
 | `minimap.mode` | string | `"off"` | Chrome presentation: `off` (no persistent row; `⌥`/Alt reveals centered HUD + minimap), `overlay` (bottom-right corner), `edge_ticks` (frame ticks). Legacy `reserved` / `reserved_quasimode` parse as `off` (no bottom row). |

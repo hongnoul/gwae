@@ -28,13 +28,9 @@ fn frame_count(out: &[u8]) -> usize {
 /// Run the real strimux binary with `config_body` as its config file and
 /// return every byte it painted before it settled.
 fn paint_with_config(config_body: &str) -> String {
-    // `skeleton = true` goes *first*: it is a top-level key, and a case body
-    // that opens a TOML table (`[theme]`) would swallow anything appended
-    // after it. The frames it turns on are the chrome these cases read the
-    // colors off - they are drawn as glyphs, so every palette key arrives as a
-    // foreground code - which is why the theme cases opt into them even though
-    // strimux ships full-bleed.
-    paint_with_config_raw(&format!("skeleton = true\n{config_body}\n"))
+    // The frames are the chrome these cases read the colors off: they are
+    // drawn as glyphs, so every palette key arrives as a foreground code.
+    paint_with_config_raw(&format!("{config_body}\n"))
 }
 
 /// As [`paint_with_config`], but writes `config_body` to disk verbatim.
@@ -310,21 +306,21 @@ fn an_unparseable_config_still_starts_with_default_colors() {
 }
 
 #[test]
-fn the_shipped_default_is_full_bleed_with_no_inset_frames() {
-    // The inset skeleton is opt-in: out of the box a pane's content runs to
-    // the edge of its column, so a default run paints no frame glyphs at all
-    // and the focus ring is a background tint instead.
+fn the_shipped_default_draws_the_inset_frames() {
+    // The skeleton is the only look: out of the box every column box is
+    // framed in the overlay color, with the focused box in the accent, and no
+    // config key is needed to get there.
     let painted = paint_with_config_raw("");
     let (r, g, b) = MOCHA_OVERLAY;
     assert!(
-        !painted.contains(&fg_seq(r, g, b)),
-        "default run painted skeleton frames in the overlay color; saw {:?}",
+        painted.contains(&fg_seq(r, g, b)),
+        "default run painted no skeleton frames; saw {:?}",
         fgs_in(&painted)
     );
-    // Focus is a background tint on the pane's own edge cells instead.
     let (r, g, b) = MOCHA_ACCENT;
     assert!(
-        painted.contains(&bg_seq(r, g, b)),
-        "focus should still be visible as an accent tint"
+        painted.contains(&fg_seq(r, g, b)),
+        "the focused box's frame should be the accent; saw {:?}",
+        fgs_in(&painted)
     );
 }
