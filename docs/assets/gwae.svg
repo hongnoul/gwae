@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 976 1600">
+  <defs>
+    <style>
+      .paper { fill: #f4f3ef; }
+      .edge { fill: none; stroke: #111; stroke-width: 32; }
+      .bar { fill: #111; }
+      .accent { fill: #d81e1e; }
+    </style>
+  </defs>
+  <!-- Paper backing, hanafuda card proportions (matches hwatu boar.svg) -->
+  <path class="paper" d="M960,22V1578a6,6,0,0,1-6,6H22a6,6,0,0,1-6-6V22a6,6,0,0,1,6-6H954A6,6,0,0,1,960,22Z"/>
+  <rect class="edge" x="16" y="16" width="944" height="1568" rx="22"/>
+  <!-- 괘: the trigram as strips. Broken bars are split panes; the row scrolls, the panes don't shrink. -->
+  <!-- top bar: solid strip -->
+  <rect class="bar" x="176" y="360" width="624" height="128" rx="18"/>
+  <!-- middle bar: broken (two panes) -->
+  <rect class="bar" x="176" y="616" width="272" height="128" rx="18"/>
+  <rect class="bar" x="528" y="616" width="272" height="128" rx="18"/>
+  <!-- bottom bar: broken (two panes), one pane lit: the agent that wants you -->
+  <rect class="bar" x="176" y="872" width="272" height="128" rx="18"/>
+  <rect class="accent" x="528" y="872" width="272" height="128" rx="18"/>
+  <!-- the strip continues past the card edge: infinite row -->
+  <rect class="bar" x="880" y="1128" width="96" height="128" rx="18"/>
+  <rect class="bar" x="176" y="1128" width="624" height="128" rx="18"/>
+</svg>

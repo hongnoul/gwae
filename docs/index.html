@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="strimux is niri's scrolling tiling for your CLI agents, in any terminal: an infinite 2D grid of strips where panes never shrink. Daemon-free, single process, macOS / Linux / Windows."
+      content="gwae is niri's scrolling tiling for your CLI agents, in any terminal: an infinite 2D grid of strips where panes never shrink. Daemon-free, single process, macOS / Linux / Windows."
     />
     <link rel="canonical" href="https://hongnoul.github.io/gwae/" />
     <meta
       property="og:title"
-      content="strimux — niri's scrolling tiling, for your CLI agents, in any terminal"
+      content="gwae — niri's scrolling tiling, for your CLI agents, in any terminal"
     />
     <meta
       property="og:description"
@@ -21,13 +21,13 @@
     <meta name="twitter:card" content="summary" />
     <meta
       name="twitter:title"
-      content="strimux — niri's scrolling tiling, for your CLI agents, in any terminal"
+      content="gwae — niri's scrolling tiling, for your CLI agents, in any terminal"
     />
     <meta
       name="twitter:description"
       content="An infinite 2D grid of strips where panes never shrink. Daemon-free, agent-aware, any terminal."
     />
-    <title>strimux</title>
+    <title>gwae</title>
     <style>
       /* Mono, monochrome, minimal. */
       :root {
@@ -77,6 +77,12 @@
         justify-content: center;
         text-align: center;
       }
+      .hero .card {
+        width: 76px;
+        height: auto;
+        margin-bottom: 1.25rem;
+        border-radius: 6px;
+      }
       .hero h1 {
         font-size: 2.5rem;
         font-weight: 700;
@@ -86,13 +92,6 @@
       .hero .tagline {
         color: var(--muted);
         margin: 0.75rem 0 2rem;
-      }
-      .hero .grid-art {
-        color: var(--faint);
-        font-size: 0.8rem;
-        line-height: 1.25;
-        margin: 0 0 1.5rem;
-        white-space: pre;
       }
       .install {
         display: inline-flex;
@@ -207,12 +206,14 @@
   <body>
     <main>
       <section class="hero">
-        <pre class="grid-art">
-┌────────┐┌────────┐┌────────┐┌────────┐
-│ claude ││ jcode  ││ nvim   ││ htop  →│  …the row scrolls,
-│   »    ││   !    ││        ││        │   the panes don't shrink
-└────────┘└────────┘└────────┘└────────┘</pre>
-        <h1>strimux</h1>
+        <img
+          class="card"
+          src="assets/gwae.svg"
+          alt="gwae logo: a trigram of strips on a hanafuda-style card, one pane lit"
+          width="76"
+          height="125"
+        />
+        <h1>gwae</h1>
         <p class="tagline">
           niri's scrolling tiling, for your CLI agents, in any terminal.<br />
           An infinite 2D grid of strips where panes never shrink.<br />
