@@ -19,8 +19,9 @@ use strimux_term::{CColor, Cell, Size as GridSize, Style, TermGrid, Vt100Grid};
 
 use crate::config::Config;
 
-/// Bottom status/minimap chrome lines.
-const CHROME_ROWS: u16 = 1;
+/// Rows reserved for bottom chrome. There is no status bar, so panes fill the
+/// full viewport height.
+const CHROME_ROWS: u16 = 0;
 
 /// Style of the one-cell ring drawn around the focused pane.
 const FOCUS_RING: Style = Style {
@@ -300,7 +301,7 @@ fn pane_window(col_x0: u16, h_scroll: i32, w: u16, grid_cols: u16) -> Option<(u1
     }
 }
 
-/// Build the full frame (cols x rows) including the bottom status line.
+/// Build the full frame (cols x rows).
 fn render_frame(
     out: &mut Vec<Cell>,
     layout: &Layout,
@@ -348,41 +349,6 @@ fn render_frame(
         }
         let ring_style = if is_focus { FOCUS_RING } else { PANEL_RING };
         draw_ring(out, v.rect, cols, rows, ring_style);
-    }
-
-    // Bottom status/minimap line.
-    let base = (rows as usize - 1) * cols as usize;
-    let style = Style {
-        fg: CColor::Idx(15),
-        bg: CColor::Idx(24),
-        bold: false,
-        underline: false,
-        inverse: false,
-    };
-    let scroll = layout.focused_row().map(|r| r.scroll_x).unwrap_or(0);
-    let pscroll = focused_pane(layout)
-        .and_then(|id| panes.get(&id))
-        .map(|p| p.h_scroll)
-        .unwrap_or(0);
-    let mut st = if IN_PREFIX.load(Ordering::Relaxed) {
-        " strimux | PREFIX: h/l/k/j nav, H/L/K/J move, c col, r row, s split, x kill, z width, ,/. scroll, q quit | Esc cancel".to_string()
-    } else {
-        format!(
-            " strimux | row:{} | scroll:{} px:{} | focus: col {} pane {} | cols {} | Ctrl-b then h/l/k/j nav, Alt+hjkl also works",
-            layout.focused_row().map(|r| r.name.as_str()).unwrap_or("?"),
-            scroll,
-            pscroll,
-            layout.focus.column,
-            layout.focus.pane,
-            layout.focused_row().map(|r| r.columns.len()).unwrap_or(0),
-        )
-    };
-    st = st.chars().take(cols as usize).collect();
-    for (ci, c) in st.chars().enumerate() {
-        out[base + ci] = Cell { ch: c, style };
-    }
-    for i in st.chars().count()..(cols as usize) {
-        out[base + i] = Cell { ch: ' ', style };
     }
 }
 
