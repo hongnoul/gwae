@@ -1875,7 +1875,8 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut bare_alt_held = false;
     let mut chord_alt_until: Option<Instant> = None;
     let mut last_alt_held = false;
-    let mut hud_active: bool = cfg.minimap.hud_on_attention_ms > 0;
+    // Startup-only cheat-sheet HUD: shown once at init, dismissed on first key.
+    let mut hud_active: bool = true;
     let mut last_has_attention = has_attention(&layout);
     // Pane ids created by the spawn-agent verb; these are (re)spawned running
     // the configured `default_agent` harness instead of a plain shell.
@@ -2001,7 +2002,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 Ok(Event::Key(ke))
                     if matches!(ke.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
-                    // Init/attention HUD persists until the next key press.
+                    // Startup HUD persists until the next key press.
                     if hud_active {
                         hud_active = false;
                         dirty = true;
@@ -2278,16 +2279,6 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         let chord_alt_held = chord_alt_until.is_some();
         let effective_alt_held = bare_alt_held || chord_alt_held;
         let cur_has_attention = has_attention(&layout);
-        if !last_has_attention
-            && cur_has_attention
-            && cfg.minimap.hud_on_attention_ms > 0
-            && !effective_alt_held
-            && !hud_active
-        {
-            // Attention just arose: re-show HUD until next key press.
-            hud_active = true;
-            dirty = true;
-        }
         if cur_has_attention != last_has_attention || effective_alt_held != last_alt_held {
             dirty = true;
             last_has_attention = cur_has_attention;
@@ -3157,6 +3148,70 @@ mod tests {
     }
 
     #[test]
+    fn minimap_status_tints_follow_the_theme() {
+        // The sibling test above pins the *default* status tints. This one
+        // proves they are not merely defaults hiding behind the palette: with
+        // a non-default theme, every tile must be that theme's status color,
+        // muted, and none of Mocha's may appear.
+        use strimux_layout::Width;
+        let mut layout = Layout::default(); // 4 quarter panes on strip 1
+        let r2 = layout.new_row("two".to_string());
+        let p = layout.alloc_pane();
+        layout.add_column(r2, Width::Cells(20), vec![p]);
+        let ids: Vec<PaneId> = {
+            let row = layout.rows[0].clone();
+            row.columns.iter().flat_map(|c| c.panes.clone()).collect()
+        };
+        layout.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Done;
+        layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Failed;
+        layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Idle;
+
+        let nord = Palette::NORD;
+        let cols = 40usize;
+        let mut out = vec![Cell::default(); cols * 8];
+        draw_minimap(
+            &mut out,
+            cols as u16,
+            8,
+            &layout,
+            &crate::config::Minimap::default(),
+            &nord,
+        );
+        let cell = |x: usize, y: usize| out[y * cols + x];
+        let (ox, y) = (8usize, 6usize);
+        assert_eq!(cell(ox, y).style.bg, nord.accent, "focused tile uses accent");
+        assert_eq!(
+            cell(ox + 8, y).style.bg,
+            Palette::muted(nord.done),
+            "done tile uses the theme's done tint"
+        );
+        assert_eq!(
+            cell(ox + 16, y).style.bg,
+            Palette::muted(nord.failed),
+            "failed tile uses the theme's failed tint"
+        );
+        assert_eq!(
+            cell(ox + 24, y).style.bg,
+            Palette::muted(nord.idle),
+            "idle tile uses the theme's idle tint"
+        );
+        // No Catppuccin Mocha status tint may survive anywhere on the map.
+        let mocha = Palette::CATPPUCCIN_MOCHA;
+        for s in [
+            PaneStatus::Running,
+            PaneStatus::Idle,
+            PaneStatus::Done,
+            PaneStatus::Failed,
+        ] {
+            let stale = Palette::muted(mocha.status(s));
+            assert!(
+                !out.iter().any(|c| c.style.bg == stale),
+                "a Mocha {s:?} tint leaked into a Nord minimap"
+            );
+        }
+    }
+
+    #[test]
     fn scan_osc133_maps_protocol_to_status() {
         // Prompt marker -> waiting for input.
         assert_eq!(scan_osc133(b"\x1b]133;A\x07"), Some(PaneStatus::Idle));
@@ -3496,7 +3551,6 @@ mod tests {
         let mm = crate::config::Minimap::default();
         assert_eq!(mm.mode, crate::config::MinimapMode::Off);
         assert_eq!(mm.chrome_rows(), 0);
-        assert_eq!(mm.hud_on_attention_ms, 2500);
         // should_paint: Off never paints; Overlay/EdgeTicks paint when enabled.
         assert!(!mm.should_paint(false, false), "Off hidden");
         assert!(!crate::config::Minimap {
@@ -3514,12 +3568,6 @@ mod tests {
             ..mm
         }
         .should_paint(false, false));
-        // hud_on_attention_ms = 0 disables HUD explicitly.
-        let no_hud = crate::config::Minimap {
-            hud_on_attention_ms: 0,
-            ..mm
-        };
-        assert_eq!(no_hud.hud_on_attention_ms, 0);
         // Legacy values parse as Off (bottom row removed).
         let legacy: crate::config::Config =
             toml::from_str("[minimap]\nmode=\"reserved_quasimode\"").unwrap();

@@ -119,7 +119,7 @@ Panes without shell integration fall back to a **quiet heuristic**: a pane silen
 No bottom status row. Hold `⌥`/Alt to see status (centered, no pane shrinkage):
 
 - **Centered minimap** — one row per strip, one tile per pane (width ∝ column share), tinted by status, focused tile in `focus_color`, `❯` on focused strip, digit `⌥+1..9` per tile, summary `5 »2 !1 ✓1 ✗1`.
-- **Centered HUD** — ` » 1.3 needs you — ⌥+g` + cheat-sheet, shown at startup and when any pane flips to `Idle`/`Failed`; persists until the next key press (`hud_on_attention_ms = 0` to disable). While the HUD is visible the minimap is hidden beneath it.
+- **Centered HUD** — ` » 1.3 needs you — ⌥+g` + cheat-sheet, shown once at startup and dismissed on the first key press. While the HUD is visible the minimap is hidden beneath it.
 
 The minimap/HUD appears whenever there is more than one pane (or strip).
 
@@ -176,7 +176,6 @@ mode = "off"                       # off | overlay | edge_ticks  (reserved / res
 max_width = 32                     # overlay + centered Alt minimap
 max_rows = 6                       # overlay + centered Alt minimap
 show_counts = true
-hud_on_attention_ms = 2500         # center HUD (startup + attention), 0 = off
 ```
 
 Key reference (defaults in parentheses):
@@ -201,7 +200,6 @@ Key reference (defaults in parentheses):
 | `minimap.max_width` | int | `32` | Width of `overlay` and centered Alt minimap |
 | `minimap.max_rows` | int | `6` | Rows of `overlay` and centered Alt minimap |
 | `minimap.show_counts` | bool | `true` | Summary tallies |
-| `minimap.hud_on_attention_ms` | int | `2500` | Centered HUD (startup + attention) with cheat-sheet, persists until key press; `0` disables (non-zero enables, value kept for compat) |
 
 ---
 

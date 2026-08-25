@@ -33,7 +33,6 @@ mode = "off"
 max_width = 32
 max_rows = 6
 show_counts = true
-hud_on_attention_ms = 2500
 ```
 
 ## Checking your config
@@ -102,7 +101,6 @@ and a config file that is not being applied at all points at the syntax error:
 | `minimap.max_width` | integer | `32` | Maximum width of the minimap. Used for `overlay` and the centered minimap while holding `⌥`/Alt. |
 | `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown. Used for `overlay` and the centered minimap while holding `⌥`/Alt. |
 | `minimap.show_counts` | bool | `true` | Summary tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts skipped), above the map. |
-| `minimap.hud_on_attention_ms` | integer | `2500` | Centered HUD box (`» 1.3 needs you — ⌥+g` + cheat-sheet) at startup and when attention (Idle/Failed) arises. Persists until the next key press; `0` disables. The numeric value is a legacy enable flag (any non-zero enables). |
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.

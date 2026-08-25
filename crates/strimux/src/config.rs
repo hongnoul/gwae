@@ -257,10 +257,6 @@ pub struct Minimap {
     pub max_rows: u16,
     /// Draw the one-line status summary (above the map or in the HUD).
     pub show_counts: bool,
-    /// If non-zero, a centered HUD (attention hint + cheat-sheet) is shown
-    /// at startup and on attention transitions. `0` disables it. The numeric
-    /// value is kept for backward compat (any non-zero enables).
-    pub hud_on_attention_ms: u16,
 }
 
 impl Minimap {
@@ -294,7 +290,6 @@ impl Default for Minimap {
             max_width: 32,
             max_rows: 6,
             show_counts: true,
-            hud_on_attention_ms: 2500,
         }
     }
 }

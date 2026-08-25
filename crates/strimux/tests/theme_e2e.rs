@@ -32,7 +32,7 @@ fn paint_with_config(config_body: &str) -> String {
         // The HUD switch goes *after* the case's own body: TOML tables
         // swallow every key that follows them, so prepending `[minimap]`
         // would capture the case's top-level keys into that table instead.
-        "{config_body}\n[minimap]\nhud_on_attention_ms = 0\n"
+        "{config_body}\n"
     ))
 }
 
