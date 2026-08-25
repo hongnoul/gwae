@@ -133,3 +133,15 @@ fn doctor_reports_how_the_spawn_agent_key_will_resolve() {
     assert!(out.contains("agent:"), "got:\n{out}");
     assert!(!out.contains("MISSING"), "got:\n{out}");
 }
+
+#[test]
+fn doctor_reports_whether_input_latency_is_tuned() {
+    // Latency settings are invisible until you notice typing feels sluggish,
+    // so doctor has to surface them alongside everything else it checks.
+    let out = doctor(Some("input_poll_ms = 10\n"));
+    assert!(out.contains("latency:"), "got:\n{out}");
+    assert!(
+        out.contains("strimux tune"),
+        "must point at the fix; got:\n{out}"
+    );
+}

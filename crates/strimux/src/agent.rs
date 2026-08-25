@@ -352,7 +352,15 @@ pub fn fallback_shell() -> String {
 /// Only a top-level key is touched. Lines inside a `[table]` are skipped, so a
 /// `default_agent` under some future section can never be clobbered.
 pub fn set_default_agent_text(text: &str, agent: &str) -> String {
-    let line = format!("default_agent = {}", toml_string(agent));
+    set_scalar_text(text, "default_agent", &toml_string(agent))
+}
+
+/// As [`set_default_agent_text`], for any top-level key. `value` must already
+/// be valid TOML (quoted for strings, bare for numbers), so the same
+/// comment-preserving rewrite serves both the agent gateway and the latency
+/// tuner rather than each growing its own config writer.
+pub fn set_scalar_text(text: &str, key: &str, value: &str) -> String {
+    let line = format!("{key} = {value}");
     let mut out: Vec<String> = Vec::new();
     let mut in_table = false;
     let mut replaced = false;
@@ -363,7 +371,7 @@ pub fn set_default_agent_text(text: &str, agent: &str) -> String {
         }
         let is_key = !in_table
             && !replaced
-            && t.strip_prefix("default_agent")
+            && t.strip_prefix(key)
                 .map(|rest| rest.trim_start().starts_with('='))
                 .unwrap_or(false);
         if is_key {
@@ -659,8 +667,46 @@ fn prompt(n: usize) -> Choice {
     }
 }
 
+/// Offer the latency tuning once, right after the user has chosen an agent.
+///
+/// Deliberately only on the interactive path: someone who already configured
+/// `default_agent` is past onboarding and must never be interrupted on the
+/// way into their harness. Silent when there is nothing to improve, so a
+/// tuned machine (or a second run) sees nothing at all.
+fn offer_latency_tuning(input_poll_ms: u64, cfg_path: &Path) {
+    let settings = crate::latency::audit(input_poll_ms);
+    let p = crate::latency::pending(&settings);
+    if p.is_empty() {
+        return;
+    }
+    let (ours, theirs) = crate::latency::ours_and_theirs(&p);
+    println!(
+        "\n{DIM}One more thing: {} input-latency setting(s) on this machine are\nslower than they need to be for a terminal you type in all day.{RESET}",
+        p.len()
+    );
+    // Fix ours without asking: it is our own config file, the change is one
+    // integer, and it is trivially reversible. Everything else is only ever
+    // printed, since it is the user's machine or another program's file.
+    if !ours.is_empty() {
+        match crate::latency::save_input_poll(cfg_path, 1) {
+            Ok(()) => println!("{DIM}Set strimux's own {RESET}input_poll_ms = 1{DIM}.{RESET}"),
+            Err(e) => println!("{YELLOW}Could not write {}: {e}{RESET}", cfg_path.display()),
+        }
+    }
+    if let Some(steps) = crate::latency::render_manual_steps(&theirs) {
+        print!("{steps}");
+    }
+    println!("\n{DIM}Full explanation any time: {RESET}{CYAN}strimux tune{RESET}\n");
+}
+
 /// `strimux agent`: resolve, maybe ask, save, and exec. Never returns.
-pub fn run(default_agent: &str, extra: &[String], cfg_path: &Path, print_only: bool) -> ! {
+pub fn run(
+    default_agent: &str,
+    extra: &[String],
+    input_poll_ms: u64,
+    cfg_path: &Path,
+    print_only: bool,
+) -> ! {
     let p = plan(default_agent, detect_with(extra));
 
     if print_only {
@@ -696,6 +742,7 @@ pub fn run(default_agent: &str, extra: &[String], cfg_path: &Path, print_only: b
                             cfg_path.display()
                         ),
                     }
+                    offer_latency_tuning(input_poll_ms, cfg_path);
                     cmd
                 }
                 _ => fallback_shell(),
@@ -719,6 +766,7 @@ pub fn run(default_agent: &str, extra: &[String], cfg_path: &Path, print_only: b
                             cfg_path.display()
                         ),
                     }
+                    offer_latency_tuning(input_poll_ms, cfg_path);
                     pick
                 }
                 None => fallback_shell(),

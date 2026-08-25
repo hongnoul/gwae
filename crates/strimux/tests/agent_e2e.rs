@@ -707,3 +707,63 @@ fn startup_with_no_agents_at_all_still_lands_in_a_usable_shell() {
     });
     p.kill();
 }
+
+#[test]
+fn onboarding_tunes_latency_right_after_the_agent_is_chosen() {
+    // The two setup steps are one flow: you should leave the first run with
+    // an agent *and* a machine that is not needlessly slow to type in.
+    let sb = Sandbox::new(&["claude"]);
+    sb.write_config("input_poll_ms = 10\n");
+    let mut p = sb.spawn(&[]);
+    p.wait_for("Which agent");
+    p.send("1\n");
+    // strimux fixes its own setting without being asked...
+    let seen = p.wait_for("Set strimux's own");
+    assert!(seen.contains("input-latency setting"), "got:\n{seen}");
+    assert!(seen.contains("input_poll_ms = 1"), "got:\n{seen}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !sb.read_config().contains("input_poll_ms = 1") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    let cfg = sb.read_config();
+    assert!(cfg.contains("input_poll_ms = 1"), "got:\n{cfg}");
+    // ...and the agent choice from the step before is still there.
+    assert!(cfg.contains("default_agent = \"claude\""), "got:\n{cfg}");
+    p.kill();
+}
+
+#[test]
+fn onboarding_says_nothing_about_latency_when_there_is_nothing_to_fix() {
+    // Silence is the feature: a tuned machine must not be nagged, or the
+    // message becomes noise people learn to skip.
+    let sb = Sandbox::new(&["claude"]);
+    sb.write_config("input_poll_ms = 1\n");
+    let mut p = sb.spawn(&[]);
+    p.wait_for("Which agent");
+    p.send("1\n");
+    let seen = p.wait_for("AGENT-RAN:claude");
+    // Only true when kitty/macOS are also clean; assert the strimux part,
+    // which is the one this sandbox controls.
+    assert!(
+        !seen.contains("Set strimux's own"),
+        "must not offer a fix that is already applied; got:\n{seen}"
+    );
+    p.kill();
+}
+
+#[test]
+fn a_configured_agent_never_sees_the_latency_prompt() {
+    // Past onboarding: going to your harness must not be interrupted, even
+    // on a machine with untuned settings.
+    let sb = Sandbox::new(&["claude"]);
+    sb.write_config("default_agent = \"claude\"\ninput_poll_ms = 10\n");
+    let p = sb.spawn(&[]);
+    let seen = p.wait_for("AGENT-RAN:claude");
+    assert!(
+        !seen.contains("input-latency"),
+        "the fast path must stay silent; got:\n{seen}"
+    );
+    // And the config is untouched.
+    assert!(sb.read_config().contains("input_poll_ms = 10"));
+    p.kill();
+}

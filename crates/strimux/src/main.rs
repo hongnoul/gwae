@@ -10,6 +10,7 @@ mod cli;
 mod config;
 mod cowsay;
 mod keys;
+mod latency;
 mod select;
 mod theme;
 mod tui;
@@ -47,9 +48,18 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
         Command::Agent { print } => agent::run(
             &cfg.default_agent,
             &cfg.agents,
+            cfg.input_poll_ms,
             &cfg_path_for_agent(),
             print,
         ),
+        Command::Tune { apply } => {
+            let code = latency::run_tune(cfg.input_poll_ms, &cfg_path_for_agent(), apply);
+            if code == 0 {
+                Ok(())
+            } else {
+                Err(code)
+            }
+        }
         Command::Setup => {
             println!("strimux setup: no per-terminal bindings installed yet (M4).");
             println!(
@@ -72,6 +82,10 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
                 None => println!("  theme: {} [ok]", cfg.theme_name()),
             }
             println!("  agent: {}", agent_status(&cfg));
+            println!(
+                "  latency: {}",
+                latency::summary(&latency::audit(cfg.input_poll_ms))
+            );
             println!("  layout smoke: {}", layout_smoke());
             Ok(())
         }

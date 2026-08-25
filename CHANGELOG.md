@@ -7,6 +7,18 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **`strimux tune` reports input latency across all three layers.** A keystroke
+  crosses macOS, your terminal, and strimux — and strimux twice, since what
+  you see is the program's echo making the return trip. Tuning only strimux's
+  own knob therefore fixes a third of the problem. `tune` probes all three and
+  says which are slower than they need to be, with the exact command for each.
+  It writes **only strimux's own config**; macOS globals and your terminal's
+  config are printed for you to apply, never edited silently. First-run
+  onboarding offers the same thing once, right after you pick an agent, and
+  stays silent when there is nothing to fix. `doctor` carries a summary line,
+  and `docs/LATENCY.md` explains the reasoning (including why removing
+  strimux's wait entirely would make typing *worse*, not better).
+
 - **The first pane opens on your agent, not a bare shell.** strimux exists to
   drive agent harnesses, but every launch dropped you at a shell prompt to
   type the harness name yourself. Pane 1.1 now runs the same agent gateway

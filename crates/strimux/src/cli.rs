@@ -1,6 +1,6 @@
 //! Command-line interface for the `strimux` binary.
 //!
-//! Single binary, subcommands: `run` (default), `new`, `agent`, `setup`, `doctor`.
+//! Single binary, subcommands: `run` (default), `new`, `agent`, `tune`, `setup`, `doctor`.
 //! There is deliberately no `server`/`ctl`/`ls`/`kill-server`: strimux is
 //! daemon-free (ADR-003 reversed, ADR-011).
 
@@ -39,6 +39,14 @@ pub enum Command {
         /// Print what would happen and exit, without prompting or exec'ing.
         #[arg(long)]
         print: bool,
+    },
+    /// Report input-latency settings across macOS, your terminal, and
+    /// strimux, and apply the ones strimux owns.
+    Tune {
+        /// Write strimux's own fix to the config file (never touches macOS
+        /// settings or your terminal's config).
+        #[arg(long)]
+        apply: bool,
     },
     /// Install optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty).
     Setup,
