@@ -1,0 +1,70 @@
+{
+  "results": [
+    {
+      "name": "bare /bin/sh (floor)",
+      "start_first_out_ms": 6.588417,
+      "start_echo_ready_ms": 61.004042,
+      "rtt_ms": {
+        "median": 0.098291,
+        "p90": 0.120416,
+        "p99": 0.210083,
+        "n": 150
+      },
+      "rss_1pane_kb": 0,
+      "procs_1pane": 0
+    },
+    {
+      "name": "strimux (gwae)",
+      "start_first_out_ms": 10.682292,
+      "start_echo_ready_ms": 64.895334,
+      "rtt_ms": {
+        "median": 2.499416,
+        "p90": 2.624084,
+        "p99": 2.86,
+        "n": 150
+      },
+      "rss_1pane_kb": 7536,
+      "procs_1pane": 2,
+      "rss_4pane_kb": 7936,
+      "procs_4pane": 2,
+      "idle_cpu_pct_4pane": 3.175282161442177
+    },
+    {
+      "name": "tmux",
+      "start_first_out_ms": 15.901916,
+      "start_echo_ready_ms": 66.602875,
+      "rtt_ms": {
+        "median": 0.24175,
+        "p90": 0.315833,
+        "p99": 0.912667,
+        "n": 150
+      },
+      "rss_1pane_kb": 9520,
+      "procs_1pane": 2,
+      "rss_4pane_kb": 13632,
+      "procs_4pane": 3,
+      "idle_cpu_pct_4pane": 0.0
+    },
+    {
+      "name": "zellij",
+      "start_first_out_ms": 44.702416,
+      "start_echo_ready_ms": 99.869666,
+      "rtt_ms": {
+        "median": 12.481709,
+        "p90": 12.7825,
+        "p99": 13.096542,
+        "n": 150
+      },
+      "rss_1pane_kb": 101904,
+      "procs_1pane": 2,
+      "warn_4pane": "4-pane session did not become interactive"
+    }
+  ],
+  "binary_bytes": {
+    "strimux": 2590288,
+    "tmux": 1000784,
+    "zellij": 41355696
+  },
+  "host": "arm64",
+  "samples": 150
+}
