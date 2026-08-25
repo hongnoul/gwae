@@ -3,7 +3,11 @@
 BIN    := target/release/strimux
 CARGO  ?= cargo
 
-.PHONY: build install check test clean
+# Where the user's config lives (same resolution as Config::default_path()).
+CONFIG_DIR  := $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/strimux,$(HOME)/.config/strimux)
+CONFIG_FILE := $(CONFIG_DIR)/strimux.toml
+
+.PHONY: build install install-keep reset-config check test clean
 
 ## Build the optimised release binary.
 build:
@@ -12,7 +16,13 @@ build:
 ## Install the release binary into the first writable `bin` dir on PATH
 ## (falling back to ~/.local/bin), so `strimux` is runnable immediately even
 ## when ~/.cargo/bin is not on PATH.
-install: build
+##
+## Installing also clears any saved preferences (backed up, never deleted) so
+## the very next `strimux` run replays the full onboarding / agent gateway
+## flow. That is the point during development: the flow is only checkable from
+## a machine that has never been onboarded. Use `make install-keep` (or
+## `KEEP_CONFIG=1`) to install without touching the config.
+install: build $(if $(KEEP_CONFIG),,reset-config)
 	@dir="$${PREFIX:-}"; \
 	if [ -z "$$dir" ]; then \
 		for d in $$(printf '%s' "$$PATH" | tr ':' '\n'); do \
@@ -25,6 +35,21 @@ install: build
 	mkdir -p "$$dir"; \
 	install -m755 $(BIN) "$$dir/strimux"; \
 	echo "installed strimux -> $$dir/strimux"
+
+## Install without clearing preferences.
+install-keep:
+	@$(MAKE) install KEEP_CONFIG=1
+
+## Move any existing config aside so the next run is a genuine first run.
+## The old file is kept as `strimux.toml.bak.<timestamp>`; nothing is deleted.
+reset-config:
+	@if [ -e "$(CONFIG_FILE)" ]; then \
+		bak="$(CONFIG_FILE).bak.$$(date +%Y%m%d%H%M%S)"; \
+		mv "$(CONFIG_FILE)" "$$bak"; \
+		echo "cleared preferences: $(CONFIG_FILE) -> $$bak"; \
+	else \
+		echo "no preferences at $(CONFIG_FILE); already a first run"; \
+	fi
 
 ## Lint the whole workspace.
 check:
