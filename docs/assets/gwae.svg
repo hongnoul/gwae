@@ -1,8 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img">
-<title>gwae — ISO 7000-030</title>
-<desc>ISO 7000-2022-030 Option key symbol, MDI apple-keyboard-option Apache 2.0. White squircle rx225.</desc>
-<rect x="0" y="0" width="1024" height="1024" rx="225" ry="225" fill="white"/>
-<g transform="translate(512,512) scale(28) translate(-12,-12)" fill="black">
-  <path d="M3,4H9.11L16.15,18H21V20H14.88L7.84,6H3V4M14,4H21V6H14V4Z"/>
-</g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="1024" height="1024" role="img" aria-label="gwae">
+  <title>gwae</title>
+  <!-- gwae official mark. 8x8 module grid, 1-module margin, bar weight = 1 module. -->
+  <rect x="0" y="0" width="10" height="10" fill="#fff"/>
+  <path fill="#000" d="
+    M1,1 h4 v1 h-4 z
+    M4,1 h1 v6 h-1 z
+    M2,3 h1 v6 h-1 z
+    M1,8 h4 v1 h-4 z
+    M6,1 h1 v8 h-1 z
+    M6,3 h3 v1 h-3 z
+    M8,1 h1 v8 h-1 z"/>
 </svg>
