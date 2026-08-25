@@ -19,8 +19,8 @@ pub enum Preset {
 }
 
 impl Preset {
-    /// The default width for a brand-new column (`1/2` viewport).
-    pub const DEFAULT: Preset = Preset::Half;
+    /// The default width for a brand-new column (`1/4` viewport).
+    pub const DEFAULT: Preset = Preset::Quarter;
 
     /// The integer numerator / denominator of this preset.
     pub fn ratio(self) -> (u16, u16) {
@@ -34,15 +34,15 @@ impl Preset {
         }
     }
 
-    /// The next preset in `cycle` order (the `cycle-width` verb). Wraps.
+    /// The next preset in `cycle` order (the `cycle-width` verb). Cycles
+    /// through the three user-facing sizes `1/3 -> 1/2 -> 1/4` and wraps.
+    /// The legacy larger fractions snap straight back into that cycle.
     pub fn next(self) -> Preset {
         match self {
             Preset::Quarter => Preset::Third,
             Preset::Third => Preset::Half,
-            Preset::Half => Preset::TwoThirds,
-            Preset::TwoThirds => Preset::ThreeQuarters,
-            Preset::ThreeQuarters => Preset::Full,
-            Preset::Full => Preset::Quarter,
+            Preset::Half => Preset::Quarter,
+            Preset::TwoThirds | Preset::ThreeQuarters | Preset::Full => Preset::Quarter,
         }
     }
 }
@@ -57,8 +57,8 @@ pub enum Width {
 }
 
 impl Width {
-    /// The *default* new-column width: half the viewport.
-    pub const DEFAULT: Width = Width::Preset(Preset::Half);
+    /// The *default* new-column width: a quarter of the viewport.
+    pub const DEFAULT: Width = Width::Preset(Preset::Quarter);
 
     /// Resolve this width to a concrete number of cells given the viewport
     /// width. Always returns at least 1 cell.

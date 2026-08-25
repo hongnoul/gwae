@@ -18,7 +18,7 @@ default_agent = "claude"
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `default_column_width` | width | `{ preset = "half" }` | Width of newly created columns. Widths are `{ preset = "quarter" \| "third" \| "half" \| "two_thirds" \| "three_quarters" \| "full" }` or `{ cells = N }`. |
+| `default_column_width` | width | `{ preset = "quarter" }` | Width of newly created columns. Widths are `{ preset = "quarter" \| "third" \| "half" \| "two_thirds" \| "three_quarters" \| "full" }` or `{ cells = N }`. |
 | `scroll_margin` | integer | `2` | Cells of context kept visible around the focused column when scrolling. |
 | `center_focus` | bool | `false` | Always center the focused column (niri's centered mode) instead of scrolling minimally. |
 | `content_width` | integer | `0` | Logical grid content width (cells) of every pane, decoupled from the visible column width. Long lines up to this width do not wrap and can be revealed with horizontal pane scroll (`⌥+Left/Right`, the Option key on macOS). `0` (the default) follows the visible column width so lines wrap normally and there is no horizontal overflow to manage in a pane. |

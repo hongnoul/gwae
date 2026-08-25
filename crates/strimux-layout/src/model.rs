@@ -138,41 +138,15 @@ impl Layout {
 
     pub fn column_x_ranges(&self, row: RowId, viewport_cols: u16) -> Option<Vec<(u32, u32)>> {
         let row = self.row(row)?;
-        let viewport = viewport_cols as u32;
-        // Reserve the exact cells of fixed-width columns first; preset-fraction
-        // columns share whatever is left so the strip is contiguous and fills
-        // the viewport exactly (no per-column rounding overflow, no gaps).
-        let reserved: u32 = row
-            .columns
-            .iter()
-            .filter(|c| matches!(c.width, Width::Cells(_)))
-            .map(|c| c.width.cells(viewport_cols) as u32)
-            .sum();
-        let budget = viewport.saturating_sub(reserved);
-        let n_preset = row.columns.iter().filter(|c| !matches!(c.width, Width::Cells(_))).count();
-        // Ideal share per preset column, so they all sum to exactly `budget`.
-        let base = if n_preset > 0 { budget / n_preset as u32 } else { 0 };
-        let mut rem = if n_preset > 0 { budget % n_preset as u32 } else { 0 };
-        // Give each preset column `base` cells, then hand out the remainder one
-        // cell at a time (round-robin) so no column overflows the viewport.
-        let mut widths = Vec::with_capacity(row.columns.len());
-        for col in &row.columns {
-            let w = match col.width {
-                Width::Cells(_) => col.width.cells(viewport_cols) as u32,
-                Width::Preset(_) => {
-                    let mut w = base;
-                    if rem > 0 {
-                        w += 1;
-                        rem -= 1;
-                    }
-                    w.max(1)
-                }
-            };
-            widths.push(w);
-        }
+        // Each column renders at its own width: preset fractions are a *fixed
+        // share of the viewport* (e.g. 1/4) regardless of how many columns
+        // exist. Columns therefore keep their size as the strip grows and any
+        // overflow extends past the right edge, where follow-focus scrolling
+        // reveals it, rather than every column shrinking to fit.
         let mut x = 0u32;
         let mut out = Vec::with_capacity(row.columns.len());
-        for w in widths {
+        for col in &row.columns {
+            let w = col.width.cells(viewport_cols) as u32;
             out.push((x, x + w));
             x += w;
         }

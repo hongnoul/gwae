@@ -7,6 +7,11 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **Fixed-width panes**: every column now renders at its own fixed preset
+  fraction of the viewport (new columns default to `1/4`), and a strip that
+  grows past the edge keeps column sizes and **scrolls right** instead of
+  shrinking all columns to fit. `⌥+r` (Option key on macOS) cycles the focused
+  width `1/3 → 1/2 → 1/4`.
 - **Spawn an agent pane with `;`**: `Ctrl-b ;` / `⌥+;` (the Option key on macOS)
   spawns a new pane running the configured agent harness (`config.default_agent`,
   default `jcode`) at the rightmost of the focused strip and switches focus to

@@ -17,7 +17,7 @@ coordinate.
 
 - A column occupies a contiguous x-range with a **width**: a preset fraction of
   the viewport (`1/4, 1/3, 1/2, 2/3, 3/4, 1`) or fixed cells.
-- Default new-column width: `1/2` (config `default_column_width`).
+- Default new-column width: `1/4` (config `default_column_width`).
 - A column contains 1..n panes stacked vertically, splitting strip height evenly.
 - Gap between columns: 1 cell (themed divider).
 
@@ -25,10 +25,13 @@ coordinate.
 
 1. **No implicit resize**: adding/removing/moving columns never changes any other
    column's width.
-2. Pane logical width = column width; logical height = its share of strip height.
-3. Terminal window resize changes the focused row's height (unavoidable).
-4. Order of columns on a row is total; no gaps (compaction on close).
-5. Rows never auto-relocate or reorder.
+2. Each preset column renders at its own fixed fraction of the viewport, so a
+   strip that grows past the screen keeps each column the same size and **scrolls
+   right** (revealed by follow-focus) instead of shrinking every column.
+3. Pane logical width = column width; logical height = its share of strip height.
+4. Terminal window resize changes the focused row's height (unavoidable).
+5. Order of columns on a row is total; no gaps (compaction on close).
+6. Rows never auto-relocate or reorder.
 
 ## Verbs (default keys)
 
@@ -45,7 +48,7 @@ go to strimux, even with an agent focused.
 | new-agent | `⌥+a` / `;` | new column running the default agent harness |
 | split-down | `⌥+s` | new pane below focused |
 | new-row | `⌥+Shift+Enter` | new row below focused |
-| cycle-width | `⌥+r` | next preset width |
+| cycle-width | `⌥+r` | cycle focused preset width 1/3 → 1/2 → 1/4 |
 | consume / expel | `⌥+,` / `⌥+.` | stack a neighbor / push pane out |
 | center | `⌥+z` | center focused column |
 | jump N | `⌥+1..9` | jump to Nth column |
