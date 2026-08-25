@@ -20,7 +20,7 @@ no compositor, no GUI, on any OS. See [`docs/COMPARISON.md`](docs/COMPARISON.md)
 ## Non-goals (read before filing a feature request)
 
 - **No daemon / detach / attach.** no need for persistence layer, keeping it lightweight
-- No free 2D canvas (we are a structured grid of strips). cmux canvas view is an overkill
+- No free 2D canvas (we are a structured grid of strips). use cmux instead of strimux
 - No floating panes, no mouse-driven chrome, no plugin system. just faithful keybind DX
 
 ## Development
