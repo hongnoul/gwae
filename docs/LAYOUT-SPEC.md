@@ -59,7 +59,7 @@ go to strimux, even with an agent focused.
 | center | `⌥+z` | center focused column |
 | jump N | `⌥+1..9` | jump to Nth column |
 | smart-jump | `⌥+g` | jump to next agent that needs you (OSC 133) |
-| find | `⌥+f` | fuzzy text search over panes |
+| find | *(unassigned)* | fuzzy text search over panes. **Not implemented; `⌥+f` is taken by toggle-full-width** (see `binds.rs`, which is verified against the dispatcher). A key must be chosen before this ships |
 | kill-pane | `⌥+x` | close pane; compact columns/rows; an emptied strip is dropped and focus shifts up |
 | scroll viewport | `⌥+Ctrl+h/l` | page the row one column stop without moving focus |
 

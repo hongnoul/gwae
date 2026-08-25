@@ -20,7 +20,7 @@ Kill the biggest risk first: prove the render path.
 ## M2 - Agent-first ergonomics (3-4 weeks) <- make-or-break
 - [ ] Agent launcher + `⌥+a` / `;` default-harness spawn
 - [ ] **OSC 133 status**: minimap dots + status tick
-- [ ] **Smart-jump** `⌥+g`; fuzzy `⌥+f` text summon
+- [ ] **Smart-jump** `⌥+g`; fuzzy text summon (**key TBD** — `⌥+f` is toggle-full-width)
 - [ ] Pane headers with resume hints; TOML config; layout property tests
 - **Exit**: dogfood daily Claude Code + Jcode sessions
 
