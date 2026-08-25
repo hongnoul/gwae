@@ -23,7 +23,11 @@ struct Sandbox {
 impl Sandbox {
     fn new(agents: &[&str]) -> Sandbox {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!(
+        // Under the target dir, not `temp_dir()`: on macOS the system temp
+        // lives in `/var/folders/...`, which the agent scan rightly treats
+        // as an OS directory and skips, so stubs planted there would be
+        // invisible to the discovery tests on a stock machine (and in CI).
+        let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "strimux-agent-e2e-{}-{}",
             std::process::id(),
             NEXT_ID.fetch_add(1, Ordering::Relaxed)
@@ -483,6 +487,13 @@ fn a_bare_enter_takes_the_listed_default() {
     let sb = Sandbox::new(&["claude", "aider"]);
     let mut p = sb.spawn(&[]);
     let seen = p.wait_for("Which agent");
+    // The label may land in a later write than the question on a slow
+    // machine, so wait for it rather than asserting on the first paint.
+    let seen = if seen.contains("(default)") {
+        seen
+    } else {
+        p.wait_for("(default)")
+    };
     assert!(
         seen.contains("(default)"),
         "the default must be labeled; got:\n{seen}"
@@ -694,8 +705,11 @@ fn startup_pane_one_one_launches_the_configured_agent_directly() {
     // that agent. No selector, no shell, nothing to type.
     let sb = Sandbox::new(&["claude"]);
     sb.write_config("default_agent = \"claude\"\n");
-    let p = sb.spawn_tui_bare();
-    let seen = p.collect_until(Duration::from_secs(15), |raw| {
+    let mut p = sb.spawn_tui_bare();
+    // The startup HUD covers the middle of the screen, and cells under it are
+    // never emitted; poke ⌥+/ so the pane's full row gets painted at least
+    // once between toggles.
+    let seen = p.collect_until_poking(Duration::from_secs(15), "\x1b/", |raw| {
         screen_text(raw).contains("AGENT-RAN:claude")
     });
     let text = screen_text(&seen);
@@ -759,7 +773,9 @@ fn startup_with_no_agents_at_all_still_lands_in_a_usable_shell() {
     // The degenerate case: strimux must never open onto a dead first pane.
     let sb = Sandbox::new(&[]);
     let mut p = sb.spawn_tui_bare();
-    p.collect_until(Duration::from_secs(15), |raw| {
+    // Same HUD-dismissal poke as above: the gateway's message is painted
+    // under the startup HUD until something toggles it away.
+    p.collect_until_poking(Duration::from_secs(15), "\x1b/", |raw| {
         screen_text(raw).contains("No agent harness found")
     });
     p.send("\n");
