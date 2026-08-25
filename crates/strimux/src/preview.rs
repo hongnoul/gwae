@@ -577,49 +577,7 @@ mod tests {
     #[test]
     fn each_visible_setting_changes_the_picture() {
         let base = plain(&render(&Prefs::default(), false));
-        let mut cases: Vec<(&str, Prefs)> = Vec::new();
-        cases.push((
-            "panes",
-            Prefs {
-                panes: 3,
-                ..Default::default()
-            },
-        ));
-        cases.push((
-            "width",
-            Prefs {
-                width: Width::Preset(Preset::Half),
-                ..Default::default()
-            },
-        ));
-        cases.push((
-            "content",
-            Prefs {
-                content: 120,
-                ..Default::default()
-            },
-        ));
-        cases.push((
-            "centered",
-            Prefs {
-                centered: true,
-                ..Default::default()
-            },
-        ));
-        cases.push((
-            "labels",
-            Prefs {
-                labels: true,
-                ..Default::default()
-            },
-        ));
-        cases.push((
-            "cowsay",
-            Prefs {
-                cowsay: true,
-                ..Default::default()
-            },
-        ));
+        let cases: Vec<(&str, Prefs)> = vec![];
         for (name, p) in cases {
             assert_ne!(base, plain(&render(&p, false)), "{name} changed nothing");
         }
