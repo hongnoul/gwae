@@ -1520,10 +1520,12 @@ fn with_opacity(frame: &mut [Cell], alpha: f32, pal: &Palette, draw: impl FnOnce
     }
 }
 
-/// Center HUD: shown at startup and when attention arrives (Idle/Failed).
-/// Persists until the next key press. Always shows a very concise
-/// cheat-sheet of every keybind; when a pane needs you the top line is a
-/// smart-jump hint (` ✗ 1.3 needs you — ⌥+g`).
+/// Center HUD: a concise cheat-sheet of every keybind, shown at startup and
+/// toggled with `⌥+/`. Persists until the next key press.
+///
+/// Attention (Idle/Failed panes) is deliberately *not* surfaced here: the
+/// ambient chrome already carries it (pane tints, right-edge strip ticks,
+/// minimap glyphs) and `⌥+g` jumps to the pane that wants you on demand.
 /// Draw the theme picker: a small centered panel naming the previewed theme.
 ///
 /// The picker deliberately shows almost nothing, because the *whole screen*
@@ -1725,44 +1727,11 @@ fn draw_toast(out: &mut [Cell], cols: u16, rows: u16, text: &str, pal: &Palette,
     }
 }
 
-fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal: &Palette) {
+fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, pal: &Palette) {
     let focus_color = pal.accent;
     if cols < 30 || rows < 9 {
         return;
     }
-    let target = smart_jump_target(layout);
-    let attention: Option<String> = if let Some(pid) = target {
-        let status = layout
-            .panes
-            .get(&pid)
-            .map(|p| p.status)
-            .unwrap_or(PaneStatus::Idle);
-        let glyph = status_glyph_for(status);
-        let addr = layout
-            .rows
-            .iter()
-            .enumerate()
-            .find_map(|(ri, row)| {
-                row.columns.iter().enumerate().find_map(|(ci, col)| {
-                    col.panes
-                        .iter()
-                        .position(|p| *p == pid)
-                        .map(|_| format!("{}.{}", ri + 1, ci + 1))
-                })
-            })
-            .unwrap_or_else(|| "?".to_string());
-        Some(format!(
-            " {} {} needs you — {} ",
-            glyph,
-            addr,
-            crate::keys::chord("g")
-        ))
-    } else if has_attention(layout) {
-        Some(format!(" ! needs you — {} ", crate::keys::chord("g")))
-    } else {
-        None
-    };
-
     // Cheat-sheet as a spreadsheet: two (key, action) column pairs with a
     // header row and ruled grid lines, so keys line up in a scannable table
     // rather than reading as a paragraph of hints.
@@ -1811,10 +1780,6 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
         s
     };
     let mut lines: Vec<String> = Vec::new();
-    if let Some(a) = attention.clone() {
-        lines.push(a);
-    }
-    let attn_rows = lines.len();
     lines.push(format!(
         "{}│{}│{}│{}",
         cell("key", 0),
@@ -1881,20 +1846,16 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
         h: bh as u16,
     };
     draw_focus_frame(out, cols, rect, focus_color);
-    let has_attn = attention.is_some();
     for (idx, line) in lines.iter().enumerate() {
         let ty = oy + 1 + idx;
         let line_len = line.chars().count();
         let tx = ox + 1 + (bw - 2).saturating_sub(line_len) / 2;
-        let is_attention = has_attn && idx == 0;
-        let is_header = idx == attn_rows;
+        let is_header = idx == 0;
         let is_rule = line.starts_with('─');
         for (i, ch) in line.chars().enumerate() {
             if let Some(c) = out.get_mut(ty * cols as usize + (tx + i)) {
                 c.ch = ch;
-                c.style.fg = if is_attention {
-                    CColor::Idx(231)
-                } else if is_header {
+                c.style.fg = if is_header {
                     focus_color
                 } else if is_rule || ch == '│' {
                     Palette::muted(pal.text)
@@ -1902,7 +1863,7 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
                     pal.text
                 };
                 c.style.bg = bg;
-                c.style.bold = is_attention || is_header;
+                c.style.bold = is_header;
                 c.width = 1;
             }
         }
@@ -3491,7 +3452,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             let alpha = cfg.hud_opacity;
             if show_hud {
                 with_opacity(&mut frame, alpha, &pal, |f| {
-                    draw_center_hud(f, cols, rows, &layout, &pal)
+                    draw_center_hud(f, cols, rows, &pal)
                 });
             }
             if show_center_minimap && !show_hud {
@@ -4587,7 +4548,7 @@ mod tests {
         for (what, draw) in [("hud", 0), ("center minimap", 1)] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
             if draw == 0 {
-                draw_center_hud(&mut out, cols, rows, &layout, &nord);
+                draw_center_hud(&mut out, cols, rows, &nord);
             } else {
                 let mm = crate::config::Minimap {
                     mode: crate::config::MinimapMode::Off,
@@ -5588,8 +5549,9 @@ mod tests {
     }
 
     #[test]
-    fn center_hud_paints_centered_box_with_attention_hint() {
-        // HUD flash: centered box with smart-jump hint + concise keybind cheat-sheet.
+    fn center_hud_paints_centered_box_with_cheat_sheet() {
+        // HUD flash: centered box with a concise keybind cheat-sheet. Pane
+        // attention is deliberately absent; ambient chrome + `⌥+g` cover it.
         let mut layout = Layout::default();
         let ids: Vec<PaneId> = layout.rows[0]
             .columns
@@ -5602,12 +5564,12 @@ mod tests {
         let rows: u16 = 24;
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
         let frame_color = CColor::Rgb(0x74, 0xc7, 0xec);
-        draw_center_hud(&mut out, cols, rows, &layout, &pal_accent(frame_color));
+        draw_center_hud(&mut out, cols, rows, &pal_accent(frame_color));
         let has_frame = out
             .iter()
             .any(|c| c.ch == '╭' || c.ch == '╮' || c.ch == '╰' || c.ch == '╯');
         assert!(has_frame, "HUD box frame painted");
-        // Whole buffer must contain both the attention hint and keybind lines.
+        // Whole buffer must contain the keybind lines and no attention nag.
         let all: Vec<String> = (0..rows)
             .map(|y| {
                 (0..cols)
@@ -5616,12 +5578,8 @@ mod tests {
             })
             .collect();
         assert!(
-            all.iter().any(|s| s.contains("needs you")),
-            "HUD hint text present, got {all:?}"
-        );
-        assert!(
-            all.iter().any(|s| s.contains("⌥+g")),
-            "HUD jump hint present, got {all:?}"
+            !all.iter().any(|s| s.contains("needs you")),
+            "HUD must not nag about attention, got {all:?}"
         );
         assert!(
             all.iter().any(|s| s.contains("focus left")),
@@ -5631,12 +5589,12 @@ mod tests {
             all.iter().any(|s| s.contains("click")),
             "HUD cheat-sheet covers mouse, got {all:?}"
         );
-        // Also with no attention the cheat-sheet still paints (startup overlay).
+        // With no attention at all the cheat-sheet is unchanged.
         for pid in &ids {
             layout.panes.get_mut(pid).unwrap().status = PaneStatus::Running;
         }
         let mut out2 = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(&mut out2, cols, rows, &layout, &pal_accent(frame_color));
+        draw_center_hud(&mut out2, cols, rows, &pal_accent(frame_color));
         let all2: Vec<String> = (0..rows)
             .map(|y| {
                 (0..cols)
@@ -5646,7 +5604,7 @@ mod tests {
             .collect();
         assert!(
             all2.iter().any(|s| s.contains("focus left")),
-            "startup HUD shows cheat-sheet without attention, got {all2:?}"
+            "startup HUD shows cheat-sheet, got {all2:?}"
         );
         // Spreadsheet shape: header row, ruled separator, aligned columns.
         assert!(
@@ -5679,7 +5637,7 @@ mod tests {
         );
         // Tiny viewport: nothing painted.
         let mut tiny = vec![Cell::default(); 10 * 4];
-        draw_center_hud(&mut tiny, 10, 4, &layout, &pal_accent(frame_color));
+        draw_center_hud(&mut tiny, 10, 4, &pal_accent(frame_color));
         assert!(
             tiny.iter().all(|c| c.ch == ' '),
             "tiny viewport draws no HUD"
@@ -5772,7 +5730,6 @@ mod tests {
         // hud_opacity < 1 must mix the panel with whatever was underneath,
         // and opacity 1 (the default) must leave the panel untouched.
         let (cols, rows) = (80u16, 24u16);
-        let layout = Layout::new(1);
         let pal = pal_accent(CColor::Idx(196));
         let under = Cell {
             ch: 'x',
@@ -5786,11 +5743,11 @@ mod tests {
         };
         let mut solid = vec![under; (cols as usize) * (rows as usize)];
         with_opacity(&mut solid, 1.0, &pal, |f| {
-            draw_center_hud(f, cols, rows, &layout, &pal)
+            draw_center_hud(f, cols, rows, &pal)
         });
         let mut ghost = vec![under; (cols as usize) * (rows as usize)];
         with_opacity(&mut ghost, 0.5, &pal, |f| {
-            draw_center_hud(f, cols, rows, &layout, &pal)
+            draw_center_hud(f, cols, rows, &pal)
         });
 
         // Untouched cells stay untouched at any opacity.
