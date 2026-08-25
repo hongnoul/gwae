@@ -111,8 +111,8 @@ impl Reloader {
             }
             // Recover the outer `Box<Box<dyn StrimuxCore>>` the factory stored.
             let holder: Box<Box<dyn StrimuxCore>> = Box::from_raw(ptr as *mut Box<dyn StrimuxCore>);
-            self.lib = Some(lib);
             self.core = Some(holder);
+            self.lib = Some(lib);
         }
         Ok(())
     }
@@ -134,11 +134,8 @@ impl Reloader {
             self.last, now
         );
         self.last = now;
-        // Drop the old core while its library is still loaded, then drop the
-        // library, then load the fresh one.
-        let old_lib = self.lib.take();
-        self.core.take();
-        drop(old_lib);
+        // `load` is staged: it drops the old core/library only after the new
+        // one is fully built, so a failed reload keeps the running core alive.
         self.load();
         true
     }
@@ -250,6 +247,12 @@ fn main() -> std::io::Result<()> {
     };
 
     let mut reloader = Reloader::new();
+    if reloader.core.is_none() {
+        eprintln!("strimux-hmr: no core loaded (run `cargo build -p strimux-core` first)");
+        let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
+        let _ = disable_raw_mode();
+        return Ok(());
+    }
     let mut frame: Frame;
     let mut last: Vec<Cell> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
