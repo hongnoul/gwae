@@ -18,6 +18,44 @@ fn frame_count(out: &[u8]) -> usize {
     out.windows(8).filter(|w| *w == b"\x1b[?2026h").count()
 }
 
+/// Drop CSI/OSC escape sequences, leaving just the glyphs that land on the
+/// screen. Enough for these assertions: strimux only emits CSI, OSC and the
+/// synchronized-update markers.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::new();
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match it.next() {
+            // CSI: parameters then a final byte in @..~
+            Some('[') => {
+                for c in it.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC: runs to BEL or ST (ESC \)
+            Some(']') => {
+                while let Some(c) = it.next() {
+                    if c == '\u{7}' {
+                        break;
+                    }
+                    if c == '\u{1b}' {
+                        let _ = it.next();
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Run the real binary with `config_body` on a `cols`x`rows` terminal and
 /// return everything it painted.
 fn paint(config_body: &str, cols: u16, rows: u16) -> String {
@@ -127,6 +165,56 @@ fn empty_message_list_disables_the_cow() {
     let cfg = format!("[cowsay]\nmessages = []\n{NO_CHROME}");
     let painted = paint(&cfg, 120, 30);
     assert!(!painted.contains("^__^"), "cow painted with no messages");
+}
+
+/// The pinned box: the first empty placeholder, wherever it currently is,
+/// must advertise the cheat-sheet toggle. This is the one hint we can be sure
+/// a user reads, so it has to be the one that opens the full list.
+///
+/// The startup HUD is drawn centered *over* the grid, so the assertion looks
+/// for the leading fragment of the pinned line, which survives on the left of
+/// the overlay, rather than the whole sentence.
+#[test]
+fn the_first_empty_box_advertises_the_cheat_sheet() {
+    let cfg = format!("[cowsay]\nenabled = true\n{NO_CHROME}");
+    let painted = paint(&cfg, 160, 40);
+    assert!(painted.contains("^__^"), "cow did not paint");
+    // Strip the CSI sequences that reposition the cursor between cells, so
+    // the assertion sees the glyphs as the user does rather than as bytes.
+    let text = strip_ansi(&painted);
+    let modk = if cfg!(target_os = "macos") {
+        "⌥"
+    } else {
+        "Alt"
+    };
+    let lead = format!("{modk}+/ toggl");
+    assert!(
+        text.contains(&lead),
+        "first empty box should lead with {lead:?}"
+    );
+}
+
+/// The pin is a *position*, not an address: with two panes open the first
+/// empty box is `1.3`, and that is where the cheat-sheet hint must move to.
+/// A hard-coded `1.2` would already be covered by a live pane here, and a
+/// hard-coded `1.1` would never be a placeholder at all.
+///
+/// At this width the centered startup HUD covers the middle of the box, so
+/// the assertion matches the *tail* of the wrapped hint that survives to the
+/// right of the overlay.
+#[test]
+fn the_pinned_hint_follows_the_layout() {
+    let cfg = format!("startup_panes = 2\n[cowsay]\nenabled = true\n{NO_CHROME}");
+    let painted = strip_ansi(&paint(&cfg, 160, 40));
+    // `sheet` is the tail of "toggles this cheat-sheet"; the head of the line
+    // is behind the overlay at this size.
+    assert!(
+        painted.contains("sheet"),
+        "cheat-sheet hint did not follow the panes to the first empty box"
+    );
+    // Uniqueness across boxes is a property of `message_for` and is asserted
+    // in its unit tests; the capture here spans several repainted frames, so
+    // counting occurrences in the byte stream would count frames, not boxes.
 }
 
 #[test]

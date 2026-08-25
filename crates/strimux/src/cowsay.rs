@@ -130,35 +130,67 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// Pick one message for the box at `(strip_no, col)`.
+/// Pick one message for an empty placeholder box.
 ///
-/// Deliberately a *hash*, never a random draw: [`crate::tui::paint`] diffs each
-/// frame against the last one, so a message that changed between repaints would
-/// force the box to be redrawn on every single frame and would make the golden
-/// end-to-end frame tests non-deterministic. Hashing the cell's own coordinates
-/// makes a given box always say the same thing, while different boxes on screen
-/// still differ.
-pub fn message_for(messages: &[String], strip_no: usize, col: usize) -> Option<&str> {
+/// `ordinal` is the box's position in reading order across the whole skeleton
+/// (`0` is the first empty box on screen). `pinned` marks that box: it always
+/// gets `messages[0]`, which callers set to the cheat-sheet hint.
+///
+/// Which cell is `0` is a *dynamic* choice made by the caller, not a fixed
+/// address. Two facts about the layout make every fixed address wrong:
+///
+/// * `1.1` is where the first real pane lives, so its placeholder is never
+///   drawn and a hint pinned there would be seen by nobody.
+/// * Placeholders are consumed left-to-right as panes appear, so `1.2` is the
+///   very next box to disappear. In practice users look at `1.3`, `1.4` and
+///   then whole strips of `n.1..4`.
+///
+/// Pinning "the first empty box, wherever it currently is" therefore keeps the
+/// hint in the one place the eye actually lands - immediately right of the live
+/// panes - for every layout, instead of only in the pristine startup grid.
+///
+/// The remaining boxes deal out the rest of the pool without repeats. A plain
+/// hash would collide and print the same hint two boxes apart, which reads as a
+/// bug on a screen showing eight boxes at once; instead the ordinal walks the
+/// pool by a stride coprime with its length, so a screenful of boxes is a
+/// permutation of distinct hints and only wraps once the pool is exhausted.
+///
+/// Deliberately deterministic, never a random draw: [`crate::tui::paint`] diffs
+/// each frame against the last, so a message that changed between repaints
+/// would redraw the box every frame and would make the golden end-to-end frame
+/// tests non-deterministic.
+pub fn message_for(messages: &[String], ordinal: usize, pinned: bool) -> Option<&str> {
     if messages.is_empty() {
         return None;
     }
-    // FNV-1a over the two coordinates: tiny, stable across runs and platforms
-    // (unlike `DefaultHasher`, which is explicitly not guaranteed to be).
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in (strip_no as u64)
-        .to_le_bytes()
-        .iter()
-        .chain((col as u64).to_le_bytes().iter())
-    {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100_0000_01b3);
-    }
-    let msg = &messages[(h % messages.len() as u64) as usize];
+    let msg = if pinned || messages.len() == 1 {
+        &messages[0]
+    } else {
+        // The pinned hint owns index 0; every other box deals from the tail so
+        // the cheat-sheet line is never duplicated elsewhere on screen.
+        let pool = &messages[1..];
+        let n = pool.len();
+        // Largest stride below `n` that is coprime with it, so repeatedly
+        // adding it visits every entry before repeating (a full cycle mod n):
+        // adjacent boxes differ and the whole screen stays varied.
+        let stride = (1..=n).rev().find(|k| gcd(*k, n) == 1).unwrap_or(1);
+        // `ordinal - 1` because ordinal 0 is the pinned box.
+        &pool[ordinal.saturating_sub(1).wrapping_mul(stride) % n]
+    };
     let t = msg.trim();
     if t.is_empty() {
         None
     } else {
         Some(t)
+    }
+}
+
+/// Greatest common divisor, for picking a stride coprime with the pool size.
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
     }
 }
 
@@ -240,25 +272,47 @@ mod tests {
     }
 
     #[test]
+    fn the_pinned_box_always_gets_the_cheat_sheet_hint() {
+        let msgs: Vec<String> = (0..8).map(|i| format!("m{i}")).collect();
+        assert_eq!(message_for(&msgs, 0, true), Some("m0"));
+        // And no other box ever repeats it, however many are on screen.
+        for o in 1..64 {
+            assert_ne!(
+                message_for(&msgs, o, false),
+                Some("m0"),
+                "box {o} duplicated the pinned hint"
+            );
+        }
+    }
+
+    #[test]
     fn message_choice_is_stable_and_varies_by_cell() {
         let msgs: Vec<String> = (0..8).map(|i| format!("m{i}")).collect();
         // Stable across calls: this is what keeps repaints diff-free.
-        for s in 0..4 {
-            for c in 0..4 {
-                assert_eq!(message_for(&msgs, s, c), message_for(&msgs, s, c));
-            }
+        for o in 0..8 {
+            assert_eq!(message_for(&msgs, o, o == 0), message_for(&msgs, o, o == 0));
         }
-        // And neighbouring boxes don't all say the same thing.
-        let row: Vec<_> = (0..4).map(|c| message_for(&msgs, 1, c)).collect();
-        assert!(
-            row.iter().collect::<std::collections::HashSet<_>>().len() > 1,
-            "all boxes picked the same message: {row:?}"
-        );
+        // A screenful of boxes says a different thing in every box.
+        let seen: std::collections::HashSet<_> =
+            (0..8).map(|o| message_for(&msgs, o, o == 0)).collect();
+        assert_eq!(seen.len(), 8, "boxes repeated a hint: {seen:?}");
+    }
+
+    #[test]
+    fn every_hint_is_reachable_before_the_pool_wraps() {
+        // The stride must be a full cycle, not merely collision-free for the
+        // first few boxes: with 27 hints a tall layout shows a lot of them.
+        for pool in 2..30usize {
+            let msgs: Vec<String> = (0..=pool).map(|i| format!("m{i}")).collect();
+            let seen: std::collections::HashSet<_> =
+                (1..=pool).map(|o| message_for(&msgs, o, false)).collect();
+            assert_eq!(seen.len(), pool, "pool of {pool} did not cycle fully");
+        }
     }
 
     #[test]
     fn no_messages_means_no_cow() {
-        assert_eq!(message_for(&[], 1, 1), None);
-        assert_eq!(message_for(&["  ".to_string()], 1, 1), None);
+        assert_eq!(message_for(&[], 1, false), None);
+        assert_eq!(message_for(&["  ".to_string()], 1, true), None);
     }
 }

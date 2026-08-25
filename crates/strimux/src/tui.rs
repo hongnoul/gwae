@@ -326,6 +326,7 @@ fn shell_split(cmd: &str) -> Vec<String> {
 /// One visible pane on screen: where to draw it and which grid slice to show.
 struct PaneView {
     pid: PaneId,
+    col: usize,     // index of the owning column in the focused strip
     rect: Rect,     // screen rect (already clipped to viewport horizontally)
     col_x0: u16,    // grid column at the left edge of `rect` (before content scroll)
     h_scroll: i32,  // pane content scroll in cells
@@ -383,9 +384,14 @@ fn focused_pane_views_with_chrome(
         .unwrap_or_default();
     let mut out = Vec::new();
     for (ci, (s, e)) in ranges.into_iter().enumerate() {
-        // Content spans the column box minus the frame ring.
+        // Content spans the column box minus the frame ring. Neighbouring
+        // column boxes *share* their boundary cell (see `FrameCanvas`), so
+        // the right-hand frame of this box sits at `e` -- the next column's
+        // left frame -- and content runs up to it. Only the final box, whose
+        // right frame would fall off-screen at `cols`, pulls its frame (and
+        // therefore its content) in by one.
         let cs = s + b;
-        let ce = e - b;
+        let ce = if b == 0 { e } else { e.min(cols as i32 - 1) };
         if ce <= cs {
             continue; // column too narrow to hold any content inside a frame
         }
@@ -425,6 +431,7 @@ fn focused_pane_views_with_chrome(
             let h_scroll = panes.get(pid).map(|p| p.h_scroll).unwrap_or(0);
             out.push(PaneView {
                 pid: *pid,
+                col: ci,
                 rect: Rect {
                     x: left,
                     y,
@@ -509,7 +516,9 @@ fn render_frame(
     let focused = focused_pane(layout);
     let mut focus_rect: Option<Rect> = None;
     let mut focused_cursor_abs: Option<(u16, u16, bool)> = None; // (screen x,y, hide)
-    for v in focused_pane_views(layout, cols, rows, content_width, panes, skeleton.is_some()) {
+    let pane_views =
+        focused_pane_views(layout, cols, rows, content_width, panes, skeleton.is_some());
+    for v in &pane_views {
         let Some(pane) = panes.get_mut(&v.pid) else {
             continue;
         };
@@ -585,9 +594,21 @@ fn render_frame(
     // Skeleton: a 1-cell frame around every column box (full strip height) so
     // the container structure always reads, plus placeholder boxes tiling any
     // empty right side at the default quarter width. The focused column's box
-    // is framed in the focus accent instead of the skeleton color. Pane rects
-    // are inset inside the frames (see focused_pane_views), so the frames
-    // occupy the 1-cell ring around each content area and never cover it.
+    // is framed in the focus accent instead of the skeleton color.
+    //
+    // All of it goes through a single `FrameCanvas` rather than being stamped
+    // box by box. Neighbouring boxes share their boundary column, so painting
+    // them independently drew a double-thick border and let whichever box was
+    // painted last own every shared cell -- which is why the focused column's
+    // accent kept getting overwritten by its neighbour's dim line. The canvas
+    // instead accumulates edge directions plus a priority per cell, so shared
+    // boundaries render as one hairline with proper `├ ┤ ┬ ┴ ┼` junctions and
+    // the focus color always wins.
+    let mut canvas = FrameCanvas::new(cols, rows);
+    // Priorities: plain chrome < focused column < focused pane.
+    const P_CHROME: u8 = 1;
+    const P_FOCUS_COL: u8 = 2;
+    const P_FOCUS_PANE: u8 = 3;
     if let Some(sk) = skeleton {
         let chrome = mm.chrome_rows();
         let strip_h = rows.saturating_sub(chrome).max(1);
@@ -614,23 +635,36 @@ fn render_frame(
                 continue;
             }
             let left = sx.max(0) as u16;
-            let right = (ex.min(cols as i32)) as u16;
+            // The right frame sits *on* the shared boundary with the next
+            // column (clamped to the last on-screen cell), so two adjacent
+            // boxes contribute to the same rule instead of two.
+            let right = (ex.min(cols as i32 - 1)) as u16;
             if right <= left {
                 continue;
             }
-            let color = if ci == layout.focus.column {
-                focus_color
+            let (color, prio) = if ci == layout.focus.column {
+                (focus_color, P_FOCUS_COL)
             } else {
-                sk
+                (sk, P_CHROME)
             };
             let boxr = Rect {
                 x: left,
                 y: 0,
-                w: right - left,
+                w: right - left + 1,
                 h: strip_h,
             };
-            draw_focus_frame(out, cols, boxr, color);
-            edge = edge.max(right);
+            canvas.rect(boxr, color, prio);
+            // Stacked panes: the 1-cell gap between two panes of a column is
+            // a shared horizontal rule that tees into the column's verticals,
+            // so a stack reads as one subdivided container.
+            if let Some(col) = layout.focused_row().and_then(|r| r.columns.get(ci)) {
+                if col.panes.len() > 1 {
+                    for v in pane_views.iter().filter(|v| v.col == ci).skip(1) {
+                        canvas.hline(left as i32, right as i32, v.rect.y as i32 - 1, color, prio);
+                    }
+                }
+            }
+            edge = edge.max(right.saturating_add(1));
         }
         // Empty right side: placeholder boxes at the default quarter width, so
         // the skeleton always shows the full four-column container even before
@@ -646,20 +680,28 @@ fn render_frame(
         let strip_no = strip_number(layout);
         let quarter = (cols / 4).max(1);
         let mut pcol = ranges.len();
-        while edge < cols {
-            let w = quarter.min(cols - edge);
+        // Placeholders also share their boundary with the live column (or the
+        // placeholder) to their left, so each box starts one cell back.
+        let mut px = edge.saturating_sub(1);
+        while px + 1 < cols {
+            let w = quarter.min(cols - px);
             if w < 2 {
                 break;
             }
+            let right = (px + w - 1).min(cols - 1);
             let boxr = Rect {
-                x: edge,
+                x: px,
                 y: 0,
-                w,
+                w: right - px + 1,
                 h: strip_h,
             };
-            for y in 0..boxr.h {
+            // Interior only: the ring itself is painted from the canvas after
+            // this loop, so clearing it here would be undone anyway -- but
+            // clearing the ring would also wipe the *left* neighbour's shared
+            // edge bookkeeping-free glyph, so keep to the inside.
+            for y in 1..boxr.h.saturating_sub(1) {
                 let row = (boxr.y + y) as usize * cols as usize;
-                for x in 0..boxr.w {
+                for x in 1..boxr.w.saturating_sub(1) {
                     if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
                         *c = Cell::default();
                     }
@@ -669,13 +711,20 @@ fn render_frame(
             // there are no live columns, so the focus lives on a placeholder
             // box: frame it in the accent color so the strip never looks
             // focus-less.
-            let color = if ranges.is_empty() && pcol == layout.focus.column {
-                focus_color
+            let (color, prio) = if ranges.is_empty() && pcol == layout.focus.column {
+                (focus_color, P_FOCUS_COL)
             } else {
-                sk
+                (sk, P_CHROME)
             };
-            draw_focus_frame(out, cols, boxr, color);
+            canvas.rect(boxr, color, prio);
             let label = format!("{}.{}", strip_no, pcol + 1);
+            // Ordinal among *empty* boxes, not the absolute column: the first
+            // placeholder to the right of the live panes is always 0, so the
+            // pinned cheat-sheet hint sits where the eye lands whatever the
+            // layout. Anchoring to a fixed address instead would put it in
+            // `1.1` (never a placeholder, so invisible) or `1.2` (the first
+            // box a second pane consumes).
+            let cow_ordinal = pcol - ranges.len();
             let inner = Rect {
                 x: boxr.x + 1,
                 y: boxr.y + 1,
@@ -689,20 +738,20 @@ fn render_frame(
                 &label,
                 pal.label,
                 cow,
-                strip_no,
-                pcol,
+                cow_ordinal,
                 cell_labels,
             );
             pcol += 1;
-            edge += w;
+            px = right;
         }
     }
     // Without the skeleton, focus is a 1-cell accent frame overlaid on the
     // focused pane's edge cells (the historical full-bleed look). With the
     // skeleton, the focused *column's* frame is already the accent color and
     // content is inset, so the overlay would only cover content: for a
-    // stacked column, frame the focused pane's own rect ring instead, drawn
-    // in the gap/frame cells around it.
+    // stacked column, promote the focused pane's own ring to the accent in
+    // the canvas, where it merges with the column frame instead of stamping
+    // over it.
     match (skeleton, focus_rect) {
         // Full-bleed mode: the ring lands on live pane content, so tint the
         // background instead of writing glyphs over the program's own text.
@@ -720,10 +769,13 @@ fn render_frame(
                 let y = rect.y.saturating_sub(1);
                 let w = (rect.w + 2).min(cols.saturating_sub(x));
                 let h = (rect.h + 2).min(rows.saturating_sub(y));
-                draw_focus_frame(out, cols, Rect { x, y, w, h }, focus_color);
+                canvas.rect(Rect { x, y, w, h }, focus_color, P_FOCUS_PANE);
             }
         }
         _ => {}
+    }
+    if !canvas.is_empty() {
+        canvas.flush(out);
     }
     // Chrome dispatch: overlay / edge ticks only. The bottom reserved row has
     // been removed; status is via the centered Alt HUD/minimap (drawn in
@@ -757,6 +809,199 @@ fn render_frame(
     }
 }
 
+/// Write one frame glyph into `out[idx]` in `color` on a default background.
+///
+/// Overwriting half of a wide (2-col) character would orphan its other half,
+/// so the partner cell is blanked: a wide head loses its continuation, a
+/// continuation loses its head.
+fn put_frame_cell(out: &mut [Cell], idx: usize, ch: char, color: CColor) {
+    let Some(c) = out.get(idx).copied() else {
+        return;
+    };
+    if c.width == 2 {
+        if let Some(n) = out.get_mut(idx + 1) {
+            if n.width == 0 {
+                *n = Cell {
+                    style: n.style,
+                    ..Cell::default()
+                };
+            }
+        }
+    } else if c.width == 0 && idx > 0 {
+        if let Some(p) = out.get_mut(idx - 1) {
+            if p.width == 2 {
+                *p = Cell {
+                    style: p.style,
+                    ..Cell::default()
+                };
+            }
+        }
+    }
+    let cell = &mut out[idx];
+    cell.ch = ch;
+    cell.width = 1;
+    cell.style.fg = color;
+    cell.style.bg = CColor::Default;
+    cell.style.bold = false;
+    cell.style.underline = false;
+    cell.style.inverse = false;
+}
+
+/// A frame accumulator that merges *shared* box edges into single hairlines.
+///
+/// Column boxes in a strip tile edge to edge, so neighbours would otherwise
+/// each paint their own vertical rule in adjacent cells (a 2-cell-thick
+/// double border) and whichever box was drawn last would win on any cell they
+/// did share, making the focused column's accent flicker under a neighbour's
+/// dim line. Instead every rect contributes *edge bits* to the cells it
+/// touches, plus a color at a priority; the flush pass then picks the one
+/// box-drawing glyph that matches the accumulated bits (corners, tees and
+/// crosses included) and the highest-priority color. Adjacent columns share
+/// the boundary cell, stacked panes join it with `├`/`┤`, and focus always
+/// wins the color of a shared edge regardless of paint order.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FrameEdge {
+    mask: u8, // N=1, E=2, S=4, W=8
+    prio: u8,
+}
+
+struct FrameCanvas {
+    cols: u16,
+    rows: u16,
+    edges: Vec<FrameEdge>,
+    colors: Vec<CColor>,
+}
+
+const EDGE_N: u8 = 1;
+const EDGE_E: u8 = 2;
+const EDGE_S: u8 = 4;
+const EDGE_W: u8 = 8;
+
+impl FrameCanvas {
+    fn new(cols: u16, rows: u16) -> Self {
+        Self {
+            cols,
+            rows,
+            edges: vec![FrameEdge { mask: 0, prio: 0 }; cols as usize * rows as usize],
+            colors: vec![CColor::Default; cols as usize * rows as usize],
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.edges.iter().all(|e| e.mask == 0)
+    }
+
+    fn add(&mut self, x: i32, y: i32, mask: u8, color: CColor, prio: u8) {
+        if x < 0 || y < 0 || x >= self.cols as i32 || y >= self.rows as i32 {
+            return;
+        }
+        let idx = y as usize * self.cols as usize + x as usize;
+        let e = &mut self.edges[idx];
+        e.mask |= mask;
+        // Highest priority wins the color; ties keep the first writer so a
+        // repaint of the same box is idempotent.
+        if prio > e.prio {
+            e.prio = prio;
+            self.colors[idx] = color;
+        }
+    }
+
+    /// A vertical rule from `y0` to `y1` (inclusive) at column `x`.
+    fn vline(&mut self, x: i32, y0: i32, y1: i32, color: CColor, prio: u8) {
+        for y in y0..=y1 {
+            let mut m = EDGE_N | EDGE_S;
+            if y == y0 {
+                m &= !EDGE_N;
+            }
+            if y == y1 {
+                m &= !EDGE_S;
+            }
+            // A 1-cell rule still has to render as something: keep it vertical.
+            if m == 0 {
+                m = EDGE_N | EDGE_S;
+            }
+            self.add(x, y, m, color, prio);
+        }
+    }
+
+    /// A horizontal rule from `x0` to `x1` (inclusive) at row `y`.
+    fn hline(&mut self, x0: i32, x1: i32, y: i32, color: CColor, prio: u8) {
+        for x in x0..=x1 {
+            let mut m = EDGE_E | EDGE_W;
+            if x == x0 {
+                m &= !EDGE_W;
+            }
+            if x == x1 {
+                m &= !EDGE_E;
+            }
+            if m == 0 {
+                m = EDGE_E | EDGE_W;
+            }
+            self.add(x, y, m, color, prio);
+        }
+    }
+
+    /// The ring of `rect`, as four rules that join at the corners.
+    fn rect(&mut self, rect: Rect, color: CColor, prio: u8) {
+        if rect.w == 0 || rect.h == 0 {
+            return;
+        }
+        let x0 = rect.x as i32;
+        let y0 = rect.y as i32;
+        let x1 = x0 + rect.w as i32 - 1;
+        let y1 = y0 + rect.h as i32 - 1;
+        if y1 > y0 {
+            self.vline(x0, y0, y1, color, prio);
+            if x1 > x0 {
+                self.vline(x1, y0, y1, color, prio);
+            }
+        }
+        if x1 > x0 {
+            self.hline(x0, x1, y0, color, prio);
+            if y1 > y0 {
+                self.hline(x0, x1, y1, color, prio);
+            }
+        }
+        if x1 == x0 && y1 == y0 {
+            self.add(x0, y0, EDGE_E | EDGE_W, color, prio);
+        }
+    }
+
+    /// The glyph for an accumulated edge mask. Pure corners are rounded, to
+    /// match the rest of the chrome; junctions use tees and a cross.
+    fn glyph(mask: u8) -> Option<char> {
+        Some(match mask {
+            0 => return None,
+            m if m == EDGE_N | EDGE_E | EDGE_S | EDGE_W => '┼',
+            m if m == EDGE_N | EDGE_E | EDGE_S => '├',
+            m if m == EDGE_N | EDGE_S | EDGE_W => '┤',
+            m if m == EDGE_E | EDGE_S | EDGE_W => '┬',
+            m if m == EDGE_N | EDGE_E | EDGE_W => '┴',
+            m if m == EDGE_E | EDGE_S => '╭',
+            m if m == EDGE_S | EDGE_W => '╮',
+            m if m == EDGE_N | EDGE_E => '╰',
+            m if m == EDGE_N | EDGE_W => '╯',
+            m if m == EDGE_N | EDGE_S => '│',
+            m if m == EDGE_E | EDGE_W => '─',
+            m if m & (EDGE_N | EDGE_S) != 0 => '│',
+            _ => '─',
+        })
+    }
+
+    /// Write the merged frame into the cell buffer.
+    fn flush(&self, out: &mut [Cell]) {
+        for y in 0..self.rows {
+            for x in 0..self.cols {
+                let idx = y as usize * self.cols as usize + x as usize;
+                let Some(ch) = Self::glyph(self.edges[idx].mask) else {
+                    continue;
+                };
+                put_frame_cell(out, idx, ch, self.colors[idx]);
+            }
+        }
+    }
+}
+
 /// Overlay a thin frame on the edge ring of `rect`: box-drawing glyphs
 /// (`╭─╮│╰╯`) with `color` as the foreground, on a default background. The
 /// previous implementation preserved the underlying `background` fill (e.g.
@@ -775,38 +1020,7 @@ fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
     // Replace a cell with a frame glyph. Overwriting half of a wide (2-col)
     // character would orphan its other half, so the partner cell is blanked:
     // a wide head loses its continuation, a continuation loses its head.
-    fn put(out: &mut [Cell], idx: usize, ch: char, color: CColor) {
-        let Some(c) = out.get(idx).copied() else {
-            return;
-        };
-        if c.width == 2 {
-            if let Some(n) = out.get_mut(idx + 1) {
-                if n.width == 0 {
-                    *n = Cell {
-                        style: n.style,
-                        ..Cell::default()
-                    };
-                }
-            }
-        } else if c.width == 0 && idx > 0 {
-            if let Some(p) = out.get_mut(idx - 1) {
-                if p.width == 2 {
-                    *p = Cell {
-                        style: p.style,
-                        ..Cell::default()
-                    };
-                }
-            }
-        }
-        let cell = &mut out[idx];
-        cell.ch = ch;
-        cell.width = 1;
-        cell.style.fg = color;
-        cell.style.bg = CColor::Default;
-        cell.style.bold = false;
-        cell.style.underline = false;
-        cell.style.inverse = false;
-    }
+    let put = put_frame_cell;
     if h == 1 {
         for x in x0..=x1 {
             put(out, y0 * stride + x, '─', color);
@@ -938,12 +1152,12 @@ fn draw_placeholder_contents(
     label: &str,
     color: CColor,
     cow: &crate::config::Cowsay,
-    strip_no: usize,
-    pcol: usize,
+    // Position among the strip's empty boxes; `0` is pinned to the hint.
+    cow_ordinal: usize,
     cell_labels: bool,
 ) {
     let art = if cow.enabled {
-        crate::cowsay::message_for(&cow.messages, strip_no, pcol)
+        crate::cowsay::message_for(&cow.messages, cow_ordinal, cow_ordinal == 0)
             .map(|m| crate::cowsay::cow_frame(m, rect.w.min(40)))
             .unwrap_or_default()
     } else {
@@ -3863,21 +4077,50 @@ mod tests {
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
         assert_eq!(ranges.len(), 4);
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
+        // Adjacent boxes *share* their boundary column: the strip is one
+        // grid, not four overlapping rectangles. Only the outermost corners
+        // are true corners; every interior boundary is a tee.
         for (ci, (s, e)) in ranges.iter().enumerate() {
-            let want = if ci == 0 { red } else { white };
-            let (s, e) = (*s as u16, *e as u16 - 1);
-            // Corners of the box frame: thin rounded glyphs in the frame color.
-            assert_eq!(at(s, 0).ch, '╭', "top-left of box {ci}");
-            assert_eq!(at(e, 0).ch, '╮', "top-right of box {ci}");
-            assert_eq!(at(s, rows - 1).ch, '╰', "bottom-left of box {ci}");
-            assert_eq!(at(e, rows - 1).ch, '╯', "bottom-right of box {ci}");
-            assert_eq!(at(s, 0).style.fg, want, "frame color of box {ci}");
-            // Vertical edges run the full strip height.
+            let (s, e) = (*s as u16, (*e as u16).min(cols - 1));
+            let first = ci == 0;
+            let last = ci + 1 == ranges.len();
+            assert_eq!(
+                at(s, 0).ch,
+                if first { '╭' } else { '┬' },
+                "top-left of box {ci}"
+            );
+            assert_eq!(
+                at(e, 0).ch,
+                if last { '╮' } else { '┬' },
+                "top-right of box {ci}"
+            );
+            assert_eq!(
+                at(s, rows - 1).ch,
+                if first { '╰' } else { '┴' },
+                "bottom-left of box {ci}"
+            );
+            assert_eq!(
+                at(e, rows - 1).ch,
+                if last { '╯' } else { '┴' },
+                "bottom-right of box {ci}"
+            );
+            // Vertical edges run the full strip height, one cell thick.
             assert_eq!(at(s, rows / 2).ch, '│', "left edge of box {ci}");
             assert_eq!(at(e, rows / 2).ch, '│', "right edge of box {ci}");
-            assert_eq!(at(s, rows / 2).style.fg, want, "left edge color {ci}");
-            assert_eq!(at(e, rows / 2).style.fg, want, "right edge color {ci}");
         }
+        // The focused column owns the color of *both* of its edges, including
+        // the one it shares with the unfocused neighbour to its right: focus
+        // outranks plain chrome no matter which box is painted last.
+        let (fs, fe) = ranges[0];
+        let (fs, fe) = (fs as u16, fe as u16);
+        for y in [0, rows / 2, rows - 1] {
+            assert_eq!(at(fs, y).style.fg, red, "focused left edge at y={y}");
+            assert_eq!(at(fe, y).style.fg, red, "focused shared right edge y={y}");
+        }
+        // Unshared edges of unfocused boxes stay the skeleton color.
+        assert_eq!(at(ranges[2].0 as u16, rows / 2).style.fg, white);
+        // No double borders: the cell next to a shared boundary is interior.
+        assert_eq!(at(fe + 1, rows / 2).ch, ' ', "no second rule beside {fe}");
         // Box interiors are not touched by the skeleton.
         let (s0, e0) = ranges[0];
         let mid = ((s0 + e0) / 2) as u16;
@@ -3885,6 +4128,122 @@ mod tests {
         // The rightmost frame reaches the exact screen edge: full bleed.
         assert_eq!(at(cols - 1, 0).ch, '╮');
         assert_eq!(at(cols - 1, 0).style.fg, white);
+    }
+
+    #[test]
+    fn shared_column_edges_are_a_single_hairline_owned_by_focus() {
+        // Regression: every column box used to stamp its own ring, so two
+        // adjacent columns painted two rules one cell apart (a double border)
+        // and the last box painted won any cell they shared -- which made the
+        // focused column's accent edge disappear under its neighbour's dim
+        // line whenever focus sat left of another column. Now the strip is
+        // one merged grid: shared boundaries are a single rule and the focus
+        // color outranks plain chrome regardless of paint order.
+        let mut layout = Layout::default();
+        layout.focus.column = 1; // focus between two unfocused neighbours
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let cols: u16 = 80;
+        let rows: u16 = 10;
+        let white = CColor::Rgb(0xff, 0xff, 0xff);
+        let red = CColor::Rgb(0xff, 0, 0);
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            &pal_of(CColor::Default, red, white),
+            true,
+            &no_map(),
+            &no_cow(),
+            true,
+        );
+        let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
+        let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
+        let (fs, fe) = (ranges[1].0 as u16, ranges[1].1 as u16);
+        // Both edges of the focused column, including the two it shares with
+        // its unfocused neighbours, carry the accent for the full height.
+        for y in 0..rows {
+            assert_eq!(at(fs, y).style.fg, red, "left shared edge at y={y}");
+            assert_eq!(at(fe, y).style.fg, red, "right shared edge at y={y}");
+        }
+        // One rule per boundary: the cells on either side are interior.
+        for x in [fs - 1, fs + 1, fe - 1, fe + 1] {
+            assert_eq!(at(x, rows / 2).ch, ' ', "double border at x={x}");
+        }
+        // Every frame cell in the strip is a box-drawing glyph, never a mix
+        // of overlapping partial rings.
+        for y in 0..rows {
+            for x in [ranges[0].0 as u16, fs, fe, cols - 1] {
+                assert!(
+                    matches!(
+                        at(x, y).ch,
+                        '╭' | '╮' | '╰' | '╯' | '─' | '│' | '├' | '┤' | '┬' | '┴' | '┼'
+                    ),
+                    "non-frame glyph {:?} at ({x},{y})",
+                    at(x, y).ch
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stacked_panes_share_a_teed_divider_with_the_column_frame() {
+        // A column holding two panes is one container subdivided once: the
+        // divider between the panes is a horizontal rule that *tees* into the
+        // column's vertical edges, rather than a free-floating focus ring
+        // stamped over the frame.
+        let mut layout = Layout::new(1);
+        let row = layout.focus.row;
+        let a = layout.alloc_pane();
+        let b = layout.alloc_pane();
+        layout.add_column(row, strimux_layout::Width::Cells(20), vec![a, b]);
+        layout.focus.column = layout.focused_row().unwrap().columns.len() - 1;
+        layout.focus.pane = 0;
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let cols: u16 = 80;
+        let rows: u16 = 14;
+        let white = CColor::Rgb(0xff, 0xff, 0xff);
+        let red = CColor::Rgb(0xff, 0, 0);
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            &pal_of(CColor::Default, red, white),
+            true,
+            &no_map(),
+            &no_cow(),
+            true,
+        );
+        let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
+        let views = focused_pane_views(&layout, cols, rows, 0, &panes, true);
+        let stacked: Vec<&PaneView> = views
+            .iter()
+            .filter(|v| v.col == layout.focus.column)
+            .collect();
+        assert_eq!(stacked.len(), 2, "two stacked panes");
+        let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
+        let (cs, ce) = ranges[layout.focus.column];
+        let (cs, ce) = (cs as u16, (ce as u16).min(cols - 1));
+        // The gap row above the second pane is the divider.
+        let divider_y = stacked[1].rect.y - 1;
+        assert_eq!(at(cs, divider_y).ch, '├', "divider tees into left edge");
+        assert_eq!(at(ce, divider_y).ch, '┤', "divider tees into right edge");
+        let mid = (cs + ce) / 2;
+        assert_eq!(at(mid, divider_y).ch, '─', "divider is a horizontal rule");
+        // The focused (upper) pane owns the accent on its own ring, and the
+        // divider it shares with the lower pane.
+        assert_eq!(at(mid, divider_y).style.fg, red, "focused pane divider");
+        assert_eq!(at(cs, divider_y).style.fg, red, "focused tee color");
+        // Pane content is never covered: the row below the divider belongs to
+        // the lower pane's content area, not to any frame.
+        assert!(stacked[1].rect.y > divider_y);
     }
 
     #[test]
@@ -3901,11 +4260,12 @@ mod tests {
         assert_eq!(views.len(), 4);
         for (v, (s, e)) in views.iter().zip(&ranges) {
             assert_eq!(v.rect.x, *s as u16 + 1, "content starts inside frame");
-            assert_eq!(
-                v.rect.x + v.rect.w,
-                *e as u16 - 1,
-                "content ends inside frame"
-            );
+            // The right frame sits *on* the shared boundary `e` (the next
+            // column's left frame), so content ends there rather than a cell
+            // earlier -- except for the last column, whose right frame is
+            // pulled in to the last on-screen cell.
+            let frame_x = (*e as u16).min(cols - 1);
+            assert_eq!(v.rect.x + v.rect.w, frame_x, "content ends inside frame");
             assert_eq!(v.rect.y, 1, "content below the top frame row");
             assert_eq!(v.rect.y + v.rect.h, rows - 1, "content above bottom row");
             // Emulator geometry matches the inset rect exactly.
@@ -3944,14 +4304,17 @@ mod tests {
             true,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
-        // Placeholder boxes cover [40,60) and [60,80): white thin frames all
-        // the way to the last screen column.
-        assert_eq!(at(40, 0).ch, '╭', "placeholder box 3 left edge");
-        assert_eq!(at(59, 0).ch, '╮', "placeholder box 3 right edge");
-        assert_eq!(at(60, 0).ch, '╭', "placeholder box 4 left edge");
+        // Placeholder boxes tile the empty right side, sharing each boundary
+        // column with their neighbour: interior boundaries are tees, only the
+        // screen edge is a true corner.
+        assert_eq!(at(40, 0).ch, '┬', "boundary between live and placeholder");
+        assert_eq!(at(59, 0).ch, '┬', "placeholder/placeholder boundary");
         assert_eq!(at(cols - 1, 0).ch, '╮', "skeleton reaches screen edge");
         assert_eq!(at(cols - 1, rows - 1).ch, '╯', "bottom-right corner");
-        for (x, y) in [(40, 0), (59, 0), (60, 0), (cols - 1, 0)] {
+        assert_eq!(at(40, rows / 2).ch, '│', "shared boundary is one rule");
+        assert_eq!(at(41, rows / 2).ch, ' ', "no double border at 41");
+        assert_eq!(at(39, rows / 2).ch, ' ', "no double border at 39");
+        for (x, y) in [(40, 0), (59, 0), (cols - 1, 0)] {
             assert_eq!(at(x, y).style.fg, white, "frame color at ({x},{y})");
         }
     }

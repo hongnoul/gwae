@@ -327,16 +327,31 @@ pub fn group(g: Group) -> impl Iterator<Item = &'static Bind> {
     BINDS.iter().filter(move |b| b.group == g)
 }
 
-/// Every binding as one line of natural language, in declaration order.
+/// Every binding as one line of natural language, in declaration order, with
+/// the cheat-sheet toggle hoisted to the front.
 ///
 /// This is exactly `BINDS.len()` strings: the mapping is bijective by
 /// construction, because [`Bind::hint`] is a required field. Adding a
 /// keybinding therefore adds its cow hint automatically, and there is no way
 /// to ship a binding the cow does not know how to explain.
+///
+/// Index `0` is special: [`crate::cowsay::message_for`] pins it to the first
+/// empty box on screen, so the one hint guaranteed to be read is the one that
+/// opens the full cheat-sheet. Everything else is a bonus the user discovers
+/// while glancing around the skeleton.
 pub fn cowsay_hints() -> Vec<String> {
-    BINDS
+    let render = |b: &Bind| format!("{} {}", b.label(), b.hint);
+    let pinned = BINDS
         .iter()
-        .map(|b| format!("{} {}", b.label(), b.hint))
+        .find(|b| b.effect == Effect::ToggleHud)
+        .expect("a binding opens the cheat-sheet");
+    std::iter::once(render(pinned))
+        .chain(
+            BINDS
+                .iter()
+                .filter(|b| b.effect != Effect::ToggleHud)
+                .map(render),
+        )
         .collect()
 }
 
@@ -397,15 +412,26 @@ mod tests {
                 b.hint
             );
         }
-        // Each rendered hint starts with the binding's own label, so the cow
+        // Each rendered hint starts with some binding's label, so the cow
         // always tells the user which keys to press.
-        for (h, b) in hints.iter().zip(BINDS) {
+        for h in &hints {
             assert!(
-                h.starts_with(&b.label()),
-                "hint {h:?} should lead with {}",
-                b.label()
+                BINDS.iter().any(|b| h.starts_with(&b.label())),
+                "hint {h:?} should lead with a key label"
             );
         }
+        // The pinned slot must be the cheat-sheet toggle: it is the only hint
+        // guaranteed a visible box, so it has to be the one that opens the
+        // full list.
+        let toggle = BINDS
+            .iter()
+            .find(|b| b.effect == Effect::ToggleHud)
+            .unwrap();
+        assert_eq!(
+            hints[0],
+            format!("{} {}", toggle.label(), toggle.hint),
+            "the first empty box must advertise the cheat-sheet"
+        );
     }
 
     #[test]
