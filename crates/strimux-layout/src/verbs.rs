@@ -2,7 +2,7 @@
 //!
 //! Verbs are the keyboard-triggerable operations from the Layout Model spec
 //! (``Alt+hjkl`` focus, ``Alt+Shift+hjkl`` move, ``cycle-width``, ``split``,
-//! ``kill-pane``, ...). Each verb is a pure mutation of the layout tree that
+//! ``kill-pane``, ``spawn-agent``, ...). Each verb is a pure mutation of the layout tree that
 //! must preserve the invariants (no implicit resize, no gaps, no row reorder).
 //! Any I/O (PTY spawn/kill) is the caller's job; here we only change structure.
 
@@ -27,6 +27,7 @@ pub enum Action {
     KillPane,
     NewColumn,
     NewRow,
+    SpawnAgent,
     ScrollViewport(i32),
     JumpToColumn(usize),
 }
@@ -66,6 +67,7 @@ impl Layout {
             Action::KillPane => self.apply_kill_pane(),
             Action::NewColumn => Ok(self.apply_new_column()),
             Action::NewRow => Ok(self.apply_new_row()),
+            Action::SpawnAgent => Ok(self.apply_new_column()),
             Action::ScrollViewport(d) => Ok(self.apply_scroll(d)),
             Action::JumpToColumn(n) => self.apply_jump(n, viewport, follow),
         }

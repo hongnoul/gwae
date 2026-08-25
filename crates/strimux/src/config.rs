@@ -25,7 +25,7 @@ pub struct Config {
     /// default) follows the visible column width so lines wrap normally and
     /// there is no horizontal overflow to manage in a pane.
     pub content_width: u16,
-    /// The command `Alt+a` spawns (the default agent harness).
+    /// The agent harness command that `;` (spawn-agent) launches.
     pub default_agent: String,
 }
 
@@ -36,7 +36,7 @@ impl Default for Config {
             scroll_margin: 2,
             center_focus: false,
             content_width: 0,
-            default_agent: "claude".to_string(),
+            default_agent: "jcode".to_string(),
         }
     }
 }

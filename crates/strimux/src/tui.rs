@@ -1,6 +1,6 @@
 //! TUI: the M0 render/event loop (single process, one focused row).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
@@ -476,6 +476,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{2206}') => return Some(Cmd::Act(Action::FocusDown)), // ∆ (Option+j)
             Char('\u{2da}') => return Some(Cmd::Act(Action::FocusUp)),   // ˚ (Option+k)
             Char('\u{ac}') => return Some(Cmd::Act(Action::FocusRight)), // ¬ (Option+l)
+            Char('\u{ba}') => return Some(Cmd::Act(Action::SpawnAgent)), // º (Option+;)
             _ => {}
         }
     }
@@ -504,6 +505,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('j') => Action::FocusDown,
             Char('c') | Char('n') => Action::NewColumn,
             Char('r') | Char('o') => Action::NewRow,
+            Char(';') => Action::SpawnAgent,
             Char('s') | Char('-') => Action::SplitBelow,
             Char('x') => Action::KillPane,
             Char('z') | Char('=') => Action::CycleWidth,
@@ -541,6 +543,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         Enter if shift => Action::NewRow,
         Enter => Action::NewColumn,
         Char('a') => Action::NewColumn,
+        Char(';') => Action::SpawnAgent,
         Char('s') => Action::SplitBelow,
         Char('r') => Action::CycleWidth,
         Char('x') => Action::KillPane,
@@ -564,9 +567,10 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
 fn sync_panes(
     layout: &mut Layout,
     panes: &mut HashMap<PaneId, PtyPane>,
-    _cfg: &Config,
+    cfg: &Config,
     tx: &Sender<PaneMsg>,
     _first_id: PaneId,
+    agent_panes: &HashSet<PaneId>,
 ) -> Result<(), String> {
     let mut wanted: Vec<PaneId> = Vec::new();
     for row in &layout.rows {
@@ -585,12 +589,17 @@ fn sync_panes(
             false
         }
     });
-    // Spawn missing panes.
+    // Spawn missing panes. Agent panes (created via the spawn-agent verb) run
+    // the configured `default_agent` harness; everything else gets the shell.
     for pid in wanted {
         if panes.contains_key(&pid) {
             continue;
         }
-        let cmd = String::new();
+        let cmd = if agent_panes.contains(&pid) {
+            cfg.default_agent.clone()
+        } else {
+            String::new()
+        };
         let pane = spawn_pane(pid, &cmd, 80, 24, tx.clone())?;
         panes.insert(pid, pane);
         tracing::debug!(pid, "spawned pane");
@@ -648,6 +657,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut last: Vec<Cell> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
     let mut dirty = true;
+    // Pane ids created by the spawn-agent verb; these are (re)spawned running
+    // the configured `default_agent` harness instead of a plain shell.
+    let mut agent_panes: HashSet<PaneId> = HashSet::new();
     // The title currently shown on the host terminal; we only write when it
     // changes so we don't spam the host with identical OSC sequences.
     let mut last_title: String = String::new();
@@ -706,7 +718,17 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                     center: cfg.center_focus,
                                 };
                                 let _ = layout.apply(a, v, f);
-                                if let Err(e) = sync_panes(&mut layout, &mut panes, &cfg, &tx, 0) {
+                                // A spawn-agent verb ends focused on the new
+                                // rightmost column; mark its pane so sync spawns
+                                // the agent harness rather than a shell.
+                                if a == Action::SpawnAgent {
+                                    if let Some(pid) = focused_pane(&layout) {
+                                        agent_panes.insert(pid);
+                                    }
+                                }
+                                if let Err(e) =
+                                    sync_panes(&mut layout, &mut panes, &cfg, &tx, 0, &agent_panes)
+                                {
                                     tracing::error!("sync panes: {e}");
                                 }
                                 dirty = true;

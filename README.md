@@ -57,6 +57,7 @@ line shows the pending prefix.
 | `Ctrl-b` `h` / `l` / `k` / `j` | move focus across panes |
 | `Ctrl-b` `H` / `L` / `K` / `J` | move the focused pane |
 | `Ctrl-b` `c` / `r` | new column to the right / new row below |
+| `Ctrl-b` `;` | spawn a new agent pane to the right and focus it |
 | `Ctrl-b` `s` | split the focused column below |
 | `Ctrl-b` `z` | cycle column width |
 | `Ctrl-b` `x` | kill the focused pane |
@@ -69,7 +70,8 @@ line shows the pending prefix.
 
 The equivalent `Alt` chords remain available for terminals where
 Option-as-Alt is configured (`Alt+hjkl` to focus, `Alt+Shift+hjkl` to move,
-`Alt+a` new column, `Alt+s` split, `Alt+z` width, `Alt+x` kill, `Alt+q` quit).
+`Alt+a` new column, `Alt+;` spawn an agent pane, `Alt+s` split, `Alt+z` width,
+`Alt+x` kill, `Alt+q` quit).
 
 All other keys pass through to the focused pane.
 

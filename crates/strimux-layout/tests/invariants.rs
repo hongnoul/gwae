@@ -26,6 +26,7 @@ fn random_actions() -> impl Strategy<Value = Vec<Action>> {
         Just(SplitBelow),
         Just(NewColumn),
         Just(NewRow),
+        Just(SpawnAgent),
         Just(MovePaneLeft),
         Just(MovePaneRight),
         prop::collection::vec(0..5, 1).prop_map(|v| ScrollViewport(v[0] - 2)),
@@ -108,4 +109,24 @@ fn rows_never_reorder() {
     let _ = layout.apply(Action::NewColumn, view(), follow());
     let ids2: Vec<_> = layout.rows.iter().map(|r| r.id).collect();
     assert_eq!(ids, ids2);
+}
+
+#[test]
+fn spawn_agent_adds_rightmost_column_and_focuses_it() {
+    let mut layout = Layout::default();
+    let n_before = layout.focused_row().unwrap().columns.len();
+    // Focus somewhere in the middle so "rightmost" is distinguishable.
+    let _ = layout.apply(Action::FocusRight, view(), follow());
+    let _ = layout.apply(Action::SpawnAgent, view(), follow());
+    let row = layout.focused_row().unwrap();
+    // A single pane is appended at the end of the strip, and it takes focus.
+    assert_eq!(row.columns.len(), n_before + 1);
+    assert_eq!(row.columns.last().unwrap().panes.len(), 1);
+    assert_eq!(layout.focus.column, row.columns.len() - 1);
+    assert_eq!(layout.focus.pane, 0);
+    // The focused column is exactly the appended one.
+    assert_eq!(
+        row.columns[layout.focus.column].panes[0],
+        row.columns.last().unwrap().panes[0]
+    );
 }
