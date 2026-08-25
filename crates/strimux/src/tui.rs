@@ -4976,7 +4976,7 @@ mod tests {
         // Moving down past the last strip creates an empty one (niri
         // workspace semantics); its first cell is the newly-visible empty box
         // and must carry the pinned hint.
-        layout.apply(
+        let _ = layout.apply(
             Action::FocusDown,
             Viewport::new(160),
             FollowScroll::default(),
