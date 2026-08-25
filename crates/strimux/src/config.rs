@@ -81,8 +81,9 @@ pub struct Config {
     /// Cowsay art drawn in empty placeholder boxes, under the big cell
     /// identifier.
     pub cowsay: Cowsay,
-    /// Draw the big `strip.pane` identifier in empty placeholder boxes. Set
-    /// to `false` for a bare skeleton with no address labels.
+    /// Draw the big `strip.pane` identifier in empty placeholder boxes.
+    /// Default `false`: empty boxes stay a bare skeleton. Set to `true` to
+    /// bring the address labels back.
     pub cell_labels: bool,
     /// Milliseconds to wait in `event::poll` before checking PTY output and
     /// repainting. Lower values reduce perceived typing and backspace latency
@@ -114,7 +115,7 @@ impl Default for Config {
             mouse: true,
             scroll_lines: 3,
             cowsay: Cowsay::default(),
-            cell_labels: true,
+            cell_labels: false,
             input_poll_ms: default_input_poll_ms(),
         }
     }
@@ -306,7 +307,8 @@ impl<'de> Deserialize<'de> for MinimapMode {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Cowsay {
-    /// Draw the cow at all.
+    /// Draw the cow at all. Off by default; the hint list below is still
+    /// populated so `enabled = true` alone restores the cheat-sheet.
     pub enabled: bool,
     /// The pool of messages. Each empty box picks one by position. An empty
     /// list disables the cow just like `enabled = false`.
@@ -321,7 +323,7 @@ impl Default for Cowsay {
         // teaches a key that does nothing or a glyph the user's keyboard
         // doesn't have.
         Cowsay {
-            enabled: true,
+            enabled: false,
             messages: crate::binds::cowsay_hints(),
         }
     }
@@ -396,7 +398,7 @@ mod tests {
     #[test]
     fn cowsay_defaults_to_keybinding_hints() {
         let cfg = parse("");
-        assert!(cfg.cowsay.enabled, "cow on by default");
+        assert!(!cfg.cowsay.enabled, "cow off by default");
         assert!(
             !cfg.cowsay.messages.is_empty(),
             "default messages must exist or the cow never draws"
@@ -413,7 +415,11 @@ mod tests {
         for msg in &cfg.cowsay.messages {
             assert!(msg.contains(m), "hint {msg:?} does not mention {m:?}");
         }
-        let other = if cfg!(target_os = "macos") { "Alt" } else { "⌥" };
+        let other = if cfg!(target_os = "macos") {
+            "Alt"
+        } else {
+            "⌥"
+        };
         for msg in &cfg.cowsay.messages {
             assert!(
                 !msg.contains(other),

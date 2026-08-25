@@ -683,7 +683,15 @@ fn render_frame(
                 h: boxr.h.saturating_sub(2),
             };
             draw_placeholder_contents(
-                out, cols, inner, &label, pal.label, cow, strip_no, pcol, cell_labels,
+                out,
+                cols,
+                inner,
+                &label,
+                pal.label,
+                cow,
+                strip_no,
+                pcol,
+                cell_labels,
             );
             pcol += 1;
             edge += w;
@@ -1338,34 +1346,17 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
     // Cheat-sheet as a spreadsheet: two (key, action) column pairs with a
     // header row and ruled grid lines, so keys line up in a scannable table
     // rather than reading as a paragraph of hints.
-    // Key names come from `crate::keys` so the sheet says `⌥`/`↵` on macOS and
-    // `Alt`/`Enter` elsewhere. Every row must correspond to a real arm of
-    // `handle_key`: a cheat-sheet that lists a binding nobody implemented is
-    // worse than no cheat-sheet.
-    let sh = crate::keys::shift_key();
-    let ent = crate::keys::enter_key();
-    let mv: Vec<(String, &str)> = vec![
-        ("hjkl".to_string(), "focus pane"),
-        (format!("{sh}hjkl"), "move pane"),
-        ("1-9".to_string(), "jump column"),
-        ("g".to_string(), "smart jump"),
-        ("←→".to_string(), "pan content"),
-        ("[ ]".to_string(), "scroll view"),
-        ("click".to_string(), "click focus"),
-        ("wheel".to_string(), "scroll"),
-    ];
-    let act: Vec<(String, &str)> = vec![
-        (";".to_string(), "new agent"),
-        ("s".to_string(), "split"),
-        ("r".to_string(), "width"),
-        ("f".to_string(), "full width"),
-        ("t".to_string(), "theme"),
-        ("x".to_string(), "kill pane"),
-        (format!("{sh}q"), "quit"),
-        (ent.to_string(), "new column"),
-        (format!("{sh}{ent}"), "new row"),
-        ("/".to_string(), "toggle help"),
-    ];
+    //
+    // Both columns are rendered from [`crate::binds::BINDS`], the single
+    // source of truth that a test cross-checks against `handle_key`, so the
+    // HUD cannot advertise a key the dispatcher does not implement.
+    let rows_for = |g: crate::binds::Group| -> Vec<(String, &'static str)> {
+        crate::binds::group(g)
+            .map(|b| (b.label(), b.desc))
+            .collect()
+    };
+    let nav = rows_for(crate::binds::Group::Navigate);
+    let panes = rows_for(crate::binds::Group::Panes);
     // Column widths sized to their widest cell, header included.
     let width_of = |hdr: &str, it: &[(String, &str)], first: bool| -> usize {
         it.iter()
@@ -1381,10 +1372,10 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
             .unwrap_or(0)
     };
     let w = [
-        width_of("key", &mv, true),
-        width_of("navigate", &mv, false),
-        width_of("key", &act, true),
-        width_of("panes", &act, false),
+        width_of("key", &nav, true),
+        width_of("navigate", &nav, false),
+        width_of("key", &panes, true),
+        width_of("panes", &panes, false),
     ];
     // Each cell is ` text `; columns joined by a vertical rule.
     let table_w: usize = w.iter().map(|c| c + 2).sum::<usize>() + 3;
@@ -1412,12 +1403,12 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
         cell("panes", 3)
     ));
     lines.push(rule('┼'));
-    for i in 0..mv.len().max(act.len()) {
-        let (k1, a1) = mv
+    for i in 0..nav.len().max(panes.len()) {
+        let (k1, a1) = nav.get(i).map(|e| (e.0.as_str(), e.1)).unwrap_or(("", ""));
+        let (k2, a2) = panes
             .get(i)
             .map(|e| (e.0.as_str(), e.1))
             .unwrap_or(("", ""));
-        let (k2, a2) = act.get(i).map(|e| (e.0.as_str(), e.1)).unwrap_or(("", ""));
         lines.push(format!(
             "{}│{}│{}│{}",
             cell(k1, 0),
@@ -4174,6 +4165,71 @@ mod tests {
         );
     }
 
+    /// The registry in [`crate::binds`] is only a single source of truth if
+    /// the dispatcher agrees with it. Feed every machine-checkable entry
+    /// through the real `handle_key` (both the Meta path and, where one
+    /// exists, the macOS glyph fallback) and require the advertised effect.
+    #[test]
+    fn advertised_bindings_match_the_dispatcher() {
+        use crate::binds::{Effect, Trigger, BINDS};
+        let expect = |e: Effect| -> Option<Cmd> {
+            Some(match e {
+                Effect::Act(a) => Cmd::Act(a),
+                Effect::SmartJump => Cmd::SmartJump,
+                Effect::ThemePick => Cmd::ThemePick(0),
+                Effect::ToggleHud => Cmd::ToggleHud,
+                Effect::Quit => Cmd::Quit,
+                Effect::Scroll(n) => Cmd::Scroll(n),
+                Effect::Unverifiable => return None,
+            })
+        };
+        for b in BINDS {
+            if expect(b.effect).is_none() {
+                continue;
+            }
+            let want = expect(b.effect);
+            match b.trigger {
+                Trigger::Chord(c) => {
+                    let ev = KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT);
+                    assert_eq!(
+                        handle_key(&ev),
+                        want,
+                        "{} ({}) must dispatch as advertised",
+                        b.label(),
+                        b.desc
+                    );
+                }
+                Trigger::ShiftChord(c) => {
+                    let ev =
+                        KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT | KeyModifiers::SHIFT);
+                    assert_eq!(
+                        handle_key(&ev),
+                        want,
+                        "{} ({}) must dispatch as advertised",
+                        b.label(),
+                        b.desc
+                    );
+                }
+                Trigger::Prose(_) => continue,
+            }
+            // The macOS glyph fallback must reach the same command, so the
+            // cheat-sheet is honest on terminals without "Option as Meta".
+            if let Some(g) = b.glyph {
+                let mods = if matches!(b.trigger, Trigger::ShiftChord(_)) {
+                    KeyModifiers::SHIFT
+                } else {
+                    KeyModifiers::NONE
+                };
+                assert_eq!(
+                    handle_key(&KeyEvent::new(KeyCode::Char(g), mods)),
+                    expect(b.effect),
+                    "glyph {g:?} fallback for {} must match",
+                    b.label()
+                );
+            }
+        }
+    }
+
     #[test]
     fn center_hud_paints_centered_box_with_attention_hint() {
         // HUD flash: centered box with smart-jump hint + concise keybind cheat-sheet.
@@ -4211,11 +4267,11 @@ mod tests {
             "HUD jump hint present, got {all:?}"
         );
         assert!(
-            all.iter().any(|s| s.contains("hjkl")),
+            all.iter().any(|s| s.contains("focus left")),
             "HUD cheat-sheet present, got {all:?}"
         );
         assert!(
-            all.iter().any(|s| s.contains("click focus")),
+            all.iter().any(|s| s.contains("click")),
             "HUD cheat-sheet covers mouse, got {all:?}"
         );
         // Also with no attention the cheat-sheet still paints (startup overlay).
@@ -4232,7 +4288,7 @@ mod tests {
             })
             .collect();
         assert!(
-            all2.iter().any(|s| s.contains("hjkl")),
+            all2.iter().any(|s| s.contains("focus left")),
             "startup HUD shows cheat-sheet without attention, got {all2:?}"
         );
         // Spreadsheet shape: header row, ruled separator, aligned columns.
@@ -4248,7 +4304,8 @@ mod tests {
         let cols_at: Vec<Vec<usize>> = all2
             .iter()
             .filter(|s| {
-                s.contains('│') && s.contains("hjkl") || s.contains('│') && s.contains("split")
+                s.contains('│') && s.contains("focus left")
+                    || s.contains('│') && s.contains("smart jump")
             })
             .map(|s| {
                 s.chars()
