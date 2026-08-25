@@ -1882,6 +1882,8 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{d4}') => return Some(Cmd::Act(Action::MovePaneDown)), // Ô (Option+Shift+j)
             Char('\u{f8ff}') => return Some(Cmd::Act(Action::MovePaneUp)), //  (Option+Shift+k)
             Char('\u{d2}') => return Some(Cmd::Act(Action::MovePaneRight)), // Ò (Option+Shift+l)
+            // ¿ (Option+Shift+/), i.e. Option+? — same toggle as Option+/.
+            Char('\u{bf}') => return Some(Cmd::ToggleHud),
             _ => {}
         }
     }
@@ -4241,6 +4243,13 @@ mod tests {
         assert!(matches!(handle_key(&ev), Some(Cmd::ToggleHud)));
         let ev = KeyEvent::new(KeyCode::Char('\u{f7}'), KeyModifiers::NONE);
         assert!(matches!(handle_key(&ev), Some(Cmd::ToggleHud)));
+        // Option+Shift+/ (Option+?) is the same toggle, both paths.
+        let ev = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert!(matches!(handle_key(&ev), Some(Cmd::ToggleHud)));
+        let ev = KeyEvent::new(KeyCode::Char('\u{bf}'), KeyModifiers::NONE);
+        assert!(matches!(handle_key(&ev), Some(Cmd::ToggleHud)));
+        let ev = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT);
+        assert!(matches!(handle_key(&ev), Some(Cmd::Input(_))));
         // Plain `/` stays pane input.
         let ev = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
         assert!(matches!(handle_key(&ev), Some(Cmd::Input(_))));
