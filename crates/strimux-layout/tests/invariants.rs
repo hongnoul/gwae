@@ -615,7 +615,7 @@ fn visible_ranges_are_identical_at_every_stop_for_uniform_columns() {
     // 85/171/256). Window-anchored rounding must paint the identical grid at
     // every stop.
     let q = Width::Preset(Preset::Quarter);
-    let mut layout = layout_with_widths(&[q, q, q, q, q, q, q, q]);
+    let layout = layout_with_widths(&[q, q, q, q, q, q, q, q]);
     for cols in [342u16, 341, 343, 82, 83, 121] {
         let vp = Viewport::new(cols);
         let row = layout.focus.row;
