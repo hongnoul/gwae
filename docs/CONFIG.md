@@ -52,7 +52,8 @@ enabled = false              # true draws the hint cow in empty boxes
 Setup is one question per screen: `↑↓`/`jk` picks an option, `→`/`l`/`⏎` moves
 on, `←`/`h`/`⌫` goes back, a digit selects without Enter, `s` skips a question
 and `esc` takes the defaults for the rest. It ends on a summary screen listing
-every setting and the file it landed in. It asks about `theme`,
+every setting and the file it landed in, where only `⏎` (leave) and `⌫` (back
+to the last question) do anything. It asks about `theme`,
 `startup_panes`, `default_column_width`, `center_focus`, `content_width`,
 `cell_labels` and `cowsay.enabled`, then offers to install `btm`.
 

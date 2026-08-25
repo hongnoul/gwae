@@ -806,14 +806,40 @@ pub fn already_onboarded(text: &str) -> bool {
 /// Read one keystroke, blocking. `None` on EOF / read error, which the caller
 /// treats as "stop asking" rather than as an answer.
 fn read_key() -> Option<Key> {
+    read_with(key_from_event)
+}
+
+/// Read one keystroke, decoded by `f`. Lets the summary screen use a stricter
+/// decoder than the questions without duplicating the event loop.
+fn read_with(f: fn(KeyCode, KeyModifiers) -> Key) -> Option<Key> {
     loop {
         match event::read() {
             Ok(Event::Key(ke)) if ke.kind != KeyEventKind::Release => {
-                return Some(key_from_event(ke.code, ke.modifiers))
+                return Some(f(ke.code, ke.modifiers))
             }
             Ok(_) => continue,
             Err(_) => return None,
         }
+    }
+}
+
+/// Decode a keystroke *on the summary screen*, where only two keys mean
+/// anything: Enter finishes and Backspace goes back to the last question.
+///
+/// Deliberately stricter than [`key_from_event`]. That decoder is written for
+/// a question, where `→`/`l`/space are all reasonable ways to say "next"; on a
+/// screen that is not asking anything, those same keys would dismiss the
+/// summary out from under someone who was just pressing keys at it. The one
+/// screen that reports what was written to disk should take a deliberate
+/// keypress to leave.
+pub fn summary_key(code: KeyCode, mods: KeyModifiers) -> Key {
+    match code {
+        KeyCode::Char('c') | KeyCode::Char('d') if mods.contains(KeyModifiers::CONTROL) => {
+            Key::Abort
+        }
+        KeyCode::Enter => Key::Next,
+        KeyCode::Backspace => Key::Prev,
+        _ => Key::Other,
     }
 }
 
@@ -901,15 +927,13 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
                 drained = true;
             }
             // Only Enter and backspace mean anything at a screen that is not
-            // asking a question.
-            match read_key() {
+            // asking a question; `summary_key` is what enforces that.
+            match read_with(summary_key) {
                 Some(Key::Prev) if total > 0 => {
                     at = total - 1;
                     // Re-ask with the previous answer under the cursor.
-                    if let Some(Answer::Set(v)) = &chosen[at] {
-                        if let Some(pos) = qs[at].options.iter().position(|o| o.value == v) {
-                            cursors[at] = pos;
-                        }
+                    if let Some(a) = chosen[at].clone() {
+                        park_cursor(&qs[at], &mut cursors[at], &a);
                     }
                     chosen[at] = None;
                 }
@@ -946,6 +970,7 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
                 at = total;
             }
             Step::Done(a) => {
+                park_cursor(q, &mut cursors[at], &a);
                 chosen[at] = Some(a);
                 at += 1;
             }
@@ -983,6 +1008,20 @@ fn run_install(qs: &[Question], chosen: &[Option<Answer>]) -> Option<crate::inst
         // Skipped or answered no: both mean "we left the machine alone".
         Some(Some(Answer::Set(_))) => Some(crate::install::Outcome::Declined),
         _ => None,
+    }
+}
+
+/// Put the cursor on the option `a` selected, so coming back to this question
+/// shows the answer rather than wherever the highlight happened to be sitting.
+///
+/// This matters most for the digit shortcut, which answers *without* moving
+/// the highlight: `5` then backspace would otherwise re-open the question with
+/// option 1 selected, quietly discarding what the user picked.
+fn park_cursor(q: &Question, cursor: &mut usize, a: &Answer) {
+    if let Answer::Set(v) = a {
+        if let Some(pos) = q.options.iter().position(|o| o.value == v) {
+            *cursor = pos;
+        }
     }
 }
 
@@ -1173,6 +1212,37 @@ mod tests {
         let no = crate::install::Outcome::Declined;
         let out = render_summary(&qs, &answers, path, None, Some(&no));
         assert!(out.contains("skipped"), "{out}");
+    }
+
+    #[test]
+    fn going_back_shows_the_answer_that_was_given_even_via_a_digit() {
+        // The regression this guards, caught by driving the real binary: a
+        // digit answers *without* moving the highlight, so `5` then backspace
+        // re-opened the question with option 1 selected and silently discarded
+        // the choice. Both the answer path and the summary's "back" use this
+        // helper, so they cannot drift apart again.
+        let q = &questions()[0];
+        let mut cursor = q.default;
+        // The digit path: cursor is still on the default when Done arrives.
+        let Step::Done(a) = step(q, cursor, Key::Digit(5)) else {
+            panic!("a digit should answer outright");
+        };
+        assert_eq!(a, Answer::Set("\"nord\"".into()));
+        park_cursor(q, &mut cursor, &a);
+        assert_eq!(cursor, 4, "cursor did not follow the digit's answer");
+
+        // The arrow path already agrees, and must keep agreeing.
+        let mut cursor = 2;
+        let Step::Done(a) = step(q, cursor, Key::Next) else {
+            panic!("Enter should answer");
+        };
+        park_cursor(q, &mut cursor, &a);
+        assert_eq!(cursor, 2);
+
+        // A Skip parks nothing: there is no answer to point at.
+        let mut cursor = 3;
+        park_cursor(q, &mut cursor, &Answer::Skip);
+        assert_eq!(cursor, 3, "Skip must not move the highlight");
     }
 
     #[test]
@@ -1480,29 +1550,50 @@ mod tests {
 
     #[test]
     fn the_summary_only_answers_to_enter_and_backspace() {
-        // It is not asking a question, so a user mashing j/k/digits at it must
-        // not fall through into something that looks like an answer. Only the
-        // two keys the footer promises do anything, which the run loop
-        // enforces by matching on exactly these two variants.
+        // It is not asking a question, so a user pressing keys at it must not
+        // fall through into something that looks like an answer. Exactly two
+        // keys do anything.
+        assert_eq!(summary_key(KeyCode::Enter, KeyModifiers::NONE), Key::Next);
+        assert_eq!(
+            summary_key(KeyCode::Backspace, KeyModifiers::NONE),
+            Key::Prev
+        );
+        // Everything else is inert - including the keys that *do* mean "next"
+        // on a question. Space, `l` and `→` are fine answers to "which of
+        // these", and a terrible way to dismiss the one screen that reports
+        // what was written to disk. Driving the real binary caught space
+        // doing exactly that.
         for code in [
+            KeyCode::Char(' '),
+            KeyCode::Char('l'),
+            KeyCode::Right,
+            KeyCode::Char('h'),
+            KeyCode::Left,
             KeyCode::Char('j'),
             KeyCode::Char('k'),
             KeyCode::Up,
+            KeyCode::Down,
             KeyCode::Char('3'),
+            KeyCode::Char('s'),
+            KeyCode::Char('q'),
+            KeyCode::Esc,
         ] {
-            let k = key_from_event(code, KeyModifiers::NONE);
-            assert!(
-                !matches!(k, Key::Next | Key::Prev),
-                "{code:?} would act on the summary screen"
+            assert_eq!(
+                summary_key(code, KeyModifiers::NONE),
+                Key::Other,
+                "{code:?} must be inert on the summary screen"
             );
         }
+        // Ctrl-C still gets you out, as it does everywhere.
         assert_eq!(
-            key_from_event(KeyCode::Enter, KeyModifiers::NONE),
-            Key::Next
+            summary_key(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Key::Abort
         );
+        // ...and the question decoder stays permissive, since the two screens
+        // deliberately differ.
         assert_eq!(
-            key_from_event(KeyCode::Backspace, KeyModifiers::NONE),
-            Key::Prev
+            key_from_event(KeyCode::Char(' '), KeyModifiers::NONE),
+            Key::Next
         );
     }
 

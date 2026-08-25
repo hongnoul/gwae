@@ -179,7 +179,9 @@ a good neighbour to an agent pane.
 `←`/`h`/`⌫` goes back to the previous one, a digit selects without Enter, `s`
 skips a question and `esc` takes the defaults for the rest. The flow ends on a
 summary screen listing every setting as it now stands and the file it landed
-in; `⏎` leaves it, `⌫` goes back to fix an answer.
+in. Only two keys act there: `⏎` leaves, `⌫` goes back to fix an answer.
+Everything else is inert, so the one screen reporting what was written to disk
+cannot be dismissed by a stray keypress.
 
 Two things are deliberately *not* questions. Input latency
 (`input_poll_ms`) has one right answer, so it is applied silently before the

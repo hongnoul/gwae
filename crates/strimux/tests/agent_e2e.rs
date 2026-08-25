@@ -1049,3 +1049,33 @@ fn a_machine_that_already_has_btm_is_never_asked() {
     p.press_done();
     p.kill();
 }
+
+#[test]
+fn a_failed_btm_install_says_so_instead_of_claiming_success() {
+    // The dangerous outcome: a tick next to "Install btm" when nothing was
+    // installed sends the user looking for a binary that is not there. A stub
+    // brew that exits non-zero stands in for the real failure modes (no
+    // network, a formula rename, a broken prefix).
+    let sb = Sandbox::new(&["claude"]);
+    sb.write_stub("brew", "#!/bin/sh\nexit 1\n");
+    let mut p = sb.spawn_allowing_install(&[]);
+    p.wait_for("Which agent");
+    p.send("1\n");
+    p.wait_for("Color theme");
+    for _ in 0..7 {
+        p.send("\r");
+        std::thread::sleep(Duration::from_millis(120));
+    }
+    p.wait_for("Install btm");
+    p.send("\r");
+    let seen = p.wait_for("strimux is configured");
+    assert!(
+        seen.contains("not installed"),
+        "a failed install must not read as a success; got:\n{seen}"
+    );
+    // ...and setup still finishes: a package manager falling over must not
+    // block the user from reaching their harness.
+    p.press_done();
+    p.wait_for("AGENT-RAN:claude");
+    p.kill();
+}
