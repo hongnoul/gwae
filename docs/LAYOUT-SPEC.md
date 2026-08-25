@@ -35,13 +35,13 @@ coordinate.
    and focus fills **left first** (left neighbor, or the pane above in a
    stack). A strip whose last pane closes is discarded and focus shifts to the
    strip **above** (or to the one below when it was the first strip), so the
-   focus never rests on an empty strip. The last pane exiting quits strimux.
+   focus never rests on an empty strip. The last pane exiting quits gwae.
 6. Rows never auto-relocate or reorder.
 
 ## Verbs (default keys)
 
 `$mod` = `⌥` (the **Option** key on macOS, Alt elsewhere); `$mod` chords always
-go to strimux, even with an agent focused.
+go to gwae, even with an agent focused.
 
 | Verb | Key | Semantics |
 |---|---|---|

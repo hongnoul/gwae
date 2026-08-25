@@ -1,7 +1,7 @@
 # Awesome-list PR pitches
 
 Entry line:
-- [strimux](https://github.com/hongnoul/strimux) - strimux: niri's scrolling tiling for your CLI agents, in any terminal (daemon-free, MIT)
+- [gwae](https://github.com/hongnoul/gwae) - gwae: niri's scrolling tiling for your CLI agents, in any terminal (daemon-free, MIT)
 
 Targets (check CONTRIBUTING.md of each; most require the project to be >30 days old with some traction):
 - awesome-rust

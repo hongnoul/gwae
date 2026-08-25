@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark strimux/gwae against tmux, Zellij, and a bare PTY.
+"""Benchmark gwae/gwae against tmux, Zellij, and a bare PTY.
 
 Everything runs headless in a real PTY, driving the real binaries the way a
 terminal would. Measures, per multiplexer:
@@ -19,7 +19,7 @@ Usage: python3 scripts/bench_vs_muxes.py [--samples 150] [--idle 10]
 import argparse, fcntl, json, os, pty, re, select, shutil, signal, struct, subprocess, sys, tempfile, termios, time
 
 COLS, ROWS = 120, 30
-STRIMUX = os.path.expanduser("~/.cargo/bin/strimux")
+GWAE = os.path.expanduser("~/.cargo/bin/gwae")
 TMUX = shutil.which("tmux") or "/opt/homebrew/bin/tmux"
 ZELLIJ = shutil.which("zellij") or os.path.expanduser("~/.local/bin/zellij")
 
@@ -254,31 +254,31 @@ def main():
         results.append(bench_one("bare /bin/sh (floor)", bare, "NOMATCH-bare",
                                  args.samples, args.idle, lambda: None))
 
-    # ---- strimux ----
-    def strimux_env(cfg, panes):
-        os.makedirs(os.path.join(cfg, "strimux"), exist_ok=True)
-        with open(os.path.join(cfg, "strimux", "strimux.toml"), "w") as f:
+    # ---- gwae ----
+    def gwae_env(cfg, panes):
+        os.makedirs(os.path.join(cfg, "gwae"), exist_ok=True)
+        with open(os.path.join(cfg, "gwae", "gwae.toml"), "w") as f:
             f.write(f"startup_panes = {panes}\ninput_poll_ms = 1\n")
         return {"XDG_CONFIG_HOME": cfg}
-    def strimux_spawn(panes):
+    def gwae_spawn(panes):
         m = Mux.__new__(Mux)
-        m.name = "strimux"
-        m.cfgdir = tempfile.mkdtemp(prefix="bench-strimux-")
+        m.name = "gwae"
+        m.cfgdir = tempfile.mkdtemp(prefix="bench-gwae-")
         env = dict(os.environ, TERM="xterm-256color", SHELL="/bin/sh")
-        env.update(strimux_env(m.cfgdir, panes))
+        env.update(gwae_env(m.cfgdir, panes))
         m.t_exec = time.monotonic_ns()
         pid, fd = pty.fork()
         if pid == 0:
-            os.execve(STRIMUX, [STRIMUX, "run"], env)
+            os.execve(GWAE, [GWAE, "run"], env)
             os._exit(127)
         m.pid, m.fd = pid, fd
         set_winsz(fd)
         m.t_first_out = None
         m.t_echo_ready = None
         return m
-    if want("strimux"):
-        results.append(bench_one("strimux (gwae)", strimux_spawn, "strimux",
-                                 args.samples, args.idle, lambda: strimux_spawn(4)))
+    if want("gwae"):
+        results.append(bench_one("gwae (gwae)", gwae_spawn, "gwae",
+                                 args.samples, args.idle, lambda: gwae_spawn(4)))
 
     # ---- tmux ----
     def tmux_spawn(panes):
@@ -338,7 +338,7 @@ def main():
 
     # ---- binary sizes ----
     sizes = {}
-    for label, path in [("strimux", STRIMUX), ("tmux", TMUX), ("zellij", ZELLIJ)]:
+    for label, path in [("gwae", GWAE), ("tmux", TMUX), ("zellij", ZELLIJ)]:
         try:
             sizes[label] = os.path.getsize(os.path.realpath(path))
         except OSError:

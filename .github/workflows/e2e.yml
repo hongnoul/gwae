@@ -25,5 +25,5 @@ jobs:
       - name: Run e2e
         run: |
           cargo test --workspace --test '*' -- --ignored
-          cargo test -p strimux-layout
+          cargo test -p gwae-layout
       # Real-shell scripted-terminal E2E lands with the M0 spike (tests/ dir).

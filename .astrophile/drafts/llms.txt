@@ -1,10 +1,10 @@
-# strimux
+# gwae
 
-> strimux: niri's scrolling tiling for your CLI agents, in any terminal (daemon-free, MIT)
+> gwae: niri's scrolling tiling for your CLI agents, in any terminal (daemon-free, MIT)
 
 > Your CLI agents, on a niri strip. No compositor required.
 
 ## Links
 
-- [Repository](https://github.com/hongnoul/strimux): source code, issues, releases
-- [README](https://github.com/hongnoul/strimux/blob/main/README.md): install and usage
+- [Repository](https://github.com/hongnoul/gwae): source code, issues, releases
+- [README](https://github.com/hongnoul/gwae/blob/main/README.md): install and usage

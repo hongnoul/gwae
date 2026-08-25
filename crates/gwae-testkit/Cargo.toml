@@ -1,0 +1,14 @@
+[package]
+name = "gwae-testkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "gwae test harness: fake PTYs, scripted terminals, snapshot helpers"
+
+[lib]
+name = "gwae_testkit"
+
+[dependencies]
+gwae-term = { path = "../gwae-term" }

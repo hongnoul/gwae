@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/strimux",
-    "crates/strimux-layout",
-    "crates/strimux-term",
-    "crates/strimux-testkit",
+    "crates/gwae",
+    "crates/gwae-layout",
+    "crates/gwae-term",
+    "crates/gwae-testkit",
 ]
 # Workspace-wide version (SemVer) is defined under [workspace.package].
 

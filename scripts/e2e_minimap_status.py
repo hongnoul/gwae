@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""E2E: drive the real strimux binary in a PTY and verify the minimap
+"""E2E: drive the real gwae binary in a PTY and verify the minimap
 agent dashboard.
 
 Scenario (the actual end-user workflow):
-  1. strimux starts with 2 panes; pane 0 runs a command that speaks OSC 133
+  1. gwae starts with 2 panes; pane 0 runs a command that speaks OSC 133
      (command start, then done with exit 0) and then sleeps to keep the pane
      open.
   2. The minimap must appear bottom-right (2 panes > 1) with the summary bar
@@ -16,15 +16,15 @@ Scenario (the actual end-user workflow):
 import os, pty, re, select, signal, struct, sys, tempfile, termios, fcntl, time
 
 COLS, ROWS = 120, 30
-BIN = os.path.join(os.path.dirname(__file__), "..", "target", "debug", "strimux")
+BIN = os.path.join(os.path.dirname(__file__), "..", "target", "debug", "gwae")
 
 def spawn():
-    cfg = tempfile.mkdtemp(prefix="strimux-e2e-")
-    os.makedirs(os.path.join(cfg, "strimux"), exist_ok=True)
-    with open(os.path.join(cfg, "strimux", "strimux.toml"), "w") as f:
+    cfg = tempfile.mkdtemp(prefix="gwae-e2e-")
+    os.makedirs(os.path.join(cfg, "gwae"), exist_ok=True)
+    with open(os.path.join(cfg, "gwae", "gwae.toml"), "w") as f:
         f.write("startup_panes = 2\n")
     env = dict(os.environ, XDG_CONFIG_HOME=cfg, SHELL="/bin/sh", TERM="xterm-256color")
-    # strimux's shell_split is naive about nested quotes, so put the OSC 133
+    # gwae's shell_split is naive about nested quotes, so put the OSC 133
     # emitter in a script file and run it plainly.
     script = os.path.join(cfg, "osc133.sh")
     with open(script, "w") as f:
@@ -99,7 +99,7 @@ def main():
     # protocol-less shell pane flips to wants-attention.
     raw = drain(fd, 6.0)
     alive = os.waitpid(pid, os.WNOHANG) == (0, 0)
-    check("strimux is running", alive)
+    check("gwae is running", alive)
     screen = render(raw)
     bottom = screen[-8:]  # map + summary live in the last few rows
 

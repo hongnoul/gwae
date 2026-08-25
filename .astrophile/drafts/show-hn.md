@@ -1,11 +1,11 @@
 # Show HN draft
 
-Title: Show HN: strimux – strimux: niri's scrolling tiling for your CLI agents, in any terminal (daemon-free, MIT)
-URL: https://github.com/hongnoul/strimux
+Title: Show HN: gwae – gwae: niri's scrolling tiling for your CLI agents, in any terminal (daemon-free, MIT)
+URL: https://github.com/hongnoul/gwae
 
 First comment (post immediately after submitting):
 
-> I built strimux because <personal itch, one sentence>.
+> I built gwae because <personal itch, one sentence>.
 > <How it works in two sentences: the concrete mechanism, not marketing.>
 > <One honest limitation.>
 > Happy to answer questions.

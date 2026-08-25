@@ -1,30 +1,30 @@
 # Input latency
 
-A keystroke you type in strimux is not shown by strimux. It travels to the
+A keystroke you type in gwae is not shown by gwae. It travels to the
 program in the pane, and what you see is that program's **echo** coming back.
-So every character makes a round trip, and strimux sits on it **twice**:
+So every character makes a round trip, and gwae sits on it **twice**:
 
 ```
-you → macOS → kitty → strimux → pane PTY → agent
+you → macOS → kitty → gwae → pane PTY → agent
                                               ↓
-you ← kitty ← strimux ← pane PTY ← ───── echo ┘
+you ← kitty ← gwae ← pane PTY ← ───── echo ┘
 ```
 
-That is why latency is not one setting but three layers, and why strimux
+That is why latency is not one setting but three layers, and why gwae
 bothers to look at the other two: tuning only its own knob fixes a third of a
 problem.
 
 ```sh
-strimux tune           # report all three layers
-strimux tune --apply   # also write strimux's own fix
+gwae tune           # report all three layers
+gwae tune --apply   # also write gwae's own fix
 ```
 
-`strimux tune` prints nothing to fix when there is nothing to fix, and
-`strimux doctor` carries a one-line summary.
+`gwae tune` prints nothing to fix when there is nothing to fix, and
+`gwae doctor` carries a one-line summary.
 
 ## What gets changed, and by whom
 
-strimux writes **only its own config file**. Your machine's global settings
+gwae writes **only its own config file**. Your machine's global settings
 and your terminal's config are printed as exact commands for you to run.
 Silently editing another program's config, or a machine-wide preference that
 affects every app you use, is not something a multiplexer should do.
@@ -36,23 +36,23 @@ affects every app you use, is not something a multiplexer should do.
 | macOS | `ApplePressAndHoldEnabled` | `0` | When on, holding a key opens the accent-picker popup instead of repeating at all. |
 | kitty | `input_delay` | `0` | kitty's own wait before processing what a program printed — i.e. exactly the echo you are waiting to see. Default `3`. |
 | kitty | `repaint_delay` | `1` | Minimum gap between screen updates. Default `10` caps you at ~100 FPS. |
-| kitty | `sync_to_monitor` | `no` | Default `yes` caps drawing at your monitor's refresh. See the note below — under strimux this is safe. |
-| strimux | `input_poll_ms` | `1` | How long strimux's loop waits for a keystroke. It is on the round trip twice, so this costs double. |
+| kitty | `sync_to_monitor` | `no` | Default `yes` caps drawing at your monitor's refresh. See the note below — under gwae this is safe. |
+| gwae | `input_poll_ms` | `1` | How long gwae's loop waits for a keystroke. It is on the round trip twice, so this costs double. |
 
 The macOS values go below what System Settings exposes: its "Fast" slider
 stops at `KeyRepeat 2`, and `1` is faster still.
 
 ## Why `sync_to_monitor no` is safe here
 
-Turning off vsync normally trades tearing for latency. Under strimux you do
-not make that trade, because strimux wraps every repaint in **synchronized
+Turning off vsync normally trades tearing for latency. Under gwae you do
+not make that trade, because gwae wraps every repaint in **synchronized
 update** markers (`ESC[?2026h` / `ESC[?2026l`). The terminal buffers the whole
 frame and applies it atomically, so a frame can never be shown half-drawn
 even without vsync. You get the latency win and keep a clean screen.
 
-## Why strimux has `input_poll_ms` at all
+## Why gwae has `input_poll_ms` at all
 
-strimux's main loop waits for a keystroke with a **timeout**. The wait itself
+gwae's main loop waits for a keystroke with a **timeout**. The wait itself
 is not the cost — the cost is being late to notice. Three ways to spend an
 idle moment:
 
@@ -82,7 +82,7 @@ Roughly, per keystroke round trip:
 | USB keyboard polling | ~8ms |
 | macOS input stack | ~1-2ms |
 | kitty (`input_delay 0`) | ~0-3ms |
-| strimux (both directions) | ~2ms at `input_poll_ms = 1` |
+| gwae (both directions) | ~2ms at `input_poll_ms = 1` |
 | Display refresh @120Hz | ~8ms |
 
 USB polling and display refresh dominate and no software here can change

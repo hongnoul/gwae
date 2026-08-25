@@ -269,10 +269,10 @@
           >
         </p>
         <pre><code>curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash
-strimux                  # one strip, one quarter-width pane
-strimux init             # guided setup: theme, layout, chrome (live preview)
-strimux run "claude"     # your agent in column 0
-strimux doctor           # config + theme validity, layout smoke</code></pre>
+gwae                  # one strip, one quarter-width pane
+gwae init             # guided setup: theme, layout, chrome (live preview)
+gwae run "claude"     # your agent in column 0
+gwae doctor           # config + theme validity, layout smoke</code></pre>
         <ul>
           <li>
             First run walks a short guided setup: theme with live swatches,
@@ -297,7 +297,7 @@ strimux doctor           # config + theme validity, layout smoke</code></pre>
           Every terminal multiplexer divides a fixed screen: more agents means
           smaller panes, until nothing is readable. niri solved this on the
           desktop with scrolling tiling — columns keep their size, the
-          viewport moves. strimux brings that model into the terminal you
+          viewport moves. gwae brings that model into the terminal you
           already use.
         </p>
         <ul>
@@ -326,7 +326,7 @@ strimux doctor           # config + theme validity, layout smoke</code></pre>
       <section>
         <h2>For coding agents</h2>
         <p>
-          strimux hosts ordinary PTYs, so every agent works out of the box:
+          gwae hosts ordinary PTYs, so every agent works out of the box:
           Claude Code, Jcode, Codex, OpenCode, Gemini CLI, anything you can
           launch from a command line. Status tracking speaks the standard
           <a
@@ -389,7 +389,7 @@ strimux doctor           # config + theme validity, layout smoke</code></pre>
               <td>macOS</td>
             </tr>
             <tr>
-              <td><strong>strimux</strong></td>
+              <td><strong>gwae</strong></td>
               <td><strong>2D niri strip grid</strong></td>
               <td><strong>yes</strong></td>
               <td><strong>no (<code>--resume</code>)</strong></td>
@@ -405,7 +405,7 @@ strimux doctor           # config + theme validity, layout smoke</code></pre>
           <li>
             <strong>No daemon, deliberately.</strong> Your agents already
             persist themselves. A shell that must survive the terminal belongs
-            in tmux, which runs happily inside a strimux pane.
+            in tmux, which runs happily inside a gwae pane.
           </li>
           <li>
             <strong>Zero instrumentation.</strong> Panes stay ordinary PTYs
@@ -447,7 +447,7 @@ strimux doctor           # config + theme validity, layout smoke</code></pre>
 
       <section>
         <h2>Architecture</h2>
-        <pre><code>strimux (one process)
+        <pre><code>gwae (one process)
 ├── Layout core (rows/strips/columns/panes) — pure, no I/O
 ├── Pane tasks (one per PTY: bytes → parse → grid + OSC 133)
 ├── Composer (coalesce damage → single 2D cell buffer)
@@ -478,7 +478,7 @@ strimux doctor           # config + theme validity, layout smoke</code></pre>
           ·
           <a href="https://github.com/hongnoul/gwae/blob/main/LICENSE">MIT</a>
         </p>
-        <p>strimux — panes never shrink.</p>
+        <p>gwae — panes never shrink.</p>
       </footer>
     </main>
   </body>

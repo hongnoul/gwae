@@ -1,12 +1,12 @@
 # Architecture
 
-strimux is a **single-process, daemon-free** multiplexer (ADR-003 reversed,
-ADR-011). One `strimux` process owns every PTY, hosts every pane's grid, and
+gwae is a **single-process, daemon-free** multiplexer (ADR-003 reversed,
+ADR-011). One `gwae` process owns every PTY, hosts every pane's grid, and
 composes the whole screen into a single 2D cell buffer. There is no client-
 server protocol, no socket, no attach/detach.
 
 ```
-strimux (one process)
+gwae (one process)
 ├── Layout core (rows / strips / columns / panes) - pure, no I/O
 ├── Pane tasks (one per PTY: read bytes -> parse -> update grid)
 ├── Composer (coalesce damage -> single 2D cell buffer)
@@ -19,19 +19,19 @@ strimux (one process)
 
 | Crate | Kind | Responsibility |
 |---|---|---|
-| `strimux` | bin | the whole TUI: raw mode, input decode, PTY hosting, composer, render loop, launcher, minimap, OSC 133 |
-| `strimux-layout` | lib | **the pure core**. 2D grid of strips (rows/columns/panes) + verbs + scroll math. No I/O, no async, no PTY. Property-tested. |
-| `strimux-term` | lib | emulator facade behind a `TermGrid` trait (ADR-004), damage tracking |
-| `strimux-testkit` | lib | fake PTYs, scripted terminals, snapshot harness |
+| `gwae` | bin | the whole TUI: raw mode, input decode, PTY hosting, composer, render loop, launcher, minimap, OSC 133 |
+| `gwae-layout` | lib | **the pure core**. 2D grid of strips (rows/columns/panes) + verbs + scroll math. No I/O, no async, no PTY. Property-tested. |
+| `gwae-term` | lib | emulator facade behind a `TermGrid` trait (ADR-004), damage tracking |
+| `gwae-testkit` | lib | fake PTYs, scripted terminals, snapshot harness |
 
-`strimux-layout` depends only on `std` + `serde`. `strimux-term` isolates the
+`gwae-layout` depends only on `std` + `serde`. `gwae-term` isolates the
 emulator-crate choice behind `TermGrid`; swapping `alacritty_terminal` <-> `wezterm-term`
 touches one crate.
 
 ## Rendering pipeline
 
 One 2D cell buffer holds everything: every visible pane's grid region plus
-strimux's own chrome (centered HUD/minimap, launcher, focus outline). Damage from
+gwae's own chrome (centered HUD/minimap, launcher, focus outline). Damage from
 any pane merges into this one buffer; the render diffs the whole buffer to the
 terminal with synchronized-update markers (`ESC[?2026h/l`).
 
@@ -48,7 +48,7 @@ the viewport is panned, and app inside is unaffected.
 
 ## Crash / persistence (deliberately thin)
 
-When the process exits, panes and their processes end; strimux persists **no
+When the process exits, panes and their processes end; gwae persists **no
 session state** (ADR-015). Resume is the harness's job (`claude --resume`,
 `jcode --resume`). A panic in one pane's emulator must not take the TUI down
 (one task per pane, supervisor pattern).
@@ -58,7 +58,7 @@ session state** (ADR-015). Resume is the harness's job (`claude --resume`,
 Minimum 256-color + standard cursor addressing; wants truecolor, synchronized
 updates, kitty keyboard protocol, mouse SGR (passed through). `⌥` (the Option
 key on macOS, Alt elsewhere) is the universal `$mod` (ADR-014); macOS may add an
-optional `Cmd+hjkl` snippet via `strimux setup`.
+optional `Cmd+hjkl` snippet via `gwae setup`.
 
 ## Open questions
 

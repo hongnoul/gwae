@@ -1,6 +1,6 @@
 <div align="center">
 
-# strimux
+# gwae
 
 [![Latest Release](https://badgen.net/github/release/hongnoul/gwae?icon=github)](https://github.com/hongnoul/gwae/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
@@ -35,10 +35,10 @@ No socket, no attach/detach. Crashing one pane's emulator can't take the TUI dow
 `kitten icat` and agent screenshots render inside their pane — APC sequences forwarded verbatim and clipped to the pane rect.
 
 **Mouse that helps, and stays out of the way**
-Click to focus, drag to copy. Full-screen apps that ask for mouse reporting (vim, agent TUIs) get every event forwarded in their own coordinates, so the wheel behaves natively inside them. strimux claims no wheel of its own.
+Click to focus, drag to copy. Full-screen apps that ask for mouse reporting (vim, agent TUIs) get every event forwarded in their own coordinates, so the wheel behaves natively inside them. gwae claims no wheel of its own.
 
 **Guided onboarding**
-`strimux init` walks theme, layout, chrome, and agent setup with a live mockup under every question. Catppuccin Mocha by default, 8 theme presets, `⌥+t` previews them live on the running session.
+`gwae init` walks theme, layout, chrome, and agent setup with a live mockup under every question. Catppuccin Mocha by default, 8 theme presets, `⌥+t` previews them live on the running session.
 
 **Cross-platform**
 Any terminal on macOS, Linux, and Windows (ConPTY). 256-color minimum; truecolor, synchronized updates, kitty keyboard protocol, and SGR mouse are auto-detected and gracefully degraded.
@@ -52,9 +52,9 @@ Any terminal on macOS, Linux, and Windows (ConPTY). 256-color minimum; truecolor
 curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash
 ```
 
-Downloads the latest prebuilt binary for your platform to `~/.local/bin` (override with `STRIMUX_INSTALL_DIR`), verifying the checksum.
+Downloads the latest prebuilt binary for your platform to `~/.local/bin` (override with `GWAE_INSTALL_DIR`), verifying the checksum.
 
-On Windows, grab `strimux-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/hongnoul/gwae/releases/latest) and put `strimux.exe` on your `PATH`.
+On Windows, grab `gwae-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/hongnoul/gwae/releases/latest) and put `gwae.exe` on your `PATH`.
 
 ### Prebuilt binaries
 
@@ -62,22 +62,22 @@ Every release ships static binaries with SHA-256 checksums for:
 
 | Platform | Asset |
 |---|---|
-| macOS (Apple Silicon) | `strimux-aarch64-apple-darwin.tar.gz` |
-| macOS (Intel) | `strimux-x86_64-apple-darwin.tar.gz` |
-| Linux (x86_64, musl static) | `strimux-x86_64-unknown-linux-musl.tar.gz` |
-| Linux (aarch64, musl static) | `strimux-aarch64-unknown-linux-musl.tar.gz` |
-| Windows (x86_64) | `strimux-x86_64-pc-windows-msvc.zip` |
+| macOS (Apple Silicon) | `gwae-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `gwae-x86_64-apple-darwin.tar.gz` |
+| Linux (x86_64, musl static) | `gwae-x86_64-unknown-linux-musl.tar.gz` |
+| Linux (aarch64, musl static) | `gwae-aarch64-unknown-linux-musl.tar.gz` |
+| Windows (x86_64) | `gwae-x86_64-pc-windows-msvc.zip` |
 
 ### From source
 
 Rust 1.85+:
 
 ```bash
-cargo install --git https://github.com/hongnoul/gwae strimux
+cargo install --git https://github.com/hongnoul/gwae gwae
 
 # or from a checkout
 git clone https://github.com/hongnoul/gwae && cd gwae
-cargo install --path crates/strimux     # -> ~/.cargo/bin/strimux
+cargo install --path crates/gwae     # -> ~/.cargo/bin/gwae
 # or: make install                      # first writable bin dir on PATH
 ```
 
@@ -86,21 +86,21 @@ Packaging scaffolding for Homebrew, AUR, and Nix lives in [`packaging/`](packagi
 ## Quick start
 
 ```sh
-strimux                     # one strip, one 1/4-width pane + placeholder boxes
-strimux run "claude"        # command runs in column 0, rest are shells ($SHELL)
-strimux new -- htop         # (subcommand form) new column in a fresh session
-strimux init                # guided setup: theme, layout, chrome (safe to re-run)
-strimux setup               # optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty)
-strimux doctor              # diagnostics: config + theme validity, layout smoke
+gwae                     # one strip, one 1/4-width pane + placeholder boxes
+gwae run "claude"        # command runs in column 0, rest are shells ($SHELL)
+gwae new -- htop         # (subcommand form) new column in a fresh session
+gwae init                # guided setup: theme, layout, chrome (safe to re-run)
+gwae setup               # optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty)
+gwae doctor              # diagnostics: config + theme validity, layout smoke
 ```
 
 The default layout is one strip, one quarter-width column. Skeleton placeholders tile the empty right side so the 4-column container always reads. New columns appear to the right of the focused pane, not at the strip end. `⌥+;` spawns your agent in a new column and focuses it.
 
-## Why strimux?
+## Why gwae?
 
-I run a lot of coding agents in parallel, and every multiplexer I tried divides a fixed screen: more agents means smaller panes, until nothing is readable. niri solved this on the desktop with scrolling tiling — columns keep their size and the viewport moves instead. strimux brings that model into the terminal you already use.
+I run a lot of coding agents in parallel, and every multiplexer I tried divides a fixed screen: more agents means smaller panes, until nothing is readable. niri solved this on the desktop with scrolling tiling — columns keep their size and the viewport moves instead. gwae brings that model into the terminal you already use.
 
-tmux divides a fixed screen; strimux scrolls an infinite one. Séance and tairi have the niri model but need a GUI or compositor; strimux runs over SSH, in any terminal, on all three platforms. See [`docs/COMPARISON.md`](docs/COMPARISON.md).
+tmux divides a fixed screen; gwae scrolls an infinite one. Séance and tairi have the niri model but need a GUI or compositor; gwae runs over SSH, in any terminal, on all three platforms. See [`docs/COMPARISON.md`](docs/COMPARISON.md).
 
 | Project | Layout | In a terminal? | Detach? | Platforms |
 |---|---|---|---|---|
@@ -108,9 +108,9 @@ tmux divides a fixed screen; strimux scrolls an infinite one. Séance and tairi 
 | Zellij | plane tiling + floating | Yes | Yes | macOS/Linux/Windows |
 | Séance | niri strip (GUI) | No | socket | Linux (GTK) |
 | tairi | niri strip (GUI) | No | workspaces | macOS |
-| **strimux** | **2D niri strip grid** | **Yes** | **No (`--resume`)** | **macOS/Windows/Linux** |
+| **gwae** | **2D niri strip grid** | **Yes** | **No (`--resume`)** | **macOS/Windows/Linux** |
 
-**No-shrink** — agents stay readable. **Niri feel** — `⌥+hjkl` / `⌥+Shift+hjkl`, dynamic strips, quantized stops, minimal follow-focus. **No daemon** — if you need SSH persistence that outlives the process, keep tmux; strimux delegates to `claude --resume` / `jcode --resume`.
+**No-shrink** — agents stay readable. **Niri feel** — `⌥+hjkl` / `⌥+Shift+hjkl`, dynamic strips, quantized stops, minimal follow-focus. **No daemon** — if you need SSH persistence that outlives the process, keep tmux; gwae delegates to `claude --resume` / `jcode --resume`.
 
 ## Documentation
 
@@ -118,7 +118,7 @@ tmux divides a fixed screen; strimux scrolls an infinite one. Séance and tairi 
 - [Layout spec](docs/LAYOUT-SPEC.md): the normative quantized-scroll / strip-grid spec
 - [Configuration](docs/CONFIG.md): every key, generated from code
 - [Comparison](docs/COMPARISON.md): tmux, Zellij, Séance, tairi
-- [Latency](docs/LATENCY.md): input-latency tuning, macOS + terminal + strimux together
+- [Latency](docs/LATENCY.md): input-latency tuning, macOS + terminal + gwae together
 - [Roadmap](docs/ROADMAP.md)
 
 ## Keyboard Shortcuts
@@ -138,7 +138,7 @@ Every action is an `⌥` chord. `⌥` is the Option key on macOS, Alt elsewhere.
 | `⌥+s` | Split focused column — new pane below |
 | `⌥+r` | Cycle focused column width `1/3 → 1/2 → 1/4` |
 | `⌥+f` (`ƒ` on macOS) | Toggle focused column between full width and `1/4` |
-| `⌥+q` (`œ`) | Kill focused pane — columns compact, focus keeps its slot (falls left only at right edge); emptied strip is dropped, last pane quits strimux |
+| `⌥+q` (`œ`) | Kill focused pane — columns compact, focus keeps its slot (falls left only at right edge); emptied strip is dropped, last pane quits gwae |
 | `⌥+←` / `⌥+→` | Scroll pane's logical content horizontally (when `content_width` > column width) |
 | `⌥+[` / `⌥+]` | Scroll the row viewport left / right without moving focus |
 | `⌥+↑` / `⌥+↓` | **Scrollback** — read back through the focused pane's history, 3 rows a notch. `⌥+Shift+↑/↓` and `⌥+PageUp/PageDown` move ~a screenful. Typing snaps back to live. A full-screen app (vim, `less`) owns its own scrolling, so it gets the arrow keys instead |
@@ -147,20 +147,20 @@ Every action is an `⌥` chord. `⌥` is the Option key on macOS, Alt elsewhere.
 | `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
 | `⌥+t` (`†` on macOS) | **Theme picker** — step presets with `←`/`→`, live-previewed on the real UI; `⏎` keeps, `esc` restores |
 | `⌥+/` or `⌥+?` (`÷` / `¿` on macOS) | **Toggle the cheat-sheet HUD** — same overlay shown at startup; any other key dismisses it |
-| `⌥+Shift+q` | Force-quit strimux — opens a centered confirmation overlay; press `⌥+Shift+q` again (or `⏎`) to kill every pane, any other key cancels |
+| `⌥+Shift+q` | Force-quit gwae — opens a centered confirmation overlay; press `⌥+Shift+q` again (or `⏎`) to kill every pane, any other key cancels |
 | click | Left-click focuses the clicked pane |
 | drag | Left-drag inside a pane selects text (inverse highlight) and copies it on release. Panes that grab the mouse (vim, agent TUIs) keep it, so hold `Shift` there to select instead |
-| wheel | Forwarded as SGR to a pane that asked for mouse reporting (vim, agent TUIs), so it behaves natively there. strimux claims no wheel of its own |
+| wheel | Forwarded as SGR to a pane that asked for mouse reporting (vim, agent TUIs), so it behaves natively there. gwae claims no wheel of its own |
 
 All other keys pass through to the focused pane. Closing a pane by `exit` / process death behaves identically to `kill-pane`.
 
-Bindings live in one place, `crates/strimux/src/binds.rs`, and tests enforce that the dispatcher, the cheat-sheet HUD, the cowsay hints, and this table all agree — a new or re-bound key fails the build until every surface is consistent.
+Bindings live in one place, `crates/gwae/src/binds.rs`, and tests enforce that the dispatcher, the cheat-sheet HUD, the cowsay hints, and this table all agree — a new or re-bound key fails the build until every surface is consistent.
 
 ## Agent awareness
 
 ### OSC 133 status
 
-If a pane's shell emits OSC 133 (`A` prompt → `C` running → `D;n` done/failed), strimux tracks per-pane status natively:
+If a pane's shell emits OSC 133 (`A` prompt → `C` running → `D;n` done/failed), gwae tracks per-pane status natively:
 
 - `»` **Working** (blue) — command running
 - `!` **Wants attention** (amber) — idle with output / prompt waiting
@@ -185,9 +185,9 @@ No bottom status row. Hold `⌥`/Alt to see status (centered, no pane shrinkage)
 
 ## Configuration
 
-`strimux init` runs a short guided setup on first launch (theme with live swatches, panes at launch, column width, scroll style, labels — each question drawn over a live mockup of the grid). Re-run it any time; defaults become whatever your config currently says.
+`gwae init` runs a short guided setup on first launch (theme with live swatches, panes at launch, column width, scroll style, labels — each question drawn over a live mockup of the grid). Re-run it any time; defaults become whatever your config currently says.
 
-File: `$XDG_CONFIG_HOME/strimux/strimux.toml` (or `~/.config/strimux/strimux.toml`). TOML, all keys optional. Full reference in [`docs/CONFIG.md`](docs/CONFIG.md).
+File: `$XDG_CONFIG_HOME/gwae/gwae.toml` (or `~/.config/gwae/gwae.toml`). TOML, all keys optional. Full reference in [`docs/CONFIG.md`](docs/CONFIG.md).
 
 ```toml
 default_column_width = "quarter"  # or "half", "two-thirds", "full", or 80 (cells)
@@ -205,11 +205,11 @@ mode = "off"                      # off | overlay | edge_ticks
 
 ### How does it compare to tmux?
 
-tmux is a fixed-screen tiler with a client-server daemon. strimux is a scrolling tiler with no daemon: columns keep their width and the row scrolls, so ten agents are as readable as two. If you need detach/attach that outlives the process, keep tmux; strimux delegates persistence to each harness's own `--resume`.
+tmux is a fixed-screen tiler with a client-server daemon. gwae is a scrolling tiler with no daemon: columns keep their width and the row scrolls, so ten agents are as readable as two. If you need detach/attach that outlives the process, keep tmux; gwae delegates persistence to each harness's own `--resume`.
 
 ### What coding agents does it work with?
 
-All of them. strimux hosts ordinary PTYs, so any agent that runs in a terminal works out of the box: Claude Code, Jcode, Codex, OpenCode, Gemini CLI, Aider, and anything else you can launch from a command line. Status tracking uses standard OSC 133 with a quiet-heuristic fallback, so no agent needs instrumentation.
+All of them. gwae hosts ordinary PTYs, so any agent that runs in a terminal works out of the box: Claude Code, Jcode, Codex, OpenCode, Gemini CLI, Aider, and anything else you can launch from a command line. Status tracking uses standard OSC 133 with a quiet-heuristic fallback, so no agent needs instrumentation.
 
 ### Does it need a specific terminal?
 
@@ -217,7 +217,7 @@ No. Minimum is 256-color plus cursor addressing. Truecolor, synchronized updates
 
 ### Can I detach and reattach?
 
-No, deliberately. There is no daemon and no socket. Your agents already persist themselves (`claude --resume`, `jcode --resume`); a shell that must survive the terminal belongs in tmux, which you can happily run inside a strimux pane.
+No, deliberately. There is no daemon and no socket. Your agents already persist themselves (`claude --resume`, `jcode --resume`); a shell that must survive the terminal belongs in tmux, which you can happily run inside a gwae pane.
 
 ### What's not planned?
 
@@ -237,7 +237,7 @@ CI runs fmt, clippy (`-D warnings`), check, and the full test suite on macOS and
 Architecture:
 
 ```
-strimux (one process)
+gwae (one process)
 ├── Layout core (rows/strips/columns/panes) — pure, no I/O
 ├── Pane tasks (one per PTY: bytes → parse → grid + OSC 133)
 ├── Composer (coalesce damage → single 2D cell buffer)
@@ -248,12 +248,12 @@ strimux (one process)
 
 | Crate | Role |
 |---|---|
-| `strimux` | bin — raw mode, PTY hosting, composer, render, input, minimap, OSC 133, Kitty APC forwarding, mouse |
-| `strimux-layout` | pure 2D grid + verbs + quantized scroll + minimap model. `proptest` invariants |
-| `strimux-term` | `TermGrid` emulator facade + damage tracking |
-| `strimux-testkit` | fake PTYs + scripted terminals + snapshot harness |
+| `gwae` | bin — raw mode, PTY hosting, composer, render, input, minimap, OSC 133, Kitty APC forwarding, mouse |
+| `gwae-layout` | pure 2D grid + verbs + quantized scroll + minimap model. `proptest` invariants |
+| `gwae-term` | `TermGrid` emulator facade + damage tracking |
+| `gwae-testkit` | fake PTYs + scripted terminals + snapshot harness |
 
-Layout invariants live as `proptest` properties in `crates/strimux-layout/tests/invariants.rs` (quantized-stop, tiling, shape-identity, focus-never-clipped, page-stop, cross-strip move).
+Layout invariants live as `proptest` properties in `crates/gwae-layout/tests/invariants.rs` (quantized-stop, tiling, shape-identity, focus-never-clipped, page-stop, cross-strip move).
 
 ## Contributing
 
@@ -263,4 +263,4 @@ Layout invariants live as `proptest` properties in `crates/strimux-layout/tests/
 
 ## License
 
-strimux is open source under the [MIT license](LICENSE).
+gwae is open source under the [MIT license](LICENSE).

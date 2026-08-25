@@ -14,7 +14,7 @@
       "procs_1pane": 0
     },
     {
-      "name": "strimux (gwae)",
+      "name": "gwae",
       "start_first_out_ms": 10.682292,
       "start_echo_ready_ms": 64.895334,
       "rtt_ms": {
@@ -61,7 +61,7 @@
     }
   ],
   "binary_bytes": {
-    "strimux": 2590288,
+    "gwae": 2590288,
     "tmux": 1000784,
     "zellij": 41355696
   },

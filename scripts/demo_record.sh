@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Record the gwae/strimux "fire demo": fast panning navigation, btm + yazi and
+# Record the gwae/gwae "fire demo": fast panning navigation, btm + yazi and
 # a swarm of jcode agents studying MIT 5.111 chemistry, across three strips.
 #
 # The whole take is driven through kitty remote control (`kitten @ send-text`),
@@ -19,15 +19,15 @@
 # agent's thinking) but turns motion frantic if pushed far. Roughly half from
 # each lands a ~25s cut that still reads.
 #
-# Chord encoding: every strimux chord goes out as Option-as-Meta, i.e. ESC +
+# Chord encoding: every gwae chord goes out as Option-as-Meta, i.e. ESC +
 # key, and shifted chords as ESC + the *shifted* character (ESC ':' for
-# ⌥+Shift+;, ESC 'J' for ⌥+Shift+j). The macOS Unicode-glyph fallback strimux
+# ⌥+Shift+;, ESC 'J' for ⌥+Shift+j). The macOS Unicode-glyph fallback gwae
 # also decodes (Ú, Ô, ©, ƒ, ÷) is deliberately NOT used here: over remote
 # control those bytes reach the focused pane as ordinary text and get typed
 # into the agent's prompt instead of steering the grid.
 set -euo pipefail
 
-BIN=${BIN:-$HOME/.cargo/bin/strimux}
+BIN=${BIN:-$HOME/.cargo/bin/gwae}
 OUT=${OUT:-$HOME/Desktop/gwae-demo.mp4}
 SOCK=${SOCK:-/tmp/gwae-demo-rc}
 FONT=${FONT:-13}
@@ -46,12 +46,12 @@ DRY=${DRY:-0}
 
 # --- key DSL ---------------------------------------------------------------
 # Every wait in the demo goes through `nap`, so PACE is the single dial for how
-# hurried the take is. The floor is not decoration: below ~90ms strimux and the
+# hurried the take is. The floor is not decoration: below ~90ms gwae and the
 # pane's own program stop being visibly distinguishable, and the frame the
 # viewer needs to see never gets painted.
 nap()   { awk -v s="$1" -v p="$PACE" 'BEGIN{d=s*p; print (d<0.09?0.09:d)}' | xargs sleep; }
 raw()   { printf '%b' "$1" | "$KITTEN" @ --to "unix:$SOCK" send-text --stdin; }
-# strimux decodes a chord as ESC immediately followed by the key, and treats a
+# gwae decodes a chord as ESC immediately followed by the key, and treats a
 # lone ESC as a chord preamble that expires. Sending one right behind a Return
 # races that window: the ESC gets consumed as the tail of the previous burst
 # and the bare key is typed into the pane, which is how a prompt ends up
@@ -77,7 +77,7 @@ burst() { local key=$1 n=$2 gap=${3:-0.12}; for _ in $(seq "$n"); do chord "$key
 # The settle is deliberately NOT scaled by PACE: it is the one wait that is a
 # property of the machine rather than of the edit, and shrinking it is how a
 # take ends up with `resubtm` on screen instead of `btm`.
-# Ctrl+U first: the chord that spawned this pane is decoded by strimux, but on
+# Ctrl+U first: the chord that spawned this pane is decoded by gwae, but on
 # a bad roll the terminal delivers ESC and the key far enough apart that the
 # key also reaches the new pane, leaving a stray ':' in front of the prompt.
 # Timing tweaks only make that rarer; clearing the line makes it impossible.
@@ -130,7 +130,7 @@ beat 2.0
 chord '\015' 0.2; settle 0.8     # ⌥+Enter: new column
 ask "yazi \"$NOTES\"" 1.0        # the 5.111 vault, browsable
 beat 1.4
-burst 'j' 4 0.20                 # yazi owns its own keys — strimux forwards
+burst 'j' 4 0.20                 # yazi owns its own keys — gwae forwards
 burst 'k' 2 0.20
 beat 0.5
 

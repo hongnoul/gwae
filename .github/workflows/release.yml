@@ -82,22 +82,22 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          tar -czf strimux-${{ matrix.target }}.tar.gz strimux
-          shasum -a 256 strimux-${{ matrix.target }}.tar.gz > strimux-${{ matrix.target }}.tar.gz.sha256
+          tar -czf gwae-${{ matrix.target }}.tar.gz gwae
+          shasum -a 256 gwae-${{ matrix.target }}.tar.gz > gwae-${{ matrix.target }}.tar.gz.sha256
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
-          7z a strimux-${{ matrix.target }}.zip strimux.exe
-          (Get-FileHash strimux-${{ matrix.target }}.zip -Algorithm SHA256).Hash.ToLower() + "  strimux-${{ matrix.target }}.zip" | Out-File -Encoding ascii strimux-${{ matrix.target }}.zip.sha256
+          7z a gwae-${{ matrix.target }}.zip gwae.exe
+          (Get-FileHash gwae-${{ matrix.target }}.zip -Algorithm SHA256).Hash.ToLower() + "  gwae-${{ matrix.target }}.zip" | Out-File -Encoding ascii gwae-${{ matrix.target }}.zip.sha256
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           gh release upload "${GITHUB_REF_NAME}" \
-            target/${{ matrix.target }}/release/strimux-${{ matrix.target }}.* \
+            target/${{ matrix.target }}/release/gwae-${{ matrix.target }}.* \
             --clobber
 
   publish:

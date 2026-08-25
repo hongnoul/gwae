@@ -8,14 +8,14 @@ changelog, updated per PR). The format is based on
 
 ## [1.0.0] - 2026-08-25
 
-First stable release. strimux ships as one static binary for macOS, Linux,
+First stable release. gwae ships as one static binary for macOS, Linux,
 and Windows with the scrolling strip grid, quantized viewport, OSC 133 agent
 dashboard, smart-jump, guided onboarding, Kitty graphics passthrough, theme
 presets, and live-PTY E2E coverage. MIT licensed.
 
 ### Added
 - **`⌥+↑` / `⌥+↓` read back through a pane's scrollback.** With the wheel no
-  longer claimed by strimux (see Removed), the keyboard is the only route into
+  longer claimed by gwae (see Removed), the keyboard is the only route into
   a pane's history, so it needed one: `⌥+↑`/`⌥+↓` move three rows a notch, and
   `⌥+Shift+↑/↓` or `⌥+PageUp/PageDown` move about a screenful. Typing snaps the
   pane back to live, and a full-screen app on the alternate screen (vim,
@@ -26,33 +26,33 @@ presets, and live-PTY E2E coverage. MIT licensed.
 - **Onboarding offers to install `btm`.** The last question of the guided setup
   offers [bottom](https://github.com/ClementTsang/bottom), the system monitor
   that makes a good permanent neighbour to an agent pane, defaulting to yes. On
-  macOS a yes installs Homebrew first when it is missing: that is strimux's
+  macOS a yes installs Homebrew first when it is missing: that is gwae's
   implementation detail, so it happens silently rather than becoming a second
   question about a package manager the user may never have heard of. The offer
   is skipped entirely when `btm` is already installed (a question whose only
   honest answer is "already done" teaches people that setup asks things it
-  already knows), and `STRIMUX_NO_INSTALL=1` turns it off for unattended runs.
+  already knows), and `GWAE_NO_INSTALL=1` turns it off for unattended runs.
   The summary reports what actually happened on the machine, not what was
   answered: "yes" and "installed" are different claims.
 
-- **`strimux tune` reports input latency across all three layers.** A keystroke
-  crosses macOS, your terminal, and strimux — and strimux twice, since what
-  you see is the program's echo making the return trip. Tuning only strimux's
+- **`gwae tune` reports input latency across all three layers.** A keystroke
+  crosses macOS, your terminal, and gwae — and gwae twice, since what
+  you see is the program's echo making the return trip. Tuning only gwae's
   own knob therefore fixes a third of the problem. `tune` probes all three and
   says which are slower than they need to be, with the exact command for each.
-  It writes **only strimux's own config**; macOS globals and your terminal's
+  It writes **only gwae's own config**; macOS globals and your terminal's
   config are printed for you to apply, never edited silently. First-run
   onboarding offers the same thing once, right after you pick an agent, and
   stays silent when there is nothing to fix. `doctor` carries a summary line,
   and `docs/LATENCY.md` explains the reasoning (including why removing
-  strimux's wait entirely would make typing *worse*, not better).
+  gwae's wait entirely would make typing *worse*, not better).
 
-- **The first pane opens on your agent, not a bare shell.** strimux exists to
+- **The first pane opens on your agent, not a bare shell.** gwae exists to
   drive agent harnesses, but every launch dropped you at a shell prompt to
   type the harness name yourself. Pane 1.1 now runs the same agent gateway
   `⌥+;` uses, so startup has exactly two outcomes: your configured agent is
   already running, or you get the selector and pick one (which is then saved,
-  making every later launch the first case). `strimux run <cmd>` still wins,
+  making every later launch the first case). `gwae run <cmd>` still wins,
   since that is you being specific.
 
 - **Detection is no longer limited to an allowlist.** The picker only knew a
@@ -68,7 +68,7 @@ presets, and live-PTY E2E coverage. MIT licensed.
   blind, so on a machine without that harness installed the pane's child died
   the instant it spawned and left a blank box with no explanation — the same
   thing that happens if you typo the command. The key now opens an *agent
-  gateway* (`strimux agent`) in the pane: when `default_agent` resolves it
+  gateway* (`gwae agent`) in the pane: when `default_agent` resolves it
   `exec`s it immediately and paints nothing, and otherwise it lists the
   harnesses actually found on your `PATH` (`jcode`, `claude`, `codex`,
   `gemini`, `opencode`, `crush`, `aider`, `cursor-agent`, `amp`, `goose`),
@@ -76,8 +76,8 @@ presets, and live-PTY E2E coverage. MIT licensed.
   instant. Choosing nothing, or having nothing installed, opens a plain
   `$SHELL` with a note saying why. Because the gateway `exec`s, the pane's
   process *is* the harness: same pid, same PTY, and its own window title still
-  reaches the host. `strimux doctor` reports the same resolution, and
-  `strimux agent --print` shows it without prompting or running anything.
+  reaches the host. `gwae doctor` reports the same resolution, and
+  `gwae agent --print` shows it without prompting or running anything.
 
 - **`⌥+<number>` reaches columns past 9.** `⌥+1..9` jumped on the keystroke,
   which capped addressable columns at nine: there is no `⌥+10` key, so a wide
@@ -105,9 +105,9 @@ presets, and live-PTY E2E coverage. MIT licensed.
 - **Latency tuning is applied silently, before the first question.** It used to
   be a prompt at the end of onboarding, which asked users to adjudicate a
   number they cannot evaluate. `input_poll_ms` has exactly one right answer, so
-  strimux now sets it in its own config file before setup draws anything, and
+  gwae now sets it in its own config file before setup draws anything, and
   the summary screen reports only what is left for the user to do (kitty and
-  macOS settings, which strimux will never edit for them).
+  macOS settings, which gwae will never edit for them).
 
 - **The inset skeleton frames now ship off.** Framing every column and insetting
   its content by a cell is a strong look, and it was both the default and a
@@ -132,7 +132,7 @@ presets, and live-PTY E2E coverage. MIT licensed.
   disagree with each other.
 
 ### Removed
-- **Mouse wheel scrollback, and the `mouse` / `scroll_lines` keys.** strimux
+- **Mouse wheel scrollback, and the `mouse` / `scroll_lines` keys.** gwae
   captured the wheel to scroll the pane under the cursor, which meant it also
   had to translate the wheel into arrow keys for alt-screen pagers, and it put
   two knobs in the config (and two questions in setup) for behavior most users
@@ -159,17 +159,17 @@ presets, and live-PTY E2E coverage. MIT licensed.
   its own bindings. The art is generated in-process (no `cowsay(1)` dependency)
   and wrapped to the box width. Which box says what is chosen by hashing the
   cell's position, never randomly, so a box always says the same thing and idle
-  strimux still paints zero cells per frame. The identifier always wins: boxes
+  gwae still paints zero cells per frame. The identifier always wins: boxes
   too narrow (under 23 cells) or too short for both degrade to the label alone
   rather than a clipped cow. Configure via `[cowsay]` `enabled` / `messages`;
   both are picked up by live config reload.
 - **Kitty graphics passthrough: images now render inside panes**: vt100 (the
   hosted emulator) silently swallows Kitty graphics APCs, so any child that
   drew images (jcode diagrams/screenshots, `kitten icat`) showed nothing.
-  strimux now scans each pane's raw output with a chunk-safe state machine,
+  gwae now scans each pane's raw output with a chunk-safe state machine,
   forwards complete `ESC _ G … ESC \` sequences verbatim to the host terminal
   (when the host speaks the protocol: Kitty/Ghostty/WezTerm by env, or forced
-  via `STRIMUX_KITTY_GRAPHICS=1/0`), and preserves the combining diacritics on
+  via `GWAE_KITTY_GRAPHICS=1/0`), and preserves the combining diacritics on
   `U+10EEEE` Unicode-placeholder cells through the grid and the painter, so
   virtual placements land exactly inside their pane and clip with it. Graphics
   *queries* (`a=q`) are dropped rather than forwarded because the host's reply
@@ -190,7 +190,7 @@ presets, and live-PTY E2E coverage. MIT licensed.
   you - failed beats waiting-for-input beats done, nearest first in layout
   order - crossing strips and following with the scroll. Does nothing while
   every other pane is happily working.
-- **Touchpad/wheel scrolling scrolls the pane, not the host terminal**: strimux
+- **Touchpad/wheel scrolling scrolls the pane, not the host terminal**: gwae
   now captures the mouse, so a scroll gesture moves the scrollback of the pane
   under the cursor instead of falling through to the host terminal (where it
   scrolled the host's own buffer and walked the shell's previous/next prompt
@@ -224,7 +224,7 @@ presets, and live-PTY E2E coverage. MIT licensed.
   **stays in the same slot**, landing on the column that slides in from the
   right (or the pane above in a stack), and only falls to the left neighbor
   when nothing is left to the right.
-  Closing the last pane quits strimux. Previously an exited pane lingered as a
+  Closing the last pane quits gwae. Previously an exited pane lingered as a
   dead frozen pane and `⌥+q` was the only way to clear it.
 - **Fixed-width panes**: every column now renders at its own fixed preset
   fraction of the viewport (new columns default to `1/4`), and a strip that
@@ -244,7 +244,7 @@ presets, and live-PTY E2E coverage. MIT licensed.
   instead of quitting; quit is `⌥+Shift+q`. On macOS the `⌥+;` / `⌥+q`
   chords work out of the box (Option+`;` = `…`, Option+`q` = `œ`), no
   Option-as-Alt needed.
-- **M0 renderer**: single-process, multi-pane PTY cell renderer. The `strimux`
+- **M0 renderer**: single-process, multi-pane PTY cell renderer. The `gwae`
   binary spawns real panes, composes them into one 2D cell buffer, diffs and
   paints frames, and streams pane output live. Full 300x80 repaint measured at
   ~0.05 ms.
@@ -258,11 +258,11 @@ presets, and live-PTY E2E coverage. MIT licensed.
 - `Makefile` with `build` / `install` / `check` / `test` targets.
 - Timeline: README status/usage, e2e PTY render test, `pane_window` unit tests.
 - Cargo workspace scaffold with four crates:
-  `strimux` (bin), `strimux-layout`, `strimux-term`, `strimux-testkit`.
-- `strimux-layout`: the pure 2D grid-of-strips core (rows/columns/panes,
+  `gwae` (bin), `gwae-layout`, `gwae-term`, `gwae-testkit`.
+- `gwae-layout`: the pure 2D grid-of-strips core (rows/columns/panes,
   follow-focus scroll, verbs) with `proptest` invariant properties.
-- `strimux-term`: the `TermGrid` emulator facade (ADR-004) + `NullGrid`.
-- `strimux-testkit`: `FakeTerminal` for scripted/rendered-frame tests.
-- `strimux` bin: `clap` CLI (`run`/`new`/`setup`/`doctor`) + TOML config loader.
+- `gwae-term`: the `TermGrid` emulator facade (ADR-004) + `NullGrid`.
+- `gwae-testkit`: `FakeTerminal` for scripted/rendered-frame tests.
+- `gwae` bin: `clap` CLI (`run`/`new`/`setup`/`doctor`) + TOML config loader.
 - MIT license, docs (ARCHITECTURE / LAYOUT-SPEC / COMPARISON / CONFIG / ROADMAP),
   CI workflow, packaging scaffolding, scripts, issue templates.

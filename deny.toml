@@ -8,7 +8,7 @@ ignore = []
 
 [licenses]
 version = 2
-# strimux is MIT; every dependency must be compatible.
+# gwae is MIT; every dependency must be compatible.
 allow = [
     "MIT",
     "ISC",

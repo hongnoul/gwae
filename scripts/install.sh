@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# strimux installer: downloads the latest release binary to a bin dir on PATH.
+# gwae installer: downloads the latest release binary to a bin dir on PATH.
 #   curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash
 set -euo pipefail
 
 REPO="hongnoul/gwae"
-INSTALL_DIR="${STRIMUX_INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${GWAE_INSTALL_DIR:-$HOME/.local/bin}"
 
-say() { printf '\033[1;36mstrimux:\033[0m %s\n' "$*"; }
-die() { printf '\033[1;31mstrimux:\033[0m %s\n' "$*" >&2; exit 1; }
+say() { printf '\033[1;36mgwae:\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31mgwae:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- platform ---------------------------------------------------------------
 case "$(uname -s)" in
   Darwin) os=apple-darwin ;;
   Linux)  os=unknown-linux-musl ;;
-  *) die "unsupported OS $(uname -s). On Windows, download strimux-x86_64-pc-windows-msvc.zip from https://github.com/${REPO}/releases/latest — or build from source: cargo install --git https://github.com/${REPO} strimux" ;;
+  *) die "unsupported OS $(uname -s). On Windows, download gwae-x86_64-pc-windows-msvc.zip from https://github.com/${REPO}/releases/latest — or build from source: cargo install --git https://github.com/${REPO} gwae" ;;
 esac
 
 case "$(uname -m)" in
   x86_64)          arch=x86_64 ;;
   aarch64 | arm64) arch=aarch64 ;;
-  *) die "unsupported architecture $(uname -m). Build from source: cargo install --git https://github.com/${REPO} strimux" ;;
+  *) die "unsupported architecture $(uname -m). Build from source: cargo install --git https://github.com/${REPO} gwae" ;;
 esac
 target="${arch}-${os}"
-artifact="strimux-${target}"
+artifact="gwae-${target}"
 
 # --- download ----------------------------------------------------------------
 # The /releases/latest/download/ redirect avoids api.github.com rate limits
@@ -54,9 +54,9 @@ fi
 # --- install ------------------------------------------------------------------
 tar xzf "$tmp/pkg.tar.gz" -C "$tmp"
 mkdir -p "$INSTALL_DIR"
-install -m755 "$tmp/strimux" "$INSTALL_DIR/strimux"
+install -m755 "$tmp/gwae" "$INSTALL_DIR/gwae"
 
-say "installed strimux ${tag} to ${INSTALL_DIR}/strimux"
+say "installed gwae ${tag} to ${INSTALL_DIR}/gwae"
 
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
@@ -66,4 +66,4 @@ case ":$PATH:" in
     ;;
 esac
 
-say "run 'strimux' to start, or 'strimux init' for the guided setup."
+say "run 'gwae' to start, or 'gwae init' for the guided setup."

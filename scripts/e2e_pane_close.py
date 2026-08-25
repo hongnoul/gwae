@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""E2E: drive the real strimux binary in a PTY and verify natural pane close.
+"""E2E: drive the real gwae binary in a PTY and verify natural pane close.
 
 Scenario (the actual end-user workflow):
-  1. strimux starts with 2 panes; pane 0 runs a command that exits after 1s.
+  1. gwae starts with 2 panes; pane 0 runs a command that exits after 1s.
   2. When it exits, the pane must close and the strip collapse leftward:
      the surviving shell pane becomes column 0 and takes focus.
   3. Typed input then lands in the surviving pane (echo MARKER), and the
      repaint places that pane's content at the LEFT edge (fill first left).
-  4. `exit` in the last pane quits strimux entirely (process terminates).
+  4. `exit` in the last pane quits gwae entirely (process terminates).
 """
 import os, pty, re, select, signal, struct, sys, tempfile, termios, fcntl, time
 
 COLS, ROWS = 120, 30
-BIN = os.path.join(os.path.dirname(__file__), "..", "target", "debug", "strimux")
+BIN = os.path.join(os.path.dirname(__file__), "..", "target", "debug", "gwae")
 
 def spawn():
-    cfg = tempfile.mkdtemp(prefix="strimux-e2e-")
-    os.makedirs(os.path.join(cfg, "strimux"), exist_ok=True)
-    with open(os.path.join(cfg, "strimux", "strimux.toml"), "w") as f:
+    cfg = tempfile.mkdtemp(prefix="gwae-e2e-")
+    os.makedirs(os.path.join(cfg, "gwae"), exist_ok=True)
+    with open(os.path.join(cfg, "gwae", "gwae.toml"), "w") as f:
         f.write("startup_panes = 2\n")
     env = dict(os.environ, XDG_CONFIG_HOME=cfg, SHELL="/bin/sh", TERM="xterm-256color")
     pid, fd = pty.fork()
@@ -45,7 +45,7 @@ def drain(fd, dur):
 def render(raw):
     """Minimal VT interpreter: apply CUP moves and printable text to a
     COLS x ROWS screen, ignoring SGR/other escapes. Enough to see where
-    strimux painted each pane's content."""
+    gwae painted each pane's content."""
     screen = [[" "] * COLS for _ in range(ROWS)]
     row = col = 0
     txt = raw.decode("utf-8", "replace")
@@ -88,7 +88,7 @@ def main():
     # Let both panes spawn and pane 0's command run out (1s) + collapse.
     pre = drain(fd, 2.5)
     alive = os.waitpid(pid, os.WNOHANG) == (0, 0)
-    check("strimux survives a non-last pane exit", alive)
+    check("gwae survives a non-last pane exit", alive)
 
     # Type into whatever pane is focused now. If collapse+refocus worked,
     # this lands in the surviving shell.
@@ -108,7 +108,7 @@ def main():
           bool(cols) and min(cols) < COLS // 4,
           f"cols={cols}")
 
-    # Last pane: exit must quit strimux.
+    # Last pane: exit must quit gwae.
     os.write(fd, b"exit\r")
     deadline = time.time() + 5
     quit_ok = False
@@ -117,7 +117,7 @@ def main():
         if os.waitpid(pid, os.WNOHANG) != (0, 0):
             quit_ok = True
             break
-    check("last pane exit quits strimux", quit_ok)
+    check("last pane exit quits gwae", quit_ok)
     if not quit_ok:
         os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)

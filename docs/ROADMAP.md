@@ -30,7 +30,7 @@ animation, Windows ConPTY verification.
 
 ## M4 - Polish and launch (2-3 weeks)
 Themes/truecolor, VHS gifs, docs, Homebrew tap + AUR + nix + winget, prebuilt
-binaries, `strimux setup`. **Exit**: v0.1.0 installable in one command.
+binaries, `gwae setup`. **Exit**: v0.1.0 installable in one command.
 
 ## M5 - Post-launch differentiation (ongoing)
 Overview zoom, per-command pane rules, deeper PTY-compliant agent integration,
