@@ -23,8 +23,9 @@ use strimux_term::{CColor, Cell, KittyApcExtractor, Size as GridSize, TermGrid, 
 
 use crate::config::Config;
 
-fn chrome_rows(cfg: &Config) -> u16 {
-    cfg.minimap.chrome_rows()
+fn chrome_rows(_cfg: &Config) -> u16 {
+    // Bottom status row has been removed; chrome is always 0.
+    0
 }
 
 fn has_attention(layout: &Layout) -> bool {
@@ -712,33 +713,10 @@ fn render_frame(
         }
         _ => {}
     }
-    // Chrome dispatch: reserved row (quasimode-aware) vs legacy overlay / edge ticks
+    // Chrome dispatch: overlay / edge ticks only. The bottom reserved row has
+    // been removed; status is via the centered Alt HUD/minimap (drawn in
+    // run_tui) and legacy overlay/edge_ticks modes here.
     match mm.mode {
-        crate::config::MinimapMode::Reserved | crate::config::MinimapMode::ReservedQuasimode => {
-            // Caller (run_tui) decides whether the row should actually paint based on alt_held/has_attention.
-            // render_frame itself paints the row whenever asked; alt_held==true or has_attention ensures visibility.
-            // Since render_frame doesn't know alt_held, it always paints when chrome==1 — the blank-row at rest is just background.
-            // To honor quasimode, run_tui will pass a Minimap with painted==false? Instead, we expose a helper:
-            // keep painting here always when chrome==1; run_tui-level alt tracking will request repaint only when state flips.
-            // For direct calls from tests we paint the row unconditionally when chrome==1 (covered below via draw_status_row).
-            // The run_tui loop will decide whether to leave the last row as background or call draw_status_row.
-            // We paint here based on mm.should_paint — but render_frame has no alt flag. So we default to painting when mode==Reserved,
-            // and when ReservedQuasimode we leave it to the loop. To keep tests honest, paint for both modes when no alt info is available.
-            if mm.mode == crate::config::MinimapMode::Reserved
-                || mm.mode == crate::config::MinimapMode::ReservedQuasimode
-            {
-                // At the render_frame level we have no Alt state; paint whenever caller hasn't indicated hidden.
-                // run_tui will blank after if needed — for now paint all chrome modes here.
-                // (Quasimode blanking is applied as a post-step in run_tui's dirty path.)
-                // We draw unconditionally here and let run_tui blank it if alt_held==false && !has_attention.
-                // So we need to know has_attention — compute here as fallback when not in quasimode loop.
-                // For simplicity, always draw_status_row when chrome>0; run_tui's outer logic will overwrite with background when hidden.
-                let chrome = mm.chrome_rows();
-                if chrome > 0 {
-                    draw_status_row(out, cols, rows, layout, mm, focus_color);
-                }
-            }
-        }
         crate::config::MinimapMode::Overlay => {
             draw_minimap(out, cols, rows, layout, mm, focus_color);
         }
@@ -932,24 +910,6 @@ fn draw_big_label(out: &mut [Cell], cols: u16, rect: Rect, label: &str, color: C
     }
 }
 
-fn status_bg_for(s: PaneStatus) -> CColor {
-    // Catppuccin Mocha accent tints, darkened for white (Idx 231) text contrast.
-    match s {
-        PaneStatus::Running => CColor::Rgb(0x52, 0x6c, 0x96), // blue #89b4fa @ 0.6
-        PaneStatus::Idle => CColor::Rgb(0x96, 0x6b, 0x51),    // peach #fab387 @ 0.6
-        PaneStatus::Done => CColor::Rgb(0x63, 0x88, 0x60),    // green #a6e3a1 @ 0.6
-        PaneStatus::Failed => CColor::Rgb(0x91, 0x53, 0x64),  // red #f38ba8 @ 0.6
-    }
-}
-fn status_fg_for(s: PaneStatus) -> CColor {
-    // Bright Mocha accents for summary counts.
-    match s {
-        PaneStatus::Running => CColor::Rgb(0x89, 0xb4, 0xfa),
-        PaneStatus::Idle => CColor::Rgb(0xfa, 0xb3, 0x87),
-        PaneStatus::Done => CColor::Rgb(0xa6, 0xe3, 0xa1),
-        PaneStatus::Failed => CColor::Rgb(0xf3, 0x8b, 0xa8),
-    }
-}
 fn status_glyph_for(s: PaneStatus) -> char {
     match s {
         PaneStatus::Running => '\u{00bb}', // »
@@ -959,164 +919,9 @@ fn status_glyph_for(s: PaneStatus) -> char {
     }
 }
 
-/// Reserved 1-line status row: `❯1» 2✓ [3!] 4»   ↕ 2 strips !1` rendered at y = rows-1.
-/// Never overwrites pane cells: panes end at strip_h = rows - chrome.
-fn draw_status_row(
-    out: &mut [Cell],
-    cols: u16,
-    rows: u16,
-    layout: &Layout,
-    mm: &crate::config::Minimap,
-    focus_color: CColor,
-) {
-    if rows == 0 {
-        return;
-    }
-    let y = (rows - 1) as usize;
-    let chrome = mm.chrome_rows();
-    if chrome == 0 {
-        return;
-    }
-    let bar_bg = CColor::Rgb(0x18, 0x18, 0x25);
-    // Start with a solid bar background so untouched cells are chrome, not pane bg.
-    for x in 0..cols as usize {
-        if let Some(c) = out.get_mut(y * cols as usize + x) {
-            *c = Cell {
-                ch: ' ',
-                style: strimux_term::Style {
-                    fg: CColor::Rgb(0xa6, 0xad, 0xc8),
-                    bg: bar_bg,
-                    ..Default::default()
-                },
-                width: 1,
-                ..Default::default()
-            };
-        }
-    }
-    let put = |out: &mut [Cell], x: usize, ch: char, fg: CColor, bg: CColor, bold: bool| {
-        if x >= cols as usize {
-            return;
-        }
-        if let Some(c) = out.get_mut(y * cols as usize + x) {
-            *c = Cell {
-                ch,
-                width: 1,
-                style: strimux_term::Style {
-                    fg,
-                    bg,
-                    bold,
-                    ..Default::default()
-                },
-                ..*c
-            };
-            // ensure single-width
-            if ch == '\u{276f}' {
-                c.width = 1;
-            } // ❯
-        }
-    };
-    // Build tile segments for focused row
-    let row = layout.focused_row();
-    let mut x = 0usize;
-    if let Some(r) = row {
-        for (ci, col) in r.columns.iter().enumerate() {
-            if x >= cols as usize {
-                break;
-            }
-            let is_focus = ci == layout.focus.column;
-            let pane_status = col
-                .panes
-                .first()
-                .and_then(|pid| layout.panes.get(pid))
-                .map(|pane| pane.status)
-                .unwrap_or(PaneStatus::Running);
-            let bg = if is_focus {
-                focus_color
-            } else {
-                status_bg_for(pane_status)
-            };
-            let glyph = status_glyph_for(pane_status);
-            // Token like "❯1»" / "[3!]" / " 2✓"
-            let digit = char::from_digit(ci as u32 + 1, 10).unwrap_or('+');
-            // For non-focused first tile, we want " ❯" style start; simplify: first focused gets ❯ prefix, else just digits
-            let text = if is_focus && ci == 0 {
-                format!("{}{}{}", '\u{276f}', digit, glyph) // ❯1»
-            } else if is_focus {
-                format!("[{}{}]", digit, glyph)
-            } else {
-                format!(" {}{} ", digit, glyph)
-            };
-            for ch in text.chars() {
-                if x >= cols as usize {
-                    break;
-                }
-                let fg = CColor::Idx(231);
-                put(out, x, ch, fg, bg, is_focus);
-                x += 1;
-            }
-            if x < cols as usize {
-                // inter-tile gap
-                put(out, x, ' ', CColor::Rgb(0xa6, 0xad, 0xc8), bar_bg, false);
-                x += 1;
-            }
-        }
-        // Right side: strip counts + tallies
-        if mm.show_counts {
-            let other_rows = layout.rows.len().saturating_sub(1);
-            let mut segs: Vec<(String, CColor)> = Vec::new();
-            if other_rows > 0 {
-                segs.push((
-                    format!("\u{2195} {} ", other_rows),
-                    CColor::Rgb(0xa6, 0xad, 0xc8),
-                )); // ↕ N
-            }
-            let mut counts = [0usize; 4];
-            let statuses = [
-                PaneStatus::Running,
-                PaneStatus::Idle,
-                PaneStatus::Done,
-                PaneStatus::Failed,
-            ];
-            for pane in layout.panes.values() {
-                if let Some(i) = statuses.iter().position(|s| *s == pane.status) {
-                    counts[i] += 1;
-                }
-            }
-            for (i, s) in statuses.iter().enumerate() {
-                if counts[i] > 0 {
-                    segs.push((
-                        format!("{}{} ", status_glyph_for(*s), counts[i]),
-                        status_fg_for(*s),
-                    ));
-                }
-            }
-            let total_w: usize = segs.iter().map(|(s, _)| s.chars().count()).sum();
-            let mut rx = cols as usize;
-            if total_w < rx {
-                rx -= total_w;
-            } else {
-                rx = x.max(cols as usize - total_w);
-            }
-            // ensure we don't overwrite left tiles: start at max(x, rx)
-            let start = x.max(rx);
-            let mut cx = start;
-            for (text, fg) in segs {
-                for ch in text.chars() {
-                    if cx >= cols as usize {
-                        break;
-                    }
-                    put(out, cx, ch, fg, bar_bg, true);
-                    cx += 1;
-                }
-            }
-        }
-    }
-}
-
 /// Centered minimap overlay: the same agent-dashboard tiles as the
-/// bottom-right overlay, but painted in a centered bordered box so
-/// holding ⌥ (the quasimode reveal) is unmissable even on a busy pane.
-/// Used for `ReservedQuasimode` while Alt is held.
+/// bottom-right overlay, but painted in a centered bordered box while
+/// holding ⌥/Alt so the reveal is unmissable even on a busy pane.
 fn draw_center_minimap(
     out: &mut [Cell],
     cols: u16,
@@ -1278,11 +1083,10 @@ fn draw_center_minimap(
     }
 }
 
-/// Center HUD: shown at startup and when attention arrives while the
-/// quasimode reserved row is hidden, so the user notices without that row
-/// being permanently visible. Persists until the next key press. Always
-/// shows a very concise cheat-sheet of every keybind; when a pane needs
-/// you the top line is a smart-jump hint (` ✗ 1.3 needs you — ⌥+g`).
+/// Center HUD: shown at startup and when attention arrives (Idle/Failed).
+/// Persists until the next key press. Always shows a very concise
+/// cheat-sheet of every keybind; when a pane needs you the top line is a
+/// smart-jump hint (` ✗ 1.3 needs you — ⌥+g`).
 fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, focus_color: CColor) {
     if cols < 30 || rows < 9 {
         return;
@@ -1391,6 +1195,14 @@ fn draw_edge_ticks(
     if cols == 0 || rows == 0 {
         return;
     }
+    fn tick_bg(s: PaneStatus) -> CColor {
+        match s {
+            PaneStatus::Running => CColor::Rgb(0x52, 0x6c, 0x96),
+            PaneStatus::Idle => CColor::Rgb(0x96, 0x6b, 0x51),
+            PaneStatus::Done => CColor::Rgb(0x63, 0x88, 0x60),
+            PaneStatus::Failed => CColor::Rgb(0x91, 0x53, 0x64),
+        }
+    }
     let y = rows.saturating_sub(1) as usize;
     let ranges = layout
         .column_x_ranges(layout.focus.row, cols)
@@ -1409,7 +1221,7 @@ fn draw_edge_ticks(
         let bg = if ci == layout.focus.column {
             focus_color
         } else {
-            status_bg_for(status)
+            tick_bg(status)
         };
         // Approx tick at column's left edge clamped
         let x = ((*_s).min(cols as u32) as usize).min(cols as usize - 1);
@@ -1421,7 +1233,7 @@ fn draw_edge_ticks(
         // Mark attention with '!' at tick neighbor if needed
         if matches!(status, PaneStatus::Idle | PaneStatus::Failed) && x + 1 < cols as usize {
             if let Some(c) = out.get_mut(y * cols as usize + x + 1) {
-                if c.style.bg == CColor::Default || c.style.bg == status_bg_for(status) {
+                if c.style.bg == CColor::Default || c.style.bg == tick_bg(status) {
                     c.ch = status_glyph_for(status);
                     c.style.bg = bg;
                     c.style.fg = CColor::Idx(231);
@@ -1483,7 +1295,7 @@ fn draw_minimap(
     if !mm.show || (layout.panes.len() <= 1 && layout.rows.len() <= 1) {
         return;
     }
-    /// Catppuccin Mocha muted backgrounds / bright foregrounds (shared with status_bg_for).
+    /// Catppuccin Mocha muted backgrounds / bright foregrounds.
     fn status_bg(s: PaneStatus) -> CColor {
         match s {
             PaneStatus::Running => CColor::Rgb(0x52, 0x6c, 0x96),
@@ -1782,7 +1594,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     // arrives as `Modifier(LeftAlt)` with the Alt bit set; the previous
     // fallthrough turned that into `key_bytes() == ESC` and cleared the
     // focused pane's line editor (e.g. jcode). Treat every pure modifier key
-    // as a no-op — quasimode tracking is handled in run_tui, not here.
+    // as a no-op — Alt-hold tracking is handled in run_tui, not here.
     if matches!(ev.code, KeyCode::Modifier(_)) {
         return Some(Cmd::None);
     }
@@ -2080,7 +1892,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let _ = stdout.write_all(b"\x1b[?7l");
     let _ = stdout.flush();
     // Request Kitty keyboard protocol: bare Alt press/release (REPORT_ALL_KEYS)
-    // so the reserved-row quasimode (hold ⌥ to reveal) can see the hold
+    // so the centered Alt HUD/minimap (hold ⌥ to reveal) can see the hold
     // itself, not just chords. REPORT_ALTERNATE_KEYS is required so
     // Shift+1 yields '!' (not '1') and shifted letters arrive as their
     // shifted codepoint with SHIFT cleared; without it shift is lost under
@@ -2170,9 +1982,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut bare_alt_held = false;
     let mut chord_alt_until: Option<Instant> = None;
     let mut last_alt_held = false;
-    let mut hud_active: bool = cfg.minimap.hud_on_attention_ms > 0
-        && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
-        && chrome_rows(&cfg) > 0;
+    let mut hud_active: bool = cfg.minimap.hud_on_attention_ms > 0;
     let mut last_has_attention = has_attention(&layout);
     // Pane ids created by the spawn-agent verb; these are (re)spawned running
     // the configured `default_agent` harness instead of a plain shell.
@@ -2303,7 +2113,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         hud_active = false;
                         dirty = true;
                     }
-                    // Bare Alt hold for quasimode: track before handle_key so chords don't double-count.
+                    // Bare Alt hold: track before handle_key so chords don't double-count.
                     let bare_alt = is_alt_modifier(&ke);
                     if bare_alt {
                         if !bare_alt_held {
@@ -2313,7 +2123,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     } else {
                         // Fallback for terminals that don't send bare Alt press/release
                         // (no Kitty keyboard protocol): any Alt chord counts as "held"
-                        // for a short window so quasimode still reveals on press-and-hold
+                        // for a short window so the centered HUD/minimap still reveals on press-and-hold
                         // via repeated chords (Option+hjkl etc.) or a single chord.
                         let alt_chord = ke.modifiers.contains(KeyModifiers::ALT)
                             || matches!(
@@ -2566,7 +2376,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
         }
 
-        // Track attention & alt flip for quasimode repaint, plus HUD (persist-until-key).
+        // Track attention & alt flip for repaint, plus HUD (persist-until-key).
         let now_for_hud = Instant::now();
         if let Some(t) = chord_alt_until {
             if now_for_hud >= t {
@@ -2578,13 +2388,11 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         let cur_has_attention = has_attention(&layout);
         if !last_has_attention
             && cur_has_attention
-            && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
             && cfg.minimap.hud_on_attention_ms > 0
             && !effective_alt_held
             && !hud_active
-            && chrome_rows(&cfg) > 0
         {
-            // Attention just arose while the quasimode row is hidden: re-show HUD until next key.
+            // Attention just arose: re-show HUD until next key press.
             hud_active = true;
             dirty = true;
         }
@@ -2595,8 +2403,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         }
         let show_hud = hud_active;
         let show_center_minimap = effective_alt_held
-            && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
-            && chrome_rows(&cfg) > 0
+            && !hud_active
             && cfg.minimap.show;
         if dirty {
             render_frame(
@@ -2611,32 +2418,6 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 cfg.skeleton.then(|| cfg.skeleton_color.color()),
                 &cfg.minimap,
             );
-            // Quasimode: hide reserved row when Alt not held and no attention
-            let chrome = chrome_rows(&cfg);
-            if chrome > 0
-                && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
-                && !cfg
-                    .minimap
-                    .should_paint(effective_alt_held, cur_has_attention)
-                && rows > 1
-            {
-                let y = (rows - 1) as usize;
-                let base = y * cols as usize;
-                // Blank chrome row to the background fill (no content)
-                for x in 0..cols as usize {
-                    if let Some(c) = frame.get_mut(base + x) {
-                        *c = Cell {
-                            ch: ' ',
-                            style: strimux_term::Style {
-                                bg: cfg.background.color(),
-                                ..Default::default()
-                            },
-                            width: 1,
-                            ..Default::default()
-                        };
-                    }
-                }
-            }
             if show_hud {
                 draw_center_hud(&mut frame, cols, rows, &layout, cfg.focus_color.color());
             }
@@ -2928,7 +2709,7 @@ mod tests {
         // With the Kitty keyboard protocol a lone Option press arrives as
         // `Modifier(LeftAlt)` with the Alt bit set. The old fallthrough
         // treated it as Meta+<nothing> -> a bare ESC, which clears jcode's
-        // line editor (e.g. pressing Option to hold quasimode erased the
+        // line editor (e.g. pressing Option to poll the HUD erased the
         // input line). Every pure modifier press/release must be a no-op.
         for code in [
             KeyCode::Modifier(ModifierKeyCode::LeftAlt),
@@ -2955,7 +2736,7 @@ mod tests {
                 Some(Cmd::None),
                 "bare modifier {code:?} must not become pane input"
             );
-            // Must not consume a Ctrl-b prefix either (quasimode hold while
+            // Must not consume a Ctrl-b prefix either (Alt hold while
             // in prefix should keep the prefix alive for the next real key).
             IN_PREFIX.store(true, Ordering::Relaxed);
             assert_eq!(
@@ -3826,16 +3607,13 @@ mod tests {
 
     #[test]
     fn quasimode_chrome_and_hud_defaults() {
-        // Defaults: ReservedQuasimode with 1 chrome row, HUD on.
+        // Defaults: no bottom row (Off), centered Alt HUD/minimap only.
         let mm = crate::config::Minimap::default();
-        assert_eq!(mm.mode, crate::config::MinimapMode::ReservedQuasimode);
-        assert_eq!(mm.chrome_rows(), 1);
+        assert_eq!(mm.mode, crate::config::MinimapMode::Off);
+        assert_eq!(mm.chrome_rows(), 0);
         assert_eq!(mm.hud_on_attention_ms, 2500);
-        // should_paint: quasimode reveals only when alt held or attention.
-        assert!(!mm.should_paint(false, false), "quasimode hidden at rest");
-        assert!(mm.should_paint(true, false), "alt held reveals");
-        assert!(mm.should_paint(false, true), "attention reveals");
-        // Off never paints; Overlay/Reserved ignore hidden.
+        // should_paint: Off never paints; Overlay/EdgeTicks paint when enabled.
+        assert!(!mm.should_paint(false, false), "Off hidden");
         assert!(!crate::config::Minimap {
             mode: crate::config::MinimapMode::Off,
             ..mm
@@ -3847,16 +3625,23 @@ mod tests {
         }
         .should_paint(false, false));
         assert!(crate::config::Minimap {
-            mode: crate::config::MinimapMode::Reserved,
+            mode: crate::config::MinimapMode::EdgeTicks,
             ..mm
         }
         .should_paint(false, false));
-        // hud_on_attention_ms = 0 disables flash explicitly.
+        // hud_on_attention_ms = 0 disables HUD explicitly.
         let no_hud = crate::config::Minimap {
             hud_on_attention_ms: 0,
             ..mm
         };
         assert_eq!(no_hud.hud_on_attention_ms, 0);
+        // Legacy values parse as Off (bottom row removed).
+        let legacy: crate::config::Config =
+            toml::from_str("[minimap]\nmode=\"reserved_quasimode\"").unwrap();
+        assert_eq!(legacy.minimap.mode, crate::config::MinimapMode::Off);
+        let legacy2: crate::config::Config =
+            toml::from_str("[minimap]\nmode=\"reserved\"").unwrap();
+        assert_eq!(legacy2.minimap.mode, crate::config::MinimapMode::Off);
     }
 
     #[test]
@@ -3875,7 +3660,7 @@ mod tests {
         let any = out
             .iter()
             .any(|c| c.style.bg != CColor::Default && c.ch != ' ');
-        assert!(any, "overlay draws tiles even with hidden quasimode row");
+        assert!(any, "overlay draws tiles");
     }
 
     #[test]
@@ -3888,7 +3673,7 @@ mod tests {
         let pid = *layout.panes.keys().next().unwrap();
         layout.panes.get_mut(&pid).unwrap().status = PaneStatus::Failed;
         let mm = crate::config::Minimap {
-            mode: crate::config::MinimapMode::ReservedQuasimode,
+            mode: crate::config::MinimapMode::Off,
             ..Default::default()
         };
         let cols: u16 = 80;

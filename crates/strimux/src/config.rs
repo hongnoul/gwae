@@ -118,24 +118,56 @@ impl Config {
 }
 
 /// Where and how the minimap/status chrome is shown.
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
+///
+/// The bottom reserved status row (`reserved` / `reserved_quasimode`) has been
+/// removed. Status is shown via the centered Alt HUD/minimap and (optionally)
+/// `overlay` / `edge_ticks`. Legacy values `reserved` and
+/// `reserved_quasimode` parse as `off` for compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MinimapMode {
     /// Classic bottom-right overlay (pre-redesign).
     Overlay,
-    /// Permanent 1-line reserved status row (never occludes content).
-    Reserved,
-    /// Reserved row that only paints when Option/Alt is held or a pane needs
-    /// attention (Idle/Failed). Holding Option also paints a centered minimap
-    /// overlay (sized by `max_width`/`max_rows`) for a quick glance. Chrome row
-    /// is still reserved to avoid SIGWINCH churn on every hold — it just stays
-    /// blank at rest.
-    #[default]
-    ReservedQuasimode,
     /// Single-cell ticks on the outer frame (no box).
     EdgeTicks,
-    /// No minimap/status chrome at all.
+    /// No minimap/status chrome at all. Hold ⌥/Alt to see the centered HUD
+    /// (attention hint + cheat-sheet) and centered minimap.
+    #[default]
     Off,
+}
+
+impl<'de> Deserialize<'de> for MinimapMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = MinimapMode;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("overlay, edge_ticks, off (plus legacy reserved / reserved_quasimode as off)")
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match v.to_ascii_lowercase().as_str() {
+                    "overlay" => Ok(MinimapMode::Overlay),
+                    "edge_ticks" | "edgeticks" => Ok(MinimapMode::EdgeTicks),
+                    "off" => Ok(MinimapMode::Off),
+                    // legacy bottom-row modes → off
+                    "reserved" | "reserved_quasimode" => Ok(MinimapMode::Off),
+                    _ => Err(de::Error::unknown_variant(v, &["overlay", "edge_ticks", "off"])),
+                }
+            }
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_str(&v)
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
 }
 
 /// The minimap widget: which strips (rows) and panes (columns) exist and
@@ -145,51 +177,42 @@ pub enum MinimapMode {
 pub struct Minimap {
     /// Draw the minimap at all (kill-switch, kept for backward compat).
     pub show: bool,
-    /// Presentation mode. `overlay` is the legacy corner overlay;
-    /// `reserved` is the permanent 1-line row; `reserved_quasimode` (default)
-    /// shows that row only while Option/Alt is held or a pane needs attention,
-    /// and paints a centered minimap (using `max_width`/`max_rows`) while held.
+    /// Presentation mode. `overlay` is the legacy bottom-right overlay;
+    /// `edge_ticks` are single-cell frame ticks; `off` (default) shows only
+    /// the centered Alt HUD/minimap on ⌥ hold. Legacy `reserved` /
+    /// `reserved_quasimode` parse as `off` and the bottom row is reclaimed.
     pub mode: MinimapMode,
     /// Maximum width (in cells) of the minimap. Used for `overlay` and the
-    /// center minimap shown while holding Option in `reserved_quasimode`.
+    /// centered minimap shown while holding Option/Alt.
     pub max_width: u16,
     /// Maximum number of strips (rows) shown; extra strips are cut off. Used
-    /// for `overlay` and the center minimap shown while holding Option in
-    /// `reserved_quasimode`.
+    /// for `overlay` and the centered minimap shown while holding Option/Alt.
     pub max_rows: u16,
-    /// Draw the one-line status summary above the map (overlay) or on the
-    /// right side of the reserved row.
+    /// Draw the one-line status summary (above the map or in the HUD).
     pub show_counts: bool,
     /// If non-zero, a centered HUD (attention hint + cheat-sheet) is shown
-    /// at startup and when a background pane transitions to attention while
-    /// the quasimode row is hidden and Alt is not held. The HUD persists
-    /// until the next key press (any key) rather than decaying after a
-    /// fixed time; `0` disables it entirely. The numeric value is an
-    /// enable flag for backward compat (historical ms duration, any non-zero
-    /// enables).
+    /// at startup and on attention transitions. `0` disables it. The numeric
+    /// value is kept for backward compat (any non-zero enables).
     pub hud_on_attention_ms: u16,
 }
 
 impl Minimap {
-    /// How many bottom rows are reserved for chrome. Keeps pane geometry
-    /// stable (no SIGWINCH churn when Alt is tapped).
+    /// How many bottom rows are reserved for chrome. No longer used: the
+    /// bottom status row has been removed, so this always returns 0.
     pub fn chrome_rows(&self) -> u16 {
-        match self.mode {
-            MinimapMode::Reserved | MinimapMode::ReservedQuasimode => 1,
-            _ => 0,
-        }
+        0
     }
 
     /// Whether the chrome strip should actually paint content this frame.
-    pub fn should_paint(&self, alt_held: bool, has_attention: bool) -> bool {
+    /// With the bottom row removed this is true only for overlay-style
+    /// chrome; the centered Alt HUD/minimap is gated elsewhere.
+    pub fn should_paint(&self, _alt_held: bool, _has_attention: bool) -> bool {
         if !self.show {
             return false;
         }
         match self.mode {
             MinimapMode::Off => false,
             MinimapMode::Overlay | MinimapMode::EdgeTicks => true,
-            MinimapMode::Reserved => true,
-            MinimapMode::ReservedQuasimode => alt_held || has_attention,
         }
     }
 }

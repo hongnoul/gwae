@@ -31,7 +31,7 @@ touches one crate.
 ## Rendering pipeline
 
 One 2D cell buffer holds everything: every visible pane's grid region plus
-strimux's own chrome (minimap, status bar, launcher, focus outline). Damage from
+strimux's own chrome (centered HUD/minimap, launcher, focus outline). Damage from
 any pane merges into this one buffer; the render diffs the whole buffer to the
 terminal with synchronized-update markers (`ESC[?2026h/l`).
 

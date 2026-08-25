@@ -119,24 +119,18 @@ Panes without shell integration fall back to a **quiet heuristic**: a pane silen
 
 ### Minimap — an agent dashboard
 
-Bottom chrome (default: a **reserved 1-row status bar in quasimode**) shows:
+No bottom status row. Hold `⌥`/Alt to see status (centered, no pane shrinkage):
 
-- One row per strip, one tile per pane — tile width proportional to column share
-- Tile tinted by status, border highlighted for the focused pane, `❯` chevron on the focused strip
-- Column digit (`⌥+1..9`) in the tile's first cell
-- One-line summary on the right: `5 »2 !1 ✓1 ✗1` (zeros omitted)
+- **Centered minimap** — one row per strip, one tile per pane (width ∝ column share), tinted by status, focused tile in `focus_color`, `❯` on focused strip, digit `⌥+1..9` per tile, summary `5 »2 !1 ✓1 ✗1`.
+- **Centered HUD** — ` » 1.3 needs you — ⌥+g` + cheat-sheet, shown at startup and when any pane flips to `Idle`/`Failed`; persists until the next key press (`hud_on_attention_ms = 0` to disable). While the HUD is visible the minimap is hidden beneath it.
 
-Holding `⌥`/Alt in `reserved_quasimode` also paints a **centered minimap overlay** (sized by `max_width`/`max_rows`) for a quick glance, and a **centered HUD** (` » 1.3 needs you — ⌥+g` + keybind cheat-sheet) is shown at startup and when attention (Idle/Failed) arises while the quasimode row is hidden; the HUD persists until the next key press (any key; `hud_on_attention_ms = 0` to disable).
-
-The minimap appears whenever there is more than one pane (not only with multiple strips). Four modes cover every taste and avoid geometry churn:
+The minimap/HUD appears whenever there is more than one pane (or strip).
 
 | `minimap.mode` | Behavior |
 |---|---|
-| `reserved_quasimode` *(default)* | Row is always reserved (no SIGWINCH churn) but paints only while `⌥`/Alt is held or a pane needs attention; while held also paints a centered minimap overlay sized by `max_width`/`max_rows`. Centered HUD at startup and on attention persists until the next key press (`hud_on_attention_ms = 0` to disable) |
-| `reserved` | Always visible reserved row |
-| `overlay` | Classic bottom-right overlay (legacy) — `max_width`/`max_rows` apply here |
+| `off` *(default)* | No persistent chrome. `⌥` reveals the centered HUD + minimap. |
+| `overlay` | Legacy bottom-right overlay — `max_width`/`max_rows` apply |
 | `edge_ticks` | Single-cell ticks on the outer frame, no box |
-| `off` | No chrome at all |
 
 Kill-switch `minimap.show = false` still respected.
 
@@ -175,9 +169,9 @@ scroll_lines = 3
 
 [minimap]
 show = true
-mode = "reserved_quasimode"        # overlay | reserved | reserved_quasimode | edge_ticks | off
-max_width = 32                     # overlay + centered-on-hold (quasimode)
-max_rows = 6                       # overlay + centered-on-hold (quasimode)
+mode = "off"                       # off | overlay | edge_ticks  (reserved / reserved_quasimode parse as off)
+max_width = 32                     # overlay + centered Alt minimap
+max_rows = 6                       # overlay + centered Alt minimap
 show_counts = true
 hud_on_attention_ms = 2500         # center HUD (startup + attention), 0 = off
 ```
@@ -199,9 +193,9 @@ Key reference (defaults in parentheses):
 | `mouse` | bool | `true` | Capture wheel/click for pane scrollback |
 | `scroll_lines` | int | `3` | Rows per wheel notch |
 | `minimap.show` | bool | `true` | Master kill-switch |
-| `minimap.mode` | enum | `reserved_quasimode` | Chrome presentation (`overlay`=corner, `reserved`=row always, `reserved_quasimode`=hold/attention + center minimap while held) |
-| `minimap.max_width` | int | `32` | Used for `overlay` and centered minimap while holding ⌥/Alt in `reserved_quasimode` |
-| `minimap.max_rows` | int | `6` | Used for `overlay` and centered minimap while holding ⌥/Alt in `reserved_quasimode` |
+| `minimap.mode` | enum | `off` | Chrome presentation (`off`=only centered Alt HUD/minimap, `overlay`=corner, `edge_ticks`=frame ticks; legacy `reserved`/`reserved_quasimode` parse as `off`) |
+| `minimap.max_width` | int | `32` | Width of `overlay` and centered Alt minimap |
+| `minimap.max_rows` | int | `6` | Rows of `overlay` and centered Alt minimap |
 | `minimap.show_counts` | bool | `true` | Summary tallies |
 | `minimap.hud_on_attention_ms` | int | `2500` | Centered HUD (startup + attention) with cheat-sheet, persists until key press; `0` disables (non-zero enables, value kept for compat) |
 
