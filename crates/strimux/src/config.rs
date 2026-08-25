@@ -49,6 +49,11 @@ pub struct Config {
     /// default) means "not chosen yet": `;` then runs the agent gateway, which
     /// offers the harnesses found on PATH and writes the choice back here.
     pub default_agent: String,
+    /// Extra agent commands to offer in the `;` picker, on top of the ones
+    /// strimux knows and the ones it finds by scanning `PATH`. Use this to
+    /// teach it a harness with a name it cannot guess, or a wrapper script.
+    /// Entries that are not installed are simply not shown.
+    pub agents: Vec<String>,
     /// Number of equal-width panes on screen at first launch. Default: 1 (a
     /// single quarter-width pane; the skeleton's placeholder boxes show the
     /// rest of the container).
@@ -119,6 +124,7 @@ impl Default for Config {
             center_focus: false,
             content_width: 0,
             default_agent: String::new(),
+            agents: Vec::new(),
             startup_panes: 1,
             // Colors all live in the theme now; the Catppuccin Mocha defaults
             // come from `Palette::default()`. These legacy keys stay unset

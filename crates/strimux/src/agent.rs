@@ -19,21 +19,142 @@
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-/// Agent harnesses the picker offers when `default_agent` is unset, in the
-/// order they are shown. Presence is probed on `PATH`; this list only decides
-/// what we *look* for and how each is labeled.
+/// Agent harnesses we can name, in the order they are shown. This list is
+/// *labeling*, not the limit of what is detectable: anything matching
+/// [`looks_like_agent`] on `PATH` is offered too, config can name more, and
+/// the picker always lets you type a command. New harnesses appear constantly,
+/// so an allowlist alone would be wrong the week after it shipped.
 pub const KNOWN_AGENTS: &[(&str, &str)] = &[
     ("jcode", "jcode"),
     ("claude", "Claude Code"),
     ("codex", "OpenAI Codex"),
     ("gemini", "Gemini CLI"),
+    ("muse", "Muse Code"),
+    ("hermes", "Hermes Agent"),
     ("opencode", "opencode"),
     ("crush", "Crush"),
     ("aider", "aider"),
     ("cursor-agent", "Cursor Agent"),
     ("amp", "Amp"),
     ("goose", "goose"),
+    ("copilot", "GitHub Copilot CLI"),
+    ("q", "Amazon Q"),
+    ("cline", "Cline"),
+    ("continue", "Continue"),
+    ("droid", "Factory Droid"),
+    ("codebuff", "Codebuff"),
+    ("forge", "Forge"),
+    ("kode", "Kode"),
+    ("octofriend", "Octofriend"),
 ];
+
+/// Word-ish fragments that mark a command as *probably* an agent harness,
+/// used to find ones we have never heard of. Deliberately narrow: a false
+/// positive puts a junk entry in the picker, which is far more annoying than
+/// a miss the user can still fix by typing the command.
+const AGENT_HINTS: &[&str] = &["agent", "code", "coder", "llm", "gpt", "ai"];
+
+/// Hints that also count when they merely *end* a one-word name, so
+/// `musecode` is found without `codesign` being dragged in. Kept separate and
+/// short: a leading match is almost never an agent.
+const SUFFIX_HINTS: &[&str] = &["code", "coder", "agent"];
+
+/// System directories that are never where an agent harness installs itself.
+///
+/// This is the single highest-value filter: without it, a stock macOS `PATH`
+/// contributes `ssh-agent`, `KernelEventAgent`, `b64encode`, `uudecode` and
+/// the disk tool `gpt`, which buries the two or three real entries. Harnesses
+/// ship via npm/cargo/homebrew/pipx, i.e. under `$HOME` or a package prefix,
+/// so scanning only those loses nothing real. Explicitly-known names and
+/// config entries are still resolved anywhere on `PATH`.
+const SYSTEM_DIRS: &[&str] = &[
+    "/bin",
+    "/sbin",
+    "/usr/bin",
+    "/usr/sbin",
+    "/usr/libexec",
+    "/System",
+    "/Library",
+    "/var",
+    "/etc",
+    "C:\\Windows",
+];
+
+/// Whether the heuristic scan should look inside `dir` at all.
+pub fn scannable_dir(dir: &Path) -> bool {
+    let d = dir.to_string_lossy();
+    // `/usr/local/*` and `/opt/*` are package prefixes, not the OS, so they
+    // stay in scope even though `/usr/*` broadly does not.
+    if d.starts_with("/usr/local") || d.starts_with("/opt") {
+        return true;
+    }
+    !SYSTEM_DIRS
+        .iter()
+        .any(|s| d == *s || d.starts_with(&format!("{s}/")))
+}
+
+/// Suffixes that mark a file as not-a-command even when it is executable.
+const NOISE_SUFFIXES: &[&str] = &[
+    ".new", ".old", ".bak", ".orig", ".tmp", ".save", ".dSYM", ".dylib", ".so", ".1",
+];
+
+/// Prefixes/names that match the hints but are definitely not agents. Without
+/// these, a normal developer machine offers `code` (VS Code), `codesign`, and
+/// half of `pkgconf` under the "ai"/"code" hints.
+const NOISE_NAMES: &[&str] = &[
+    "code",
+    "codesign",
+    "codesign_allocate",
+    "aiff",
+    "aifccompiler",
+    "ailment",
+    "pagestuff",
+    "encode",
+    "decode",
+    "geocode",
+    "unicode",
+    "gencode",
+    "barcode",
+    "opcode",
+    "zipcodes",
+    "aiverify",
+];
+
+/// Whether a bare command name looks like an agent harness we should offer.
+///
+/// Split out and pure so the heuristic's exact edges are pinned by tests
+/// rather than discovered by a user staring at a polluted picker.
+pub fn looks_like_agent(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if NOISE_NAMES.contains(&lower.as_str()) {
+        return false;
+    }
+    if NOISE_SUFFIXES.iter().any(|sfx| lower.ends_with(sfx)) {
+        return false;
+    }
+    // Version-suffixed duplicates of a real command (`muse-bin-0.2.1-R1215.1`)
+    // are the same tool twice; keep the clean name only.
+    if lower.chars().any(|c| c.is_ascii_digit()) && lower.contains('-') {
+        return false;
+    }
+    // A hint has to appear as a *word*, so `cursor-agent` and `my_code` match
+    // but `codesign` does not.
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.iter().any(|w| AGENT_HINTS.contains(w)) {
+        return true;
+    }
+    // Harnesses are also routinely named as one word ending in the hint
+    // (`musecode`, `hermesagent`). Only trailing matches count, since a
+    // leading one is nearly always a different kind of tool (`codesign`,
+    // `aiff`), and the `NOISE_NAMES` list catches the common `-code` verbs
+    // like `decode` and `unicode`.
+    SUFFIX_HINTS
+        .iter()
+        .any(|h| lower.ends_with(h) && lower.len() > h.len() + 1)
+}
 
 /// True when `p` is a file we could actually execute.
 fn executable(p: &Path) -> bool {
@@ -86,18 +207,101 @@ pub struct Found {
     pub path: PathBuf,
 }
 
-/// Every known harness currently installed, in `KNOWN_AGENTS` order.
-pub fn detect() -> Vec<Found> {
-    KNOWN_AGENTS
-        .iter()
-        .filter_map(|(cmd, label)| {
-            which(cmd).map(|path| Found {
-                cmd: (*cmd).to_string(),
-                label: (*label).to_string(),
+/// Every harness we can find, best-known first.
+///
+/// Three sources, merged and de-duplicated by command name:
+/// 1. `extra` — names from the user's config, which always win the labeling
+///    and come first, since the user told us about them explicitly.
+/// 2. [`KNOWN_AGENTS`] — the ones we can name nicely.
+/// 3. A scan of every `PATH` directory for anything [`looks_like_agent`].
+///
+/// The scan is what makes a brand-new harness (or a personal wrapper script)
+/// show up without a strimux release, which an allowlist alone can never do.
+pub fn detect_with(extra: &[String]) -> Vec<Found> {
+    let mut out: Vec<Found> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    fn push(
+        seen: &mut std::collections::HashSet<String>,
+        out: &mut Vec<Found>,
+        cmd: &str,
+        label: &str,
+        path: PathBuf,
+    ) {
+        if seen.insert(cmd.to_string()) {
+            out.push(Found {
+                cmd: cmd.to_string(),
+                label: label.to_string(),
                 path,
-            })
-        })
-        .collect()
+            });
+        }
+    }
+
+    // 1. Explicitly configured names, in the user's own order.
+    for cmd in extra {
+        let cmd = cmd.trim();
+        if cmd.is_empty() {
+            continue;
+        }
+        if let Some(path) = which(shell_exe(cmd)) {
+            push(&mut seen, &mut out, cmd, cmd, path);
+        }
+    }
+    // 2. Names we can label.
+    for (cmd, label) in KNOWN_AGENTS {
+        if let Some(path) = which(cmd) {
+            push(&mut seen, &mut out, cmd, label, path);
+        }
+    }
+    // 3. Anything else on PATH that looks the part.
+    let mut discovered: Vec<Found> = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            if !scannable_dir(&dir) {
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if seen.contains(&name) || !looks_like_agent(&name) {
+                    continue;
+                }
+                let p = e.path();
+                if executable(&p) {
+                    discovered.push(Found {
+                        cmd: name.clone(),
+                        label: name,
+                        path: p,
+                    });
+                }
+            }
+        }
+    }
+    // Stable output: PATH order is not, and directory order certainly is not.
+    discovered.sort_by(|a, b| a.cmd.cmp(&b.cmd));
+    for f in discovered {
+        push(
+            &mut seen,
+            &mut out,
+            &f.cmd.clone(),
+            &f.label.clone(),
+            f.path,
+        );
+    }
+    out
+}
+
+/// The executable word of a command line (`"jcode --resume"` -> `"jcode"`).
+fn shell_exe(cmd: &str) -> &str {
+    cmd.split_whitespace().next().unwrap_or("")
+}
+
+/// [`detect_with`] with no configured extras.
+#[cfg(test)]
+pub fn detect() -> Vec<Found> {
+    detect_with(&[])
 }
 
 /// What the gateway decided to do, before any of it is carried out. Split from
@@ -293,7 +497,7 @@ pub fn render(plan: &Plan) -> (String, Vec<Found>) {
                 )),
             }
             s.push_str(&format!(
-                "{DIM}Looked for: {}{RESET}\n\nInstall one, then press {CYAN}⌥+;{RESET} again.\n{DIM}Opening a shell instead.{RESET}\n",
+                "{DIM}Looked for: {}, plus anything on PATH that looks like an agent.{RESET}\n\nInstall one and press {CYAN}⌥+;{RESET} again, or type its command now\nif it lives somewhere we did not look. {DIM}Enter alone opens a shell.{RESET}\n",
                 KNOWN_AGENTS
                     .iter()
                     .map(|(c, _)| *c)
@@ -320,20 +524,67 @@ pub fn render(plan: &Plan) -> (String, Vec<Found>) {
     }
     if !choices.is_empty() {
         s.push_str(&format!(
-            "  {CYAN}s{RESET}  {BOLD}just a shell{RESET}  {DIM}skip, don't save{RESET}\n\n{DIM}Your choice is saved to {} as `default_agent`, so ⌥+; goes straight there next time.{RESET}\n",
+            "  {CYAN}s{RESET}  {BOLD}just a shell{RESET}  {DIM}skip, don't save{RESET}\n\n{DIM}Not listed? Type the command itself (e.g. {RESET}{CYAN}hermes --resume{RESET}{DIM}).\nYour choice is saved to {} as `default_agent`, so ⌥+; goes straight there next time.{RESET}\n",
             crate::config::Config::default_path().display()
         ));
     }
     (s, choices)
 }
 
-/// Read a single choice. Returns `Some(index)` for a listed harness, `None`
-/// for "just a shell" (including EOF or a non-tty, so the gateway can never
-/// wedge a pane waiting for input that will not come).
-fn prompt(n: usize) -> Option<usize> {
+/// What the user typed at the picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Choice {
+    /// One of the listed harnesses, by index.
+    Listed(usize),
+    /// A command they typed themselves, which resolved on `PATH`. This is the
+    /// escape hatch that makes a harness strimux has never heard of usable
+    /// today rather than after a release.
+    Typed(String),
+    /// Just a shell; save nothing.
+    Shell,
+}
+
+/// Interpret one line of picker input. Pure, so every branch (including the
+/// typo cases a user actually hits) is testable without a terminal.
+pub fn parse_choice(line: &str, n: usize) -> Result<Choice, String> {
+    let t = line.trim();
+    if t.is_empty() {
+        // Enter takes the first (most preferred) harness, or a shell when
+        // there is nothing to take.
+        return Ok(if n > 0 {
+            Choice::Listed(0)
+        } else {
+            Choice::Shell
+        });
+    }
+    if t.eq_ignore_ascii_case("s") || t.eq_ignore_ascii_case("shell") {
+        return Ok(Choice::Shell);
+    }
+    // A bare number only means an index when it *is* one; otherwise fall
+    // through, since a command could plausibly be named oddly.
+    if let Ok(i) = t.parse::<usize>() {
+        return if i >= 1 && i <= n {
+            Ok(Choice::Listed(i - 1))
+        } else {
+            Err(format!("There is no {i}. Enter 1-{n}, a command, or s."))
+        };
+    }
+    if command_available(t) {
+        return Ok(Choice::Typed(t.to_string()));
+    }
+    Err(format!(
+        "`{}` is not on your PATH. Enter 1-{n}, another command, or s for a shell.",
+        shell_exe(t)
+    ))
+}
+
+/// Read a choice, re-prompting until it is valid. Returns [`Choice::Shell`]
+/// on EOF or a non-tty, so the gateway can never wedge a pane waiting for
+/// input that will not come.
+fn prompt(n: usize) -> Choice {
     use std::io::BufRead;
     if !std::io::stdin().is_terminal() {
-        return None;
+        return Choice::Shell;
     }
     let stdin = std::io::stdin();
     loop {
@@ -341,29 +592,19 @@ fn prompt(n: usize) -> Option<usize> {
         let _ = std::io::stdout().flush();
         let mut line = String::new();
         match stdin.lock().read_line(&mut line) {
-            Ok(0) | Err(_) => return None,
+            Ok(0) | Err(_) => return Choice::Shell,
             Ok(_) => {}
         }
-        let t = line.trim();
-        if t.is_empty() {
-            // Enter takes the first (most preferred) harness.
-            return Some(0);
+        match parse_choice(&line, n) {
+            Ok(c) => return c,
+            Err(msg) => println!("{DIM}{msg}{RESET}"),
         }
-        if t.eq_ignore_ascii_case("s") || t.eq_ignore_ascii_case("shell") {
-            return None;
-        }
-        if let Ok(i) = t.parse::<usize>() {
-            if i >= 1 && i <= n {
-                return Some(i - 1);
-            }
-        }
-        println!("{DIM}Enter 1-{n}, or s for a shell.{RESET}");
     }
 }
 
 /// `strimux agent`: resolve, maybe ask, save, and exec. Never returns.
-pub fn run(default_agent: &str, cfg_path: &Path, print_only: bool) -> ! {
-    let p = plan(default_agent, detect());
+pub fn run(default_agent: &str, extra: &[String], cfg_path: &Path, print_only: bool) -> ! {
+    let p = plan(default_agent, detect_with(extra));
 
     if print_only {
         match &p {
@@ -384,18 +625,36 @@ pub fn run(default_agent: &str, cfg_path: &Path, print_only: bool) -> ! {
     let cmd = match p {
         Plan::Configured(cmd) => cmd,
         Plan::NoneInstalled { .. } => {
+            // Still offer the typed escape hatch: "we found nothing" is a
+            // statement about our search, not about the user's machine.
             let (text, _) = render(&p);
             print!("{text}");
             let _ = std::io::stdout().flush();
-            fallback_shell()
+            match prompt(0) {
+                Choice::Typed(cmd) => {
+                    match save_default_agent(cfg_path, &cmd) {
+                        Ok(()) => println!("{DIM}Saved default_agent = \"{cmd}\".{RESET}"),
+                        Err(e) => println!(
+                            "{YELLOW}Could not save to {}: {e}{RESET}",
+                            cfg_path.display()
+                        ),
+                    }
+                    cmd
+                }
+                _ => fallback_shell(),
+            }
         }
         ref chooser => {
             let (text, choices) = render(chooser);
             print!("{text}");
             let _ = std::io::stdout().flush();
-            match prompt(choices.len()) {
-                Some(i) => {
-                    let pick = choices[i].cmd.clone();
+            let pick = match prompt(choices.len()) {
+                Choice::Listed(i) => Some(choices[i].cmd.clone()),
+                Choice::Typed(cmd) => Some(cmd),
+                Choice::Shell => None,
+            };
+            match pick {
+                Some(pick) => {
                     match save_default_agent(cfg_path, &pick) {
                         Ok(()) => println!("{DIM}Saved default_agent = \"{pick}\".{RESET}"),
                         Err(e) => println!(
@@ -600,22 +859,240 @@ mod tests {
     }
 
     #[test]
-    fn detect_returns_known_agents_in_listed_order() {
-        // Whatever is installed here, the result must be a subsequence of the
-        // known list (the picker's numbering depends on that stability).
+    fn detect_lists_known_agents_before_discovered_ones() {
+        // Known names are labeled and ordered; discovered ones follow. The
+        // picker's numbering depends on that being stable across runs.
         let got = detect();
-        let names: Vec<&str> = KNOWN_AGENTS.iter().map(|(c, _)| *c).collect();
+        let known: Vec<&str> = KNOWN_AGENTS.iter().map(|(c, _)| *c).collect();
+        let split = got
+            .iter()
+            .position(|f| !known.contains(&f.cmd.as_str()))
+            .unwrap_or(got.len());
         let mut last = 0;
-        for f in &got {
-            let at = names.iter().position(|n| *n == f.cmd).unwrap();
-            assert!(at >= last, "out of order: {:?}", f.cmd);
+        for f in &got[..split] {
+            let at = known.iter().position(|n| *n == f.cmd).unwrap();
+            assert!(at >= last, "known agents out of order: {:?}", f.cmd);
             last = at;
-            assert!(f.path.is_absolute() || f.path.exists());
         }
+        // Discovered ones are sorted, so two runs agree.
+        let tail: Vec<&str> = got[split..].iter().map(|f| f.cmd.as_str()).collect();
+        let mut sorted = tail.clone();
+        sorted.sort_unstable();
+        assert_eq!(tail, sorted, "discovered agents must be sorted");
+        // Nothing is listed twice, and everything listed really exists.
+        let mut names: Vec<&str> = got.iter().map(|f| f.cmd.as_str()).collect();
+        let n = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), n, "duplicate entries in {got:?}");
+        for f in &got {
+            assert!(f.path.exists(), "listed a missing path: {:?}", f.path);
+        }
+    }
+
+    #[test]
+    fn configured_extras_are_offered_first_and_are_never_duplicated() {
+        // `sh` stands in for a harness strimux has never heard of.
+        let got = detect_with(&["sh".to_string()]);
+        assert_eq!(got[0].cmd, "sh", "configured names come first: {got:?}");
+        assert_eq!(got.iter().filter(|f| f.cmd == "sh").count(), 1);
+        // Ones that are not installed are simply not shown, not errors.
+        let got = detect_with(&["strimux-not-real-xyz".to_string()]);
+        assert!(!got.iter().any(|f| f.cmd == "strimux-not-real-xyz"));
+        // Blank entries in the config are ignored rather than listed.
+        let got = detect_with(&["".to_string(), "   ".to_string()]);
+        assert!(got.iter().all(|f| !f.cmd.trim().is_empty()));
+    }
+
+    #[test]
+    fn the_heuristic_catches_unknown_harnesses_without_dragging_in_junk() {
+        // The point of the scan: names we have never shipped support for.
+        assert!(looks_like_agent("hermes-agent"));
+        assert!(looks_like_agent("musecode"));
+        assert!(looks_like_agent("my_code"));
+        assert!(looks_like_agent("someone-ai"));
+        assert!(looks_like_agent("llm"));
+        assert!(looks_like_agent("zed-agent"));
+
+        // ...without turning the picker into a listing of /usr/bin.
+        assert!(!looks_like_agent("codesign"), "VS Code's neighbors");
+        assert!(!looks_like_agent("code"), "an editor, not an agent");
+        assert!(!looks_like_agent("decode"));
+        assert!(!looks_like_agent("encode"));
+        assert!(!looks_like_agent("unicode"));
+        assert!(!looks_like_agent("git"));
+        assert!(!looks_like_agent("python3"));
+        assert!(!looks_like_agent("ls"));
+        assert!(!looks_like_agent("aiff"));
+
+        // Version-suffixed duplicates and editor backups are noise.
+        assert!(!looks_like_agent("muse-bin-0.2.1-R1215.1"));
+        assert!(!looks_like_agent("jcode.new"));
+        assert!(!looks_like_agent("jcode.bak"));
+    }
+
+    #[test]
+    fn the_scan_skips_system_directories_that_are_full_of_false_positives() {
+        // Without this, a stock macOS PATH offers ssh-agent, KernelEventAgent,
+        // b64encode, uudecode and the disk tool `gpt` above the real ones.
+        assert!(!scannable_dir(Path::new("/usr/bin")));
+        assert!(!scannable_dir(Path::new("/usr/sbin")));
+        assert!(!scannable_dir(Path::new("/bin")));
+        assert!(!scannable_dir(Path::new("/sbin")));
+        assert!(!scannable_dir(Path::new("/usr/libexec")));
+        assert!(!scannable_dir(Path::new("/System/Cryptexes/App/usr/bin")));
+
+        // Where harnesses actually install.
+        assert!(scannable_dir(Path::new("/Users/me/.local/bin")));
+        assert!(scannable_dir(Path::new("/Users/me/.cargo/bin")));
+        assert!(scannable_dir(Path::new("/opt/homebrew/bin")));
+        assert!(scannable_dir(Path::new("/usr/local/bin")));
+        assert!(scannable_dir(Path::new("/home/me/.npm-global/bin")));
+    }
+
+    #[test]
+    fn a_real_path_scan_stays_free_of_system_noise() {
+        // The end result users judge this on: the list must be short and real.
+        let got = detect();
+        for junk in [
+            "ssh-agent",
+            "KernelEventAgent",
+            "BTLEServerAgent",
+            "b64encode",
+            "b64decode",
+            "uuencode",
+            "uudecode",
+            "gpt",
+            "codesign",
+        ] {
+            assert!(
+                !got.iter().any(|f| f.cmd == junk),
+                "{junk:?} must never be offered as an agent; got {:?}",
+                got.iter().map(|f| &f.cmd).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn parse_choice_accepts_indexes_typed_commands_and_shell() {
+        assert_eq!(parse_choice("2", 3), Ok(Choice::Listed(1)));
+        assert_eq!(parse_choice("  1  ", 3), Ok(Choice::Listed(0)));
+        assert_eq!(parse_choice("", 3), Ok(Choice::Listed(0)), "Enter = first");
+        assert_eq!(parse_choice("s", 3), Ok(Choice::Shell));
+        assert_eq!(parse_choice("SHELL", 3), Ok(Choice::Shell));
+        // With nothing listed, Enter can only mean a shell.
+        assert_eq!(parse_choice("", 0), Ok(Choice::Shell));
+        // The escape hatch: any real command, with or without args.
+        assert_eq!(parse_choice("sh", 3), Ok(Choice::Typed("sh".into())));
+        assert_eq!(
+            parse_choice("sh --resume", 3),
+            Ok(Choice::Typed("sh --resume".into()))
+        );
+    }
+
+    #[test]
+    fn parse_choice_explains_rejections_instead_of_silently_failing() {
+        // An out-of-range number is a typo, not a command.
+        let e = parse_choice("9", 3).unwrap_err();
+        assert!(e.contains("no 9"), "{e}");
+        assert!(e.contains("1-3"), "{e}");
+        // A command that does not exist says so by name, so the user can see
+        // the typo rather than wondering why nothing happened.
+        let e = parse_choice("hermes-not-installed", 3).unwrap_err();
+        assert!(e.contains("hermes-not-installed"), "{e}");
+        assert!(e.contains("not on your PATH"), "{e}");
+        // Args are stripped when naming the missing executable.
+        let e = parse_choice("hermes-nope --resume", 3).unwrap_err();
+        assert!(e.contains("`hermes-nope`"), "{e}");
     }
 
     #[test]
     fn fallback_shell_is_never_empty() {
         assert!(!fallback_shell().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod save_edge_cases {
+    use super::*;
+
+    /// Every rewrite must leave a file that still parses and holds the new
+    /// value: the config is the user's, and a corrupted one is silently
+    /// ignored at startup, which would look like strimux losing settings.
+    fn check(before: &str, agent: &str) -> toml::Value {
+        let after = set_default_agent_text(before, agent);
+        assert!(
+            after.ends_with('\n'),
+            "must stay newline-terminated: {after:?}"
+        );
+        let v: toml::Value =
+            toml::from_str(&after).unwrap_or_else(|e| panic!("broke the file: {e}\n{after:?}"));
+        assert_eq!(v["default_agent"].as_str(), Some(agent), "{after:?}");
+        v
+    }
+
+    #[test]
+    fn a_file_without_a_trailing_newline_is_still_valid_after() {
+        check("startup_panes = 1", "claude");
+    }
+
+    #[test]
+    fn crlf_line_endings_survive() {
+        let v = check(
+            "startup_panes = 1\r\ndefault_agent = \"jcode\"\r\nmouse = true\r\n",
+            "claude",
+        );
+        assert_eq!(v["mouse"].as_bool(), Some(true));
+        assert_eq!(v["startup_panes"].as_integer(), Some(1));
+    }
+
+    #[test]
+    fn an_indented_key_is_still_the_key_we_replace() {
+        let after = set_default_agent_text("  default_agent = \"jcode\"\n", "claude");
+        assert_eq!(after.matches("default_agent").count(), 1, "{after:?}");
+        let v: toml::Value = toml::from_str(&after).unwrap();
+        assert_eq!(v["default_agent"].as_str(), Some("claude"));
+    }
+
+    #[test]
+    fn a_comment_only_file_gains_the_key_and_keeps_its_comments() {
+        let after = set_default_agent_text("# my notes\n# more notes\n", "claude");
+        assert!(after.contains("# my notes"), "{after:?}");
+        assert!(after.contains("# more notes"), "{after:?}");
+        let v: toml::Value = toml::from_str(&after).unwrap();
+        assert_eq!(v["default_agent"].as_str(), Some("claude"));
+    }
+
+    #[test]
+    fn a_file_that_is_only_a_table_gets_the_key_above_it() {
+        let v = check("[theme]\npreset = \"nord\"\n", "claude");
+        assert_eq!(v["theme"]["preset"].as_str(), Some("nord"));
+    }
+
+    #[test]
+    fn an_empty_string_is_handled_without_producing_a_stray_blank_line() {
+        let after = set_default_agent_text("", "claude");
+        assert_eq!(after, "default_agent = \"claude\"\n");
+    }
+
+    #[test]
+    fn repeated_saves_never_accumulate_duplicate_keys() {
+        // The picker can run many times; each must replace, not append.
+        let mut text = "startup_panes = 1\n".to_string();
+        for a in ["claude", "codex", "aider", "jcode"] {
+            text = set_default_agent_text(&text, a);
+        }
+        assert_eq!(text.matches("default_agent").count(), 1, "{text:?}");
+        let v: toml::Value = toml::from_str(&text).unwrap();
+        assert_eq!(v["default_agent"].as_str(), Some("jcode"));
+    }
+
+    #[test]
+    fn a_key_whose_name_merely_starts_the_same_is_left_alone() {
+        let after = set_default_agent_text("default_agent_args = \"x\"\n", "claude");
+        assert!(after.contains("default_agent_args = \"x\""), "{after:?}");
+        let v: toml::Value = toml::from_str(&after).unwrap();
+        assert_eq!(v["default_agent"].as_str(), Some("claude"));
+        assert_eq!(v["default_agent_args"].as_str(), Some("x"));
     }
 }

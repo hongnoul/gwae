@@ -137,8 +137,11 @@ fn drag_highlights_pane_text_and_copies_it_to_the_clipboard() {
     // Written as a tiny script rather than an inline `sh -c '...'`: strimux's
     // own command splitting is not a shell, so nested quotes would not survive.
     let script = dir.join("pane.sh");
-    std::fs::write(&script, "#!/bin/sh\nprintf 'HELLO-STRIMUX WORLD\\n'\nsleep 30\n")
-        .expect("write pane script");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nprintf 'HELLO-STRIMUX WORLD\\n'\nsleep 30\n",
+    )
+    .expect("write pane script");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -211,7 +214,9 @@ fn drag_highlights_pane_text_and_copies_it_to_the_clipboard() {
     );
 
     // Release: this is what copies.
-    writer.write_all(release(12, 0).as_bytes()).expect("release");
+    writer
+        .write_all(release(12, 0).as_bytes())
+        .expect("release");
     writer.flush().ok();
     let mut after = Vec::new();
     drain_until_quiet(&rx, &mut after, 6);

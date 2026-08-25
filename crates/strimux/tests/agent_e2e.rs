@@ -177,7 +177,7 @@ fn with_nothing_installed_the_pane_explains_itself_and_still_gives_a_shell() {
     let mut p = sb.spawn(&[]);
     let seen = p.wait_for("No agent harness found");
     assert!(
-        seen.contains("Opening a shell instead"),
+        seen.contains("Enter alone opens a shell"),
         "must say what it is doing instead; got:\n{seen}"
     );
     assert!(
@@ -186,6 +186,7 @@ fn with_nothing_installed_the_pane_explains_itself_and_still_gives_a_shell() {
     );
 
     // And the pane is a *live shell*, not a dead box: it runs a command.
+    p.send("\n");
     p.send("echo SHELL-IS-ALIVE\n");
     p.wait_for("SHELL-IS-ALIVE");
 
@@ -357,12 +358,14 @@ fn pressing_the_spawn_agent_key_opens_the_gateway_in_the_new_pane() {
     p.send("\x1b;");
     // The pane is a quarter of the screen, so the gateway's lines are wrapped
     // and split across cell-positioned writes; assert on fragments that fit.
+    // A quarter-width pane is ~24 columns, so the gateway's own header can
+    // scroll off; assert on the list itself, which is what must be reachable.
     let seen = p.collect_until(Duration::from_secs(10), |raw| {
         let t = screen_text(raw);
-        t.contains("Which agent should") && t.contains("claude")
+        t.contains("Found on your PATH") && t.contains("claude") && t.contains("just a shell")
     });
     let text = screen_text(&seen);
-    assert!(text.contains("Found on your PATH"), "got:\n{text}");
+    assert!(text.contains("1 Claude Code"), "got:\n{text}");
 
     // Pick it, and prove the choice reached the config from a real keypress.
     p.send("1\n");
@@ -430,4 +433,150 @@ fn a_non_tty_never_wedges_the_pane_waiting_for_input() {
     // It exec'd a shell, which with no stdin exits immediately and cleanly.
     assert!(out.status.success(), "status: {:?}", out.status);
     assert!(!sb.read_config().contains("default_agent"));
+}
+
+#[test]
+fn a_configured_command_with_arguments_is_exec_d_with_them() {
+    // `default_agent` is documented as a command, not just a binary name, so
+    // args have to survive the gateway's shell-split and reach the harness.
+    let sb = Sandbox::new(&["claude"]);
+    // The stub echoes its argv, so this proves the args were passed through.
+    std::fs::write(
+        sb.bin.join("claude"),
+        "#!/bin/sh\necho AGENT-RAN:claude ARGS:$*\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            sb.bin.join("claude"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    sb.write_config("default_agent = \"claude --resume --foo\"\n");
+    let p = sb.spawn(&[]);
+    let seen = p.wait_for("ARGS:");
+    assert!(
+        seen.contains("--resume --foo"),
+        "args must reach the harness; got:\n{seen}"
+    );
+    p.kill();
+}
+
+#[test]
+fn an_absolute_path_as_the_configured_agent_runs_without_a_prompt() {
+    // Someone pinning a specific install must not be sent to the picker.
+    let sb = Sandbox::new(&["claude"]);
+    let abs = sb.bin.join("claude");
+    sb.write_config(&format!("default_agent = \"{}\"\n", abs.display()));
+    let p = sb.spawn(&[]);
+    let seen = p.wait_for("AGENT-RAN:claude");
+    assert!(!seen.contains("Which agent"), "got:\n{seen}");
+    p.kill();
+}
+
+/// Install an executable stub that announces itself when run.
+fn stub(dir: &std::path::Path, name: &str) {
+    let p = dir.join(name);
+    std::fs::write(&p, format!("#!/bin/sh\necho AGENT-RAN:{name}\n")).expect("stub");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+}
+
+#[test]
+fn a_harness_strimux_has_never_heard_of_is_still_discovered() {
+    // The whole point of the heuristic: a tool that did not exist when this
+    // binary was built must show up without a strimux release.
+    let sb = Sandbox::new(&[]);
+    stub(&sb.bin, "hermes-agent");
+    stub(&sb.bin, "frobnicator"); // not agent-shaped: must NOT be offered
+    let mut p = sb.spawn(&[]);
+    let seen = p.wait_for("hermes-agent");
+    assert!(
+        !seen.contains("frobnicator"),
+        "an ordinary binary must not be offered; got:\n{seen}"
+    );
+
+    p.send("1\n");
+    p.wait_for("AGENT-RAN:hermes-agent");
+    assert!(sb
+        .read_config()
+        .contains("default_agent = \"hermes-agent\""));
+    p.kill();
+}
+
+#[test]
+fn muse_style_one_word_names_are_found_too() {
+    let sb = Sandbox::new(&[]);
+    stub(&sb.bin, "musecode");
+    let mut p = sb.spawn(&[]);
+    p.wait_for("musecode");
+    p.send("1\n");
+    p.wait_for("AGENT-RAN:musecode");
+    p.kill();
+}
+
+#[test]
+fn the_config_can_teach_it_a_name_it_could_never_guess() {
+    // An agent whose command looks like nothing in particular.
+    let sb = Sandbox::new(&[]);
+    stub(&sb.bin, "zz");
+    sb.write_config("agents = [\"zz\"]\n");
+    let mut p = sb.spawn(&[]);
+    let seen = p.wait_for("Which agent");
+    assert!(seen.contains("zz"), "got:\n{seen}");
+    p.send("1\n");
+    p.wait_for("AGENT-RAN:zz");
+    p.kill();
+}
+
+#[test]
+fn typing_an_unlisted_command_works_and_is_saved() {
+    // The escape hatch that makes any harness usable immediately.
+    let sb = Sandbox::new(&["claude"]);
+    stub(&sb.bin, "zz");
+    let mut p = sb.spawn(&[]);
+    let seen = p.wait_for("Which agent");
+    assert!(
+        seen.contains("Type the command"),
+        "the option must be advertised; got:\n{seen}"
+    );
+    assert!(!seen.contains("zz"), "zz is not agent-shaped; got:\n{seen}");
+
+    p.send("zz\n");
+    p.wait_for("AGENT-RAN:zz");
+    assert!(sb.read_config().contains("default_agent = \"zz\""));
+    p.kill();
+}
+
+#[test]
+fn a_typed_command_that_does_not_exist_says_so_and_reprompts() {
+    let sb = Sandbox::new(&["claude"]);
+    let mut p = sb.spawn(&[]);
+    p.wait_for("Which agent");
+    p.send("hermes\n");
+    let seen = p.wait_for("not on your PATH");
+    assert!(seen.contains("hermes"), "must name the typo; got:\n{seen}");
+    p.send("1\n");
+    p.wait_for("AGENT-RAN:claude");
+    p.kill();
+}
+
+#[test]
+fn even_with_nothing_found_you_can_type_a_command() {
+    // "Nothing installed" is a claim about our search, not the machine, so
+    // that screen must not be a dead end either.
+    let sb = Sandbox::new(&[]);
+    stub(&sb.bin, "zz");
+    let mut p = sb.spawn(&[]);
+    p.wait_for("No agent harness found");
+    p.send("zz\n");
+    p.wait_for("AGENT-RAN:zz");
+    assert!(sb.read_config().contains("default_agent = \"zz\""));
+    p.kill();
 }

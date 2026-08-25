@@ -44,7 +44,12 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
             tracing::info!(command = ?command, "new column (PTY spawn lands in M0 spike)");
             Ok(())
         }
-        Command::Agent { print } => agent::run(&cfg.default_agent, &cfg_path_for_agent(), print),
+        Command::Agent { print } => agent::run(
+            &cfg.default_agent,
+            &cfg.agents,
+            &cfg_path_for_agent(),
+            print,
+        ),
         Command::Setup => {
             println!("strimux setup: no per-terminal bindings installed yet (M4).");
             println!(
@@ -96,7 +101,7 @@ fn config_file_status(path: &std::path::Path) -> String {
 /// How `⌥+;` will resolve right now, for `doctor`. This is the same decision
 /// the gateway makes, so doctor can never disagree with the live behavior.
 fn agent_status(cfg: &Config) -> String {
-    match agent::plan(&cfg.default_agent, agent::detect()) {
+    match agent::plan(&cfg.default_agent, agent::detect_with(&cfg.agents)) {
         agent::Plan::Configured(cmd) => format!("{cmd} [ok]"),
         agent::Plan::Choose(found) => format!(
             "unset; ⌥+; will offer {} [ok]",
