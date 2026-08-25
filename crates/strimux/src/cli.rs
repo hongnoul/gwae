@@ -1,6 +1,6 @@
 //! Command-line interface for the `strimux` binary.
 //!
-//! Single binary, subcommands: `run` (default), `new`, `setup`, `doctor`.
+//! Single binary, subcommands: `run` (default), `new`, `agent`, `setup`, `doctor`.
 //! There is deliberately no `server`/`ctl`/`ls`/`kill-server`: strimux is
 //! daemon-free (ADR-003 reversed, ADR-011).
 
@@ -31,6 +31,14 @@ pub enum Command {
         /// The command (with args) to run in the new column.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
+    },
+    /// The agent gateway that `⌥+;` runs: resolve `default_agent`, offer the
+    /// harnesses found on PATH when it is unset or missing, save the choice,
+    /// and exec it. Not usually run by hand.
+    Agent {
+        /// Print what would happen and exit, without prompting or exec'ing.
+        #[arg(long)]
+        print: bool,
     },
     /// Install optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty).
     Setup,

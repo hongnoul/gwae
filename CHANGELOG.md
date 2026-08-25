@@ -7,6 +7,21 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **`⌥+;` now works before you have picked an agent.** It ran `default_agent`
+  blind, so on a machine without that harness installed the pane's child died
+  the instant it spawned and left a blank box with no explanation — the same
+  thing that happens if you typo the command. The key now opens an *agent
+  gateway* (`strimux agent`) in the pane: when `default_agent` resolves it
+  `exec`s it immediately and paints nothing, and otherwise it lists the
+  harnesses actually found on your `PATH` (`jcode`, `claude`, `codex`,
+  `gemini`, `opencode`, `crush`, `aider`, `cursor-agent`, `amp`, `goose`),
+  runs the one you choose, and saves it as `default_agent` so the next `;` is
+  instant. Choosing nothing, or having nothing installed, opens a plain
+  `$SHELL` with a note saying why. Because the gateway `exec`s, the pane's
+  process *is* the harness: same pid, same PTY, and its own window title still
+  reaches the host. `strimux doctor` reports the same resolution, and
+  `strimux agent --print` shows it without prompting or running anything.
+
 - **`⌥+<number>` reaches columns past 9.** `⌥+1..9` jumped on the keystroke,
   which capped addressable columns at nine: there is no `⌥+10` key, so a wide
   strip could only be reached by walking `⌥+l`. Holding `⌥` is already a mode
@@ -19,6 +34,13 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   jumps feel exactly as they did.
 
 ### Changed
+- **`default_agent` now defaults to unset rather than `"jcode"`.** Defaulting
+  to one vendor's harness meant every user who had not installed *that* tool
+  hit the dead-pane path above on their first `⌥+;`. Unset is now a normal
+  state that the gateway resolves interactively, so first run works no matter
+  which agent you use. An explicit `default_agent` keeps behaving exactly as
+  before.
+
 - **Key hints now name the platform's own modifier.** The cowsay hints and the
   cheat-sheet HUD hard-coded macOS vocabulary (`⌥`, `↵`, `⇧`), which is
   meaningless on Linux/Windows where the same key is `Alt` and the glyphs may

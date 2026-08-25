@@ -113,3 +113,23 @@ fn a_valid_config_is_never_reported_as_a_problem() {
         );
     }
 }
+
+#[test]
+fn doctor_reports_how_the_spawn_agent_key_will_resolve() {
+    // `default_agent` failures are invisible until you press ⌥+;, so doctor
+    // has to say what that key will actually do right now.
+    let out = doctor(Some("default_agent = \"sh\"\n"));
+    assert!(out.contains("agent: sh [ok]"), "got:\n{out}");
+
+    // A configured-but-absent harness must be called out, not silently ok'd.
+    let out = doctor(Some("default_agent = \"strimux-no-such-agent-xyz\"\n"));
+    assert!(
+        out.contains("MISSING \"strimux-no-such-agent-xyz\""),
+        "got:\n{out}"
+    );
+
+    // Unset is a normal state now, not an error: the gateway handles it.
+    let out = doctor(Some("startup_panes = 1\n"));
+    assert!(out.contains("agent:"), "got:\n{out}");
+    assert!(!out.contains("MISSING"), "got:\n{out}");
+}

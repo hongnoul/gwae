@@ -267,35 +267,19 @@ fn emit_title(stdout: &mut impl Write, title: &str) -> std::io::Result<()> {
     stdout.flush()
 }
 
-/// True when the first word of `cmd` resolves to an executable we can spawn:
-/// either an explicit path that exists, or a bare name found on `PATH`. Used
-/// so the spawn-agent verb can degrade to a shell instead of producing a pane
-/// whose child dies immediately with "no such file or directory".
-fn agent_on_path(cmd: &str) -> bool {
-    let argv = shell_split(cmd);
-    let Some(exe) = argv.first() else {
-        return false;
-    };
-    fn executable(p: &std::path::Path) -> bool {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::metadata(p)
-                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-                .unwrap_or(false)
-        }
-        #[cfg(not(unix))]
-        {
-            p.is_file()
-        }
-    }
-    if exe.contains('/') || exe.contains('\\') {
-        return executable(std::path::Path::new(exe));
-    }
-    let Ok(path) = std::env::var("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| executable(&dir.join(exe)))
+/// The command an agent pane runs: this very binary's `agent` subcommand.
+///
+/// `current_exe` rather than a bare `strimux`, so a binary that is not on
+/// `PATH` (a `cargo run` build, or an install into a directory the shell does
+/// not know about) still spawns *itself* rather than some other strimux, or
+/// nothing at all.
+fn agent_gateway_cmd() -> String {
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(str::to_string))
+        .unwrap_or_else(|| "strimux".to_string());
+    // Quoted so an install path containing spaces survives `shell_split`.
+    format!("\"{exe}\" agent")
 }
 
 /// Spawn a PTY running `cmd` at the given grid size, wiring a reader thread.
@@ -372,7 +356,7 @@ fn spawn_pane(
 }
 
 /// Naive shell splitter: split on whitespace, keeping simple quoting (\"..\").
-fn shell_split(cmd: &str) -> Vec<String> {
+pub fn shell_split(cmd: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut in_quote = false;
@@ -1502,12 +1486,7 @@ fn draw_center_minimap(
 ///
 /// `alpha >= 1.0` is the default and short-circuits to a plain draw, so the
 /// opaque path costs nothing (no frame clone, no blending).
-fn with_opacity(
-    frame: &mut [Cell],
-    alpha: f32,
-    pal: &Palette,
-    draw: impl FnOnce(&mut [Cell]),
-) {
+fn with_opacity(frame: &mut [Cell], alpha: f32, pal: &Palette, draw: impl FnOnce(&mut [Cell])) {
     if alpha >= 1.0 {
         draw(frame);
         return;
@@ -2537,9 +2516,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     // Alt+digit/punct not listed above: check the original code directly
     // since those don't need case folding.
     match ev.code {
-        Char(c) if c.is_ascii_digit() => {
-            return Some(Cmd::JumpDigit(c.to_digit(10).unwrap_or(1)))
-        }
+        Char(c) if c.is_ascii_digit() => return Some(Cmd::JumpDigit(c.to_digit(10).unwrap_or(1))),
         Char('[') => return Some(Cmd::Scroll(-200)),
         Char(']') => return Some(Cmd::Scroll(200)),
         _ => {}
@@ -2551,7 +2528,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
 fn sync_panes(
     layout: &mut Layout,
     panes: &mut HashMap<PaneId, PtyPane>,
-    cfg: &Config,
     tx: &Sender<PaneMsg>,
     _first_id: PaneId,
     agent_panes: &HashSet<PaneId>,
@@ -2579,16 +2555,13 @@ fn sync_panes(
         if panes.contains_key(&pid) {
             continue;
         }
-        // Agent panes fall back to a plain shell when the configured harness
-        // isn't on PATH: a missing `jcode` must not leave a dead/blank pane.
+        // Agent panes run the gateway, not the harness directly: it resolves
+        // `default_agent`, prompts when there is nothing to resolve, and execs
+        // the result, so the pane's process ends up *being* the harness.
+        // Resolving inside the pane (rather than here) is what lets the "not
+        // installed" case be a real interactive screen instead of a toast.
         let cmd = if agent_panes.contains(&pid) {
-            let want = cfg.default_agent.clone();
-            if agent_on_path(&want) {
-                want
-            } else {
-                tracing::warn!(agent = %want, "default_agent not on PATH; falling back to shell");
-                String::new()
-            }
+            agent_gateway_cmd()
         } else {
             String::new()
         };
@@ -2851,9 +2824,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         };
                         let _ = layout.apply(Action::ClosePane(pid), v, f);
                         agent_panes.remove(&pid);
-                        if let Err(e) =
-                            sync_panes(&mut layout, &mut panes, &cfg, &tx, 0, &agent_panes)
-                        {
+                        if let Err(e) = sync_panes(&mut layout, &mut panes, &tx, 0, &agent_panes) {
                             tracing::error!("sync panes: {e}");
                         }
                     } else {
@@ -3151,20 +3122,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                     if let Some(pid) = focused_pane(&layout) {
                                         agent_panes.insert(pid);
                                     }
-                                    // Say so out loud when the harness isn't
-                                    // installed: the pane will come up as a
-                                    // plain shell and that should not look
-                                    // like strimux silently misfired.
-                                    if !agent_on_path(&cfg.default_agent) {
-                                        reload_note = Some(format!(
-                                            "agent error: `{}` not on PATH — opened a shell instead",
-                                            cfg.default_agent
-                                        ));
-                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                    }
                                 }
                                 if let Err(e) =
-                                    sync_panes(&mut layout, &mut panes, &cfg, &tx, 0, &agent_panes)
+                                    sync_panes(&mut layout, &mut panes, &tx, 0, &agent_panes)
                                 {
                                     tracing::error!("sync panes: {e}");
                                 }
@@ -6150,32 +6110,5 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
     );
     for p in panes.values_mut() {
         let _ = p.child.kill();
-    }
-}
-
-#[cfg(test)]
-mod agent_path_tests {
-    use super::agent_on_path;
-
-    #[test]
-    fn bare_name_on_path_resolves_and_missing_one_does_not() {
-        // `sh` is on PATH everywhere we run; a nonsense name never is, and the
-        // spawn-agent verb relies on that distinction to fall back to a shell.
-        assert!(agent_on_path("sh"));
-        assert!(!agent_on_path("strimux-no-such-agent-xyz"));
-        assert!(!agent_on_path("   "));
-    }
-
-    #[test]
-    fn explicit_path_must_exist_and_be_executable() {
-        assert!(agent_on_path("/bin/sh"));
-        assert!(!agent_on_path("/bin/definitely-not-here"));
-        // A directory is not spawnable even though the path exists.
-        assert!(!agent_on_path("/bin"));
-    }
-
-    #[test]
-    fn only_the_first_word_is_probed_so_args_do_not_break_lookup() {
-        assert!(agent_on_path("sh -c 'echo hi'"));
     }
 }

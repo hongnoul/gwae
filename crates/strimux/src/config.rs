@@ -45,7 +45,9 @@ pub struct Config {
     /// default) follows the visible column width so lines wrap normally and
     /// there is no horizontal overflow to manage in a pane.
     pub content_width: u16,
-    /// The agent harness command that `;` (spawn-agent) launches.
+    /// The agent harness command that `;` (spawn-agent) launches. Empty (the
+    /// default) means "not chosen yet": `;` then runs the agent gateway, which
+    /// offers the harnesses found on PATH and writes the choice back here.
     pub default_agent: String,
     /// Number of equal-width panes on screen at first launch. Default: 1 (a
     /// single quarter-width pane; the skeleton's placeholder boxes show the
@@ -116,7 +118,7 @@ impl Default for Config {
             scroll_margin: 2,
             center_focus: false,
             content_width: 0,
-            default_agent: "jcode".to_string(),
+            default_agent: String::new(),
             startup_panes: 1,
             // Colors all live in the theme now; the Catppuccin Mocha defaults
             // come from `Palette::default()`. These legacy keys stay unset
@@ -197,9 +199,11 @@ impl Config {
     ///
     /// Live reload only re-reads the file; it does not re-run startup. So
     /// settings that were *consumed once* at launch are deliberately kept:
-    /// `startup_panes` (the panes already exist), `mouse` (capture was
-    /// enabled or not against the host terminal), and `default_agent` (panes
-    /// already spawned with it keep running). Everything that is read afresh
+    /// `startup_panes` (the panes already exist) and `mouse` (capture was
+    /// enabled or not against the host terminal). `default_agent` is kept too,
+    /// but only because nothing in the TUI reads it: the agent gateway loads
+    /// the file itself in the new pane, so an edited value applies to the next
+    /// agent pane regardless. Everything that is read afresh
     /// every frame - colors, skeleton, minimap, scroll behavior - is adopted,
     /// which is exactly the set a user edits when tweaking a theme.
     pub fn adopt_appearance(&mut self, new: Config) {

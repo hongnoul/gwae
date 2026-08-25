@@ -84,7 +84,7 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | `⌥+Shift+h` / `⌥+Shift+l` | Move focused column left / right (swap with neighbor) |
 | `⌥+Shift+k` / `⌥+Shift+j` | Move pane up / down within stack; at the stack edge carries the pane to the neighboring strip (creating one past the end), discarding an emptied strip |
 | `⌥+Enter` / `⌥+a` | New column to the right of focused |
-| `⌥+;` (`…` on macOS) | Spawn agent pane (`default_agent`, default `jcode`) at strip end and focus it |
+| `⌥+;` (`…` on macOS) | Spawn agent pane at strip end and focus it (`default_agent`, or pick one if unset) |
 | `⌥+s` | Split focused column — new pane below |
 | `⌥+r` | Cycle focused column width `1/3 → 1/2 → 1/4` |
 | `⌥+f` (`ƒ` on macOS) | Toggle focused column between full width and `1/4` |
@@ -199,7 +199,7 @@ Key reference (defaults in parentheses):
 | `scroll_margin` | int | `2` | Reserved under quantization (kept for future continuous mode) |
 | `center_focus` | bool | `false` | Center focused column at nearest quantized stop |
 | `content_width` | int | `0` | Logical pane width; `0` = follow column width (wrap). `>0` = horizontal overflow panned with `⌥+←/→` |
-| `default_agent` | string | `jcode` | Command launched by `;`; falls back to `$SHELL` if not on `PATH` |
+| `default_agent` | string | *(unset)* | Command launched by `;`. Unset or missing means `;` opens the agent gateway, which offers the harnesses on your `PATH` and saves your pick |
 | `startup_panes` | int | `1` | Quarter-width panes at launch; remainder shows as skeleton placeholders |
 | `theme` | string/table | `catppuccin-mocha` | Palette preset or `[theme]` table with `preset` + per-key overrides; see Appearance / `docs/CONFIG.md` |
 | `background` | color | theme `base` | Legacy alias for `theme.base` |
