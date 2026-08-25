@@ -54,6 +54,7 @@ go to strimux, even with an agent focused.
 | split-down | `⌥+s` | new pane below focused |
 | new-row | `⌥+Shift+Enter` | new row below focused |
 | cycle-width | `⌥+r` | cycle focused preset width 1/3 → 1/2 → 1/4 |
+| toggle-full-width | `⌥+f` | toggle focused column between full width and 1/4 |
 | consume / expel | `⌥+,` / `⌥+.` | stack a neighbor / push pane out |
 | center | `⌥+z` | center focused column |
 | jump N | `⌥+1..9` | jump to Nth column |

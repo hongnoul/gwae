@@ -677,3 +677,26 @@ fn visible_ranges_are_identical_at_every_stop_for_uniform_columns() {
         }
     }
 }
+
+#[test]
+fn toggle_full_width_round_trips_to_quarter() {
+    let mut layout = layout_with_widths(&[Width::Preset(Preset::Third), Width::DEFAULT]);
+    let width = |l: &Layout| l.focused_row().unwrap().columns[l.focus.column].width;
+
+    // Any non-full width goes full first.
+    layout
+        .apply(Action::ToggleFullWidth, view(), follow())
+        .unwrap();
+    assert_eq!(width(&layout), Width::Preset(Preset::Full));
+
+    // Toggling back lands on a quarter.
+    layout
+        .apply(Action::ToggleFullWidth, view(), follow())
+        .unwrap();
+    assert_eq!(width(&layout), Width::Preset(Preset::Quarter));
+
+    layout
+        .apply(Action::ToggleFullWidth, view(), follow())
+        .unwrap();
+    assert_eq!(width(&layout), Width::Preset(Preset::Full));
+}

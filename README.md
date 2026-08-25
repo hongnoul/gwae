@@ -90,6 +90,7 @@ Content width is decoupled from column width via `content_width`. Default `0` fo
 | `;` | `⌥+;` (`…` on macOS) | Spawn agent pane (`default_agent`, default `jcode`) at strip end and focus it |
 | `s` | `⌥+s` | Split focused column — new pane below |
 | `r` (`z`) | `⌥+r` | Cycle focused column width `1/3 → 1/2 → 1/4` |
+| `f` | `⌥+f` (`ƒ` on macOS) | Toggle focused column between full width and `1/4` |
 | `x` | `⌥+x` / `⌥+q` (`œ`) | Kill focused pane — columns compact, focus keeps its slot (falls left only at right edge); emptied strip is dropped, last pane quits strimux |
 | `,` / `.` | `⌥+←` / `⌥+→` | Scroll pane's logical content horizontally (when `content_width` > column width) |
 | `[` / `]` | `⌥+Ctrl+h` / `⌥+Ctrl+l` | Scroll row viewport one quantized stop without moving focus |

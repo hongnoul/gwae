@@ -1814,6 +1814,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{2026}') => return Some(Cmd::Act(Action::SpawnAgent)), // … (Option+;)
             Char('\u{153}') => return Some(Cmd::Act(Action::KillPane)),  // œ (Option+q)
             Char('\u{a9}') => return Some(Cmd::SmartJump),               // © (Option+g)
+            Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
             _ => {}
         }
     }
@@ -1863,6 +1864,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
                 's' | '-' => Action::SplitBelow,
                 'x' => Action::KillPane,
                 'z' | '=' => Action::CycleWidth,
+                'f' => Action::ToggleFullWidth,
                 'g' => return Some(Cmd::SmartJump),
                 ',' => return Some(Cmd::ScrollPane(-1)),
                 '.' => return Some(Cmd::ScrollPane(1)),
@@ -1928,6 +1930,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             ';' => Some(Action::SpawnAgent),
             's' => Some(Action::SplitBelow),
             'r' => Some(Action::CycleWidth),
+            'f' => Some(Action::ToggleFullWidth),
             'x' => Some(Action::KillPane),
             'z' => Some(Action::CycleWidth),
             'q' => Some(Action::KillPane),

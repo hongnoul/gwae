@@ -8,7 +8,7 @@
 
 use crate::model::Layout;
 use crate::viewport::{follow_focus_scroll, scroll_stops, snap_scroll, Viewport};
-use crate::width::Width;
+use crate::width::{Preset, Width};
 use crate::{FollowScroll, LayoutError, LayoutResult, PaneId, RowId};
 
 /// A single user-initiated layout action. Represents one keypress verb.
@@ -23,6 +23,8 @@ pub enum Action {
     MovePaneUp,
     MovePaneDown,
     CycleWidth,
+    /// Toggle the focused column between full viewport width and 1/4.
+    ToggleFullWidth,
     SplitBelow,
     KillPane,
     /// Close a specific pane by id (e.g. its process exited), collapsing the
@@ -69,6 +71,7 @@ impl Layout {
             Action::MovePaneUp => self.move_pane_vertical(-1, viewport, follow),
             Action::MovePaneDown => self.move_pane_vertical(1, viewport, follow),
             Action::CycleWidth => Ok(self.apply_cycle_width()),
+            Action::ToggleFullWidth => Ok(self.apply_toggle_full_width(viewport, follow)),
             Action::SplitBelow => self.apply_split_below(),
             Action::KillPane => self.apply_kill_pane(viewport, follow),
             Action::ClosePane(pid) => self.apply_close_pane(pid, viewport, follow),
@@ -402,6 +405,24 @@ impl Layout {
                 };
             }
         }
+        self.focused_scroll()
+    }
+
+    /// Toggle the focused column between `Full` and `Quarter` width. Any
+    /// other width (preset or fixed cells) goes to `Full` first, so the
+    /// binding always has an obvious first effect.
+    fn apply_toggle_full_width(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
+        let (row, col) = (self.focus.row, self.focus.column);
+        if let Some(r) = self.row_mut(row) {
+            if let Some(c) = r.columns.get_mut(col) {
+                c.width = if c.width == Width::Preset(Preset::Full) {
+                    Width::Preset(Preset::Quarter)
+                } else {
+                    Width::Preset(Preset::Full)
+                };
+            }
+        }
+        self.refocus_scroll(viewport, follow);
         self.focused_scroll()
     }
 
