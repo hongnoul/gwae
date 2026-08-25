@@ -125,11 +125,13 @@ Bottom chrome (default: a **reserved 1-row status bar in quasimode**) shows:
 - Column digit (`⌥+1..9`) in the tile's first cell
 - One-line summary on the right: `5 »2 !1 ✓1 ✗1` (zeros omitted)
 
+Holding `⌥`/Alt in `reserved_quasimode` also paints a **centered minimap overlay** (sized by `max_width`/`max_rows`) for a quick glance, and a **centered HUD** (` » 1.3 needs you — ⌥+g` + keybind cheat-sheet) flashes at startup and when attention (Idle/Failed) arises while the quasimode row is hidden (`hud_on_attention_ms`, default `2500`; `0` to disable).
+
 The minimap appears whenever there is more than one pane (not only with multiple strips). Four modes cover every taste and avoid geometry churn:
 
 | `minimap.mode` | Behavior |
 |---|---|
-| `reserved_quasimode` *(default)* | Row is always reserved (no SIGWINCH churn) but paints only while `⌥`/Alt is held or a pane needs attention. Optional centered HUD flash on attention (`hud_on_attention_ms`) |
+| `reserved_quasimode` *(default)* | Row is always reserved (no SIGWINCH churn) but paints only while `⌥`/Alt is held or a pane needs attention; while held also paints a centered minimap overlay sized by `max_width`/`max_rows`. Optional centered HUD flash at startup and on attention (`hud_on_attention_ms`, default `2500`) |
 | `reserved` | Always visible reserved row |
 | `overlay` | Classic bottom-right overlay (legacy) — `max_width`/`max_rows` apply here |
 | `edge_ticks` | Single-cell ticks on the outer frame, no box |
@@ -173,10 +175,10 @@ scroll_lines = 3
 [minimap]
 show = true
 mode = "reserved_quasimode"        # overlay | reserved | reserved_quasimode | edge_ticks | off
-max_width = 32                     # overlay only
-max_rows = 6                       # overlay only
+max_width = 32                     # overlay + centered-on-hold (quasimode)
+max_rows = 6                       # overlay + centered-on-hold (quasimode)
 show_counts = true
-hud_on_attention_ms = 0            # 0 = no HUD flash
+hud_on_attention_ms = 2500         # center HUD (startup + attention), 0 = off
 ```
 
 Key reference (defaults in parentheses):
@@ -196,11 +198,11 @@ Key reference (defaults in parentheses):
 | `mouse` | bool | `true` | Capture wheel/click for pane scrollback |
 | `scroll_lines` | int | `3` | Rows per wheel notch |
 | `minimap.show` | bool | `true` | Master kill-switch |
-| `minimap.mode` | enum | `reserved_quasimode` | Chrome presentation |
-| `minimap.max_width` | int | `32` | Overlay width cap |
-| `minimap.max_rows` | int | `6` | Overlay row cap |
+| `minimap.mode` | enum | `reserved_quasimode` | Chrome presentation (`overlay`=corner, `reserved`=row always, `reserved_quasimode`=hold/attention + center minimap while held) |
+| `minimap.max_width` | int | `32` | Used for `overlay` and centered minimap while holding ⌥/Alt in `reserved_quasimode` |
+| `minimap.max_rows` | int | `6` | Used for `overlay` and centered minimap while holding ⌥/Alt in `reserved_quasimode` |
 | `minimap.show_counts` | bool | `true` | Summary tallies |
-| `minimap.hud_on_attention_ms` | int | `0` | Centered HUD flash on attention |
+| `minimap.hud_on_attention_ms` | int | `2500` | Centered HUD (startup + attention) with cheat-sheet; `0` disables |
 
 ---
 

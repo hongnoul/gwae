@@ -126,8 +126,10 @@ pub enum MinimapMode {
     /// Permanent 1-line reserved status row (never occludes content).
     Reserved,
     /// Reserved row that only paints when Option/Alt is held or a pane needs
-    /// attention (Idle/Failed). Chrome row is still reserved to avoid
-    /// SIGWINCH churn on every hold — it just stays blank at rest.
+    /// attention (Idle/Failed). Holding Option also paints a centered minimap
+    /// overlay (sized by `max_width`/`max_rows`) for a quick glance. Chrome row
+    /// is still reserved to avoid SIGWINCH churn on every hold — it just stays
+    /// blank at rest.
     #[default]
     ReservedQuasimode,
     /// Single-cell ticks on the outer frame (no box).
@@ -145,18 +147,23 @@ pub struct Minimap {
     pub show: bool,
     /// Presentation mode. `overlay` is the legacy corner overlay;
     /// `reserved` is the permanent 1-line row; `reserved_quasimode` (default)
-    /// shows that row only while Option/Alt is held or a pane needs attention.
+    /// shows that row only while Option/Alt is held or a pane needs attention,
+    /// and paints a centered minimap (using `max_width`/`max_rows`) while held.
     pub mode: MinimapMode,
-    /// Maximum width (in cells) of the minimap block. Used only for `overlay`.
+    /// Maximum width (in cells) of the minimap. Used for `overlay` and the
+    /// center minimap shown while holding Option in `reserved_quasimode`.
     pub max_width: u16,
-    /// Maximum number of strips (rows) shown; extra strips are cut off (overlay).
+    /// Maximum number of strips (rows) shown; extra strips are cut off. Used
+    /// for `overlay` and the center minimap shown while holding Option in
+    /// `reserved_quasimode`.
     pub max_rows: u16,
     /// Draw the one-line status summary above the map (overlay) or on the
     /// right side of the reserved row.
     pub show_counts: bool,
-    /// Milliseconds to flash a centered HUD when a background pane transitions
-    /// to attention while the quasimode row is hidden and Alt is not held.
-    /// `0` disables the HUD entirely.
+    /// Milliseconds to flash a centered HUD (attention hint + cheat-sheet)
+    /// at startup and when a background pane transitions to attention while the
+    /// quasimode row is hidden and Alt is not held. `0` disables the HUD
+    /// entirely.
     pub hud_on_attention_ms: u16,
 }
 
