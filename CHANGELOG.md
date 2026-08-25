@@ -7,6 +7,18 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **Kitty graphics passthrough: images now render inside panes**: vt100 (the
+  hosted emulator) silently swallows Kitty graphics APCs, so any child that
+  drew images (jcode diagrams/screenshots, `kitten icat`) showed nothing.
+  strimux now scans each pane's raw output with a chunk-safe state machine,
+  forwards complete `ESC _ G … ESC \` sequences verbatim to the host terminal
+  (when the host speaks the protocol: Kitty/Ghostty/WezTerm by env, or forced
+  via `STRIMUX_KITTY_GRAPHICS=1/0`), and preserves the combining diacritics on
+  `U+10EEEE` Unicode-placeholder cells through the grid and the painter, so
+  virtual placements land exactly inside their pane and clip with it. Graphics
+  *queries* (`a=q`) are dropped rather than forwarded because the host's reply
+  cannot be routed back to the child. Combining marks on ordinary text
+  (é as `e`+U+0301) also survive the grid now instead of being stripped.
 - **The minimap is now an agent dashboard**: each pane's tile is tinted by
   live status - blue `»` working, amber `!` wants attention, green `✓` done,
   red `✗` failed (non-zero exit) - with the pane's `⌥+digit` column address in

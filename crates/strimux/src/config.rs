@@ -104,31 +104,82 @@ impl Config {
     }
 }
 
+/// Where and how the minimap/status chrome is shown.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapMode {
+    /// Classic bottom-right overlay (pre-redesign).
+    Overlay,
+    /// Permanent 1-line reserved status row (never occludes content).
+    Reserved,
+    /// Reserved row that only paints when Option/Alt is held or a pane needs
+    /// attention (Idle/Failed). Chrome row is still reserved to avoid
+    /// SIGWINCH churn on every hold — it just stays blank at rest.
+    #[default]
+    ReservedQuasimode,
+    /// Single-cell ticks on the outer frame (no box).
+    EdgeTicks,
+    /// No minimap/status chrome at all.
+    Off,
+}
+
 /// The minimap widget: which strips (rows) and panes (columns) exist and
-/// which is focused. Shown bottom-right; rows of the map are strips, the width
-/// of each tile is proportional to the column's width share.
+/// which is focused.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(default)]
 pub struct Minimap {
-    /// Draw the minimap at all.
+    /// Draw the minimap at all (kill-switch, kept for backward compat).
     pub show: bool,
-    /// Maximum width (in cells) of the minimap block. The map shrinks to fit
-    /// the panel if the panel is narrower.
+    /// Presentation mode. `overlay` is the legacy corner overlay;
+    /// `reserved` is the permanent 1-line row; `reserved_quasimode` (default)
+    /// shows that row only while Option/Alt is held or a pane needs attention.
+    pub mode: MinimapMode,
+    /// Maximum width (in cells) of the minimap block. Used only for `overlay`.
     pub max_width: u16,
-    /// Maximum number of strips (rows) shown; extra strips are cut off.
+    /// Maximum number of strips (rows) shown; extra strips are cut off (overlay).
     pub max_rows: u16,
-    /// Draw the one-line status summary above the map: total pane count and
-    /// per-status tallies (working / attention / done / failed).
+    /// Draw the one-line status summary above the map (overlay) or on the
+    /// right side of the reserved row.
     pub show_counts: bool,
+    /// Milliseconds to flash a centered HUD when a background pane transitions
+    /// to attention while the quasimode row is hidden and Alt is not held.
+    /// `0` disables the HUD entirely (default).
+    pub hud_on_attention_ms: u16,
+}
+
+impl Minimap {
+    /// How many bottom rows are reserved for chrome. Keeps pane geometry
+    /// stable (no SIGWINCH churn when Alt is tapped).
+    pub fn chrome_rows(&self) -> u16 {
+        match self.mode {
+            MinimapMode::Reserved | MinimapMode::ReservedQuasimode => 1,
+            _ => 0,
+        }
+    }
+
+    /// Whether the chrome strip should actually paint content this frame.
+    pub fn should_paint(&self, alt_held: bool, has_attention: bool) -> bool {
+        if !self.show {
+            return false;
+        }
+        match self.mode {
+            MinimapMode::Off => false,
+            MinimapMode::Overlay | MinimapMode::EdgeTicks => true,
+            MinimapMode::Reserved => true,
+            MinimapMode::ReservedQuasimode => alt_held || has_attention,
+        }
+    }
 }
 
 impl Default for Minimap {
     fn default() -> Self {
         Minimap {
             show: true,
+            mode: MinimapMode::default(),
             max_width: 32,
             max_rows: 6,
             show_counts: true,
+            hud_on_attention_ms: 0,
         }
     }
 }
