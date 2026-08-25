@@ -11,6 +11,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// Run `strimux doctor` with `config_body` as the config file (or no file at
 /// all when `None`) and return its stdout.
 fn doctor(config_body: Option<&str>) -> String {
+    doctor_with_agents(config_body, &[])
+}
+
+/// As [`doctor`], but with `agents` planted as stub executables on a pinned
+/// PATH. The agent line's wording depends on what is installed, so a case
+/// asserting on it must control PATH rather than inherit the machine's: a
+/// developer laptop has `claude` on PATH and a CI runner has nothing, and
+/// `plan` answers differently for each.
+fn doctor_with_agents(config_body: Option<&str>, agents: &[&str]) -> String {
     // Unique per case: these tests are threads of one process, so a shared
     // directory would let cases clobber each other's config.
     static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -23,11 +32,24 @@ fn doctor(config_body: Option<&str>) -> String {
     if let Some(body) = config_body {
         std::fs::write(dir.join("strimux/strimux.toml"), body).expect("write config");
     }
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_strimux"))
-        .arg("doctor")
-        .env("XDG_CONFIG_HOME", &dir)
-        .output()
-        .expect("run strimux doctor");
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_strimux"));
+    cmd.arg("doctor").env("XDG_CONFIG_HOME", &dir);
+    if !agents.is_empty() {
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin dir");
+        for a in agents {
+            let p = bin.join(a);
+            std::fs::write(&p, "#!/bin/sh\nexit 0\n").expect("stub");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755))
+                    .expect("chmod stub");
+            }
+        }
+        cmd.env("PATH", format!("{}:/bin:/usr/bin", bin.display()));
+    }
+    let out = cmd.output().expect("run strimux doctor");
     assert!(out.status.success(), "doctor should exit cleanly");
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
@@ -122,7 +144,12 @@ fn doctor_reports_how_the_spawn_agent_key_will_resolve() {
     assert!(out.contains("agent: sh [ok]"), "got:\n{out}");
 
     // A configured-but-absent harness must be called out, not silently ok'd.
-    let out = doctor(Some("default_agent = \"strimux-no-such-agent-xyz\"\n"));
+    // An alternative is planted on a pinned PATH so the wording is `MISSING
+    // ...; will offer ...` on every machine, installed agents or none.
+    let out = doctor_with_agents(
+        Some("default_agent = \"strimux-no-such-agent-xyz\"\n"),
+        &["codex"],
+    );
     assert!(
         out.contains("MISSING \"strimux-no-such-agent-xyz\""),
         "got:\n{out}"
