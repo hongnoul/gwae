@@ -6,6 +6,7 @@
 
 mod cli;
 mod config;
+mod tui;
 
 use clap::Parser;
 use cli::{Cli, Command};
@@ -32,7 +33,7 @@ fn main() {
 
 fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
     match cli.command.unwrap_or(Command::Run { command: None }) {
-        Command::Run { command } => run_tui(command, cfg),
+        Command::Run { command } => tui::run_tui(command, cfg),
         Command::New { command } => {
             tracing::info!(command = ?command, "new column (PTY spawn lands in M0 spike)");
             Ok(())
@@ -66,11 +67,4 @@ fn layout_smoke() -> String {
         .map(|r| r.len())
         .unwrap_or(0);
     format!("columns {before} -> {after} on default row [ok]")
-}
-
-#[allow(dead_code)]
-fn run_tui(_command: Option<String>, _cfg: Config) -> Result<(), i32> {
-    tracing::warn!("strimux run: the TUI renderer lands in the M0 spike; nothing to show yet.");
-    println!("strimux: M0 spike pending. Build the render path (see docs/ARCHITECTURE.md).");
-    Ok(())
 }

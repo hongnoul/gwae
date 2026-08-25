@@ -22,3 +22,4 @@ strimux-layout = { path = "../strimux-layout" }
 strimux-term = { path = "../strimux-term" }
 strimux-testkit = { path = "../strimux-testkit" }
 portable-pty = { workspace = true }
+crossterm = { workspace = true }

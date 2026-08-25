@@ -6,7 +6,7 @@
 //!   - `ScriptedPty`: an in-memory PTY stand-in (used once the binary exists).
 //!   - a tiny snapshot runner for frame assertions.
 
-pub use strimux_term::{Cell, Damage, NullGrid, Size, TermGrid};
+pub use strimux_term::{Cell, Damage, NullGrid, Size, Style, TermGrid};
 
 /// A `TermGrid` that records every written row so tests can snapshot frames.
 #[derive(Debug, Clone, Default)]
@@ -60,6 +60,6 @@ impl TermGrid for FakeTerminal {
             .and_then(|r| r.get(x as usize))
             .copied()
             .unwrap_or(' ');
-        Cell { ch, style: 0 }
+        Cell { ch, style: Style::default() }
     }
 }

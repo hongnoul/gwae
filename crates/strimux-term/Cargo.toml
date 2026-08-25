@@ -11,3 +11,4 @@ description = "strimux emulator facade: TermGrid trait isolating the grid crate 
 name = "strimux_term"
 
 [dependencies]
+vt100 = "0.15"
