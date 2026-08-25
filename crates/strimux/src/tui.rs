@@ -607,6 +607,32 @@ fn sync_panes(
     Ok(())
 }
 
+/// Re-read the live terminal size and adopt it whenever the OS reports
+/// anything different from what we last knew. Called every loop so a resize
+/// that crossterm never delivers as an `Event::Resize` (or that is coalesced
+/// away) can't leave the frame short of the terminal's true right edge. This
+/// is what makes the panes truly full-bleed to the right margin: the frame is
+/// always sized to the currently-rendered column count, never to a cached one.
+fn refresh_size(cols: &mut u16, rows: &mut u16) -> bool {
+    match term_size() {
+        Ok((c, r)) => {
+            let c = c.max(1);
+            let r = r.max(2);
+            if c != *cols || r != *rows {
+                if std::env::var_os("STRIMUX_DEBUG_SIZE").is_some() {
+                    eprintln!("[strimux] terminal size -> {c} cols x {r} rows");
+                }
+                *cols = c;
+                *rows = r;
+                true
+            } else {
+                false
+            }
+        }
+        Err(_) => false,
+    }
+}
+
 /// Run the interactive TUI.
 pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     use std::io;
@@ -626,6 +652,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     })?;
     let mut cols = cols.max(1);
     rows = rows.max(2);
+    if std::env::var_os("STRIMUX_DEBUG_SIZE").is_some() {
+        eprintln!("[strimux] initial terminal size -> {cols} cols x {rows} rows");
+    }
     let mut layout = Layout::default();
     let (tx, rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
@@ -686,6 +715,13 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     dirty = true;
                 }
             }
+        }
+
+        // Keep the frame sized to the live terminal, even when a resize event
+        // is dropped or coalesced. Re-measuring here guarantees the panes stay
+        // full-bleed to the actual right margin.
+        if refresh_size(&mut cols, &mut rows) {
+            dirty = true;
         }
 
         if event::poll(Duration::from_millis(10)).unwrap_or(false) {
