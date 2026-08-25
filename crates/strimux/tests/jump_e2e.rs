@@ -118,7 +118,10 @@ fn widen(s: &mut Session, n: usize) {
 #[test]
 fn two_digits_address_a_column_past_nine() {
     // 12 columns total, i.e. one that no single-digit chord could ever reach.
-    let mut s = Session::start("[cowsay]\nenabled = false\n");
+    // The focused tile is identified by its exact accent background, so pin
+    // the panels opaque: the default `hud_opacity` composites chrome over the
+    // pane and would shift that RGB triple by design.
+    let mut s = Session::start("hud_opacity = 1.0\n[cowsay]\nenabled = false\n");
     let _ = s.drain();
     widen(&mut s, 11);
 

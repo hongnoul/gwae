@@ -23,7 +23,10 @@ fn default_input_poll_ms() -> u64 {
 }
 
 fn default_hud_opacity() -> f32 {
-    1.0
+    // Just translucent enough that the pane ghosts through and the panel
+    // reads as an overlay rather than a hole punched in the screen, without
+    // costing any legibility. Set `1.0` for the old fully solid panels.
+    0.9
 }
 
 /// The resolved view of the config file, with defaults filled in.
@@ -98,7 +101,7 @@ pub struct Config {
     #[serde(default = "default_input_poll_ms")]
     pub input_poll_ms: u64,
     /// Opacity of the centered HUD / minimap / picker panels, `0.0`
-    /// (invisible) to `1.0` (solid, the default). Terminals have no alpha
+    /// (invisible) to `1.0` (solid). Default `0.9`. Terminals have no alpha
     /// channel, so strimux composites the panel over whatever the panes
     /// already painted underneath and emits the mixed truecolor result;
     /// on a terminal without truecolor the panel simply stays solid-looking.
