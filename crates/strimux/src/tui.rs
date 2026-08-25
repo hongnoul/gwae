@@ -1321,18 +1321,96 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
         None
     };
 
-    // Very concise cheat-sheet. Fits ~54 cols; the box auto-centers each line.
+    // Cheat-sheet as a spreadsheet: two (key, action) column pairs with a
+    // header row and ruled grid lines, so keys line up in a scannable table
+    // rather than reading as a paragraph of hints.
+    const MOVE: &[(&str, &str)] = &[
+        ("hjkl", "focus pane"),
+        ("⇧hjkl", "move pane"),
+        ("1-9", "jump column"),
+        ("g", "smart jump"),
+        ("←→ ,.", "prev/next"),
+        ("[ ]", "view"),
+        ("click", "click focus"),
+        ("wheel", "scroll"),
+    ];
+    const ACT: &[(&str, &str)] = &[
+        ("c", "new pane"),
+        (";", "new agent"),
+        ("s", "split"),
+        ("r", "width"),
+        ("x", "kill pane"),
+        ("q", "quit"),
+        ("⌥+↵", "new column"),
+        ("⇧↵", "new row"),
+        ("/", "toggle help"),
+    ];
+    // Column widths sized to their widest cell, header included.
+    let width_of = |hdr: &str, it: &[(&str, &str)], first: bool| -> usize {
+        it.iter()
+            .map(|e| if first { e.0 } else { e.1 }.chars().count())
+            .chain(std::iter::once(hdr.chars().count()))
+            .max()
+            .unwrap_or(0)
+    };
+    let w = [
+        width_of("key", MOVE, true),
+        width_of("navigate", MOVE, false),
+        width_of("key", ACT, true),
+        width_of("panes", ACT, false),
+    ];
+    let pad: usize = 1;
+    // Each cell is ` text `; columns joined by a vertical rule.
+    let table_w: usize = w.iter().map(|c| c + 2).sum::<usize>() + 3;
+    let cell = |text: &str, i: usize| -> String { format!(" {:<width$} ", text, width = w[i]) };
+    let rule = |m: char| -> String {
+        let mut s = String::new();
+        for (i, c) in w.iter().enumerate() {
+            if i > 0 {
+                s.push(m);
+            }
+            s.extend(std::iter::repeat('─').take(c + 2));
+        }
+        s
+    };
     let mut lines: Vec<String> = Vec::new();
     if let Some(a) = attention.clone() {
         lines.push(a);
     }
-    lines.push(" hjkl focus  ⇧hjkl move  1-9 col  g jump ".to_string());
-    lines.push(" c new  ; agent  s split  r width  x kill  q quit ".to_string());
-    lines.push(" ←→/,. pane  [] view  ⌥+↵ col  ⇧↵ row ".to_string());
-    lines.push(" ⌥+key  /  ^B key  •  click focus  wheel scroll ".to_string());
+    let attn_rows = lines.len();
+    lines.push(format!(
+        "{}│{}│{}│{}",
+        cell("key", 0),
+        cell("navigate", 1),
+        cell("key", 2),
+        cell("panes", 3)
+    ));
+    lines.push(rule('┼'));
+    for i in 0..MOVE.len().max(ACT.len()) {
+        let (k1, a1) = MOVE.get(i).copied().unwrap_or(("", ""));
+        let (k2, a2) = ACT.get(i).copied().unwrap_or(("", ""));
+        lines.push(format!(
+            "{}│{}│{}│{}",
+            cell(k1, 0),
+            cell(a1, 1),
+            cell(k2, 2),
+            cell(a2, 3)
+        ));
+    }
+    lines.push(rule('┴'));
+    lines.push(format!(
+        "{:^width$}",
+        "prefix: ⌥+key  or  ^B key",
+        width = table_w
+    ));
 
-    let pad: usize = 1;
-    let bw = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) + pad * 2 + 2;
+    let bw = lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(table_w)
+        + 2;
     let bh = lines.len() + 2;
     if bw as u16 >= cols || bh as u16 >= rows {
         return;
@@ -1367,18 +1445,24 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal:
     for (idx, line) in lines.iter().enumerate() {
         let ty = oy + 1 + idx;
         let line_len = line.chars().count();
-        let tx = ox + 1 + pad + (bw - 2 - pad * 2 - line_len) / 2;
+        let tx = ox + 1 + (bw - 2).saturating_sub(line_len) / 2;
         let is_attention = has_attn && idx == 0;
+        let is_header = idx == attn_rows;
+        let is_rule = line.starts_with('─');
         for (i, ch) in line.chars().enumerate() {
             if let Some(c) = out.get_mut(ty * cols as usize + (tx + i)) {
                 c.ch = ch;
                 c.style.fg = if is_attention {
                     CColor::Idx(231)
+                } else if is_header {
+                    focus_color
+                } else if is_rule || ch == '│' {
+                    Palette::muted(pal.text)
                 } else {
                     pal.text
                 };
                 c.style.bg = bg;
-                c.style.bold = is_attention;
+                c.style.bold = is_attention || is_header;
                 c.width = 1;
             }
         }
@@ -1710,6 +1794,9 @@ enum Cmd {
     /// Open the theme picker (`⌥+t`), or step through it while it is open.
     /// `0` opens, `-1`/`+1` move the selection.
     ThemePick(i32),
+    /// Toggle the centered cheat-sheet HUD (`⌥+/`), the same overlay shown
+    /// once at startup. Any other key still dismisses it.
+    ToggleHud,
     Quit,
     None,
 }
@@ -1810,6 +1897,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{a9}') => return Some(Cmd::SmartJump),               // © (Option+g)
             Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
             Char('\u{2020}') => return Some(Cmd::ThemePick(0)),          // † (Option+t)
+            Char('\u{f7}') => return Some(Cmd::ToggleHud),               // ÷ (Option+/)
             _ => {}
         }
     }
@@ -1858,6 +1946,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             }
             'g' => return Some(Cmd::SmartJump),
             't' => return Some(Cmd::ThemePick(0)),
+            '/' | '?' => return Some(Cmd::ToggleHud),
             _ if c.is_ascii_digit() => Some(Action::JumpToColumn(
                 c.to_digit(10).unwrap_or(1) as usize - 1,
             )),
@@ -2298,7 +2387,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 Ok(Event::Key(ke))
                     if matches!(ke.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
-                    // Startup HUD persists until the next key press.
+                    // The HUD persists until the next key press; ⌥+/ toggles
+                    // it explicitly, so remember whether it was up before we
+                    // dismiss it here.
+                    let hud_was_active = hud_active;
                     if hud_active {
                         hud_active = false;
                         dirty = true;
@@ -2395,6 +2487,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     if let Some(cmd) = handle_key(&ke) {
                         match cmd {
                             Cmd::Quit => break 'main,
+                            Cmd::ToggleHud => {
+                                hud_active = !hud_was_active;
+                                dirty = true;
+                            }
                             Cmd::ThemePick(_) => {
                                 // Open on the currently configured theme when
                                 // it is a known preset, so stepping starts
@@ -4042,6 +4138,15 @@ mod tests {
     }
 
     #[test]
+    fn dump_hud_tmp() {
+        let layout = Layout::default();
+        let (cols, rows) = (80u16, 24u16);
+        let mut out = vec![Cell::default(); cols as usize * rows as usize];
+        draw_center_hud(&mut out, cols, rows, &layout, &pal_accent(CColor::Rgb(1,2,3)));
+        for y in 0..rows { let l: String = (0..cols).map(|x| out[y as usize*cols as usize+x as usize].ch).collect(); println!("{}", l.trim_end()); }
+    }
+
+    #[test]
     fn center_hud_paints_centered_box_with_attention_hint() {
         // HUD flash: centered box with smart-jump hint + concise keybind cheat-sheet.
         let mut layout = Layout::default();
@@ -4109,6 +4214,18 @@ mod tests {
             tiny.iter().all(|c| c.ch == ' '),
             "tiny viewport draws no HUD"
         );
+    }
+
+    #[test]
+    fn alt_slash_toggles_the_cheat_sheet_hud() {
+        // Option-as-Meta path and the macOS glyph path both map to ToggleHud.
+        let ev = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::ALT);
+        assert!(matches!(handle_key(&ev), Some(Cmd::ToggleHud)));
+        let ev = KeyEvent::new(KeyCode::Char('\u{f7}'), KeyModifiers::NONE);
+        assert!(matches!(handle_key(&ev), Some(Cmd::ToggleHud)));
+        // Plain `/` stays pane input.
+        let ev = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+        assert!(matches!(handle_key(&ev), Some(Cmd::Input(_))));
     }
 
     #[test]

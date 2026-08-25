@@ -94,6 +94,7 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | `⌥+1` … `⌥+9` | Jump to column N in focused strip |
 | `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
 | `⌥+t` (`†` on macOS) | **Theme picker** — step presets with `←`/`→`, live-previewed on the real UI; `⏎` keeps, `esc` restores |
+| `⌥+/` (`÷` on macOS) | **Toggle the cheat-sheet HUD** — same overlay shown at startup; any other key dismisses it |
 | `⌥+Shift+q` | Quit strimux (kills all panes) |
 | click | Left-click focuses the clicked pane |
 | wheel | Scrolls pane scrollback under cursor; `Shift+wheel` etc. forwarded as SGR when pane wants mouse, else translated to `↑`/`↓` for alt-screen pagers |
@@ -120,7 +121,7 @@ Panes without shell integration fall back to a **quiet heuristic**: a pane silen
 No bottom status row. Hold `⌥`/Alt to see status (centered, no pane shrinkage):
 
 - **Centered minimap** — one row per strip, one tile per pane (width ∝ column share), tinted by status, focused tile in `focus_color`, `❯` on focused strip, digit `⌥+1..9` per tile, summary `5 »2 !1 ✓1 ✗1`.
-- **Centered HUD** — ` » 1.3 needs you — ⌥+g` + cheat-sheet, shown once at startup and dismissed on the first key press. While the HUD is visible the minimap is hidden beneath it.
+- **Centered HUD** — ` » 1.3 needs you — ⌥+g` + cheat-sheet, shown once at startup, toggled any time with `⌥+/`, and dismissed on the first key press. While the HUD is visible the minimap is hidden beneath it.
 
 The minimap/HUD appears whenever there is more than one pane (or strip).
 

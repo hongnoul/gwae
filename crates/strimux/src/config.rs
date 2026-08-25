@@ -321,7 +321,7 @@ impl Default for Cowsay {
                 "Press s to split this column".to_string(),
                 "1-9 jumps straight to a column".to_string(),
                 "Press r to cycle this column's width".to_string(),
-                "Hold Alt for the cheat-sheet".to_string(),
+                "Alt+/ toggles the cheat-sheet".to_string(),
             ],
         }
     }
