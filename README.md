@@ -84,6 +84,7 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | `⌥+Shift+h` / `⌥+Shift+l` | Move focused column left / right (swap with neighbor) |
 | `⌥+Shift+k` / `⌥+Shift+j` | Move pane up / down within stack; at the stack edge carries the pane to the neighboring strip (creating one past the end), discarding an emptied strip |
 | `⌥+Enter` / `⌥+a` | New column to the right of focused |
+| `⌥+Shift+Enter` | New strip (row) below the focused one |
 | `⌥+;` (`…` on macOS) | Spawn agent pane at strip end and focus it (`default_agent`, or pick one if unset) |
 | `⌥+s` | Split focused column — new pane below |
 | `⌥+r` | Cycle focused column width `1/3 → 1/2 → 1/4` |

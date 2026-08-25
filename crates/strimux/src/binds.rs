@@ -26,6 +26,15 @@ pub enum Trigger {
     Chord(char),
     /// `$mod` + Shift + this character.
     ShiftChord(char),
+    /// `$mod` + Return, optionally with Shift. Spelled by the platform module
+    /// so it reads `⌥+↵` on macOS and `Alt+Enter` elsewhere. Machine-checkable
+    /// like the character chords: the dispatcher only produces these commands
+    /// with the modifier held, so the label must say so.
+    EnterChord { shift: bool },
+    /// `$mod` + something the cheat-sheet can only describe in prose (digit
+    /// ranges, arrows). Still labelled with the modifier, because pressing the
+    /// key alone does nothing.
+    ModProse(&'static str),
     /// Described in prose (arrows, digits, mouse); not machine-checkable.
     Prose(&'static str),
 }
@@ -89,12 +98,12 @@ impl Bind {
         match self.trigger {
             Trigger::Chord(c) => keys::chord(&c.to_string()),
             Trigger::ShiftChord(c) => keys::shift_chord(&c.to_string()),
-            // The two Enter rows are spelled by the platform module so they
-            // read `↵` on macOS and `Enter` elsewhere, like every other label.
-            Trigger::Prose("↵") => keys::enter_key().to_string(),
-            Trigger::Prose("⇧↵") => {
-                format!("{}{}", keys::shift_key(), keys::enter_key())
-            }
+            // The two Enter rows are `$mod` chords like everything else; the
+            // label has to carry the modifier or the cow tells the user to
+            // press a bare Return, which just goes to the focused pane.
+            Trigger::EnterChord { shift: false } => keys::chord(keys::enter_key()),
+            Trigger::EnterChord { shift: true } => keys::shift_chord(keys::enter_key()),
+            Trigger::ModProse(s) => keys::chord(s),
             Trigger::Prose(s) => s.to_string(),
         }
     }
@@ -192,7 +201,7 @@ pub const BINDS: &[Bind] = &[
         effect: Effect::Scroll(200),
     },
     Bind {
-        trigger: Trigger::Prose("1-9"),
+        trigger: Trigger::ModProse("1-9"),
         hint: "jumps straight to a column",
         glyph: None,
         group: Group::Navigate,
@@ -200,7 +209,7 @@ pub const BINDS: &[Bind] = &[
         effect: Effect::Unverifiable,
     },
     Bind {
-        trigger: Trigger::Prose("←/→"),
+        trigger: Trigger::ModProse("←/→"),
         hint: "pans wide content sideways",
         glyph: None,
         group: Group::Navigate,
@@ -305,20 +314,20 @@ pub const BINDS: &[Bind] = &[
         effect: Effect::ToggleHud,
     },
     Bind {
-        trigger: Trigger::Prose("↵"),
+        trigger: Trigger::EnterChord { shift: false },
         hint: "opens a column here as well",
         glyph: None,
         group: Group::Panes,
         desc: "new column",
-        effect: Effect::Unverifiable,
+        effect: Effect::Act(Action::NewColumn),
     },
     Bind {
-        trigger: Trigger::Prose("⇧↵"),
+        trigger: Trigger::EnterChord { shift: true },
         hint: "starts a new strip below",
         glyph: None,
         group: Group::Panes,
         desc: "new row",
-        effect: Effect::Unverifiable,
+        effect: Effect::Act(Action::NewRow),
     },
 ];
 
@@ -377,7 +386,8 @@ mod tests {
             let key = match b.trigger {
                 Trigger::Chord(c) => c.to_string(),
                 Trigger::ShiftChord(c) => c.to_string(),
-                Trigger::Prose(_) => continue,
+                Trigger::EnterChord { .. } => "Enter".to_string(),
+                Trigger::ModProse(_) | Trigger::Prose(_) => continue,
             };
             let mac = format!("⌥+{key}");
             assert!(readme.contains(&mac), "README documents {mac} ({})", b.desc);

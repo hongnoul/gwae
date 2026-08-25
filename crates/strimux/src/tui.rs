@@ -5471,7 +5471,30 @@ mod tests {
                         b.desc
                     );
                 }
-                Trigger::Prose(_) => continue,
+                Trigger::EnterChord { shift } => {
+                    let mut mods = KeyModifiers::ALT;
+                    if shift {
+                        mods |= KeyModifiers::SHIFT;
+                    }
+                    assert_eq!(
+                        handle_key(&KeyEvent::new(KeyCode::Enter, mods)),
+                        want,
+                        "{} ({}) must dispatch as advertised",
+                        b.label(),
+                        b.desc
+                    );
+                    // A *bare* Return (no modifier) belongs to the focused
+                    // pane. The cheat-sheet used to label this row `↵`, which
+                    // told users to press a key that only types a newline.
+                    assert!(
+                        matches!(
+                            handle_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+                            Some(Cmd::Input(_))
+                        ),
+                        "bare Return must reach the pane, not the layout"
+                    );
+                }
+                Trigger::ModProse(_) | Trigger::Prose(_) => continue,
             }
             // The macOS glyph fallback must reach the same command, so the
             // cheat-sheet is honest on terminals without "Option as Meta".
