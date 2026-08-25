@@ -96,6 +96,32 @@ fn query_reply(bytes: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+/// Strip control characters that could escape an OSC title sequence and clip
+/// the result to a reasonable window-title length. Prevents a malicious child
+/// title from running state-changing escapes on the host terminal.
+fn sanitize_title(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    for c in title.chars() {
+        if (c as u32) < 0x20 || c == '\x7f' {
+            continue;
+        }
+        out.push(c);
+        if out.chars().count() >= 256 {
+            break;
+        }
+    }
+    out
+}
+
+/// Tell the host terminal what title to display by writing OSC 2 (window
+/// title) terminated with ST. Forwarding the focused pane's inner title makes
+/// strimux effectively transparent to the host's title/status bar: the outer
+/// window shows e.g. a jcode session title instead of "strimux".
+fn emit_title(stdout: &mut impl Write, title: &str) -> std::io::Result<()> {
+    write!(stdout, "\x1b]2;{}\x1b\\", sanitize_title(title))?;
+    stdout.flush()
+}
+
 /// Spawn a PTY running `cmd` at the given grid size, wiring a reader thread.
 fn spawn_pane(
     id: PaneId,
@@ -666,6 +692,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut last: Vec<Cell> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
     let mut dirty = true;
+    // The title currently shown on the host terminal; we only write when it
+    // changes so we don't spam the host with identical OSC sequences.
+    let mut last_title: String = String::new();
 
     'main: loop {
         while let Ok(msg) = rx.try_recv() {
@@ -777,6 +806,24 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
         }
 
+        // Treat strimux as an invisible layer for the host title bar: mirror the
+        // focused pane's inner title (set via OSC 0/2 by e.g. jcode) out to the
+        // host terminal, so switching panes updates the outer window/status bar
+        // to the pane you're actually looking at instead of "strimux". Fall back
+        // to a plain strimux label when the focused pane has set no title.
+        let effective = focused_pane(&layout)
+            .and_then(|pid| panes.get(&pid))
+            .map(|p| p.grid.title())
+            .filter(|t| !t.is_empty())
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "strimux".to_string());
+        if effective != last_title {
+            last_title = effective.clone();
+            if let Err(e) = emit_title(&mut stdout, &effective) {
+                tracing::warn!("set title: {e}");
+            }
+        }
+
         if dirty {
             render_frame(
                 &mut frame,
@@ -823,6 +870,27 @@ mod tests {
     fn pane_window_shows_leading_content() {
         // 240-col content, 80-col rect, no scroll: reveal [0, 80).
         assert_eq!(pane_window(0, 0, 80, 240), Some((0, 80)));
+    }
+
+    #[test]
+    fn emit_title_writes_osc2_st() {
+        let mut out = Vec::new();
+        emit_title(&mut out, "jcode: my session").unwrap();
+        assert_eq!(out, b"\x1b]2;jcode: my session\x1b\\");
+    }
+
+    #[test]
+    fn sanitize_title_strips_control_and_clips() {
+        // Ordinary text passes through untouched.
+        assert_eq!(sanitize_title("abc 123"), "abc 123");
+        // Control characters (ESC/BEL/CR/LF) are dropped so a child cannot
+        // smuggle state-changing escapes out through the title; printable
+        // characters inside the OSC payload are preserved verbatim.
+        assert_eq!(sanitize_title("a\x1b]0;evil\x07b"), "a]0;evilb");
+        assert_eq!(sanitize_title("\x01\x02"), "");
+        // Over-long titles are clipped to a sane window-title length.
+        let long = "x".repeat(1000);
+        assert_eq!(sanitize_title(&long).chars().count(), 256);
     }
 
     #[test]

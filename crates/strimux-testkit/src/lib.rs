@@ -16,6 +16,8 @@ pub struct FakeTerminal {
     pub rows: Vec<Vec<char>>,
     /// Accumulated raw bytes fed in.
     pub fed: Vec<u8>,
+    /// Window title via OSC 0/2, so tests can exercise title forwarding.
+    pub title: String,
 }
 
 impl FakeTerminal {
@@ -25,6 +27,7 @@ impl FakeTerminal {
             size,
             rows,
             fed: Vec::new(),
+            title: String::new(),
         }
     }
 
@@ -64,5 +67,9 @@ impl TermGrid for FakeTerminal {
             ch,
             style: Style::default(),
         }
+    }
+
+    fn title(&self) -> &str {
+        &self.title
     }
 }

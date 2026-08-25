@@ -61,6 +61,8 @@ pub trait TermGrid {
     fn resize(&mut self, size: Size);
     fn feed(&mut self, bytes: &[u8]) -> Vec<Damage>;
     fn cell(&self, x: u16, y: u16) -> Cell;
+    /// The most recent window title set by the child (OSC 0/2), if any.
+    fn title(&self) -> &str;
 }
 
 // --- vt100-backed grid (M0/M1 implementation) ---
@@ -133,6 +135,10 @@ impl TermGrid for Vt100Grid {
             None => Cell::default(),
         }
     }
+
+    fn title(&self) -> &str {
+        self.parser.screen().title()
+    }
 }
 
 /// A blank, fixed-size grid used as a test double and during startup.
@@ -163,6 +169,10 @@ impl TermGrid for NullGrid {
     }
     fn cell(&self, _x: u16, _y: u16) -> Cell {
         Cell::default()
+    }
+
+    fn title(&self) -> &str {
+        ""
     }
 }
 
@@ -213,5 +223,20 @@ mod tests {
         let g = NullGrid::new(Size { cols: 10, rows: 10 });
         assert_eq!(g.cell(3, 4), Cell::default());
         assert_eq!(g.size(), Size { cols: 10, rows: 10 });
+    }
+
+    #[test]
+    fn vt100_tracks_osc_title() {
+        let mut g = Vt100Grid::new(Size { cols: 20, rows: 5 });
+        assert_eq!(g.title(), "");
+        // OSC 2 (window title) terminated by BEL.
+        g.feed(b"\x1b]2;my session\x07");
+        assert_eq!(g.title(), "my session");
+        // OSC 0 (icon + window title) terminated by ST (ESC \).
+        g.feed(b"\x1b]0;other title\x1b\\");
+        assert_eq!(g.title(), "other title");
+        // A later title completely replaces the previous one.
+        g.feed(b"\x1b]0;\x1b\\");
+        assert_eq!(g.title(), "");
     }
 }
