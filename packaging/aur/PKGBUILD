@@ -9,7 +9,7 @@ url="https://github.com/hongnoul/gwae"
 license=('MIT')
 depends=()
 source=("gwae-$pkgver-x86_64-unknown-linux-musl.tar.gz::https://github.com/hongnoul/gwae/releases/download/v$pkgver/gwae-x86_64-unknown-linux-musl.tar.gz")
-sha256sums=('bea6d1c6c3414668f0d45417255bbd86566eedbafac2bd7ff859a46a78d569e2')
+sha256sums=('039775ed62a4ebb404bd76ce24f23abe0966df66fe2a5efc2672458eb4da8429')
 
 package() {
   install -Dm755 gwae "$pkgdir/usr/bin/gwae"

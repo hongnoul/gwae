@@ -9,10 +9,10 @@ class Gwae < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/hongnoul/gwae/releases/download/v1.0.0/gwae-aarch64-apple-darwin.tar.gz"
-      sha256 "918aa91b52f11fce6dc01360cbe2d6e630aeb7d6e2896b943c2022112ada01c6"
+      sha256 "5c24d94da2e27262e15b950987e6906200c8b04522ab07784607a3c0b1b2b49e"
     else
       url "https://github.com/hongnoul/gwae/releases/download/v1.0.0/gwae-x86_64-apple-darwin.tar.gz"
-      sha256 "00c0a5b725fd275f46eefc61852451422930da2bb1eee12dc621e1f2a8788282"
+      sha256 "ad2c5dd7cc631355be34a34351ba86bad84f90682a01f291ce6a588a117c7faa"
     end
   end
 
