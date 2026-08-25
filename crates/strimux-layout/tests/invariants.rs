@@ -27,6 +27,7 @@ fn random_actions() -> impl Strategy<Value = Vec<Action>> {
         Just(NewColumn),
         Just(NewRow),
         Just(SpawnAgent),
+        Just(SpawnAgentRow),
         Just(MovePaneLeft),
         Just(MovePaneRight),
         prop::collection::vec(0..5, 1).prop_map(|v| ScrollViewport(v[0] - 2)),
@@ -699,4 +700,76 @@ fn toggle_full_width_round_trips_to_quarter() {
         .apply(Action::ToggleFullWidth, view(), follow())
         .unwrap();
     assert_eq!(width(&layout), Width::Preset(Preset::Full));
+}
+
+#[test]
+fn column_focus_persists_across_horizontal_movement() {
+    // Vertical focus is per column: stepping off a stack and back returns to
+    // the pane you were on, not the top of the column.
+    let mut layout = Layout::default();
+    let _ = layout.apply(Action::SplitBelow, view(), follow());
+    let _ = layout.apply(Action::SplitBelow, view(), follow());
+    assert_eq!(layout.focus.pane, 2);
+    let deep = layout.focused_pane_id().unwrap();
+    let _ = layout.apply(Action::FocusRight, view(), follow());
+    assert_eq!(
+        layout.focus.pane, 0,
+        "shallow neighbor starts at its own top"
+    );
+    let _ = layout.apply(Action::FocusLeft, view(), follow());
+    assert_eq!(layout.focus.pane, 2);
+    assert_eq!(layout.focused_pane_id(), Some(deep));
+}
+
+#[test]
+fn column_focus_persists_across_strips() {
+    // Crossing to another strip and back restores the per-column pane too,
+    // including when the strip-level memory picks the column.
+    let mut layout = Layout::default();
+    let _ = layout.apply(Action::SplitBelow, view(), follow());
+    let deep = layout.focused_pane_id().unwrap();
+    let _ = layout.apply(Action::FocusDown, view(), follow()); // new empty strip
+    let _ = layout.apply(Action::NewColumn, view(), follow());
+    let _ = layout.apply(Action::FocusUp, view(), follow());
+    assert_eq!(layout.focus.pane, 1);
+    assert_eq!(layout.focused_pane_id(), Some(deep));
+}
+
+#[test]
+fn column_focus_survives_a_jump_and_neighbor_edits() {
+    let mut layout = Layout::default();
+    let _ = layout.apply(Action::SplitBelow, view(), follow());
+    let deep = layout.focused_pane_id().unwrap();
+    let _ = layout.apply(Action::JumpToColumn(2), view(), follow());
+    // Editing another column must not disturb this one's memory.
+    let _ = layout.apply(Action::SplitBelow, view(), follow());
+    let _ = layout.apply(Action::JumpToColumn(0), view(), follow());
+    assert_eq!(layout.focused_pane_id(), Some(deep));
+}
+
+#[test]
+fn column_focus_tracks_panes_removed_above_it() {
+    // Closing a pane above the remembered one shifts every later index down;
+    // memory must follow the same pane rather than drift up a slot.
+    let mut layout = Layout::default();
+    let _ = layout.apply(Action::SplitBelow, view(), follow());
+    let _ = layout.apply(Action::SplitBelow, view(), follow());
+    let deep = layout.focused_pane_id().unwrap();
+    let top = layout.focused_row().unwrap().columns[0].panes[0];
+    let _ = layout.apply(Action::FocusRight, view(), follow());
+    let _ = layout.apply(Action::ClosePane(top), view(), follow());
+    let _ = layout.apply(Action::FocusLeft, view(), follow());
+    assert_eq!(layout.focused_pane_id(), Some(deep));
+}
+
+#[test]
+fn column_focus_clamps_when_the_stack_shrinks() {
+    let mut layout = Layout::default();
+    let _ = layout.apply(Action::SplitBelow, view(), follow());
+    let bottom = layout.focused_pane_id().unwrap();
+    let _ = layout.apply(Action::FocusRight, view(), follow());
+    let _ = layout.apply(Action::ClosePane(bottom), view(), follow());
+    let _ = layout.apply(Action::FocusLeft, view(), follow());
+    assert_eq!(layout.focus.pane, 0);
+    assert!(layout.focused_pane_id().is_some());
 }

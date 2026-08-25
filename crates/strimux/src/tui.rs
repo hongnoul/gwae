@@ -2302,21 +2302,24 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{d2}') => return Some(Cmd::Act(Action::MovePaneRight)), // Ò (Option+Shift+l)
             // ¿ (Option+Shift+/), i.e. Option+? — same toggle as Option+/.
             Char('\u{bf}') => return Some(Cmd::ToggleHud),
+            // Ú (Option+Shift+;) spawns an agent on a new strip.
+            Char('\u{da}') => return Some(Cmd::Act(Action::SpawnAgentRow)),
             _ => {}
         }
     }
     if !alt && !ctrl && !shift {
         match ev.code {
-            Char('\u{2d9}') => return Some(Cmd::Act(Action::FocusLeft)), // ˙ (Option+h)
-            Char('\u{2206}') => return Some(Cmd::Act(Action::FocusDown)), // ∆ (Option+j)
-            Char('\u{2da}') => return Some(Cmd::Act(Action::FocusUp)),   // ˚ (Option+k)
-            Char('\u{ac}') => return Some(Cmd::Act(Action::FocusRight)), // ¬ (Option+l)
             Char('\u{2026}') => return Some(Cmd::Act(Action::SpawnAgent)), // … (Option+;)
-            Char('\u{153}') => return Some(Cmd::Act(Action::KillPane)),  // œ (Option+q)
-            Char('\u{a9}') => return Some(Cmd::SmartJump),               // © (Option+g)
+            Char('\u{2d9}') => return Some(Cmd::Act(Action::FocusLeft)),   // ˙ (Option+h)
+            Char('\u{2206}') => return Some(Cmd::Act(Action::FocusDown)),  // ∆ (Option+j)
+            Char('\u{2da}') => return Some(Cmd::Act(Action::FocusUp)),     // ˚ (Option+k)
+            Char('\u{ac}') => return Some(Cmd::Act(Action::FocusRight)),   // ¬ (Option+l)
+
+            Char('\u{153}') => return Some(Cmd::Act(Action::KillPane)), // œ (Option+q)
+            Char('\u{a9}') => return Some(Cmd::SmartJump),              // © (Option+g)
             Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
-            Char('\u{2020}') => return Some(Cmd::ThemePick(0)),          // † (Option+t)
-            Char('\u{f7}') => return Some(Cmd::ToggleHud),               // ÷ (Option+/)
+            Char('\u{2020}') => return Some(Cmd::ThemePick(0)),         // † (Option+t)
+            Char('\u{f7}') => return Some(Cmd::ToggleHud),              // ÷ (Option+/)
             _ => {}
         }
     }
@@ -2354,7 +2357,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         // ⌥+s and strimux would split the column instead of forwarding the key.
         // That silently ate chords the focused pane owns (jcode binds
         // ⌥+Shift+s to copy), so shifted variants fall through to the pane.
-        if shift && !matches!(c, 'q' | '/' | '?') {
+        if shift && !matches!(c, 'q' | '/' | '?' | ';' | ':') {
             // Forward the shifted codepoint. Some terminals report Shift as a
             // modifier bit alongside the *unshifted* char; `key_bytes` encodes
             // `ev.code` verbatim and has no shift handling for `Char`, so the
@@ -2367,12 +2370,16 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             return Some(Cmd::Input(key_bytes(&ev)));
         }
         let act = match c {
-            'a' => Some(Action::NewColumn),
-            ';' => Some(Action::SpawnAgent),
+            // Some terminals deliver ⌥+Shift+; as a bare ':' with no shift
+            // bit; the shifted codepoint itself is the signal.
+            ';' | ':' => Some(if shift || matches!(ev.code, Char(':')) {
+                Action::SpawnAgentRow
+            } else {
+                Action::SpawnAgent
+            }),
             's' => Some(Action::SplitBelow),
             'r' => Some(Action::CycleWidth),
             'f' => Some(Action::ToggleFullWidth),
-            'x' => Some(Action::KillPane),
             'z' => Some(Action::CycleWidth),
             'q' => {
                 if shift {
@@ -3081,7 +3088,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                 // A spawn-agent verb ends focused on the new
                                 // column just right of the previous focus; mark its pane so sync spawns
                                 // the agent harness rather than a shell.
-                                if a == Action::SpawnAgent {
+                                if matches!(a, Action::SpawnAgent | Action::SpawnAgentRow) {
                                     if let Some(pid) = focused_pane(&layout) {
                                         agent_panes.insert(pid);
                                     }
@@ -3655,6 +3662,33 @@ mod tests {
         // Terminals that deliver Option as Meta send ESC+; -> Alt+;.
         let ev = KeyEvent::new(KeyCode::Char(';'), KeyModifiers::ALT);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgent)));
+    }
+
+    #[test]
+    fn handle_key_option_shift_semicolon_spawns_an_agent_row() {
+        // macOS glyph fallback: Option+Shift+; is Ú.
+        let ev = KeyEvent::new(KeyCode::Char('\u{da}'), KeyModifiers::NONE);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgentRow)));
+        // Option-as-Meta: ESC+':' arrives as Alt+':' (shifted codepoint, and
+        // some terminals also set the Shift bit).
+        let ev = KeyEvent::new(KeyCode::Char(':'), KeyModifiers::ALT);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgentRow)));
+        let ev = KeyEvent::new(KeyCode::Char(';'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgentRow)));
+    }
+
+    #[test]
+    fn option_a_and_option_x_belong_to_the_pane_again() {
+        // Both bindings were removed: strimux must not swallow them, so the
+        // focused pane sees the chord (jcode and vim bind ⌥+a / ⌥+x).
+        for c in ['a', 'x'] {
+            let ev = KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT);
+            assert_eq!(
+                handle_key(&ev),
+                Some(Cmd::Input(key_bytes(&ev))),
+                "⌥+{c} should be forwarded, not claimed"
+            );
+        }
     }
 
     #[test]

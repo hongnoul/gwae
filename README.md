@@ -84,13 +84,14 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | `⌥+k` / `⌥+j` | Focus up / down within stack; at edge crosses strips. Past the last strip creates an empty strip (niri workspace semantics); leaving an empty strip discards it |
 | `⌥+Shift+h` / `⌥+Shift+l` | Move focused column left / right (swap with neighbor) |
 | `⌥+Shift+k` / `⌥+Shift+j` | Move pane up / down within stack; at the stack edge carries the pane to the neighboring strip (creating one past the end), discarding an emptied strip |
-| `⌥+Enter` / `⌥+a` | New column to the right of focused |
+| `⌥+Enter` | New column to the right of focused |
 | `⌥+Shift+Enter` | New strip (row) below the focused one |
-| `⌥+;` (`…` on macOS) | Spawn agent pane at strip end and focus it (`default_agent`, or pick one if unset) |
+| `⌥+;` (`…` on macOS) | Spawn agent column right of focus and focus it (`default_agent`, or pick one if unset) |
+| `⌥+Shift+;` (`Ú` on macOS) | Spawn agent on a new strip below the focused one |
 | `⌥+s` | Split focused column — new pane below |
 | `⌥+r` | Cycle focused column width `1/3 → 1/2 → 1/4` |
 | `⌥+f` (`ƒ` on macOS) | Toggle focused column between full width and `1/4` |
-| `⌥+x` / `⌥+q` (`œ`) | Kill focused pane — columns compact, focus keeps its slot (falls left only at right edge); emptied strip is dropped, last pane quits strimux |
+| `⌥+q` (`œ`) | Kill focused pane — columns compact, focus keeps its slot (falls left only at right edge); emptied strip is dropped, last pane quits strimux |
 | `⌥+←` / `⌥+→` | Scroll pane's logical content horizontally (when `content_width` > column width) |
 | `⌥+[` / `⌥+]` | Scroll the row viewport left / right without moving focus |
 | `⌥+↑` / `⌥+↓` | **Scrollback** — read back through the focused pane's history, 3 rows a notch. `⌥+Shift+↑/↓` and `⌥+PageUp/PageDown` move ~a screenful. Typing snaps back to live. A full-screen app (vim, `less`) owns its own scrolling, so it gets the arrow keys instead |

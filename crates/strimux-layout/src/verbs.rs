@@ -33,6 +33,8 @@ pub enum Action {
     NewColumn,
     NewRow,
     SpawnAgent,
+    /// Spawn an agent on a brand-new strip below the focused one.
+    SpawnAgentRow,
     ScrollViewport(i32),
     JumpToColumn(usize),
     /// Jump focus directly to a pane anywhere in the grid (smart-jump: the
@@ -78,6 +80,7 @@ impl Layout {
             Action::NewColumn => Ok(self.apply_new_column(viewport, follow)),
             Action::NewRow => Ok(self.apply_new_row(viewport, follow)),
             Action::SpawnAgent => Ok(self.apply_new_column(viewport, follow)),
+            Action::SpawnAgentRow => Ok(self.apply_new_row(viewport, follow)),
             Action::ScrollViewport(d) => Ok(self.apply_scroll(d, viewport)),
             Action::JumpToColumn(n) => self.apply_jump(n, viewport, follow),
             Action::FocusPane(pid) => self.apply_focus_pane(pid, viewport, follow),
@@ -113,12 +116,22 @@ impl Layout {
         self.focus.pane = self.focus.pane.min(max - 1);
     }
 
+    /// Point `focus.pane` at the focused column's remembered pane.
+    ///
+    /// Vertical focus is *per column*, not per strip: stepping sideways off a
+    /// stack and back returns to the pane you were on rather than the top of
+    /// the column.
+    fn restore_column_focus(&mut self) {
+        self.focus.pane = self.column_focus(self.focus.row, self.focus.column);
+        self.clamp_focus_pane();
+    }
+
     fn focus_left(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
         if self.focus.column == 0 {
             return Ok(self.focused_scroll());
         }
         self.focus.column -= 1;
-        self.clamp_focus_pane();
+        self.restore_column_focus();
         self.remember_focus();
         self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
@@ -130,7 +143,7 @@ impl Layout {
             return Ok(self.focused_scroll());
         }
         self.focus.column += 1;
-        self.clamp_focus_pane();
+        self.restore_column_focus();
         self.remember_focus();
         self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
@@ -203,8 +216,7 @@ impl Layout {
             let col = self.nearest_column(target_id, x_center, viewport.cols);
             self.focus.row = target_id;
             self.focus.column = col;
-            self.focus.pane = 0;
-            self.clamp_focus_pane();
+            self.restore_column_focus();
         }
         // Leaving an empty strip behind drops it, so only the strip you are
         // standing on can ever be empty.
@@ -493,6 +505,13 @@ impl Layout {
             return Ok(self.focused_scroll());
         };
         self.panes.remove(&removed);
+        // Keep the surviving column's memory pointed at the *same* pane:
+        // removing an entry above it shifts every later index down one.
+        if let Some(c) = self.row_mut(row).and_then(|r| r.columns.get_mut(col)) {
+            if c.focus > pane_idx {
+                c.focus -= 1;
+            }
+        }
         // Was the closed pane the focused one? Remember before indices shift.
         let was_focused =
             self.focus.row == row && self.focus.column == col && self.focus.pane == pane_idx;
@@ -540,7 +559,7 @@ impl Layout {
                     self.focus.pane = pane;
                 } else {
                     self.focus.column = 0;
-                    self.focus.pane = 0;
+                    self.focus.pane = self.column_focus(self.focus.row, 0);
                 }
                 self.clamp_focus_pane();
                 self.remember_focus();
@@ -563,7 +582,7 @@ impl Layout {
                     } else {
                         col.saturating_sub(1)
                     };
-                    self.focus.pane = 0;
+                    self.focus.pane = self.column_focus(row, self.focus.column);
                 } else {
                     self.focus.pane = pane_idx.saturating_sub(1);
                 }
@@ -675,7 +694,7 @@ impl Layout {
             return Ok(self.focused_scroll());
         }
         self.focus.column = n;
-        self.clamp_focus_pane();
+        self.restore_column_focus();
         self.remember_focus();
         Ok(self.focused_scroll())
     }

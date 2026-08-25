@@ -41,6 +41,20 @@ pub struct Pane {
 pub struct Column {
     pub panes: Vec<PaneId>,
     pub width: Width,
+    /// Index of the last focused pane in this stack. Moving focus off the
+    /// column and back (or between strips) restores this pane instead of
+    /// snapping to the topmost one. It rides along with the column through
+    /// swaps/inserts, so no separate keying is needed; stale values are
+    /// clamped on read.
+    #[serde(default)]
+    pub focus: usize,
+}
+
+impl Column {
+    /// The remembered pane index, clamped into the current stack.
+    pub fn focus_index(&self) -> usize {
+        self.focus.min(self.panes.len().saturating_sub(1))
+    }
 }
 
 /// One infinite horizontal strip. Columns are ordered with no gaps.
@@ -126,6 +140,21 @@ impl Layout {
         if let Some(pid) = self.focused_pane_id() {
             self.row_focus.insert(row, pid);
         }
+        // Per-column memory: which pane of this stack was last focused.
+        let (col, pane) = (self.focus.column, self.focus.pane);
+        if let Some(c) = self.row_mut(row).and_then(|r| r.columns.get_mut(col)) {
+            if pane < c.panes.len() {
+                c.focus = pane;
+            }
+        }
+    }
+
+    /// The remembered pane index for `(row, column)`, clamped into the stack.
+    pub fn column_focus(&self, row: RowId, column: usize) -> usize {
+        self.row(row)
+            .and_then(|r| r.columns.get(column))
+            .map(|c| c.focus_index())
+            .unwrap_or(0)
     }
 
     /// Remembered `(column, pane)` for `row`, if the stored pane still
@@ -173,7 +202,11 @@ impl Layout {
 
     pub fn add_column(&mut self, row: RowId, width: Width, panes: Vec<PaneId>) -> usize {
         let row = self.row_mut(row).expect("row must exist");
-        row.columns.push(Column { width, panes });
+        row.columns.push(Column {
+            width,
+            panes,
+            focus: 0,
+        });
         row.columns.len() - 1
     }
 
@@ -188,7 +221,14 @@ impl Layout {
     ) -> usize {
         let row = self.row_mut(row).expect("row must exist");
         let at = index.min(row.columns.len());
-        row.columns.insert(at, Column { width, panes });
+        row.columns.insert(
+            at,
+            Column {
+                width,
+                panes,
+                focus: 0,
+            },
+        );
         at
     }
 

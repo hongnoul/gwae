@@ -187,7 +187,9 @@ fn the_first_empty_box_advertises_the_cheat_sheet() {
     } else {
         "Alt"
     };
-    let lead = format!("{modk}+/ toggl");
+    // Only the fragment left of the centered HUD survives; the overlay grows
+    // as bindings are added, so match the shortest unambiguous head.
+    let lead = format!("{modk}+/ tog");
     assert!(
         text.contains(&lead),
         "first empty box should lead with {lead:?}"
