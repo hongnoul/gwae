@@ -490,6 +490,13 @@ fn crossterm_color(c: CColor) -> crossterm::style::Color {
 ///    any non-single-width cell, so even if the host terminal disagrees with
 ///    the emulator about a glyph's width (a classic emoji problem) the drift
 ///    is bounded to that one glyph instead of shearing the rest of the row.
+///
+/// Attributes are reset per run, not per row: SGR attributes (bold, underline,
+/// reverse) have no "set exactly these" form, only additive codes, so a run
+/// that doesn't reset first would inherit whatever the previous run enabled.
+/// The observed failure was a popup row with underlined entries painting an
+/// underline across every cell to its right ("line overflow"), which then
+/// stuck because the diff buffer believed those cells were already blank.
 fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -> bool {
     use crossterm::queue;
     use crossterm::style::{
@@ -503,7 +510,6 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
             continue;
         }
         dirty = true;
-        let _ = queue!(buf, SetAttribute(Attribute::Reset));
         // Group cells into style runs and print each run.
         let mut x = 0usize;
         while x < cc {
@@ -530,6 +536,7 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
             let _ = queue!(
                 buf,
                 cursor::MoveTo(x as u16, y as u16),
+                SetAttribute(Attribute::Reset),
                 SetForegroundColor(crossterm_color(style.fg)),
                 SetBackgroundColor(crossterm_color(style.bg)),
             );
@@ -1171,6 +1178,33 @@ mod tests {
     }
 
     #[test]
+    fn paint_resets_attributes_between_runs() {
+        // Regression for the popup "line overflow": an underlined run followed
+        // by a plain run on the same row. SGR attrs are additive, so without a
+        // reset at the start of the second run the underline bleeds across the
+        // rest of the row on the host terminal.
+        let mut row = vec![Cell::default(); 4];
+        row[0].ch = 'u';
+        row[0].style.underline = true;
+        row[1].ch = 'p';
+        let last = vec![Cell { ch: 'x', ..Cell::default() }; 4];
+        let mut buf = Vec::new();
+        assert!(paint(&mut buf, &row, &last, 4, 1));
+        let s = String::from_utf8(buf).unwrap();
+        // Underline (SGR 4) is enabled for the first run, and a full reset
+        // (SGR 0) is emitted after it and before the plain run's text.
+        let under = s.find("\u{1b}[4m").expect("underline never set");
+        let reset_after = s[under..]
+            .find("\u{1b}[0m")
+            .expect("no attribute reset after underlined run");
+        let plain = s.find('p').expect("plain run missing");
+        assert!(
+            under + reset_after < plain,
+            "underline leaks into the plain run: {s:?}"
+        );
+    }
+
+    #[test]
     fn four_quarter_panes_fill_screen_without_overflow() {
         // Regression for the reported bug: at 342 cols (not divisible by 4),
         // per-column ceil widths summed to 344 and the 4th pane's rect ran
@@ -1336,4 +1370,96 @@ fn content_scroll_reveals_overflow_e2e() {
     assert_eq!(out[45].ch, ' '); // past content end -> blank
 
     let _ = panes.get_mut(&pid).unwrap().child.kill();
+}
+
+/// End-to-end acceptance for the quarter-pane overflow fix: four real PTY
+/// children, one per quarter column, rendered by `render_frame` at 342 cols
+/// (the reported failure width, not divisible by 4). Every screen cell up to
+/// and including the rightmost column must show the pane that owns it, with
+/// pane content never spilling past a column boundary or the screen edge.
+#[test]
+fn four_quarter_panes_render_to_screen_edge_e2e() {
+    use strimux_layout::{Preset, Width};
+    let cols: u16 = 342;
+    let rows: u16 = 8;
+    let mut layout = Layout::new(1);
+    if let Some(r) = layout.row_mut(layout.focus.row) {
+        r.columns.clear();
+    }
+    let row = layout.focus.row;
+    let fills = ['A', 'B', 'C', 'D'];
+    let mut pids = Vec::new();
+    for _ in fills {
+        let p = layout.alloc_pane();
+        layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
+        pids.push(p);
+    }
+    let ranges = layout
+        .column_x_ranges(row, cols)
+        .expect("ranges for the four-quarter row");
+    assert_eq!(ranges.last().unwrap().1, cols as u32);
+
+    // Spawn one real child per pane, each filling a line with its letter.
+    let (tx, rx) = channel::<PaneMsg>();
+    let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+    for (i, pid) in pids.iter().enumerate() {
+        let w = (ranges[i].1 - ranges[i].0) as u16;
+        let cmd = format!(
+            "sh -c \"for i in $(seq 1 {w}); do printf '%s' {}; done; echo\"",
+            fills[i]
+        );
+        let pane = spawn_pane(*pid, &cmd, w, rows, tx.clone()).expect("spawn pane");
+        panes.insert(*pid, pane);
+    }
+    // Feed PTY output until every pane's first row is fully painted.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        let done = pids.iter().enumerate().all(|(i, pid)| {
+            let w = (ranges[i].1 - ranges[i].0) as u16;
+            panes
+                .get(pid)
+                .map(|p| p.grid.cell(w.saturating_sub(1), 0).ch == fills[i])
+                .unwrap_or(false)
+        });
+        if done {
+            break;
+        }
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(PaneMsg::Output(pid, bytes)) => {
+                if let Some(p) = panes.get_mut(&pid) {
+                    p.grid.feed(&bytes);
+                }
+            }
+            Ok(PaneMsg::Exited(_)) => {}
+            Err(_) => {}
+        }
+    }
+
+    let mut out = Vec::new();
+    render_frame(
+        &mut out,
+        &layout,
+        &mut panes,
+        cols,
+        rows,
+        0,
+        CColor::Default,
+        CColor::Default,
+        &crate::config::Minimap::default(),
+    );
+    // The top row shows each pane's letter across its exact range: the
+    // rightmost screen cell belongs to pane 'D' and no boundary bleeds.
+    for (i, (s, e)) in ranges.iter().enumerate() {
+        for x in *s..*e {
+            assert_eq!(
+                out[x as usize].ch, fills[i],
+                "screen x={x} must show pane {} content",
+                fills[i]
+            );
+        }
+    }
+    assert_eq!(out[cols as usize - 1].ch, 'D', "rightmost cell is pane D");
+    for p in panes.values_mut() {
+        let _ = p.child.kill();
+    }
 }
