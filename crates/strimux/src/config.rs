@@ -21,8 +21,9 @@ pub struct Config {
     pub center_focus: bool,
     /// Logical grid content width (cells) of every pane, decoupled from the
     /// visible column width. Long lines up to this width do not wrap and can
-    /// be revealed with horizontal pane scroll (Alt+Left/Right). `0` follows
-    /// the visible column width (no overflow reveal).
+    /// be revealed with horizontal pane scroll (Alt+Left/Right). `0` (the
+    /// default) follows the visible column width so lines wrap normally and
+    /// there is no horizontal overflow to manage in a pane.
     pub content_width: u16,
     /// The command `Alt+a` spawns (the default agent harness).
     pub default_agent: String,
@@ -34,7 +35,7 @@ impl Default for Config {
             default_column_width: Width::DEFAULT,
             scroll_margin: 2,
             center_focus: false,
-            content_width: 240,
+            content_width: 0,
             default_agent: "claude".to_string(),
         }
     }
