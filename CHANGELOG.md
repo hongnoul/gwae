@@ -7,6 +7,19 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **M0 renderer**: single-process, multi-pane PTY cell renderer. The `strimux`
+  binary spawns real panes, composes them into one 2D cell buffer, diffs and
+  paints frames, and streams pane output live. Full 300x80 repaint measured at
+  ~0.05 ms.
+- **Content-width / horizontal-overflow scroll**: a pane's logical grid width
+  is decoupled from its visible column width (`config.content_width`, default
+  240). `Alt+Left/Right` pans across overflowing content.
+- Interactive keybindings: focus (`Alt+hjkl`), move (`Alt+Shift+hjkl`), new
+  column (`Alt+a`/`Alt+Enter`), split below (`Alt+s`), cycle width (`Alt+r/z`),
+  kill pane (`Alt+x`), row viewport scroll (`Alt+[/]`), column jump (`Alt+1..9`),
+  quit (`Alt+q`).
+- `Makefile` with `build` / `install` / `check` / `test` targets.
+- Timeline: README status/usage, e2e PTY render test, `pane_window` unit tests.
 - Cargo workspace scaffold with four crates:
   `strimux` (bin), `strimux-layout`, `strimux-term`, `strimux-testkit`.
 - `strimux-layout`: the pure 2D grid-of-strips core (rows/columns/panes,
