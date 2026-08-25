@@ -2320,14 +2320,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         cols: v.grid_cols,
                         rows: v.grid_rows,
                     });
+                    let _ = p.master.resize(PtySize {
+                        rows: v.grid_rows,
+                        cols: v.grid_cols,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    });
                     dirty = true;
                 }
-                let _ = p.master.resize(PtySize {
-                    rows: v.grid_rows,
-                    cols: v.grid_cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                });
             }
         }
 
