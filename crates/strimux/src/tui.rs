@@ -31,6 +31,16 @@ const FOCUS_RING: Style = Style {
     inverse: false,
 };
 
+/// Style of the one-cell ring drawn around every other (non-focused) pane, so
+/// all panes are framed uniformly and only the focused ring stands out.
+const PANEL_RING: Style = Style {
+    fg: CColor::Idx(239), // dim gray
+    bg: CColor::Default,
+    bold: false,
+    underline: false,
+    inverse: false,
+};
+
 /// True while the user is inside the `Ctrl-b` prefix and the next key is a
 /// strimux command rather than pane input. Works on every terminal, no
 /// Option-as-Alt config required.
@@ -251,7 +261,7 @@ fn focused_pane_views(
 
 /// Draw a one-cell ring around a pane's `rect` with `style`, clipping writes
 /// to the frame so panes flush against the edge still show a visible border.
-fn draw_focus_ring(out: &mut [Cell], r: Rect, cols: u16, rows: u16, style: Style) {
+fn draw_ring(out: &mut [Cell], r: Rect, cols: u16, rows: u16, style: Style) {
     let cc = cols as usize;
     let mut put = |x: u16, y: u16, ch: char| {
         if x < cols && y < rows {
@@ -308,9 +318,10 @@ fn render_frame(
             continue;
         };
         let is_focus = focused == Some(v.pid);
-        // The focused pane shows a one-cell ring; inset its content so the
-        // ring does not cover text.
-        let (ix, iy, iw, ih) = if is_focus && v.rect.w >= 3 && v.rect.h >= 3 {
+        // Always frame a pane with a one-cell ring, so every pane is inset by
+        // the same amount and the focused one does not appear to "shrink".
+        // Keep the ring insetting content so it never covers text.
+        let (ix, iy, iw, ih) = if v.rect.w >= 3 && v.rect.h >= 3 {
             (v.rect.x + 1, v.rect.y + 1, v.rect.w - 2, v.rect.h - 2)
         } else {
             (v.rect.x, v.rect.y, v.rect.w, v.rect.h)
@@ -335,9 +346,8 @@ fn render_frame(
                 gx += 1;
             }
         }
-        if is_focus {
-            draw_focus_ring(out, v.rect, cols, rows, FOCUS_RING);
-        }
+        let ring_style = if is_focus { FOCUS_RING } else { PANEL_RING };
+        draw_ring(out, v.rect, cols, rows, ring_style);
     }
 
     // Bottom status/minimap line.
