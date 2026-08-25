@@ -6,7 +6,7 @@
 //!   3. Focus is always within the focused row's column bounds.
 
 use proptest::prelude::*;
-use strimux_layout::{Action, FollowScroll, Layout, Preset, Viewport, Width};
+use strimux_layout::{scroll_stops, Action, FollowScroll, Layout, Preset, Viewport, Width};
 
 fn follow() -> FollowScroll {
     FollowScroll::default()
@@ -452,7 +452,11 @@ fn move_pane_down_carries_it_to_a_new_strip() {
     let pid = layout.focused_pane_id().unwrap();
     let _ = layout.apply(Action::MovePaneDown, view(), follow());
     assert_eq!(layout.rows.len(), 2);
-    assert_eq!(layout.focused_pane_id(), Some(pid), "pane travels with focus");
+    assert_eq!(
+        layout.focused_pane_id(),
+        Some(pid),
+        "pane travels with focus"
+    );
     assert_eq!(layout.focused_row().unwrap().columns.len(), 1);
     // The source strip kept its other pane.
     assert_eq!(layout.rows[0].columns.len(), 1);
@@ -469,4 +473,136 @@ fn moving_a_lone_pane_off_its_strip_is_a_noop() {
     let before = layout.clone();
     let _ = layout.apply(Action::MovePaneDown, view(), follow());
     assert_eq!(layout, before, "a lone pane has nowhere new to go");
+}
+
+/// Every row's `scroll_x` rests on a valid quantized stop: a column's left
+/// boundary, or `max_scroll` (the end stop pinning the last column to the
+/// right viewport edge). This is what guarantees identical grids paint
+/// identically across scroll states: a column always starts exactly at x=0.
+fn assert_scrolls_on_stops(layout: &Layout, vp: Viewport, ctx: &str) {
+    for row in &layout.rows {
+        let stops = scroll_stops(layout, row.id, vp.cols);
+        assert!(
+            stops.contains(&row.scroll_x),
+            "{ctx}: scroll_x={} not on a stop {:?} (row {})",
+            row.scroll_x,
+            stops,
+            row.id
+        );
+    }
+}
+
+proptest! {
+    #[test]
+    fn scroll_is_always_quantized(actions in random_actions()) {
+        let mut layout = Layout::default();
+        seed_columns(&mut layout, 6);
+        assert_scrolls_on_stops(&layout, view(), "seed");
+        for a in actions {
+            let _ = layout.apply(a, view(), follow());
+            assert_scrolls_on_stops(&layout, view(), &format!("after {a:?}"));
+        }
+    }
+
+    #[test]
+    fn clamp_scrolls_lands_on_stops_after_resize(
+        actions in random_actions(),
+        cols in 20u16..500,
+    ) {
+        let mut layout = Layout::default();
+        seed_columns(&mut layout, 6);
+        for a in actions {
+            let _ = layout.apply(a, view(), follow());
+        }
+        // Simulate a terminal resize: geometry changes under the stored
+        // scrolls, clamp_scrolls must re-snap every row.
+        let vp = Viewport::new(cols);
+        layout.clamp_scrolls(vp);
+        assert_scrolls_on_stops(&layout, vp, &format!("after resize to {cols}"));
+    }
+}
+
+#[test]
+fn manual_scroll_pages_between_column_boundaries() {
+    // Six 1/4 columns overflow a 120-col viewport (each column is 30 cells).
+    // Manual scrolls land exactly on column boundaries, ending at max_scroll,
+    // and reverse the same way.
+    let q = Width::Preset(Preset::Quarter);
+    let mut layout = layout_with_widths(&[q, q, q, q, q, q]);
+    let vp = Viewport::new(120);
+    let ranges = layout.column_x_ranges(layout.focus.row, vp.cols).unwrap();
+    let total = ranges.last().unwrap().1 as i32;
+    let max_scroll = total - vp.cols as i32;
+    let starts: Vec<i32> = ranges.iter().map(|(s, _)| *s as i32).collect();
+    let mut seen = vec![0];
+    loop {
+        let before = layout.row(layout.focus.row).unwrap().scroll_x;
+        let after = layout
+            .apply(Action::ScrollViewport(1), vp, follow())
+            .unwrap();
+        if after == before {
+            break;
+        }
+        assert!(
+            starts.contains(&after) || after == max_scroll,
+            "scroll {after} is not a column boundary or the end stop"
+        );
+        seen.push(after);
+    }
+    assert_eq!(
+        *seen.last().unwrap(),
+        max_scroll,
+        "paging reaches the end stop"
+    );
+    assert!(seen.len() > 2, "multiple stops traversed");
+    // And back: the same stops in reverse, ending at 0.
+    for want in seen.iter().rev().skip(1) {
+        let after = layout
+            .apply(Action::ScrollViewport(-1), vp, follow())
+            .unwrap();
+        assert_eq!(after, *want, "reverse paging retraces the stops");
+    }
+    assert_eq!(layout.row(layout.focus.row).unwrap().scroll_x, 0);
+}
+
+#[test]
+fn focus_scroll_states_paint_columns_at_identical_offsets() {
+    // The motivating bug: walking focus across an overflowing strip must
+    // produce scroll states where every visible column starts at an offset
+    // that is exactly some column's boundary distance, i.e. the visible grid
+    // is always a suffix of columns starting flush at x=0 (or the end stop).
+    // With uniform quarters, all scroll states then paint the same 4-column
+    // grid shape.
+    let q = Width::Preset(Preset::Quarter);
+    let mut layout = layout_with_widths(&[q, q, q, q, q, q, q, q]);
+    let vp = Viewport::new(120);
+    let starts: Vec<i32> = layout
+        .column_x_ranges(layout.focus.row, vp.cols)
+        .unwrap()
+        .iter()
+        .map(|(s, _)| *s as i32)
+        .collect();
+    let max_scroll = layout.max_scroll(vp);
+    for _ in 0..7 {
+        let scroll = layout.apply(Action::FocusRight, vp, follow()).unwrap();
+        assert!(
+            starts.contains(&scroll) || scroll == max_scroll,
+            "focus walk produced off-boundary scroll {scroll}"
+        );
+        // The focused column is fully visible with no margin slivers.
+        let (s, e) = layout.focused_range(vp.cols).unwrap();
+        assert!(s as i32 >= scroll, "focused column clipped on the left");
+        assert!(
+            e as i32 <= scroll + vp.cols as i32,
+            "focused column clipped on the right"
+        );
+    }
+    // Walk back: same guarantee.
+    for _ in 0..7 {
+        let scroll = layout.apply(Action::FocusLeft, vp, follow()).unwrap();
+        assert!(
+            starts.contains(&scroll) || scroll == max_scroll,
+            "reverse focus walk produced off-boundary scroll {scroll}"
+        );
+    }
 }

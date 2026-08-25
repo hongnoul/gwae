@@ -58,15 +58,27 @@ go to strimux, even with an agent focused.
 | smart-jump | `⌥+g` | jump to next agent that needs you (OSC 133) |
 | find | `⌥+f` | fuzzy text search over panes |
 | kill-pane | `⌥+x` | close pane; compact columns/rows |
-| scroll viewport | `⌥+Ctrl+h/l` | scroll the row without moving focus |
+| scroll viewport | `⌥+Ctrl+h/l` | page the row one column stop without moving focus |
 
 ## Scroll behavior
 
-- **Follow-focus**: after a focus change, scroll the minimum so the focused
-  column is fully visible, honoring `scroll_margin` (default 2).
-- **Free scroll** does not move focus; first pane-bound keystroke snaps back per
-  `snap_back`.
-- Optional `center_focus` centers the column always.
+Scrolling is **quantized to column boundaries**. `scroll_x` only ever rests on
+a valid **stop**: some column's left boundary, or `max_scroll` (the end stop
+that pins the last column to the right viewport edge). A column therefore
+always starts flush at x=0, so identical grids paint identically in every
+scroll state: no partial-column slivers, no margin drift.
+
+- **Follow-focus**: after a focus change, move to the *nearest stop* that
+  fully reveals the focused column (minimal movement, niri feel). A column
+  wider than the viewport is shown from its left edge. `scroll_margin` is
+  ignored under quantization (partial-column margins are exactly the slivers
+  quantization removes).
+- **Free scroll** pages to the previous/next stop and does not move focus;
+  first pane-bound keystroke snaps back per `snap_back`.
+- Optional `center_focus` picks the feasible stop nearest the centered
+  position.
+- On resize, every row's scroll re-snaps to the nearest stop at the new
+  geometry.
 
 ## Minimap
 

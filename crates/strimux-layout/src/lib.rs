@@ -18,7 +18,7 @@ pub mod width;
 
 pub use model::{Column, Focus, Layout, Pane, PaneId, PaneStatus, Row, RowId};
 pub use verbs::Action;
-pub use viewport::{FollowScroll, Viewport};
+pub use viewport::{scroll_stops, snap_scroll, FollowScroll, Viewport};
 pub use width::{Preset, Width};
 
 /// A result type shared across the pure core.

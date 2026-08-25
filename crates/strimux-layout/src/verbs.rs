@@ -7,7 +7,7 @@
 //! Any I/O (PTY spawn/kill) is the caller's job; here we only change structure.
 
 use crate::model::Layout;
-use crate::viewport::{follow_focus_scroll, Viewport};
+use crate::viewport::{follow_focus_scroll, scroll_stops, snap_scroll, Viewport};
 use crate::width::Width;
 use crate::{FollowScroll, LayoutError, LayoutResult, PaneId, RowId};
 
@@ -303,7 +303,11 @@ impl Layout {
             .iter()
             .position(|r| r.id == from)
             .ok_or(LayoutError::UnknownRow(from))?;
-        let ti = if dy < 0 { idx.checked_sub(1) } else { Some(idx + 1) };
+        let ti = if dy < 0 {
+            idx.checked_sub(1)
+        } else {
+            Some(idx + 1)
+        };
         let Some(ti) = ti else {
             return Ok(self.focused_scroll());
         };
@@ -335,7 +339,11 @@ impl Layout {
                     c.panes.remove(pane_idx);
                 }
             }
-            if r.columns.get(col).map(|c| c.panes.is_empty()).unwrap_or(false) {
+            if r.columns
+                .get(col)
+                .map(|c| c.panes.is_empty())
+                .unwrap_or(false)
+            {
                 r.columns.remove(col);
             }
         }
@@ -528,11 +536,25 @@ impl Layout {
     }
 
     fn apply_scroll(&mut self, delta: i32, viewport: Viewport) -> i32 {
-        // Clamp to the strip extent so scrolling never reveals background past
-        // the last column's right edge.
-        let max_scroll = self.max_scroll(viewport);
-        if let Some(r) = self.row_mut(self.focus.row) {
-            r.scroll_x = (r.scroll_x + delta).clamp(0, max_scroll);
+        // Quantized scrolling: a manual scroll pages to the next/previous
+        // stop (column boundary, or the end stop that pins the last column to
+        // the right edge) rather than panning by cells. Stops never pass the
+        // strip extent, so scrolling can never reveal background on the right.
+        if delta == 0 {
+            return self.focused_scroll();
+        }
+        let row = self.focus.row;
+        let stops = scroll_stops(self, row, viewport.cols);
+        let cur = self.focused_scroll();
+        let next = if delta > 0 {
+            stops.iter().copied().find(|b| *b > cur)
+        } else {
+            stops.iter().rev().copied().find(|b| *b < cur)
+        };
+        // Off-stop (e.g. stale state): snap toward the requested direction.
+        let target = next.unwrap_or_else(|| snap_scroll(self, row, viewport.cols, cur));
+        if let Some(r) = self.row_mut(row) {
+            r.scroll_x = target;
         }
         self.focused_scroll()
     }
@@ -546,20 +568,19 @@ impl Layout {
             .max(0)
     }
 
-    /// Re-clamp every row's stored scroll into the valid range for `viewport`.
+    /// Re-snap every row's stored scroll onto a valid stop for `viewport`.
     /// Call after external geometry changes (e.g. a terminal resize): a scroll
-    /// that was valid at the old width can overshoot the strip at the new one
-    /// and would otherwise reveal background at the right edge.
+    /// that was valid at the old width can overshoot the strip, or land
+    /// between column boundaries, at the new one. Snapping (which also clamps,
+    /// since stops never exceed `max_scroll`) keeps the paint stable and never
+    /// reveals background at the right edge.
     pub fn clamp_scrolls(&mut self, viewport: Viewport) {
         let row_ids: Vec<_> = self.rows.iter().map(|r| r.id).collect();
         for id in row_ids {
-            let max = self
-                .column_x_ranges(id, viewport.cols)
-                .and_then(|r| r.last().map(|(_, e)| *e as i32 - viewport.cols as i32))
-                .unwrap_or(0)
-                .max(0);
+            let cur = self.row(id).map(|r| r.scroll_x).unwrap_or(0);
+            let snapped = snap_scroll(self, id, viewport.cols, cur);
             if let Some(row) = self.row_mut(id) {
-                row.scroll_x = row.scroll_x.clamp(0, max);
+                row.scroll_x = snapped;
             }
         }
     }
