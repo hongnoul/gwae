@@ -1484,11 +1484,11 @@ mod tests {
             ('l', Action::MovePaneRight),
         ] {
             let ev = KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT | KeyModifiers::SHIFT);
-            assert_eq!(handle_key(&ev), Some(Cmd::Act(act.clone())));
+            assert_eq!(handle_key(&ev), Some(Cmd::Act(act)));
             // Uppercase variant, with or without an explicit SHIFT bit.
             let up = c.to_ascii_uppercase();
             let ev = KeyEvent::new(KeyCode::Char(up), KeyModifiers::ALT);
-            assert_eq!(handle_key(&ev), Some(Cmd::Act(act.clone())));
+            assert_eq!(handle_key(&ev), Some(Cmd::Act(act)));
         }
         // macOS no-Meta path: Option+Shift+hjkl arrive as Ó Ô  Ò.
         for (g, act) in [
