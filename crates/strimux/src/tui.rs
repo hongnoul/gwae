@@ -1171,6 +1171,44 @@ mod tests {
     }
 
     #[test]
+    fn four_quarter_panes_fill_screen_without_overflow() {
+        // Regression for the reported bug: at 342 cols (not divisible by 4),
+        // per-column ceil widths summed to 344 and the 4th pane's rect ran
+        // past the right edge. Exercise the real render path: layout ->
+        // focused_pane_views -> on-screen Rects.
+        use strimux_layout::{Preset, Width};
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        for _ in 0..4 {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
+        }
+        let panes = HashMap::new();
+        for cols in [342u16, 341, 343, 80, 81] {
+            let views = focused_pane_views(&layout, cols, 40, 0, &panes);
+            assert_eq!(views.len(), 4, "all four panes visible at cols={cols}");
+            // Panes tile the full width: start at 0, no gaps, end at the edge.
+            assert_eq!(views[0].rect.x, 0);
+            for w in views.windows(2) {
+                assert_eq!(
+                    w[0].rect.x + w[0].rect.w,
+                    w[1].rect.x,
+                    "gap/overlap between panes at cols={cols}"
+                );
+            }
+            let last = views.last().unwrap();
+            assert_eq!(
+                last.rect.x + last.rect.w,
+                cols,
+                "rightmost pane must end exactly at the screen edge at cols={cols}"
+            );
+        }
+    }
+
+    #[test]
     fn draw_focus_frame_rings_the_rect() {
         // 5x5 grid; frame the 3x3 rect at (1,1) -> rows 1..=3, cols 1..=3.
         let mut out = vec![Cell { ch: '.', ..Cell::default() }; 25];
