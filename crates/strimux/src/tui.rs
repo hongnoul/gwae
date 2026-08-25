@@ -1176,6 +1176,85 @@ fn draw_center_minimap(
 /// Persists until the next key press. Always shows a very concise
 /// cheat-sheet of every keybind; when a pane needs you the top line is a
 /// smart-jump hint (` ✗ 1.3 needs you — ⌥+g`).
+/// Draw the theme picker: a small centered panel naming the previewed theme.
+///
+/// The picker deliberately shows almost nothing, because the *whole screen*
+/// is already the preview: stepping through presets re-themes the live
+/// chrome behind this panel. All it has to answer is "which one am I looking
+/// at, and how do I keep it".
+fn draw_theme_picker(out: &mut [Cell], cols: u16, rows: u16, sel: usize, pal: &Palette) {
+    let names = Palette::NAMES;
+    let Some(name) = names.get(sel) else {
+        return;
+    };
+    let title = format!(" theme {}/{}: {} ", sel + 1, names.len(), name);
+    let help = " ←/→ preview   ⏎ keep   esc cancel ";
+    let bw = title.chars().count().max(help.chars().count()) + 2;
+    let bh = 4usize;
+    if (cols as usize) < bw + 2 || (rows as usize) < bh + 2 {
+        return;
+    }
+    let ox = ((cols as usize) - bw) / 2;
+    let oy = ((rows as usize) - bh) / 2;
+    // Panel background.
+    for y in 0..bh {
+        for x in 0..bw {
+            if let Some(c) = out.get_mut((oy + y) * cols as usize + ox + x) {
+                *c = Cell {
+                    ch: ' ',
+                    style: strimux_term::Style {
+                        fg: pal.text,
+                        bg: pal.surface,
+                        ..Default::default()
+                    },
+                    width: 1,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+    // Accent border, so the picker itself demonstrates the previewed accent.
+    let mut edge = |x: usize, y: usize, ch: char| {
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            c.ch = ch;
+            c.style.fg = pal.accent;
+            c.style.bg = pal.surface;
+            c.width = 1;
+        }
+    };
+    for x in 0..bw {
+        edge(ox + x, oy, '─');
+        edge(ox + x, oy + bh - 1, '─');
+    }
+    for y in 0..bh {
+        edge(ox, oy + y, '│');
+        edge(ox + bw - 1, oy + y, '│');
+    }
+    edge(ox, oy, '╭');
+    edge(ox + bw - 1, oy, '╮');
+    edge(ox, oy + bh - 1, '╰');
+    edge(ox + bw - 1, oy + bh - 1, '╯');
+
+    let mut text = |row: usize, s: &str, fg: CColor, bold: bool| {
+        let chars: Vec<char> = s.chars().collect();
+        let tx = ox + 1 + (bw - 2).saturating_sub(chars.len()) / 2;
+        for (i, ch) in chars.iter().enumerate() {
+            if tx + i >= ox + bw - 1 {
+                break;
+            }
+            if let Some(c) = out.get_mut(row * cols as usize + tx + i) {
+                c.ch = *ch;
+                c.style.fg = fg;
+                c.style.bg = pal.surface;
+                c.style.bold = bold;
+                c.width = 1;
+            }
+        }
+    };
+    text(oy + 1, &title, pal.accent, true);
+    text(oy + 2, help, pal.text, false);
+}
+
 /// Draw a one-line toast along the bottom of the screen.
 ///
 /// Used to report config reloads. It is a single row so it never covers a
@@ -1628,6 +1707,9 @@ enum Cmd {
     /// Smart-jump: focus the next pane that needs the user (`⌥+g`). Resolved
     /// against the live layout in the main loop, not here.
     SmartJump,
+    /// Open the theme picker (`⌥+t`), or step through it while it is open.
+    /// `0` opens, `-1`/`+1` move the selection.
+    ThemePick(i32),
     Quit,
     None,
 }
@@ -1727,6 +1809,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{153}') => return Some(Cmd::Act(Action::KillPane)),  // œ (Option+q)
             Char('\u{a9}') => return Some(Cmd::SmartJump),               // © (Option+g)
             Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
+            Char('\u{2020}') => return Some(Cmd::ThemePick(0)),          // † (Option+t)
             _ => {}
         }
     }
@@ -1774,6 +1857,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
                 }
             }
             'g' => return Some(Cmd::SmartJump),
+            't' => return Some(Cmd::ThemePick(0)),
             _ if c.is_ascii_digit() => Some(Action::JumpToColumn(
                 c.to_digit(10).unwrap_or(1) as usize - 1,
             )),
@@ -2045,6 +2129,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut reload_check = Instant::now();
     let mut reload_note: Option<String> = None;
     let mut reload_note_until: Option<Instant> = None;
+    // Theme picker (⌥+t): Some(index into Palette::NAMES) while open. The
+    // selection previews live, so the whole screen is the preview and the
+    // picker itself only needs to show the name.
+    let mut theme_pick: Option<usize> = None;
 
     'main: loop {
         while let Ok(msg) = rx.try_recv() {
@@ -2251,9 +2339,74 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                             dirty = true;
                         }
                     }
+                    // While the theme picker is open it owns the keyboard:
+                    // arrows/hjkl step through presets, Enter keeps the
+                    // choice, Escape restores what was there before. Without
+                    // this the keys would reach the focused pane instead.
+                    if let Some(sel) = theme_pick {
+                        let n = Palette::NAMES.len();
+                        let mut close: Option<bool> = None; // Some(keep?)
+                        let mut next = sel;
+                        match ke.code {
+                            KeyCode::Left | KeyCode::Up => next = (sel + n - 1) % n,
+                            KeyCode::Right | KeyCode::Down => next = (sel + 1) % n,
+                            KeyCode::Char('h') | KeyCode::Char('k') => next = (sel + n - 1) % n,
+                            KeyCode::Char('l') | KeyCode::Char('j') => next = (sel + 1) % n,
+                            KeyCode::Char('\u{2d9}') | KeyCode::Char('\u{2da}') => {
+                                next = (sel + n - 1) % n
+                            }
+                            KeyCode::Char('\u{ac}') | KeyCode::Char('\u{2206}') => {
+                                next = (sel + 1) % n
+                            }
+                            KeyCode::Enter => close = Some(true),
+                            KeyCode::Esc => close = Some(false),
+                            KeyCode::Char('\u{2020}') => close = Some(true),
+                            KeyCode::Char('t') if ke.modifiers.contains(KeyModifiers::ALT) => {
+                                close = Some(true)
+                            }
+                            _ => {}
+                        }
+                        match close {
+                            Some(true) => {
+                                theme_pick = None;
+                                reload_note = Some(format!(
+                                    "theme: {} — add `theme = \"{}\"` to keep it",
+                                    Palette::NAMES[sel],
+                                    Palette::NAMES[sel]
+                                ));
+                                reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                            }
+                            Some(false) => {
+                                // Restore the configured theme: the preview
+                                // never touched the config file.
+                                theme_pick = None;
+                                pal = cfg.palette();
+                            }
+                            None => {
+                                if next != sel {
+                                    theme_pick = Some(next);
+                                    pal = Palette::preset(Palette::NAMES[next]).unwrap_or_default();
+                                }
+                            }
+                        }
+                        dirty = true;
+                        continue;
+                    }
                     if let Some(cmd) = handle_key(&ke) {
                         match cmd {
                             Cmd::Quit => break 'main,
+                            Cmd::ThemePick(_) => {
+                                // Open on the currently configured theme when
+                                // it is a known preset, so stepping starts
+                                // from what the user is actually looking at.
+                                let cur = Palette::NAMES
+                                    .iter()
+                                    .position(|n| Palette::preset(n) == Some(pal))
+                                    .unwrap_or(0);
+                                theme_pick = Some(cur);
+                                pal = Palette::preset(Palette::NAMES[cur]).unwrap_or_default();
+                                dirty = true;
+                            }
                             Cmd::Scroll(d) => {
                                 let v = Viewport::new(cols);
                                 let _ = layout.apply(
@@ -2512,6 +2665,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
             if show_center_minimap && !show_hud {
                 draw_center_minimap(&mut frame, cols, rows, &layout, &cfg.minimap, &pal);
+            }
+            if let Some(sel) = theme_pick {
+                draw_theme_picker(&mut frame, cols, rows, sel, &pal);
             }
             if let Some(note) = &reload_note {
                 let ok = !note.starts_with("config error") && !note.starts_with("unknown theme");

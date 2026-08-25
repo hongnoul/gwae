@@ -39,6 +39,35 @@ enabled = true
 # messages = ["your own message", "another one"]
 ```
 
+## Live reload
+
+Saving the config file re-themes the **running** session: there is no restart,
+so every pane and every agent keeps going. The file is polled for changes a
+few times a second, and a one-line toast confirms the reload along the bottom
+of the screen.
+
+Only appearance is adopted. `startup_panes`, `mouse` and `default_agent` are
+consumed once at launch (the panes already exist, mouse capture is already
+negotiated with the host terminal, and running harnesses cannot be swapped
+underneath), so changing them still needs a restart. Everything read every
+frame - colors, `skeleton`, `[minimap]`, scroll behavior - takes effect
+immediately.
+
+A config that fails to parse mid-edit (an editor saving between keystrokes)
+leaves the running settings alone and reports the error, rather than dropping
+you back to defaults.
+
+## Previewing themes (`⌥+t`)
+
+`⌥+t` opens the theme picker. `←`/`→` (or `h`/`l`) step through the built-in
+presets and each one is applied to the **live UI**, so the preview is the real
+thing rather than a swatch. `⏎` keeps the previewed theme for this session and
+shows the line to add to your config; `esc` restores whatever your config says.
+
+The picker never writes to your config file - it would have to own your
+formatting and comments to do that - so making a theme permanent is a
+copy-paste of the line it shows you.
+
 ## Checking your config
 
 A config file that fails to parse is **ignored entirely** (strimux falls back to

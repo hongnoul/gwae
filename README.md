@@ -10,7 +10,7 @@
 - **Single process, no daemon.** No socket, no attach/detach. Crashing one pane's emulator can't take the TUI down. Persistence is each harness's own `--resume`.
 - **Kitty graphics passthrough.** `kitten icat` and jcode screenshots render inside their pane — APC sequences forwarded verbatim and clipped to the pane rect.
 - **Mouse that helps.** Wheel scrolls the pane under the cursor (its own scrollback), not the host terminal. Click to focus. `less` without mouse reporting gets arrow keys; typing snaps back to live.
-- **Catppuccin Mocha by default.** Base `#1e1e2e`, focus sapphire `#74c7ec`, skeleton overlay `#6c7086`. Every color is themeable.
+- **Catppuccin Mocha by default.** Base `#1e1e2e`, focus sapphire `#74c7ec`, skeleton overlay `#6c7086`. Every color is themeable, 8 presets ship, `⌥+t` previews them live, and saving the config re-themes the running session without restarting a single pane.
 
 ```sh
 cargo install --path crates/strimux   # or: cargo build --release && make install
@@ -93,6 +93,7 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | `⌥+Ctrl+h` / `⌥+Ctrl+l` | Scroll row viewport one quantized stop without moving focus |
 | `⌥+1` … `⌥+9` | Jump to column N in focused strip |
 | `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
+| `⌥+t` (`†` on macOS) | **Theme picker** — step presets with `←`/`→`, live-previewed on the real UI; `⏎` keeps, `esc` restores |
 | `⌥+Shift+q` | Quit strimux (kills all panes) |
 | click | Left-click focuses the clicked pane |
 | wheel | Scrolls pane scrollback under cursor; `Shift+wheel` etc. forwarded as SGR when pane wants mouse, else translated to `↑`/`↓` for alt-screen pagers |
