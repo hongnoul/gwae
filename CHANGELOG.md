@@ -7,6 +7,34 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **`⌥+<number>` reaches columns past 9.** `⌥+1..9` jumped on the keystroke,
+  which capped addressable columns at nine: there is no `⌥+10` key, so a wide
+  strip could only be reached by walking `⌥+l`. Holding `⌥` is already a mode
+  (it reveals the HUD/minimap), so digits typed while it is down now accumulate
+  into one number and commit when the modifier is released — `⌥` + `1` `2`
+  focuses column 12. A pending number is echoed along the bottom row so a
+  half-typed address is never mistaken for a dropped keystroke. Terminals that
+  do not report a bare `⌥` release (no Kitty keyboard protocol) commit on a
+  500ms idle instead, and any other chord commits immediately, so single-digit
+  jumps feel exactly as they did.
+
+### Changed
+- **Key hints now name the platform's own modifier.** The cowsay hints and the
+  cheat-sheet HUD hard-coded macOS vocabulary (`⌥`, `↵`, `⇧`), which is
+  meaningless on Linux/Windows where the same key is `Alt` and the glyphs may
+  not even exist in the terminal font. Both surfaces resolve key names through
+  a new `keys` module, so they read `Alt+g` / `Enter` off macOS and can never
+  disagree with each other.
+
+### Fixed
+- **Hints no longer teach bindings that do not exist.** The default cowsay list
+  advertised `c` for "new pane" (never implemented) and told users to "press ;"
+  with no modifier at all, which just types a semicolon into the focused pane;
+  the HUD listed the same phantom `c` and labelled `q` as "quit" when it kills
+  a pane (`⇧q` quits). The hint list is rewritten from the real key table and
+  covered by tests that fail if a hint names a dead binding.
+
+### Added
 - **Empty grid cells now document themselves with a cowsay hint**: an empty
   placeholder box showed only its big block-font `strip.cell` identifier, which
   says *where* you are but not what to do about it. Each empty box now draws a

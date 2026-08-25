@@ -5541,6 +5541,87 @@ mod tests {
     }
 
     #[test]
+    fn alt_digit_is_a_jump_digit_not_an_immediate_jump() {
+        // The regression this whole feature exists for: a digit alone can't
+        // decide the column, because it may be the first of two.
+        let ev = KeyEvent::new(KeyCode::Char('4'), KeyModifiers::ALT);
+        assert_eq!(handle_key(&ev), Some(Cmd::JumpDigit(4)));
+        // Every digit decodes, including the ones that used to be unreachable
+        // as a *second* digit.
+        for d in 0..=9u32 {
+            let c = char::from_digit(d, 10).unwrap();
+            let ev = KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT);
+            assert_eq!(handle_key(&ev), Some(Cmd::JumpDigit(d)), "digit {d}");
+        }
+    }
+
+    #[test]
+    fn jump_accum_builds_multi_digit_columns() {
+        let t = Instant::now();
+        let mut j = JumpAccum::default();
+        j.push(1, t);
+        j.push(2, t);
+        // 1-based typing, 0-based layout index: column 12 is index 11.
+        assert_eq!(j.take(), Some(11));
+        // Taking clears, so a second commit can't re-jump.
+        assert_eq!(j.take(), None);
+    }
+
+    #[test]
+    fn jump_accum_ignores_a_leading_zero() {
+        // There is no column 0, so a bare `0` must not start a number (and
+        // must not commit a jump to index -1 on release).
+        let t = Instant::now();
+        let mut j = JumpAccum::default();
+        j.push(0, t);
+        assert_eq!(j.pending(), None);
+        // But zero still extends a real number: 1 then 0 is column 10.
+        j.push(1, t);
+        j.push(0, t);
+        assert_eq!(j.take(), Some(9));
+    }
+
+    #[test]
+    fn jump_accum_refuses_absurd_numbers() {
+        // Key repeat must not overflow the accumulator into a nonsense index.
+        let t = Instant::now();
+        let mut j = JumpAccum::default();
+        for _ in 0..12 {
+            j.push(9, t);
+        }
+        assert_eq!(j.pending(), Some(999), "clamped at MAX, not overflowed");
+    }
+
+    #[test]
+    fn jump_accum_expires_without_a_release_event() {
+        // Terminals without the Kitty protocol never report Option release,
+        // so the idle timeout is the only thing that commits the jump.
+        let t = Instant::now();
+        let mut j = JumpAccum::default();
+        j.push(3, t);
+        assert_eq!(j.take_if_expired(t), None, "still being typed");
+        assert_eq!(
+            j.take_if_expired(t + JumpAccum::TIMEOUT),
+            Some(2),
+            "commits once idle"
+        );
+        assert_eq!(j.pending(), None);
+    }
+
+    #[test]
+    fn jump_accum_timeout_is_refreshed_by_each_digit() {
+        // Typing the second digit slowly must not split `12` into `1` then
+        // `2`; every digit restarts the idle window.
+        let t = Instant::now();
+        let mut j = JumpAccum::default();
+        j.push(1, t);
+        let late = t + JumpAccum::TIMEOUT - Duration::from_millis(1);
+        j.push(2, late);
+        assert_eq!(j.take_if_expired(t + JumpAccum::TIMEOUT), None);
+        assert_eq!(j.take_if_expired(late + JumpAccum::TIMEOUT), Some(11));
+    }
+
+    #[test]
     fn alt_slash_toggles_the_cheat_sheet_hud() {
         // Option-as-Meta path and the macOS glyph path both map to ToggleHud.
         let ev = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::ALT);
