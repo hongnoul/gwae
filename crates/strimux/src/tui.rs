@@ -1637,7 +1637,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     if host_kitty_graphics {
         tracing::info!("host supports kitty graphics; pane image passthrough enabled");
     }
-    let (mut cols, mut rows) = term_size().map_err(|e| {
+    let (cols, mut rows) = term_size().map_err(|e| {
         eprintln!("size: {e}");
         1
     })?;
@@ -1918,6 +1918,18 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         chrome,
                     );
                     if let Some((pid, gx, gy)) = pane_at(&views, me.column, me.row) {
+                        // Bare minimum touchpad/cursor support: left click focuses the clicked pane.
+                        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                            if focused_pane(&layout) != Some(pid) {
+                                let v = Viewport::new(cols);
+                                let f = FollowScroll {
+                                    margin: cfg.scroll_margin,
+                                    center: cfg.center_focus,
+                                };
+                                let _ = layout.apply(Action::FocusPane(pid), v, f);
+                                dirty = true;
+                            }
+                        }
                         if let Some(p) = panes.get_mut(&pid) {
                             let wheel = matches!(
                                 me.kind,
