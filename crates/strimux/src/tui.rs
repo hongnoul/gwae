@@ -2,10 +2,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::time::{Duration, Instant};
 
+use crate::theme::Palette;
 use crossterm::cursor;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -70,11 +70,6 @@ fn logical_char(ev: &KeyEvent) -> Option<char> {
 /// working. Long enough that a compiler pausing between crates doesn't
 /// flicker, short enough that a finished agent surfaces quickly.
 const QUIET_AFTER: Duration = Duration::from_secs(4);
-
-/// True while the user is inside the `Ctrl-b` prefix and the next key is a
-/// strimux command rather than pane input. Works on every terminal, no
-/// Option-as-Alt config required.
-static IN_PREFIX: AtomicBool = AtomicBool::new(false);
 
 /// A PTY-backed pane: its emulator grid plus the I/O handles.
 pub struct PtyPane {
@@ -487,11 +482,16 @@ fn render_frame(
     cols: u16,
     rows: u16,
     content_width: u16,
-    background: CColor,
-    focus_color: CColor,
-    skeleton: Option<CColor>,
+    pal: &Palette,
+    skeleton: bool,
     mm: &crate::config::Minimap,
 ) {
+    // Every chrome color in this function comes from the palette; the
+    // skeleton frame color is just `pal.overlay`, kept in a local so the
+    // `Option`-shaped call sites below read the same as they used to.
+    let background = pal.base;
+    let focus_color = pal.accent;
+    let skeleton: Option<CColor> = skeleton.then_some(pal.overlay);
     out.clear();
     out.resize((cols as usize) * (rows as usize), Cell::default());
     // Paint the uncovered background first so any cell not overwritten by a
@@ -680,7 +680,7 @@ fn render_frame(
                 w: boxr.w.saturating_sub(2),
                 h: boxr.h.saturating_sub(2),
             };
-            draw_big_label(out, cols, inner, &label, CColor::Rgb(0x58, 0x5b, 0x70));
+            draw_big_label(out, cols, inner, &label, pal.label);
             pcol += 1;
             edge += w;
         }
@@ -718,10 +718,10 @@ fn render_frame(
     // run_tui) and legacy overlay/edge_ticks modes here.
     match mm.mode {
         crate::config::MinimapMode::Overlay => {
-            draw_minimap(out, cols, rows, layout, mm, focus_color);
+            draw_minimap(out, cols, rows, layout, mm, pal);
         }
         crate::config::MinimapMode::EdgeTicks => {
-            draw_edge_ticks(out, cols, rows, layout, mm, focus_color);
+            draw_edge_ticks(out, cols, rows, layout, mm, pal);
         }
         crate::config::MinimapMode::Off => {}
     }
@@ -928,8 +928,9 @@ fn draw_center_minimap(
     rows: u16,
     layout: &Layout,
     mm: &crate::config::Minimap,
-    focus_color: CColor,
+    pal: &Palette,
 ) {
+    let focus_color = pal.accent;
     if !mm.show || (layout.panes.len() <= 1 && layout.rows.len() <= 1) {
         return;
     }
@@ -937,22 +938,8 @@ fn draw_center_minimap(
         return;
     }
     use strimux_layout::minimap;
-    fn status_bg(s: PaneStatus) -> CColor {
-        match s {
-            PaneStatus::Running => CColor::Rgb(0x52, 0x6c, 0x96),
-            PaneStatus::Idle => CColor::Rgb(0x96, 0x6b, 0x51),
-            PaneStatus::Done => CColor::Rgb(0x63, 0x88, 0x60),
-            PaneStatus::Failed => CColor::Rgb(0x91, 0x53, 0x64),
-        }
-    }
-    fn status_fg(s: PaneStatus) -> CColor {
-        match s {
-            PaneStatus::Running => CColor::Rgb(0x89, 0xb4, 0xfa),
-            PaneStatus::Idle => CColor::Rgb(0xfa, 0xb3, 0x87),
-            PaneStatus::Done => CColor::Rgb(0xa6, 0xe3, 0xa1),
-            PaneStatus::Failed => CColor::Rgb(0xf3, 0x8b, 0xa8),
-        }
-    }
+    let status_bg = |s: PaneStatus| pal.status_muted(s);
+    let status_fg = |s: PaneStatus| pal.status(s);
     fn status_glyph(s: PaneStatus) -> char {
         match s {
             PaneStatus::Running => '»',
@@ -976,7 +963,7 @@ fn draw_center_minimap(
     }
     let ox = ((cols as usize).saturating_sub(bw)) / 2;
     let oy = ((rows as usize).saturating_sub(bh)) / 2;
-    let bg = CColor::Rgb(0x18, 0x18, 0x25);
+    let bg = pal.surface;
     // Fill box interior with bar background.
     for y in 0..bh {
         for x in 0..bw {
@@ -984,7 +971,7 @@ fn draw_center_minimap(
                 *c = Cell {
                     ch: ' ',
                     style: strimux_term::Style {
-                        fg: CColor::Rgb(0xa6, 0xad, 0xc8),
+                        fg: pal.text,
                         bg,
                         ..Default::default()
                     },
@@ -1060,10 +1047,7 @@ fn draw_center_minimap(
         for p in layout.panes.values() {
             counts[statuses.iter().position(|s| *s == p.status).unwrap_or(0)] += 1;
         }
-        let mut segs: Vec<(String, CColor)> = vec![(
-            format!("{}", layout.panes.len()),
-            CColor::Rgb(0xa6, 0xad, 0xc8),
-        )];
+        let mut segs: Vec<(String, CColor)> = vec![(format!("{}", layout.panes.len()), pal.text)];
         for (i, s) in statuses.iter().enumerate() {
             if counts[i] > 0 {
                 segs.push((format!(" {}{}", status_glyph(*s), counts[i]), status_fg(*s)));
@@ -1087,7 +1071,8 @@ fn draw_center_minimap(
 /// Persists until the next key press. Always shows a very concise
 /// cheat-sheet of every keybind; when a pane needs you the top line is a
 /// smart-jump hint (` ✗ 1.3 needs you — ⌥+g`).
-fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, focus_color: CColor) {
+fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal: &Palette) {
+    let focus_color = pal.accent;
     if cols < 30 || rows < 9 {
         return;
     }
@@ -1137,14 +1122,14 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, focu
     }
     let ox = ((cols as usize).saturating_sub(bw)) / 2;
     let oy = ((rows as usize).saturating_sub(bh)) / 2;
-    let bg = CColor::Rgb(0x18, 0x18, 0x25);
+    let bg = pal.surface;
     for y in 0..bh {
         for x in 0..bw {
             if let Some(c) = out.get_mut((oy + y) * cols as usize + (ox + x)) {
                 *c = Cell {
                     ch: ' ',
                     style: strimux_term::Style {
-                        fg: CColor::Rgb(0xa6, 0xad, 0xc8),
+                        fg: pal.text,
                         bg,
                         ..Default::default()
                     },
@@ -1173,7 +1158,7 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, focu
                 c.style.fg = if is_attention {
                     CColor::Idx(231)
                 } else {
-                    CColor::Rgb(0xa6, 0xad, 0xc8)
+                    pal.text
                 };
                 c.style.bg = bg;
                 c.style.bold = is_attention;
@@ -1190,19 +1175,13 @@ fn draw_edge_ticks(
     rows: u16,
     layout: &Layout,
     _mm: &crate::config::Minimap,
-    focus_color: CColor,
+    pal: &Palette,
 ) {
+    let focus_color = pal.accent;
     if cols == 0 || rows == 0 {
         return;
     }
-    fn tick_bg(s: PaneStatus) -> CColor {
-        match s {
-            PaneStatus::Running => CColor::Rgb(0x52, 0x6c, 0x96),
-            PaneStatus::Idle => CColor::Rgb(0x96, 0x6b, 0x51),
-            PaneStatus::Done => CColor::Rgb(0x63, 0x88, 0x60),
-            PaneStatus::Failed => CColor::Rgb(0x91, 0x53, 0x64),
-        }
-    }
+    let tick_bg = |s: PaneStatus| pal.status_muted(s);
     let y = rows.saturating_sub(1) as usize;
     let ranges = layout
         .column_x_ranges(layout.focus.row, cols)
@@ -1258,11 +1237,11 @@ fn draw_edge_ticks(
             break;
         }
         let bg = if is_focus {
-            focus_color
+            pal.accent
         } else if needs {
-            CColor::Rgb(0x96, 0x6b, 0x51)
+            pal.status_muted(PaneStatus::Idle)
         } else {
-            CColor::Rgb(0x6c, 0x70, 0x86)
+            pal.overlay
         };
         if let Some(c) = out.get_mut(ri * cols as usize + x) {
             // only overwrite border-ish cells (don't clobber pane content interior — but right edge is usually chrome)
@@ -1288,30 +1267,17 @@ fn draw_minimap(
     rows: u16,
     layout: &Layout,
     mm: &crate::config::Minimap,
-    focus_color: CColor,
+    pal: &Palette,
 ) {
+    let focus_color = pal.accent;
     use strimux_layout::minimap;
     // With a single pane there is nothing to triage; hide the map.
     if !mm.show || (layout.panes.len() <= 1 && layout.rows.len() <= 1) {
         return;
     }
-    /// Catppuccin Mocha muted backgrounds / bright foregrounds.
-    fn status_bg(s: PaneStatus) -> CColor {
-        match s {
-            PaneStatus::Running => CColor::Rgb(0x52, 0x6c, 0x96),
-            PaneStatus::Idle => CColor::Rgb(0x96, 0x6b, 0x51),
-            PaneStatus::Done => CColor::Rgb(0x63, 0x88, 0x60),
-            PaneStatus::Failed => CColor::Rgb(0x91, 0x53, 0x64),
-        }
-    }
-    fn status_fg(s: PaneStatus) -> CColor {
-        match s {
-            PaneStatus::Running => CColor::Rgb(0x89, 0xb4, 0xfa),
-            PaneStatus::Idle => CColor::Rgb(0xfa, 0xb3, 0x87),
-            PaneStatus::Done => CColor::Rgb(0xa6, 0xe3, 0xa1),
-            PaneStatus::Failed => CColor::Rgb(0xf3, 0x8b, 0xa8),
-        }
-    }
+    // Muted tile backgrounds and bright foregrounds, both from the palette.
+    let status_bg = |s: PaneStatus| pal.status_muted(s);
+    let status_fg = |s: PaneStatus| pal.status(s);
     /// Single-width status glyph (every one is width 1 per unicode-width, so
     /// the painter never has to cut a run around it).
     fn status_glyph(s: PaneStatus) -> char {
@@ -1389,10 +1355,7 @@ fn draw_minimap(
             counts[statuses.iter().position(|s| *s == p.status).unwrap_or(0)] += 1;
         }
         // Segments: (text, fg). The total is dim; each tally is colored.
-        let mut segs: Vec<(String, CColor)> = vec![(
-            format!("{}", layout.panes.len()),
-            CColor::Rgb(0xa6, 0xad, 0xc8),
-        )];
+        let mut segs: Vec<(String, CColor)> = vec![(format!("{}", layout.panes.len()), pal.text)];
         for (i, s) in statuses.iter().enumerate() {
             if counts[i] > 0 {
                 segs.push((format!(" {}{}", status_glyph(*s), counts[i]), status_fg(*s)));
@@ -1401,7 +1364,7 @@ fn draw_minimap(
         let total_w: usize = segs.iter().map(|(t, _)| t.chars().count()).sum();
         let y = oy - 1;
         let mut x = cols.saturating_sub(total_w as u16);
-        let bar_bg = CColor::Rgb(0x18, 0x18, 0x25);
+        let bar_bg = pal.surface;
         for (text, fg) in segs {
             for ch in text.chars() {
                 put(out, x, y, ch, fg, bar_bg, true);
@@ -1528,7 +1491,6 @@ enum Cmd {
     /// against the live layout in the main loop, not here.
     SmartJump,
     Quit,
-    Repaint,
     None,
 }
 
@@ -1630,85 +1592,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             _ => {}
         }
     }
-    // Prefix toggle: `Ctrl-b`. Always arrives on any terminal, no config.
-    if !alt && ctrl && matches!(ev.code, Char('b')) {
-        IN_PREFIX.store(true, Ordering::Relaxed);
-        return Some(Cmd::Repaint);
-    }
-    // Inside the prefix, the next key is a strimux command.
-    if IN_PREFIX.load(Ordering::Relaxed) {
-        IN_PREFIX.store(false, Ordering::Relaxed);
-        if ev.code == Esc {
-            return Some(Cmd::Repaint); // cancel prefix
-        }
-        if ctrl && matches!(ev.code, Char('b')) {
-            return Some(Cmd::Input(vec![0x02])); // literal Ctrl-b to the pane
-        }
-        let lc = logical_char(ev);
-        if let Some(c) = lc {
-            // Shift+hjkl moves the pane (niri-style); plain hjkl focuses.
-            // Use logical_char so Kitty alternate keys (Shift clears) and Caps
-            // Lock are both handled: physical_shift distinguishes them, while
-            // `c` is the layout-agnostic lowercased letter.
-            if c == 'h' || c == 'j' || c == 'k' || c == 'l' {
-                return Some(if shift {
-                    match c {
-                        'h' => Cmd::Act(Action::MovePaneLeft),
-                        'j' => Cmd::Act(Action::MovePaneDown),
-                        'k' => Cmd::Act(Action::MovePaneUp),
-                        'l' => Cmd::Act(Action::MovePaneRight),
-                        _ => unreachable!(),
-                    }
-                } else {
-                    match c {
-                        'h' => Cmd::Act(Action::FocusLeft),
-                        'j' => Cmd::Act(Action::FocusDown),
-                        'k' => Cmd::Act(Action::FocusUp),
-                        'l' => Cmd::Act(Action::FocusRight),
-                        _ => unreachable!(),
-                    }
-                });
-            }
-            let cmd = match c {
-                'c' | 'n' => Action::NewColumn,
-                'r' | 'o' => Action::NewRow,
-                ';' => Action::SpawnAgent,
-                's' | '-' => Action::SplitBelow,
-                'x' => Action::KillPane,
-                'z' | '=' => Action::CycleWidth,
-                'f' => Action::ToggleFullWidth,
-                'g' => return Some(Cmd::SmartJump),
-                ',' => return Some(Cmd::ScrollPane(-1)),
-                '.' => return Some(Cmd::ScrollPane(1)),
-                '<' => return Some(Cmd::ScrollPane(-16)),
-                '>' => return Some(Cmd::ScrollPane(16)),
-                '[' => return Some(Cmd::Scroll(-200)),
-                ']' => return Some(Cmd::Scroll(200)),
-                'q' => return Some(Cmd::Quit),
-                _ => {
-                    if c.is_ascii_digit() {
-                        Action::JumpToColumn(c.to_digit(10).unwrap_or(1) as usize - 1)
-                    } else {
-                        return Some(Cmd::None);
-                    }
-                }
-            };
-            return Some(Cmd::Act(cmd));
-        }
-        // Non-char codes (e.g. ','/'<' are already handled above) and bare
-        // punctuation that had no `c` hit the fallback.
-        let cmd = match ev.code {
-            Char(';') => Action::SpawnAgent,
-            Char(',') => return Some(Cmd::ScrollPane(-1)),
-            Char('.') => return Some(Cmd::ScrollPane(1)),
-            Char('<') => return Some(Cmd::ScrollPane(-16)),
-            Char('>') => return Some(Cmd::ScrollPane(16)),
-            Char('[') => return Some(Cmd::Scroll(-200)),
-            Char(']') => return Some(Cmd::Scroll(200)),
-            _ => return Some(Cmd::None), // unknown prefix key just cancels
-        };
-        return Some(Cmd::Act(cmd));
-    }
     if !alt {
         // Escape must be a chord preamble only; forward everything else.
         if ev.code == Esc {
@@ -1745,7 +1628,13 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             'f' => Some(Action::ToggleFullWidth),
             'x' => Some(Action::KillPane),
             'z' => Some(Action::CycleWidth),
-            'q' => Some(Action::KillPane),
+            'q' => {
+                if shift {
+                    return Some(Cmd::Quit);
+                } else {
+                    Some(Action::KillPane)
+                }
+            }
             'g' => return Some(Cmd::SmartJump),
             _ if c.is_ascii_digit() => Some(Action::JumpToColumn(
                 c.to_digit(10).unwrap_or(1) as usize - 1,
@@ -1873,6 +1762,10 @@ fn refresh_size(cols: &mut u16, rows: &mut u16) -> bool {
 /// Run the interactive TUI.
 pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     use std::io;
+    // Resolve the theme once: preset lookup + `[theme]` overrides + the
+    // legacy top-level color keys. Every chrome color painted below reads
+    // from this palette.
+    let pal = cfg.palette();
     let mut stdout = io::stdout();
     enable_raw_mode().map_err(|e| {
         eprintln!("raw mode: {e}");
@@ -2223,7 +2116,6 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                     dirty = true;
                                 }
                             }
-                            Cmd::Repaint => dirty = true,
                             Cmd::None => {}
                         }
                     }
@@ -2402,9 +2294,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             last_alt_held = effective_alt_held;
         }
         let show_hud = hud_active;
-        let show_center_minimap = effective_alt_held
-            && !hud_active
-            && cfg.minimap.show;
+        let show_center_minimap = effective_alt_held && !hud_active && cfg.minimap.show;
         if dirty {
             render_frame(
                 &mut frame,
@@ -2413,23 +2303,15 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 cols,
                 rows,
                 cfg.content_width,
-                cfg.background.color(),
-                cfg.focus_color.color(),
-                cfg.skeleton.then(|| cfg.skeleton_color.color()),
+                &pal,
+                cfg.skeleton,
                 &cfg.minimap,
             );
             if show_hud {
-                draw_center_hud(&mut frame, cols, rows, &layout, cfg.focus_color.color());
+                draw_center_hud(&mut frame, cols, rows, &layout, &pal);
             }
             if show_center_minimap && !show_hud {
-                draw_center_minimap(
-                    &mut frame,
-                    cols,
-                    rows,
-                    &layout,
-                    &cfg.minimap,
-                    cfg.focus_color.color(),
-                );
+                draw_center_minimap(&mut frame, cols, rows, &layout, &cfg.minimap, &pal);
             }
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
@@ -2598,6 +2480,27 @@ fn sgr_mouse_report(ev: &MouseEvent, gx: u16, gy: u16) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    /// A palette with a distinctive accent, everything else Mocha. Render
+    /// tests assert on the accent to prove focus chrome is drawn, so the
+    /// remaining colors just need to be stable.
+    fn pal_accent(accent: CColor) -> Palette {
+        Palette {
+            accent,
+            ..Palette::default()
+        }
+    }
+
+    /// A palette built from the explicit colors a pre-theme render test used
+    /// to pass positionally: background, focus accent, and skeleton overlay.
+    fn pal_of(base: CColor, accent: CColor, overlay: CColor) -> Palette {
+        Palette {
+            base,
+            accent,
+            overlay,
+            ..Palette::default()
+        }
+    }
+
     #[test]
     fn pane_window_shows_leading_content() {
         // 240-col content, 80-col rect, no scroll: reveal [0, 80).
@@ -2663,11 +2566,10 @@ mod tests {
             KeyEventState::CAPS_LOCK,
         );
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::FocusLeft)));
-        // Same for prefix: Caps should not fake Shift+hjkl.
-        IN_PREFIX.store(true, Ordering::Relaxed);
+        // Same with Alt+Shift: Caps should not fake Shift+hjkl either.
         let ev = KeyEvent::new_with_kind_and_state(
             KeyCode::Char('H'),
-            KeyModifiers::NONE,
+            KeyModifiers::ALT,
             KeyEventKind::Press,
             KeyEventState::CAPS_LOCK,
         );
@@ -2680,8 +2582,7 @@ mod tests {
         // SHIFT modifier but without CAPS_LOCK, so physical_shift sees it as Shift.
         let ev = KeyEvent::new(KeyCode::Char('H'), KeyModifiers::ALT);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::MovePaneLeft)));
-        IN_PREFIX.store(true, Ordering::Relaxed);
-        let ev = KeyEvent::new(KeyCode::Char('K'), KeyModifiers::NONE);
+        let ev = KeyEvent::new(KeyCode::Char('K'), KeyModifiers::ALT);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::MovePaneUp)));
     }
 
@@ -2694,7 +2595,7 @@ mod tests {
         let ev = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE);
         assert_eq!(handle_key(&ev), Some(Cmd::Input(b"!".to_vec())));
         // Caps+a also produces 'A' (caps state) but should still type 'A' when
-        // not an Alt/prefix chord, just like Shift. Focus test is plain key:
+        // not an Alt chord, just like Shift. Focus test is plain key:
         let ev = KeyEvent::new_with_kind_and_state(
             KeyCode::Char('A'),
             KeyModifiers::NONE,
@@ -2736,19 +2637,6 @@ mod tests {
                 Some(Cmd::None),
                 "bare modifier {code:?} must not become pane input"
             );
-            // Must not consume a Ctrl-b prefix either (Alt hold while
-            // in prefix should keep the prefix alive for the next real key).
-            IN_PREFIX.store(true, Ordering::Relaxed);
-            assert_eq!(
-                handle_key(&ev),
-                Some(Cmd::None),
-                "bare modifier {code:?} must not consume prefix"
-            );
-            assert!(
-                IN_PREFIX.load(Ordering::Relaxed),
-                "prefix survives bare modifier {code:?}"
-            );
-            IN_PREFIX.store(false, Ordering::Relaxed);
         }
     }
 
@@ -3134,7 +3022,7 @@ mod tests {
             8,
             &layout,
             &crate::config::Minimap::default(),
-            accent,
+            &pal_accent(accent),
         );
         // Two strips -> map height 2, width 32 (default max). Bottom-right:
         // ox = 40-32 = 8, oy = 8-2 = 6.
@@ -3184,7 +3072,7 @@ mod tests {
             8,
             &single,
             &crate::config::Minimap::default(),
-            accent,
+            &pal_accent(accent),
         );
         assert!(
             out2.iter().all(|c| c.style.bg == CColor::Default),
@@ -3200,7 +3088,7 @@ mod tests {
             8,
             &strip,
             &crate::config::Minimap::default(),
-            accent,
+            &pal_accent(accent),
         );
         assert!(
             out3.iter().any(|c| c.style.bg != CColor::Default),
@@ -3233,7 +3121,7 @@ mod tests {
             8,
             &layout,
             &crate::config::Minimap::default(),
-            accent,
+            &pal_accent(accent),
         );
         let cell = |x: usize, y: usize| out[y * cols + x];
         // Map: ox=8, oy=6. Strip 1 has 4 tiles of 8 cells each.
@@ -3365,9 +3253,8 @@ mod tests {
             cols,
             rows,
             0,
-            CColor::Default,
-            red,
-            Some(white),
+            &pal_of(CColor::Default, red, white),
+            true,
             &no_map(),
         );
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
@@ -3447,9 +3334,8 @@ mod tests {
             cols,
             rows,
             0,
-            CColor::Default,
-            CColor::Rgb(0xff, 0, 0),
-            Some(white),
+            &pal_of(CColor::Default, CColor::Rgb(0xff, 0, 0), white),
+            true,
             &no_map(),
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
@@ -3484,9 +3370,8 @@ mod tests {
             cols,
             rows,
             0,
-            dim,
-            CColor::Rgb(0xff, 0, 0),
-            Some(CColor::Rgb(0xff, 0xff, 0xff)),
+            &pal_of(dim, CColor::Rgb(0xff, 0, 0), CColor::Rgb(0xff, 0xff, 0xff)),
+            true,
             &no_map(),
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
@@ -3550,7 +3435,7 @@ mod tests {
         let rows: u16 = 24;
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
         let frame_color = CColor::Rgb(0x74, 0xc7, 0xec);
-        draw_center_hud(&mut out, cols, rows, &layout, frame_color);
+        draw_center_hud(&mut out, cols, rows, &layout, &pal_accent(frame_color));
         let has_frame = out
             .iter()
             .any(|c| c.ch == '╭' || c.ch == '╮' || c.ch == '╰' || c.ch == '╯');
@@ -3584,7 +3469,7 @@ mod tests {
             layout.panes.get_mut(pid).unwrap().status = PaneStatus::Running;
         }
         let mut out2 = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(&mut out2, cols, rows, &layout, frame_color);
+        draw_center_hud(&mut out2, cols, rows, &layout, &pal_accent(frame_color));
         let all2: Vec<String> = (0..rows)
             .map(|y| {
                 (0..cols)
@@ -3598,7 +3483,7 @@ mod tests {
         );
         // Tiny viewport: nothing painted.
         let mut tiny = vec![Cell::default(); 10 * 4];
-        draw_center_hud(&mut tiny, 10, 4, &layout, frame_color);
+        draw_center_hud(&mut tiny, 10, 4, &layout, &pal_accent(frame_color));
         assert!(
             tiny.iter().all(|c| c.ch == ' '),
             "tiny viewport draws no HUD"
@@ -3656,7 +3541,7 @@ mod tests {
             ..Default::default()
         };
         let mut out = vec![Cell::default(); 40 * 8];
-        draw_minimap(&mut out, 40, 8, &layout, &mm, CColor::Idx(36));
+        draw_minimap(&mut out, 40, 8, &layout, &mm, &pal_accent(CColor::Idx(36)));
         let any = out
             .iter()
             .any(|c| c.style.bg != CColor::Default && c.ch != ' ');
@@ -3679,7 +3564,14 @@ mod tests {
         let cols: u16 = 80;
         let rows: u16 = 24;
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_minimap(&mut out, cols, rows, &layout, &mm, CColor::Idx(36));
+        draw_center_minimap(
+            &mut out,
+            cols,
+            rows,
+            &layout,
+            &mm,
+            &pal_accent(CColor::Idx(36)),
+        );
         let has_frame = out
             .iter()
             .any(|c| c.ch == '╭' || c.ch == '╮' || c.ch == '╰' || c.ch == '╯');
@@ -3697,7 +3589,7 @@ mod tests {
         // Single-pane layout hides it.
         let single = Layout::new(1);
         let mut out2 = vec![Cell::default(); 40 * 8];
-        draw_center_minimap(&mut out2, 40, 8, &single, &mm, CColor::Idx(36));
+        draw_center_minimap(&mut out2, 40, 8, &single, &mm, &pal_accent(CColor::Idx(36)));
         assert!(
             out2.iter().all(|c| c.ch == ' '),
             "no center map for one pane"
@@ -3743,9 +3635,8 @@ fn content_scroll_reveals_overflow_e2e() {
         80,
         10,
         240,
-        CColor::Default,
-        CColor::Default,
-        None,
+        &Palette::default(),
+        false,
         &crate::config::Minimap::default(),
     );
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
@@ -3761,9 +3652,8 @@ fn content_scroll_reveals_overflow_e2e() {
         80,
         10,
         240,
-        CColor::Default,
-        CColor::Default,
-        None,
+        &Palette::default(),
+        false,
         &crate::config::Minimap::default(),
     );
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
@@ -3779,9 +3669,8 @@ fn content_scroll_reveals_overflow_e2e() {
         80,
         10,
         240,
-        CColor::Default,
-        CColor::Default,
-        None,
+        &Palette::default(),
+        false,
         &crate::config::Minimap::default(),
     );
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
@@ -3862,9 +3751,8 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
         cols,
         rows,
         0,
-        CColor::Default,
-        CColor::Default,
-        None,
+        &Palette::default(),
+        false,
         &crate::config::Minimap::default(),
     );
     // The top row shows each pane's letter across its exact range: the
@@ -3961,9 +3849,8 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
             cols,
             rows,
             0,
-            CColor::Rgb(0x1e, 0x1e, 0x2e),
-            CColor::Rgb(0x74, 0xc7, 0xec),
-            Some(CColor::Rgb(0x6c, 0x70, 0x86)),
+            &Palette::default(),
+            true,
             &crate::config::Minimap::default(),
         );
         let y = 2usize;

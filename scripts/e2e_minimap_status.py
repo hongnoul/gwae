@@ -123,12 +123,12 @@ def main():
     tallies_ok = any(re.search(r"!1.*✓1|✓1.*!1", line) for line in right)
     check("summary tallies split 1 attention / 1 done", tallies_ok, repr(right))
 
-    # Smart-jump (prefix `g`): focus must leave the Done pane and land on the
+    # Smart-jump (Alt+g): focus must leave the Done pane and land on the
     # shell pane that wants attention. Proof is behavioral: the next keystrokes
     # must reach the shell (the Done pane only runs `sleep`, it answers
     # nothing). Have the shell emit OSC 133 D;2 -> its tile must flip to
     # Failed (✗) and the tally must show ✗1.
-    os.write(fd, b"\x02g")  # Ctrl-b, g = smart-jump
+    os.write(fd, b"\x1bg")  # Alt+g = smart-jump
     time.sleep(0.3)
     os.write(fd, b'printf "\\033]133;C\\007"; printf "\\033]133;D;2\\007"\r')
     raw2 = drain(fd, 2.0)

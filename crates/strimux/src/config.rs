@@ -5,12 +5,16 @@
 //! M0 and grows with the layout. `docs/CONFIG.md` is generated from the doc
 //! comments here.
 
+use crate::theme::{Palette, ThemeSpec};
 use serde::de::{self, Visitor};
 use serde::Deserialize;
 use std::fmt;
 use std::path::PathBuf;
 use strimux_layout::Width;
-use strimux_term::CColor;
+
+/// A color as written in the config. Re-exported from [`crate::theme`] under
+/// its historical name so existing `background = ...` handling is unchanged.
+pub use crate::theme::Color as Background;
 
 fn default_input_poll_ms() -> u64 {
     2
@@ -38,19 +42,31 @@ pub struct Config {
     /// single quarter-width pane; the skeleton's placeholder boxes show the
     /// rest of the container).
     pub startup_panes: usize,
+    /// The chrome color theme. Either a built-in preset name
+    /// (`theme = "tokyo-night"`) or a `[theme]` table with a `preset` plus
+    /// per-key overrides. `theme = "terminal"` derives every color from the
+    /// host terminal's own ANSI 0-15 palette. Default: `catppuccin-mocha`.
+    /// See `docs/CONFIG.md` for the full key list.
+    pub theme: ThemeSpec,
     /// Color of the empty (uncovered) background behind the panes. Accepts a
     /// 256-color index (`236`), a hex RGB (`"#1e1e2e"`), or `"default"`.
-    pub background: Background,
+    ///
+    /// Legacy alias for `theme.base`; when set it overrides the theme.
+    pub background: Option<Background>,
     /// Color of the 1-cell accent frame drawn around the focused box. Accepts
     /// a 256-color index (`196`), a hex RGB (`"#ff0000"`), or `"default"`.
-    pub focus_color: Background,
+    ///
+    /// Legacy alias for `theme.accent`; when set it overrides the theme.
+    pub focus_color: Option<Background>,
     /// Draw the skeleton: a 1-cell frame around every column box (full strip
     /// height), so the layout's structure is always visible. The focused box's
     /// frame uses `focus_color` instead of `skeleton_color`.
     pub skeleton: bool,
     /// Color of the skeleton frames around unfocused boxes. Accepts the same
-    /// forms as `background`. Default: white.
-    pub skeleton_color: Background,
+    /// forms as `background`.
+    ///
+    /// Legacy alias for `theme.overlay`; when set it overrides the theme.
+    pub skeleton_color: Option<Background>,
     /// The minimap: a small bottom-right grid showing each strip (row) and its
     /// panes (columns), with the focused strip and column highlighted.
     pub minimap: Minimap,
@@ -79,11 +95,14 @@ impl Default for Config {
             content_width: 0,
             default_agent: "jcode".to_string(),
             startup_panes: 1,
-            // Catppuccin Mocha defaults: base #1e1e2e, sapphire #74c7ec, overlay0 #6c7086.
-            background: Background(CColor::Rgb(0x1e, 0x1e, 0x2e)),
-            focus_color: Background(CColor::Rgb(0x74, 0xc7, 0xec)),
+            // Colors all live in the theme now; the Catppuccin Mocha defaults
+            // come from `Palette::default()`. These legacy keys stay unset
+            // unless the user writes them, so they only ever *override*.
+            theme: ThemeSpec::default(),
+            background: None,
+            focus_color: None,
             skeleton: true,
-            skeleton_color: Background(CColor::Rgb(0x6c, 0x70, 0x86)),
+            skeleton_color: None,
             minimap: Minimap::default(),
             mouse: true,
             scroll_lines: 3,
@@ -102,6 +121,32 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_default()
             .join(".config/strimux/strimux.toml")
+    }
+
+    /// The fully resolved chrome palette: the named preset (or the default
+    /// Catppuccin Mocha), then the `[theme]` per-key overrides, then the
+    /// legacy top-level `background` / `focus_color` / `skeleton_color` keys,
+    /// which win so that pre-theme config files keep behaving exactly as they
+    /// did.
+    pub fn palette(&self) -> Palette {
+        let (mut p, bad) = self.theme.0.resolve();
+        if let Some(name) = bad {
+            tracing::warn!(
+                "unknown theme {name:?}; using {}. Available: {}",
+                "catppuccin-mocha",
+                Palette::NAMES.join(", ")
+            );
+        }
+        if let Some(c) = self.background {
+            p.base = c.color();
+        }
+        if let Some(c) = self.focus_color {
+            p.accent = c.color();
+        }
+        if let Some(c) = self.skeleton_color {
+            p.overlay = c.color();
+        }
+        p
     }
 
     /// Load config from `path`, falling back to defaults if the file is
@@ -144,7 +189,9 @@ impl<'de> Deserialize<'de> for MinimapMode {
         impl<'de> Visitor<'de> for V {
             type Value = MinimapMode;
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("overlay, edge_ticks, off (plus legacy reserved / reserved_quasimode as off)")
+                f.write_str(
+                    "overlay, edge_ticks, off (plus legacy reserved / reserved_quasimode as off)",
+                )
             }
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
             where
@@ -156,7 +203,10 @@ impl<'de> Deserialize<'de> for MinimapMode {
                     "off" => Ok(MinimapMode::Off),
                     // legacy bottom-row modes → off
                     "reserved" | "reserved_quasimode" => Ok(MinimapMode::Off),
-                    _ => Err(de::Error::unknown_variant(v, &["overlay", "edge_ticks", "off"])),
+                    _ => Err(de::Error::unknown_variant(
+                        v,
+                        &["overlay", "edge_ticks", "off"],
+                    )),
                 }
             }
             fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
@@ -199,6 +249,7 @@ pub struct Minimap {
 impl Minimap {
     /// How many bottom rows are reserved for chrome. No longer used: the
     /// bottom status row has been removed, so this always returns 0.
+    #[allow(dead_code)]
     pub fn chrome_rows(&self) -> u16 {
         0
     }
@@ -206,6 +257,7 @@ impl Minimap {
     /// Whether the chrome strip should actually paint content this frame.
     /// With the bottom row removed this is true only for overlay-style
     /// chrome; the centered Alt HUD/minimap is gated elsewhere.
+    #[allow(dead_code)]
     pub fn should_paint(&self, _alt_held: bool, _has_attention: bool) -> bool {
         if !self.show {
             return false;
@@ -230,82 +282,10 @@ impl Default for Minimap {
     }
 }
 
-/// The empty (uncovered) background color behind the panes. Wraps a `CColor`
-/// and parses it from TOML as either a 256-color index, a hex RGB string, or
-/// the literal `"default"` (the terminal's own background).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Background(pub CColor);
-
-impl Default for Background {
-    fn default() -> Self {
-        Background(CColor::Default)
-    }
-}
-
-impl Background {
-    /// Resolve to the color used when painting uncovered background cells.
-    pub fn color(self) -> CColor {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for Background {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_any(BackgroundVisitor)
-    }
-}
-
-struct BackgroundVisitor;
-
-impl<'de> Visitor<'de> for BackgroundVisitor {
-    type Value = Background;
-
-    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("a 256-color index (0-255), a hex RGB string like \"#1e1e2e\", or \"default\"")
-    }
-
-    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        let i = v.min(255) as u8;
-        Ok(Background(CColor::Idx(i)))
-    }
-
-    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        let i = v.clamp(0, 255) as u8;
-        Ok(Background(CColor::Idx(i)))
-    }
-
-    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        if s.eq_ignore_ascii_case("default") {
-            return Ok(Background(CColor::Default));
-        }
-        let hex = s.trim_start_matches('#');
-        if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(de::Error::custom(
-                "background string must be \"default\" or a 6-digit hex RGB like \"#1e1e2e\"",
-            ));
-        }
-        let r = u8::from_str_radix(&hex[0..2], 16).map_err(de::Error::custom)?;
-        let g = u8::from_str_radix(&hex[2..4], 16).map_err(de::Error::custom)?;
-        let b = u8::from_str_radix(&hex[4..6], 16).map_err(de::Error::custom)?;
-        Ok(Background(CColor::Rgb(r, g, b)))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strimux_term::CColor;
 
     fn parse(toml: &str) -> Config {
         toml::from_str(toml).expect("config parses")
@@ -322,27 +302,22 @@ mod tests {
     fn defaults_apply_when_omitted() {
         let cfg = parse("");
         assert_eq!(cfg.startup_panes, 1);
-        // Catppuccin Mocha defaults: background base (#1e1e2e), focus sapphire
-        // (#74c7ec), skeleton overlay0 (#6c7086).
-        assert_eq!(cfg.background, Background(CColor::Rgb(0x1e, 0x1e, 0x2e)));
-        assert_eq!(cfg.focus_color, Background(CColor::Rgb(0x74, 0xc7, 0xec)));
         assert!(cfg.skeleton, "skeleton frames on by default");
         assert!(cfg.mouse, "mouse captured by default");
         assert_eq!(cfg.scroll_lines, 3);
-        assert_eq!(
-            cfg.skeleton_color,
-            Background(CColor::Rgb(0x6c, 0x70, 0x86))
-        );
+        // No color keys set: the palette is the default Catppuccin Mocha,
+        // exactly the colors that used to be hardcoded.
+        assert_eq!(cfg.palette(), Palette::CATPPUCCIN_MOCHA);
     }
 
     #[test]
     fn focus_color_parses() {
         let cfg = parse("focus_color = 36");
-        assert_eq!(cfg.focus_color, Background(CColor::Idx(36)));
+        assert_eq!(cfg.palette().accent, CColor::Idx(36));
         let cfg = parse("focus_color = \"#ff0000\"");
-        assert_eq!(cfg.focus_color, Background(CColor::Rgb(0xff, 0, 0)));
+        assert_eq!(cfg.palette().accent, CColor::Rgb(0xff, 0, 0));
         let cfg = parse("focus_color = \"default\"");
-        assert_eq!(cfg.focus_color, Background::default());
+        assert_eq!(cfg.palette().accent, CColor::Default);
     }
 
     #[test]
@@ -350,31 +325,65 @@ mod tests {
         let cfg = parse("skeleton = false");
         assert!(!cfg.skeleton);
         let cfg = parse("skeleton_color = \"#333333\"");
-        assert_eq!(
-            cfg.skeleton_color,
-            Background(CColor::Rgb(0x33, 0x33, 0x33))
-        );
+        assert_eq!(cfg.palette().overlay, CColor::Rgb(0x33, 0x33, 0x33));
     }
 
     #[test]
     fn background_index_parses() {
         let cfg = parse("background = 235");
-        assert_eq!(cfg.background, Background(CColor::Idx(235)));
+        assert_eq!(cfg.palette().base, CColor::Idx(235));
     }
 
     #[test]
     fn background_hex_parses() {
         let cfg = parse("background = \"#1e1e2e\"");
-        assert_eq!(cfg.background, Background(CColor::Rgb(0x1e, 0x1e, 0x2e)));
+        assert_eq!(cfg.palette().base, CColor::Rgb(0x1e, 0x1e, 0x2e));
         // Leading '#' is optional.
         let cfg = parse("background = '1e1e2e'");
-        assert_eq!(cfg.background, Background(CColor::Rgb(0x1e, 0x1e, 0x2e)));
+        assert_eq!(cfg.palette().base, CColor::Rgb(0x1e, 0x1e, 0x2e));
     }
 
     #[test]
     fn background_default_literal() {
         let cfg = parse("background = \"default\"");
-        assert_eq!(cfg.background, Background(CColor::Default));
+        assert_eq!(cfg.palette().base, CColor::Default);
+    }
+
+    #[test]
+    fn theme_name_selects_a_preset() {
+        let cfg = parse("theme = \"nord\"");
+        assert_eq!(cfg.palette(), Palette::NORD);
+    }
+
+    #[test]
+    fn theme_table_overrides_layer_on_the_preset() {
+        let cfg = parse("[theme]\npreset = \"nord\"\naccent = \"#ff0000\"\n");
+        let p = cfg.palette();
+        assert_eq!(p.accent, CColor::Rgb(0xff, 0, 0));
+        assert_eq!(p.base, Palette::NORD.base);
+    }
+
+    #[test]
+    fn legacy_flat_keys_beat_the_theme() {
+        // A pre-theme config that also names a preset: the explicit legacy
+        // keys must still win, so upgrading strimux never changes an
+        // existing user's colors.
+        let cfg = parse("theme = \"nord\"\nbackground = \"#010203\"\n");
+        let p = cfg.palette();
+        assert_eq!(p.base, CColor::Rgb(1, 2, 3), "legacy background wins");
+        assert_eq!(p.accent, Palette::NORD.accent, "rest comes from the preset");
+    }
+
+    #[test]
+    fn unknown_theme_falls_back_to_the_default_palette() {
+        let cfg = parse("theme = \"no-such-theme\"");
+        assert_eq!(cfg.palette(), Palette::CATPPUCCIN_MOCHA);
+    }
+
+    #[test]
+    fn terminal_theme_inherits_the_ansi_palette() {
+        let cfg = parse("theme = \"terminal\"");
+        assert_eq!(cfg.palette(), Palette::TERMINAL);
     }
 
     #[test]
@@ -387,6 +396,6 @@ mod tests {
     fn sample_user_config() {
         let cfg = parse("startup_panes = 2\nbackground = 235");
         assert_eq!(cfg.startup_panes, 2);
-        assert_eq!(cfg.background, Background(CColor::Idx(235)));
+        assert_eq!(cfg.palette().base, CColor::Idx(235));
     }
 }

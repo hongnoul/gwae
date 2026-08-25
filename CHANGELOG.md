@@ -30,7 +30,7 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   attention). The map now appears whenever more than one pane exists, not
   only with multiple strips. Configurable under `[minimap]`
   (`show`, `max_width`, `max_rows`, `show_counts`).
-- **Smart-jump (`⌥+g`, prefix `g`)**: jump straight to the pane that needs
+- **Smart-jump (`⌥+g`)**: jump straight to the pane that needs
   you - failed beats waiting-for-input beats done, nearest first in layout
   order - crossing strips and following with the scroll. Does nothing while
   every other pane is happily working.
@@ -80,12 +80,12 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   of a faint gray background tint. The frame is an overlay on the pane's edge
   cells, so it never shifts or resizes the pane, and it stays visible over
   panes that paint their own background.
-- **Spawn an agent pane with `;`**: `Ctrl-b ;` / `⌥+;` (the Option key on macOS)
+- **Spawn an agent pane with `;`**: `⌥+;` (the Option key on macOS)
   spawns a new pane running the configured agent harness (`config.default_agent`,
   default `jcode`) at the rightmost of the focused strip and switches focus to
   it. Configurable via `default_agent = "claude"` (or any command).
 - **Keybinding tweaks**: `⌥+q` now kills the focused pane (matching `⌥+x`)
-  instead of quitting; quit remains `Ctrl-b q`. On macOS the `⌥+;` / `⌥+q`
+  instead of quitting; quit is `⌥+Shift+q`. On macOS the `⌥+;` / `⌥+q`
   chords work out of the box (Option+`;` = `…`, Option+`q` = `œ`), no
   Option-as-Alt needed.
 - **M0 renderer**: single-process, multi-pane PTY cell renderer. The `strimux`

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """E2E: closing every pane with the kill-pane verb must quit strimux.
 
-Scenario: start with 2 panes, press `Ctrl-b x` twice. After the second kill
+Scenario: start with 2 panes, press `Alt+q` twice. After the second kill
 there are no panes left, so the process must terminate instead of resurrecting
 a fresh default layout.
 """
@@ -52,13 +52,13 @@ def main():
 
     drain(fd, 1.5)
     # First kill: one pane left, strimux keeps running.
-    os.write(fd, b"\x02x")
+    os.write(fd, b"\x1bq")
     drain(fd, 1.0)
     check("strimux survives killing a non-last pane",
           os.waitpid(pid, os.WNOHANG) == (0, 0))
 
     # Second kill: no panes left, must exit.
-    os.write(fd, b"\x02x")
+    os.write(fd, b"\x1bq")
     deadline = time.time() + 5
     quit_ok = False
     while time.time() < deadline:

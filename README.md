@@ -69,36 +69,33 @@ strimux doctor              # diagnostics: terminal caps + $mod decoding
 
 The default layout is **one strip, one quarter-width column**. Skeleton placeholders tile the empty right side so the 4-column container always reads (each shows a big `strip.cell` address). Set `startup_panes` to open more panes immediately. New columns appear to the **right of the focused pane**, not at the strip end.
 
-Content width is decoupled from column width via `content_width`. Default `0` follows the column (lines wrap); set e.g. `240` to give panes a wider logical grid and pan inside the pane with `⌥+←/→` / `Ctrl-b ,/.`.
+Content width is decoupled from column width via `content_width`. Default `0` follows the column (lines wrap); set e.g. `240` to give panes a wider logical grid and pan inside the pane with `⌥+←/→`.
 
 ---
 
 ## Keybindings
 
-`strimux` has **two equivalent bindings** so it works everywhere with zero configuration:
+Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt elsewhere. It works when the terminal delivers Option as Meta/Alt, plus a fallback that decodes macOS's Unicode glyphs (`…` for `⌥+;`, `œ` for `⌥+q`, `ÓÔÒ` for `⌥+Shift+hjkl`) with no "Option as Alt" toggle.
 
-- **`Ctrl-b` prefix** — always works. Press `Ctrl-b`, the status line shows `^B`, then a command key. `Esc` cancels, `Ctrl-b Ctrl-b` sends a literal `Ctrl-b` to the pane.
-- **`⌥` chords** — `⌥` is the **Option key on macOS**, Alt elsewhere. Works when the terminal delivers Option as Meta/Alt, plus a fallback that decodes macOS's Unicode glyphs (`…` for `⌥+;`, `œ` for `⌥+q`, `ÓÔÒ` for `⌥+Shift+hjkl`) with no "Option as Alt" toggle.
-
-| Keys (`Ctrl-b` then …) | `⌥` chord | Action |
-|---|---|---|
-| `h` / `l` | `⌥+h` / `⌥+l` | Focus left / right (adjacent column; scrolls minimally to reveal) |
-| `k` / `j` | `⌥+k` / `⌥+j` | Focus up / down within stack; at edge crosses strips. Past the last strip creates an empty strip (niri workspace semantics); leaving an empty strip discards it |
-| `H` / `L` | `⌥+Shift+h` / `⌥+Shift+l` | Move focused column left / right (swap with neighbor) |
-| `K` / `J` | `⌥+Shift+k` / `⌥+Shift+j` | Move pane up / down within stack; at the stack edge carries the pane to the neighboring strip (creating one past the end), discarding an emptied strip |
-| `c` | `⌥+Enter` | New column to the right of focused |
-| `;` | `⌥+;` (`…` on macOS) | Spawn agent pane (`default_agent`, default `jcode`) at strip end and focus it |
-| `s` | `⌥+s` | Split focused column — new pane below |
-| `r` (`z`) | `⌥+r` | Cycle focused column width `1/3 → 1/2 → 1/4` |
-| `f` | `⌥+f` (`ƒ` on macOS) | Toggle focused column between full width and `1/4` |
-| `x` | `⌥+x` / `⌥+q` (`œ`) | Kill focused pane — columns compact, focus keeps its slot (falls left only at right edge); emptied strip is dropped, last pane quits strimux |
-| `,` / `.` | `⌥+←` / `⌥+→` | Scroll pane's logical content horizontally (when `content_width` > column width) |
-| `[` / `]` | `⌥+Ctrl+h` / `⌥+Ctrl+l` | Scroll row viewport one quantized stop without moving focus |
-| `1` … `9` | `⌥+1` … `⌥+9` | Jump to column N in focused strip |
-| `g` | `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
-| `q` | — | Quit strimux (kills all panes) |
-| | click | Left-click focuses the clicked pane |
-| | wheel | Scrolls pane scrollback under cursor; `Shift+wheel` etc. forwarded as SGR when pane wants mouse, else translated to `↑`/`↓` for alt-screen pagers |
+| `⌥` chord | Action |
+|---|---|
+| `⌥+h` / `⌥+l` | Focus left / right (adjacent column; scrolls minimally to reveal) |
+| `⌥+k` / `⌥+j` | Focus up / down within stack; at edge crosses strips. Past the last strip creates an empty strip (niri workspace semantics); leaving an empty strip discards it |
+| `⌥+Shift+h` / `⌥+Shift+l` | Move focused column left / right (swap with neighbor) |
+| `⌥+Shift+k` / `⌥+Shift+j` | Move pane up / down within stack; at the stack edge carries the pane to the neighboring strip (creating one past the end), discarding an emptied strip |
+| `⌥+Enter` | New column to the right of focused |
+| `⌥+;` (`…` on macOS) | Spawn agent pane (`default_agent`, default `jcode`) at strip end and focus it |
+| `⌥+s` | Split focused column — new pane below |
+| `⌥+r` | Cycle focused column width `1/3 → 1/2 → 1/4` |
+| `⌥+f` (`ƒ` on macOS) | Toggle focused column between full width and `1/4` |
+| `⌥+x` / `⌥+q` (`œ`) | Kill focused pane — columns compact, focus keeps its slot (falls left only at right edge); emptied strip is dropped, last pane quits strimux |
+| `⌥+←` / `⌥+→` | Scroll pane's logical content horizontally (when `content_width` > column width) |
+| `⌥+Ctrl+h` / `⌥+Ctrl+l` | Scroll row viewport one quantized stop without moving focus |
+| `⌥+1` … `⌥+9` | Jump to column N in focused strip |
+| `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
+| `⌥+Shift+q` | Quit strimux (kills all panes) |
+| click | Left-click focuses the clicked pane |
+| wheel | Scrolls pane scrollback under cursor; `Shift+wheel` etc. forwarded as SGR when pane wants mouse, else translated to `↑`/`↓` for alt-screen pagers |
 
 All other keys pass through to the focused pane. Closing a pane by `exit` / process death behaves identically to `kill-pane`.
 
@@ -136,15 +133,15 @@ Kill-switch `minimap.show = false` still respected.
 
 ### Smart-jump
 
-`⌥+g` / `Ctrl-b g` jumps to the pane that needs you most — **failed beats wants-attention beats done**, nearest in layout order first, crossing strips and following with the scroll. Does nothing when every other pane is happily working. Proven E2E: jump lands on the attention shell, typing there succeeds and flips `✗` on the command that emitted `D;2`.
+`⌥+g` jumps to the pane that needs you most — **failed beats wants-attention beats done**, nearest in layout order first, crossing strips and following with the scroll. Does nothing when every other pane is happily working. Proven E2E: jump lands on the attention shell, typing there succeeds and flips `✗` on the command that emitted `D;2`.
 
 ---
 
 ## Appearance
 
-- **Skeleton** (`skeleton = true`): 1-cell frame around every column box at full strip height, so the container always reads even with one pane. Content is inset 1 cell so the frame never covers what a program draws. Placeholders show big block-font `strip.cell` addresses. Focus frame uses `focus_color`, others use `skeleton_color`.
-- **Focus**: sapphire `#74c7ec` hairline (never shifts layout) + kitty-like inverse block cursor at the focused pane's vt100 cursor.
-- **Palette**: Catppuccin Mocha by default — `background #1e1e2e`, `skeleton_color #6c7086` (overlay0), `focus_color #74c7ec` (sapphire, distinct from red `Failed`). Minimap tiles at 60% muted accents, summary at full. All themeable as `256-index`, `#rrggbb`, or `"default"`.
+- **Skeleton** (`skeleton = true`): 1-cell frame around every column box at full strip height, so the container always reads even with one pane. Content is inset 1 cell so the frame never covers what a program draws. Placeholders show big block-font `strip.cell` addresses. Focus frame uses the theme's `accent`, others use `overlay`.
+- **Focus**: accent hairline (never shifts layout) + kitty-like inverse block cursor at the focused pane's vt100 cursor.
+- **Palette**: Catppuccin Mocha by default — base `#1e1e2e`, overlay `#6c7086`, accent `#74c7ec` (sapphire, distinct from red `Failed`). Pick a preset with `theme = "nord"` (also `catppuccin-latte`, `tokyo-night`, `gruvbox`, `rose-pine`, `dracula`, `terminal` which inherits the host's ANSI 0-15), or override any key in `[theme]` (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`). Minimap tiles at 60% muted accents, summary at full. Legacy `background`/`focus_color`/`skeleton_color` still work as aliases for `theme.base`/`accent`/`overlay`. All colors as `256-index`, `#rrggbb`, or `"default"`.
 - **Pane geometry**: window-anchored column boundaries + quantized stops mean the same four `1/4` columns paint identically at every scroll stop even at hostile widths like 342 cols (verified E2E).
 
 ---
@@ -160,10 +157,16 @@ center_focus = false
 content_width = 0
 default_agent = "claude"          # ; spawns this
 startup_panes = 1
-background = "#1e1e2e"             # Mocha base
-focus_color = "#74c7ec"            # Mocha sapphire
+theme = "catppuccin-mocha"        # palette preset (see Appearance)
+# [theme]
+# preset = "nord"
+# accent = "#ff0000"              # override any key on top of the preset
+# overlay = "#665c54"
 skeleton = true
-skeleton_color = "#6c7086"         # Mocha overlay0
+# legacy aliases (override theme when set):
+# background = "#1e1e2e"          # -> theme.base
+# focus_color = "#74c7ec"         # -> theme.accent
+# skeleton_color = "#6c7086"      # -> theme.overlay
 mouse = true
 scroll_lines = 3
 
@@ -186,10 +189,11 @@ Key reference (defaults in parentheses):
 | `content_width` | int | `0` | Logical pane width; `0` = follow column width (wrap). `>0` = horizontal overflow panned with `⌥+←/→` |
 | `default_agent` | string | `jcode` | Command launched by `;` |
 | `startup_panes` | int | `1` | Quarter-width panes at launch; remainder shows as skeleton placeholders |
-| `background` | color | `#1e1e2e` | Empty background behind panes |
-| `focus_color` | color | `#74c7ec` | Focus frame accent |
+| `theme` | string/table | `catppuccin-mocha` | Palette preset or `[theme]` table with `preset` + per-key overrides; see Appearance / `docs/CONFIG.md` |
+| `background` | color | theme `base` | Legacy alias for `theme.base` |
+| `focus_color` | color | theme `accent` | Legacy alias for `theme.accent` |
 | `skeleton` | bool | `true` | Draw column frames + placeholders |
-| `skeleton_color` | color | `#6c7086` | Unfocused frame color |
+| `skeleton_color` | color | theme `overlay` | Legacy alias for `theme.overlay` |
 | `mouse` | bool | `true` | Capture wheel/click for pane scrollback |
 | `scroll_lines` | int | `3` | Rows per wheel notch |
 | `minimap.show` | bool | `true` | Master kill-switch |
@@ -227,7 +231,7 @@ strimux (one process)
 ├── Pane tasks (one per PTY: bytes → parse → grid + OSC 133)
 ├── Composer (coalesce damage → single 2D cell buffer)
 ├── Render (diff buffer → batched ANSI, sync-update markers)
-├── Input (raw mode: decode keys, route to pane or $mod)
+├── Input (raw mode: decode keys, route to pane or ⌥)
 └── Minimap / smart-jump (per-pane status → chrome)
 ```
 

@@ -12,10 +12,17 @@ scroll_margin = 2
 center_focus = false
 content_width = 0
 default_agent = "claude"
-background = "#1e1e2e"        # Catppuccin Mocha base
-focus_color = "#74c7ec"       # Catppuccin Mocha sapphire — focus ring vs red failed
+theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal
+# or per-key overrides on top of a preset:
+# [theme]
+# preset = "nord"
+# accent = "#ff0000"
+# overlay = "#665c54"
 skeleton = true
-skeleton_color = "#6c7086"    # Catppuccin Mocha overlay0
+# legacy aliases (override theme.* when set):
+# background = "#1e1e2e"     # -> theme.base
+# focus_color = "#74c7ec"    # -> theme.accent
+# skeleton_color = "#6c7086" # -> theme.overlay
 mouse = true
 scroll_lines = 3
 input_poll_ms = 2
@@ -39,10 +46,22 @@ hud_on_attention_ms = 2500
 | `content_width` | integer | `0` | Logical grid content width (cells) of every pane, decoupled from the visible column width. Long lines up to this width do not wrap and can be revealed with horizontal pane scroll (`⌥+Left/Right`, the Option key on macOS). `0` (the default) follows the visible column width so lines wrap normally and there is no horizontal overflow to manage in a pane. |
 | `default_agent` | string | `"jcode"` | The agent harness command that `;` (spawn-agent) launches. |
 | `startup_panes` | integer | `1` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (shown as skeleton placeholder boxes, or covered by `background` with `skeleton = false`). The default `1` opens a single terminal in the leftmost quarter. |
-| `background` | color | `#1e1e2e` | Color of the empty (uncovered) background behind the panes. Accepted forms: a 256-color index (`235`), a hex RGB string (`"#1e1e2e"`), or the literal `"default"` (the terminal's own background, usually black). Pane content always paints over it. Default is Catppuccin Mocha base. |
-| `focus_color` | color | `#74c7ec` | Color of the 1-cell accent frame drawn around the focused box (an overlay on the pane's edge cells; it never shifts or resizes the pane). Accepted forms match `background`. Set to `default` to draw with the terminal's own background. Default is Catppuccin Mocha sapphire (cyan, distinct from the red `Failed` state). |
+| `theme` | string or table | `catppuccin-mocha` | Chrome color theme. A bare preset name (`theme = "tokyo-night"`) or a `[theme]` table with `preset` plus per-key overrides (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`). Presets: `catppuccin-mocha` (default), `catppuccin-latte`, `tokyo-night`, `gruvbox`, `nord`, `rose-pine`, `dracula`, `terminal` (inherits the host terminal's ANSI 0-15 palette; single-word aliases `mocha`, `latte`, `tokyo`, `gruvbox`, `nord`, `dracula`, `ansi` also accepted). Colors accept a 256-color index (`235`), hex RGB (`"#1e1e2e"`), or `"default"`. |
+| `[theme].preset` | string | `catppuccin-mocha` | Which built-in palette to start from (see `theme`). Unknown names fall back to `catppuccin-mocha` with a warning. |
+| `[theme].base` | color | preset | Empty (uncovered) background behind the panes. |
+| `[theme].surface` | color | preset | Background of the HUD and centered minimap panels. |
+| `[theme].overlay` | color | preset | Skeleton frames around unfocused boxes. |
+| `[theme].accent` | color | preset | Accent frame around the focused box. |
+| `[theme].text` | color | preset | HUD and minimap text. |
+| `[theme].label` | color | preset | Big block-font `strip.cell` label in placeholder boxes. |
+| `[theme].running` | color | preset | Pane status tint: running. |
+| `[theme].idle` | color | preset | Pane status tint: idle / wants attention. |
+| `[theme].done` | color | preset | Pane status tint: succeeded. |
+| `[theme].failed` | color | preset | Pane status tint: failed. |
+| `background` | color | preset `base` | **Legacy alias for `theme.base`**. When set it overrides the resolved theme's `base`, so existing configs with `background = "#1e1e2e"` keep behaving as before. New configs should use `theme` / `[theme]`. |
+| `focus_color` | color | preset `accent` | **Legacy alias for `theme.accent`**. Overrides the theme's `accent`; use `[theme] accent = ...` for new configs. |
+| `skeleton_color` | color | preset `overlay` | **Legacy alias for `theme.overlay`**. Overrides the theme's `overlay`; use `[theme] overlay = ...` for new configs. |
 | `skeleton` | bool | `true` | Draw the skeleton: a 1-cell frame around every column box at full strip height, so the four-column container always reads. Pane content is inset 1 cell inside its frame, so the frame never covers anything a program draws. With fewer columns than fit, placeholder quarter-width boxes tile the empty right side; their interiors use the default (pane) background rather than `background`, so empty grids are not dimmed, and each shows a big block-font `strip.cell` identifier centered in the box. The focused box's frame uses `focus_color` instead of `skeleton_color`. |
-| `skeleton_color` | color | `#6c7086` | Color of the skeleton frames around unfocused boxes. Accepted forms match `background`. Default is Catppuccin Mocha overlay0. |
 | `mouse` | bool | `true` | Capture the mouse so the wheel scrolls *inside* the pane under the cursor (its own scrollback) instead of reaching the host terminal, where it walks the host's scrollback and the shell's previous/next prompt history. A pane running a full-screen app that asked for mouse reporting gets the event forwarded verbatim, translated into its own grid coordinates; one on the alternate screen without mouse reporting (e.g. `less`) gets arrow keys. Typing snaps a scrolled-back pane to the live bottom. Set to `false` to hand the wheel back to the host terminal. |
 | `scroll_lines` | integer | `3` | Rows of pane scrollback moved per wheel notch. |
 | `input_poll_ms` | integer | `2` | Milliseconds to wait in `event::poll` before checking PTY output and repainting. Lower values reduce perceived typing and backspace latency at the cost of more frequent wakeups. Default `2` (down from `10`) is low latency with modest CPU cost. Valid range `1..50`. Set to `1` for minimum possible input latency. |

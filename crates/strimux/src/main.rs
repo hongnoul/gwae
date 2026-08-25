@@ -6,6 +6,7 @@
 
 mod cli;
 mod config;
+mod theme;
 mod tui;
 
 use clap::Parser;
