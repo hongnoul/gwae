@@ -28,12 +28,13 @@ fn frame_count(out: &[u8]) -> usize {
 /// Run the real strimux binary with `config_body` as its config file and
 /// return every byte it painted before it settled.
 fn paint_with_config(config_body: &str) -> String {
-    paint_with_config_raw(&format!(
-        // The HUD switch goes *after* the case's own body: TOML tables
-        // swallow every key that follows them, so prepending `[minimap]`
-        // would capture the case's top-level keys into that table instead.
-        "{config_body}\n"
-    ))
+    // `skeleton = true` goes *first*: it is a top-level key, and a case body
+    // that opens a TOML table (`[theme]`) would swallow anything appended
+    // after it. The frames it turns on are the chrome these cases read the
+    // colors off - they are drawn as glyphs, so every palette key arrives as a
+    // foreground code - which is why the theme cases opt into them even though
+    // strimux ships full-bleed.
+    paint_with_config_raw(&format!("skeleton = true\n{config_body}\n"))
 }
 
 /// As [`paint_with_config`], but writes `config_body` to disk verbatim.
@@ -169,6 +170,7 @@ const NORD_OVERLAY: (u8, u8, u8) = (0x4c, 0x56, 0x6a);
 #[test]
 fn default_config_paints_the_catppuccin_mocha_chrome() {
     let painted = paint_with_config("");
+    // (The palette is the default one; only the frames are opted into.)
     let (r, g, b) = MOCHA_ACCENT;
     assert!(
         painted.contains(&fg_seq(r, g, b)),
@@ -264,10 +266,9 @@ fn legacy_keys_beat_a_named_preset() {
 
 #[test]
 fn background_key_paints_uncovered_cells() {
-    // `base` is only visible where nothing covers it, so turn the skeleton
-    // off: the placeholder boxes go away and the empty right side is bare
-    // background.
-    let painted = paint_with_config("skeleton = false\nbackground = \"#040506\"\n");
+    // `base` is only visible where nothing covers it: with one startup pane
+    // the empty right side of the grid is bare background.
+    let painted = paint_with_config_raw("background = \"#040506\"\n");
     assert!(
         painted.contains(&bg_seq(4, 5, 6)),
         "the uncovered background should be painted with the configured base; saw {:?}",
@@ -305,5 +306,25 @@ fn an_unparseable_config_still_starts_with_default_colors() {
         painted.contains(&fg_seq(r, g, b)),
         "a broken config should fall back to the default Mocha chrome; saw {:?}",
         fgs_in(&painted)
+    );
+}
+
+#[test]
+fn the_shipped_default_is_full_bleed_with_no_inset_frames() {
+    // The inset skeleton is opt-in: out of the box a pane's content runs to
+    // the edge of its column, so a default run paints no frame glyphs at all
+    // and the focus ring is a background tint instead.
+    let painted = paint_with_config_raw("");
+    let (r, g, b) = MOCHA_OVERLAY;
+    assert!(
+        !painted.contains(&fg_seq(r, g, b)),
+        "default run painted skeleton frames in the overlay color; saw {:?}",
+        fgs_in(&painted)
+    );
+    // Focus is a background tint on the pane's own edge cells instead.
+    let (r, g, b) = MOCHA_ACCENT;
+    assert!(
+        painted.contains(&bg_seq(r, g, b)),
+        "focus should still be visible as an accent tint"
     );
 }

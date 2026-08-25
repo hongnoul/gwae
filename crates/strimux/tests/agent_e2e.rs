@@ -155,6 +155,38 @@ impl Pty {
         out
     }
 
+    /// Fast-forward the guided setup the gateway runs after the agent pick:
+    /// `q` takes the default for every remaining question, then Enter
+    /// dismisses the summary screen. The flow runs in raw mode, so these are
+    /// bare keystrokes with no trailing newline - exactly what a keyboard
+    /// sends. Tests that care about onboarding itself drive it explicitly.
+    fn skip_onboarding(&mut self) {
+        self.wait_for("Color theme");
+        self.send("q");
+        self.dismiss_summary();
+    }
+
+    /// Leave the closing summary screen, which only Enter and backspace act
+    /// on. It drains keys typed during the flow before it listens, so this
+    /// waits for the screen to appear rather than firing blind.
+    ///
+    /// Call [`Pty::press_done`] instead when the caller has already read the
+    /// summary out of the stream: `wait_for` consumes what it reads, so a
+    /// second wait for text that already went by would block until timeout.
+    fn dismiss_summary(&mut self) {
+        self.wait_for("strimux is configured");
+        // The drain runs once the screen is up; give it a beat so the Enter
+        // below is read as a keystroke rather than swallowed as backlog.
+        std::thread::sleep(Duration::from_millis(250));
+        self.send("\r");
+    }
+
+    /// Press Enter at a summary screen the caller has already seen.
+    fn press_done(&mut self) {
+        std::thread::sleep(Duration::from_millis(250));
+        self.send("\r");
+    }
+
     /// Accumulate output until `done` holds, nudging the TUI with `poke` each
     /// second. The startup HUD covers the middle of the screen and only lifts
     /// on a keypress, so a test that needs the pane underneath has to ask more
@@ -247,6 +279,7 @@ fn an_installed_harness_is_offered_chosen_saved_and_executed() {
     // Pick #2 (aider), proving the numbering maps to the listed order.
     p.send("2\n");
     // The stub prints this only if it was actually exec'd.
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:aider");
 
     // The choice persisted, so the next ⌥+; skips the prompt entirely.
@@ -283,6 +316,7 @@ fn a_configured_but_missing_harness_names_it_and_offers_what_exists() {
     );
 
     p.send("1\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:codex");
     assert!(sb.read_config().contains("default_agent = \"codex\""));
     p.kill();
@@ -317,6 +351,7 @@ fn saving_a_choice_preserves_the_rest_of_the_config_file() {
     let mut p = sb.spawn(&[]);
     p.wait_for("Which agent");
     p.send("1\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:claude");
 
     let cfg = sb.read_config();
@@ -435,6 +470,7 @@ fn a_bare_enter_takes_the_listed_default() {
     );
 
     p.send("\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:claude");
     assert!(sb.read_config().contains("default_agent = \"claude\""));
     p.kill();
@@ -452,6 +488,7 @@ fn a_bad_entry_reprompts_instead_of_giving_up() {
     p.send("banana\n");
     p.wait_for("Enter 1-1");
     p.send("1\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:claude");
     p.kill();
 }
@@ -548,6 +585,7 @@ fn a_harness_strimux_has_never_heard_of_is_still_discovered() {
     );
 
     p.send("1\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:hermes-agent");
     assert!(sb
         .read_config()
@@ -562,6 +600,7 @@ fn muse_style_one_word_names_are_found_too() {
     let mut p = sb.spawn(&[]);
     p.wait_for("musecode");
     p.send("1\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:musecode");
     p.kill();
 }
@@ -576,6 +615,7 @@ fn the_config_can_teach_it_a_name_it_could_never_guess() {
     let seen = p.wait_for("Which agent");
     assert!(seen.contains("zz"), "got:\n{seen}");
     p.send("1\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:zz");
     p.kill();
 }
@@ -594,6 +634,7 @@ fn typing_an_unlisted_command_works_and_is_saved() {
     assert!(!seen.contains("zz"), "zz is not agent-shaped; got:\n{seen}");
 
     p.send("zz\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:zz");
     assert!(sb.read_config().contains("default_agent = \"zz\""));
     p.kill();
@@ -608,6 +649,7 @@ fn a_typed_command_that_does_not_exist_says_so_and_reprompts() {
     let seen = p.wait_for("not on your PATH");
     assert!(seen.contains("hermes"), "must name the typo; got:\n{seen}");
     p.send("1\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:claude");
     p.kill();
 }
@@ -621,6 +663,7 @@ fn even_with_nothing_found_you_can_type_a_command() {
     let mut p = sb.spawn(&[]);
     p.wait_for("No agent harness found");
     p.send("zz\n");
+    p.skip_onboarding();
     p.wait_for("AGENT-RAN:zz");
     assert!(sb.read_config().contains("default_agent = \"zz\""));
     p.kill();
@@ -709,26 +752,59 @@ fn startup_with_no_agents_at_all_still_lands_in_a_usable_shell() {
 }
 
 #[test]
-fn onboarding_tunes_latency_right_after_the_agent_is_chosen() {
-    // The two setup steps are one flow: you should leave the first run with
-    // an agent *and* a machine that is not needlessly slow to type in.
+fn onboarding_tunes_latency_silently_before_it_asks_anything() {
+    // Machine tuning is not a question: it has one right answer, so strimux
+    // applies it to its own config *before* the first question is drawn,
+    // rather than making the user adjudicate a number they cannot evaluate.
     let sb = Sandbox::new(&["claude"]);
     sb.write_config("input_poll_ms = 10\n");
     let mut p = sb.spawn(&[]);
     p.wait_for("Which agent");
     p.send("1\n");
-    // strimux fixes its own setting without being asked...
-    let seen = p.wait_for("Set strimux's own");
-    assert!(seen.contains("input-latency setting"), "got:\n{seen}");
-    assert!(seen.contains("input_poll_ms = 1"), "got:\n{seen}");
+    // By the time the first question is on screen, the fix is already on disk.
+    let seen = p.wait_for("Color theme");
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline && !sb.read_config().contains("input_poll_ms = 1") {
         let _ = p.rx.recv_timeout(Duration::from_millis(200));
     }
     let cfg = sb.read_config();
     assert!(cfg.contains("input_poll_ms = 1"), "got:\n{cfg}");
-    // ...and the agent choice from the step before is still there.
+    // ...and it was never asked about, or announced mid-flow.
+    assert!(
+        !seen.contains("input_poll_ms"),
+        "tuning must be silent; got:\n{seen}"
+    );
+    // The agent choice from the step before survives the tuning write.
     assert!(cfg.contains("default_agent = \"claude\""), "got:\n{cfg}");
+    p.send("q");
+    p.dismiss_summary();
+    p.kill();
+}
+
+#[test]
+fn the_summary_screen_reports_what_landed_in_the_file() {
+    // The flow ends on one screen showing every setting as it now stands, so
+    // a user who arrowed through eight questions can check the result without
+    // opening the TOML.
+    let sb = Sandbox::new(&["claude"]);
+    let mut p = sb.spawn(&[]);
+    p.wait_for("Which agent");
+    p.send("1\n");
+    p.wait_for("Color theme");
+    p.send("q");
+    let seen = p.wait_for("strimux is configured");
+    for line in [
+        "Color theme",
+        "Panes on screen at launch",
+        "Width of a new column",
+        "catppuccin-mocha",
+    ] {
+        assert!(seen.contains(line), "summary omits {line:?}; got:\n{seen}");
+    }
+    // And it names the file it wrote, which is the thing to edit next.
+    assert!(seen.contains("strimux.toml"), "got:\n{seen}");
+    p.press_done();
+    p.wait_for("AGENT-RAN:claude");
     p.kill();
 }
 
@@ -741,12 +817,15 @@ fn onboarding_says_nothing_about_latency_when_there_is_nothing_to_fix() {
     let mut p = sb.spawn(&[]);
     p.wait_for("Which agent");
     p.send("1\n");
+    p.wait_for("Color theme");
+    p.send("q");
+    p.dismiss_summary();
     let seen = p.wait_for("AGENT-RAN:claude");
     // Only true when kitty/macOS are also clean; assert the strimux part,
     // which is the one this sandbox controls.
     assert!(
-        !seen.contains("Set strimux's own"),
-        "must not offer a fix that is already applied; got:\n{seen}"
+        !seen.contains("input_poll_ms"),
+        "must not mention a fix that is already applied; got:\n{seen}"
     );
     p.kill();
 }
@@ -766,4 +845,74 @@ fn a_configured_agent_never_sees_the_latency_prompt() {
     // And the config is untouched.
     assert!(sb.read_config().contains("input_poll_ms = 10"));
     p.kill();
+}
+
+#[test]
+fn first_run_configures_the_whole_terminal_not_just_the_agent() {
+    // The acceptance behavior for onboarding: one pass through `⌥+;` leaves a
+    // config file with the *appearance* and *layout* settings decided, not
+    // only `default_agent`. Driven through a real PTY, which is what a pane is.
+    let sb = Sandbox::new(&["claude"]);
+    let mut p = sb.spawn(&[]);
+    p.wait_for("Which agent");
+    p.send("1\n");
+    // Theme: arrow down to the fifth option (nord) and take it with Enter, so
+    // we prove the *highlight* is what lands in the file, not the default.
+    p.wait_for("Color theme");
+    p.send("jjjj\r");
+    // Panes: a digit needs no Enter at all.
+    p.wait_for("Panes on screen at launch");
+    p.send("2");
+    // Everything else: defaults, then dismiss the summary.
+    p.send("q");
+
+    p.dismiss_summary();
+    p.wait_for("AGENT-RAN:claude");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !sb.read_config().contains("onboarded") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    let cfg = sb.read_config();
+    assert!(cfg.contains("default_agent = \"claude\""), "got:\n{cfg}");
+    assert!(
+        cfg.contains("theme = \"nord\""),
+        "answered theme; got:\n{cfg}"
+    );
+    assert!(
+        cfg.contains("startup_panes = 2"),
+        "answered panes; got:\n{cfg}"
+    );
+    assert!(
+        cfg.contains("center_focus = "),
+        "defaults written too; got:\n{cfg}"
+    );
+    assert!(cfg.contains("[cowsay]"), "table answers land; got:\n{cfg}");
+    toml::from_str::<toml::Value>(&cfg).expect("generated config is valid TOML");
+    p.kill();
+}
+
+#[test]
+fn onboarding_happens_exactly_once() {
+    // Second visit to the gateway must exec straight into the harness: a
+    // setup flow you cannot get past is worse than no setup flow.
+    let sb = Sandbox::new(&["claude"]);
+    let mut p = sb.spawn(&[]);
+    p.wait_for("Which agent");
+    p.send("1\n");
+    p.skip_onboarding();
+    p.wait_for("AGENT-RAN:claude");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !sb.read_config().contains("onboarded") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    p.kill();
+
+    let p2 = sb.spawn(&[]);
+    let seen = p2.wait_for("AGENT-RAN:claude");
+    assert!(
+        !seen.contains("Color theme"),
+        "setup ran a second time; got:\n{seen}"
+    );
+    p2.kill();
 }

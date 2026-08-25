@@ -703,7 +703,15 @@ fn render_frame(
         .and_then(|r| r.columns.get(layout.focus.column))
         .map(|c| c.panes.len() > 1)
         .unwrap_or(false);
-    if let Some(sk) = skeleton {
+    // Placeholder boxes tile the empty right side whether or not the inset
+    // frames are on: an empty grid must show where the next pane will go, and
+    // (with `cowsay`) advertise the key that puts one there. Only the frame
+    // glyphs are gated on `skeleton`; the boxes' *contents* are not.
+    {
+        let sk = skeleton.unwrap_or(pal.overlay);
+        // With no frames the box is full-bleed, exactly like a live pane, so
+        // its contents get the whole span instead of a 1-cell inset.
+        let inset: u16 = if skeleton.is_some() { 1 } else { 0 };
         let chrome = mm.chrome_rows();
         let strip_h = rows.saturating_sub(chrome).max(1);
         let abs_ranges = layout
@@ -758,20 +766,29 @@ fn render_frame(
                 // and clearing it here would also wipe the left neighbour's
                 // shared edge. Reset to the default (pane) background so an
                 // empty box reads exactly like a live one.
-                for y in 1..boxr.h.saturating_sub(1) {
-                    let row = (boxr.y + y) as usize * cols as usize;
-                    for x in 1..boxr.w.saturating_sub(1) {
-                        if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
-                            *c = Cell::default();
+                // Only the framed look resets the interior to the pane
+                // background, so a boxed placeholder reads exactly like a live
+                // pane. Full-bleed, the empty right side is genuinely
+                // uncovered and must keep showing `background`, which is the
+                // only place that key is ever visible.
+                if skeleton.is_some() {
+                    for y in inset..boxr.h.saturating_sub(inset) {
+                        let row = (boxr.y + y) as usize * cols as usize;
+                        for x in inset..boxr.w.saturating_sub(inset) {
+                            if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
+                                *c = Cell::default();
+                            }
                         }
                     }
                 }
-                canvas.rect(boxr, color, prio);
+                if skeleton.is_some() {
+                    canvas.rect(boxr, color, prio);
+                }
                 let inner = Rect {
-                    x: boxr.x + 1,
-                    y: boxr.y + 1,
-                    w: boxr.w.saturating_sub(2),
-                    h: boxr.h.saturating_sub(2),
+                    x: boxr.x + inset,
+                    y: boxr.y + inset,
+                    w: boxr.w.saturating_sub(inset * 2),
+                    h: boxr.h.saturating_sub(inset * 2),
                 };
                 draw_placeholder_contents(
                     out,
@@ -786,6 +803,9 @@ fn render_frame(
                     ci - live,
                     cell_labels,
                 );
+                continue;
+            }
+            if skeleton.is_none() {
                 continue;
             }
             canvas.rect(boxr, color, prio);
@@ -2572,14 +2592,11 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     if kitty_keyboard {
         tracing::info!("kitty keyboard protocol enabled (bare Alt hover)");
     }
-    // Capture the mouse so wheel events land here instead of the host
-    // terminal, where they scroll the host's own scrollback / prompt history
-    // right past the layout we are drawing. We route each notch to the pane
-    // under the cursor.
-    if cfg.mouse {
-        if let Err(e) = execute!(stdout, EnableMouseCapture) {
-            tracing::warn!("enable mouse: {e}");
-        }
+    // Capture the mouse so clicks and drags land here: focus follows a click,
+    // a drag selects text, and a child that asked for mouse reporting gets the
+    // event forwarded verbatim. strimux itself does nothing with the wheel.
+    if let Err(e) = execute!(stdout, EnableMouseCapture) {
+        tracing::warn!("enable mouse: {e}");
     }
     // Whether the *host* terminal understands the Kitty graphics protocol.
     // Gates APC passthrough: forwarding graphics sequences to a terminal that
@@ -2635,12 +2652,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             Err(e) => {
                 eprintln!("spawn: {e}");
                 let _ = stdout.write_all(b"\x1b[?7h");
-                if cfg.mouse {
-                    let _ = execute!(stdout, DisableMouseCapture);
-                }
-                if cfg.mouse {
-                    let _ = execute!(stdout, DisableMouseCapture);
-                }
+                let _ = execute!(stdout, DisableMouseCapture);
                 let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
                 let _ = disable_raw_mode();
                 return Err(1);
@@ -3229,45 +3241,15 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                             dirty = true;
                         }
                         if let Some(p) = panes.get_mut(&pid) {
-                            let wheel = matches!(
-                                me.kind,
-                                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-                            );
-                            // A child that asked for mouse reporting (or that
-                            // owns the alternate screen, where there is no
-                            // scrollback to move) gets the event verbatim, so
-                            // wheel scrolling inside vim/less/an agent TUI
-                            // behaves exactly as it would natively.
+                            // A child that asked for mouse reporting owns the
+                            // event, translated into its own grid coordinates,
+                            // so vim/less/an agent TUI behave exactly as they
+                            // would natively. strimux claims no wheel of its
+                            // own: scrollback moves by keyboard only.
                             if p.grid.wants_mouse() {
                                 if let Some(bytes) = sgr_mouse_report(&me, gx, gy) {
                                     let _ = p.writer.write_all(&bytes);
                                     let _ = p.writer.flush();
-                                }
-                            } else if wheel {
-                                if p.grid.alternate_screen() {
-                                    // Alternate screen without mouse reporting
-                                    // (e.g. `less`): translate the wheel into
-                                    // arrow keys, the conventional fallback.
-                                    let n = cfg.scroll_lines.max(1);
-                                    let key: &[u8] = if me.kind == MouseEventKind::ScrollUp {
-                                        b"\x1b[A"
-                                    } else {
-                                        b"\x1b[B"
-                                    };
-                                    for _ in 0..n {
-                                        let _ = p.writer.write_all(key);
-                                    }
-                                    let _ = p.writer.flush();
-                                } else {
-                                    let n = cfg.scroll_lines.max(1) as i32;
-                                    let d = if me.kind == MouseEventKind::ScrollUp {
-                                        n
-                                    } else {
-                                        -n
-                                    };
-                                    if p.grid.scroll_by(d) {
-                                        dirty = true;
-                                    }
                                 }
                             }
                         }
@@ -3444,9 +3426,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // Restore the host's autowrap before handing the terminal back.
     let _ = stdout.write_all(b"\x1b[?7h");
     let _ = stdout.flush();
-    if cfg.mouse {
-        let _ = execute!(stdout, DisableMouseCapture);
-    }
+    let _ = execute!(stdout, DisableMouseCapture);
     let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
     let _ = disable_raw_mode();
     Ok(())

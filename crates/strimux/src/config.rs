@@ -67,9 +67,11 @@ pub struct Config {
     ///
     /// Legacy alias for `theme.accent`; when set it overrides the theme.
     pub focus_color: Option<Background>,
-    /// Draw the skeleton: a 1-cell frame around every column box (full strip
-    /// height), so the layout's structure is always visible. The focused box's
-    /// frame uses `focus_color` instead of `skeleton_color`.
+    /// Draw the skeleton: a 1-cell inset frame around every column box (full
+    /// strip height), which insets pane content by a cell on every side. Off
+    /// by default - panes are full-bleed and focus is a plain accent frame -
+    /// and only ever enabled by writing `skeleton = true` by hand. The focused
+    /// box's frame uses `focus_color` instead of `skeleton_color`.
     pub skeleton: bool,
     /// Color of the skeleton frames around unfocused boxes. Accepts the same
     /// forms as `background`.
@@ -79,13 +81,6 @@ pub struct Config {
     /// The minimap: a small bottom-right grid showing each strip (row) and its
     /// panes (columns), with the focused strip and column highlighted.
     pub minimap: Minimap,
-    /// Capture the mouse so the wheel scrolls *inside* the pane under the
-    /// cursor (its scrollback) instead of reaching the host terminal, where it
-    /// walks the shell's previous/next prompt history. Disable to hand the
-    /// wheel back to the host terminal entirely.
-    pub mouse: bool,
-    /// Rows of pane scrollback moved per wheel notch.
-    pub scroll_lines: u16,
     /// Cowsay art drawn in empty placeholder boxes, under the big cell
     /// identifier.
     pub cowsay: Cowsay,
@@ -118,11 +113,9 @@ impl Default for Config {
             theme: ThemeSpec::default(),
             background: None,
             focus_color: None,
-            skeleton: true,
+            skeleton: false,
             skeleton_color: None,
             minimap: Minimap::default(),
-            mouse: true,
-            scroll_lines: 3,
             cowsay: Cowsay::default(),
             cell_labels: false,
             input_poll_ms: default_input_poll_ms(),
@@ -190,8 +183,7 @@ impl Config {
     ///
     /// Live reload only re-reads the file; it does not re-run startup. So
     /// settings that were *consumed once* at launch are deliberately kept:
-    /// `startup_panes` (the panes already exist) and `mouse` (capture was
-    /// enabled or not against the host terminal). `default_agent` is kept too,
+    /// `startup_panes` (the panes already exist). `default_agent` is kept too,
     /// but only because nothing in the TUI reads it: the agent gateway loads
     /// the file itself in the new pane, so an edited value applies to the next
     /// agent pane regardless. Everything that is read afresh
@@ -200,13 +192,11 @@ impl Config {
     pub fn adopt_appearance(&mut self, new: Config) {
         let Config {
             startup_panes,
-            mouse,
             default_agent,
             ..
         } = self.clone();
         *self = Config {
             startup_panes,
-            mouse,
             default_agent,
             ..new
         };
@@ -500,19 +490,17 @@ mod tests {
     }
 
     #[test]
-    fn mouse_keys_parse() {
-        let cfg = parse("mouse = false\nscroll_lines = 7\n");
-        assert!(!cfg.mouse);
-        assert_eq!(cfg.scroll_lines, 7);
+    fn retired_mouse_keys_are_ignored_not_fatal() {
+        // Old configs still on disk must keep loading: the keys are gone, so
+        // they are simply not read rather than a parse error.
+        let cfg = parse("mouse = false\nscroll_lines = 7\nstartup_panes = 2\n");
+        assert_eq!(cfg.startup_panes, 2);
     }
 
     #[test]
     fn defaults_apply_when_omitted() {
         let cfg = parse("");
         assert_eq!(cfg.startup_panes, 1);
-        assert!(cfg.skeleton, "skeleton frames on by default");
-        assert!(cfg.mouse, "mouse captured by default");
-        assert_eq!(cfg.scroll_lines, 3);
         // No color keys set: the palette is the default Catppuccin Mocha,
         // exactly the colors that used to be hardcoded.
         assert_eq!(cfg.palette(), Palette::CATPPUCCIN_MOCHA);
@@ -530,8 +518,9 @@ mod tests {
 
     #[test]
     fn skeleton_parses() {
-        let cfg = parse("skeleton = false");
-        assert!(!cfg.skeleton);
+        assert!(!parse("").skeleton, "inset frames are opt-in");
+        let cfg = parse("skeleton = true");
+        assert!(cfg.skeleton);
         let cfg = parse("skeleton_color = \"#333333\"");
         assert_eq!(cfg.palette().overlay, CColor::Rgb(0x33, 0x33, 0x33));
     }

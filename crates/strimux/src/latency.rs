@@ -373,6 +373,34 @@ pub fn render_manual_steps(theirs: &[&Setting]) -> Option<String> {
     Some(s)
 }
 
+/// Apply the tuning strimux owns, silently, before onboarding asks anything.
+///
+/// `input_poll_ms` has exactly one right answer, so it was never a real
+/// question: making it one only taught users that setup asks about things they
+/// cannot evaluate. We fix our own config file without asking (one integer, in
+/// our own file, trivially reversible) and *return* the steps only the user can
+/// take, so the caller can show them once on the summary screen rather than
+/// interrupting the flow.
+///
+/// Returns `None` when there is nothing left for the user to do, which is the
+/// common case: silence is the feature.
+pub fn apply_silently(input_poll_ms: u64, cfg_path: &Path) -> Option<String> {
+    let settings = audit(input_poll_ms);
+    let p = pending(&settings);
+    if p.is_empty() {
+        return None;
+    }
+    let (ours, theirs) = ours_and_theirs(&p);
+    if !ours.is_empty() {
+        // A failure here is not worth a screen of its own: the user gets a
+        // working strimux either way, just a couple of milliseconds slower.
+        if let Err(e) = save_input_poll(cfg_path, 1) {
+            tracing::warn!("could not tune {}: {e}", cfg_path.display());
+        }
+    }
+    render_manual_steps(&theirs)
+}
+
 /// One-line summary for `doctor`.
 pub fn summary(settings: &[Setting]) -> String {
     let slow = pending(settings).len();

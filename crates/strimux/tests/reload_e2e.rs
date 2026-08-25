@@ -30,7 +30,11 @@ impl Session {
             NEXT_ID.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(dir.join("strimux")).expect("temp config dir");
-        std::fs::write(dir.join("strimux/strimux.toml"), initial_config).expect("write config");
+        std::fs::write(
+            dir.join("strimux/strimux.toml"),
+            with_frames(initial_config),
+        )
+        .expect("write config");
 
         let pair = native_pty_system()
             .openpty(PtySize {
@@ -68,7 +72,8 @@ impl Session {
 
     /// Rewrite the config file, as an editor's save would.
     fn write_config(&self, body: &str) {
-        std::fs::write(self.dir.join("strimux/strimux.toml"), body).expect("rewrite config");
+        std::fs::write(self.dir.join("strimux/strimux.toml"), with_frames(body))
+            .expect("rewrite config");
     }
 
     /// Read output until it goes quiet, and return it.
@@ -97,6 +102,19 @@ impl Session {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Turn the inset skeleton frames on for a case body.
+///
+/// These cases read the live theme off the frame glyphs, which carry every
+/// palette key as a *foreground* color. strimux ships full-bleed (no frames,
+/// focus is a background tint), so the reload cases opt the frames back on.
+/// The key goes first because a body opening a TOML table would swallow it.
+///
+/// The malformed-TOML case is unaffected: a file strimux cannot parse is
+/// ignored whole, frames or no frames.
+fn with_frames(body: &str) -> String {
+    format!("skeleton = true\n{body}")
 }
 
 /// The SGR foreground sequence for a 24-bit color. The skeleton frames are

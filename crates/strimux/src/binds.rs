@@ -224,14 +224,6 @@ pub const BINDS: &[Bind] = &[
         desc: "focus pane",
         effect: Effect::Unverifiable,
     },
-    Bind {
-        trigger: Trigger::Prose("wheel"),
-        hint: "scrolls this pane's history",
-        glyph: None,
-        group: Group::Navigate,
-        desc: "scrollback",
-        effect: Effect::Unverifiable,
-    },
     // -- panes -----------------------------------------------------------
     Bind {
         trigger: Trigger::Chord('a'),

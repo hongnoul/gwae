@@ -90,12 +90,12 @@ fn drag_highlights_pane_text_and_copies_it_to_the_clipboard() {
     std::fs::create_dir_all(dir.join("strimux")).expect("config dir");
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).expect("stub bin dir");
-    // Full-bleed (no skeleton inset) keeps the arithmetic honest: pane grid
-    // cell (x, y) is screen cell (x, y), so the coordinates below are the ones
-    // a user's mouse would really report.
+    // Panes are full-bleed by default (the inset skeleton is opt-in), so pane
+    // grid cell (x, y) is screen cell (x, y) and the coordinates below are the
+    // ones a user's mouse would really report.
     std::fs::write(
         dir.join("strimux/strimux.toml"),
-        "skeleton = false\nmouse = true\n[minimap]\nshow = false\n",
+        "[minimap]\nshow = false\n",
     )
     .expect("write config");
 
@@ -174,9 +174,8 @@ fn drag_highlights_pane_text_and_copies_it_to_the_clipboard() {
     let mut boot = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline && frame_count(&boot) < 1 {
-        match rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(b) => boot.extend_from_slice(&b),
-            Err(_) => {}
+        if let Ok(b) = rx.recv_timeout(Duration::from_millis(200)) {
+            boot.extend_from_slice(&b);
         }
     }
     assert!(frame_count(&boot) >= 1, "strimux never painted a frame");
