@@ -3148,6 +3148,50 @@ mod tests {
     }
 
     #[test]
+    fn hud_and_center_minimap_panels_follow_the_theme() {
+        // The HUD and centered minimap are the only chrome that uses
+        // `surface` and `text`, and they are reachable only while holding
+        // Option, so no render test above covers them. Assert both panels
+        // paint the theme's colors and leak none of Mocha's.
+        let mut layout = Layout::default();
+        let r2 = layout.new_row("two".to_string());
+        let p = layout.alloc_pane();
+        layout.add_column(r2, strimux_layout::Width::Cells(20), vec![p]);
+        let nord = Palette::NORD;
+        let mocha = Palette::CATPPUCCIN_MOCHA;
+        let (cols, rows) = (80u16, 24u16);
+
+        for (what, draw) in [("hud", 0), ("center minimap", 1)] {
+            let mut out = vec![Cell::default(); cols as usize * rows as usize];
+            if draw == 0 {
+                draw_center_hud(&mut out, cols, rows, &layout, &nord);
+            } else {
+                let mm = crate::config::Minimap {
+                    mode: crate::config::MinimapMode::Off,
+                    ..Default::default()
+                };
+                draw_center_minimap(&mut out, cols, rows, &layout, &mm, &nord);
+            }
+            assert!(
+                out.iter().any(|c| c.style.bg == nord.surface),
+                "{what} panel should be filled with the theme's surface"
+            );
+            assert!(
+                out.iter().any(|c| c.style.fg == nord.text),
+                "{what} text should use the theme's text color"
+            );
+            assert!(
+                !out.iter().any(|c| c.style.bg == mocha.surface),
+                "{what} leaked the Mocha surface"
+            );
+            assert!(
+                !out.iter().any(|c| c.style.fg == mocha.text),
+                "{what} leaked the Mocha text color"
+            );
+        }
+    }
+
+    #[test]
     fn minimap_status_tints_follow_the_theme() {
         // The sibling test above pins the *default* status tints. This one
         // proves they are not merely defaults hiding behind the palette: with
@@ -3179,7 +3223,11 @@ mod tests {
         );
         let cell = |x: usize, y: usize| out[y * cols + x];
         let (ox, y) = (8usize, 6usize);
-        assert_eq!(cell(ox, y).style.bg, nord.accent, "focused tile uses accent");
+        assert_eq!(
+            cell(ox, y).style.bg,
+            nord.accent,
+            "focused tile uses accent"
+        );
         assert_eq!(
             cell(ox + 8, y).style.bg,
             Palette::muted(nord.done),
