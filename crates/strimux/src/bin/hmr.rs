@@ -185,11 +185,7 @@ fn paint(out: &mut Vec<u8>, frame: &Frame, last: &[Cell], cols: u16, rows: u16) 
             continue;
         }
         dirty = true;
-        let _ = queue!(
-            out,
-            cursor::MoveTo(0, y as u16),
-            SetAttribute(Attribute::Reset)
-        );
+        let _ = queue!(out, cursor::MoveTo(0, y as u16));
         let mut x = 0usize;
         while x < cc {
             let cell = sl[x];
@@ -207,6 +203,9 @@ fn paint(out: &mut Vec<u8>, frame: &Frame, last: &[Cell], cols: u16, rows: u16) 
             }
             let _ = queue!(
                 out,
+                // Reset per run: SGR attributes are additive, so bold/reverse
+                // from the previous run would otherwise bleed into this one.
+                SetAttribute(Attribute::Reset),
                 SetForegroundColor(crossterm::style::Color::AnsiValue(cell.fg)),
                 SetBackgroundColor(crossterm::style::Color::AnsiValue(cell.bg)),
             );

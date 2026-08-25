@@ -7,6 +7,12 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Fixed
+- **SGR attributes no longer bleed across a row ("line overflow")**: the
+  painter reset attributes once per row but SGR codes are additive, so an
+  underlined/bold run (e.g. a popup's underlined entries) leaked its
+  attributes into every later run on that row, drawing underlines out to the
+  right screen edge. Both painters (tui and hmr) now reset attributes at the
+  start of every style run.
 - **Rightmost pane no longer overflows the viewport**: column x-positions are
   now computed by rounding *cumulative boundaries* (accumulated in exact
   twelfths of a cell) instead of summing per-column `ceil` widths. On viewport
