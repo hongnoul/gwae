@@ -132,6 +132,21 @@ impl Layout {
         row.columns.len() - 1
     }
 
+    /// Insert a column at `index` in `row` (clamped to the strip length),
+    /// shifting later columns right. Returns the index it landed at.
+    pub fn insert_column(
+        &mut self,
+        row: RowId,
+        index: usize,
+        width: Width,
+        panes: Vec<PaneId>,
+    ) -> usize {
+        let row = self.row_mut(row).expect("row must exist");
+        let at = index.min(row.columns.len());
+        row.columns.insert(at, Column { width, panes });
+        at
+    }
+
     pub fn row(&self, id: RowId) -> Option<&Row> {
         self.rows.iter().find(|r| r.id == id)
     }

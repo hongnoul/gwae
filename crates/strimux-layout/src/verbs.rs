@@ -404,12 +404,15 @@ impl Layout {
 
     fn apply_new_column(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
         let pane = self.alloc_pane();
-        let col = self.add_column(self.focus.row, Width::DEFAULT, vec![pane]);
+        // Spawn immediately to the right of the focused column (not at the far
+        // end of the strip) so a new agent/terminal appears next to the work it
+        // came from, and take focus there.
+        let at = self.focus.column + 1;
+        let col = self.insert_column(self.focus.row, at, Width::DEFAULT, vec![pane]);
         self.focus.column = col;
         self.focus.pane = 0;
-        // The new column is appended at the rightmost edge, which can be
-        // off-screen (e.g. whatever fixed width it has). Follow-scroll so the
-        // freshly spawned pane is immediately in view.
+        // The new column may be off-screen (e.g. whatever fixed width it has).
+        // Follow-scroll so the freshly spawned pane is immediately in view.
         self.refocus_scroll(viewport, follow);
         self.focused_scroll()
     }

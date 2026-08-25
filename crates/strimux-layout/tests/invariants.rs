@@ -112,23 +112,31 @@ fn rows_never_reorder() {
 }
 
 #[test]
-fn spawn_agent_adds_rightmost_column_and_focuses_it() {
+fn spawn_agent_inserts_column_right_of_focus_and_focuses_it() {
     let mut layout = Layout::default();
     let n_before = layout.focused_row().unwrap().columns.len();
-    // Focus somewhere in the middle so "rightmost" is distinguishable.
+    // Focus somewhere in the middle so "right of focus" is distinguishable
+    // from "end of strip".
     let _ = layout.apply(Action::FocusRight, view(), follow());
+    let focused_before = layout.focus.column;
+    let last_before = layout
+        .focused_row()
+        .unwrap()
+        .columns
+        .last()
+        .unwrap()
+        .panes[0];
     let _ = layout.apply(Action::SpawnAgent, view(), follow());
     let row = layout.focused_row().unwrap();
-    // A single pane is appended at the end of the strip, and it takes focus.
+    // A single pane is inserted just after the previously focused column, and
+    // it takes focus.
     assert_eq!(row.columns.len(), n_before + 1);
-    assert_eq!(row.columns.last().unwrap().panes.len(), 1);
-    assert_eq!(layout.focus.column, row.columns.len() - 1);
+    assert_eq!(layout.focus.column, focused_before + 1);
+    assert_eq!(row.columns[layout.focus.column].panes.len(), 1);
     assert_eq!(layout.focus.pane, 0);
-    // The focused column is exactly the appended one.
-    assert_eq!(
-        row.columns[layout.focus.column].panes[0],
-        row.columns.last().unwrap().panes[0]
-    );
+    // The pre-existing rightmost column stayed at the end: nothing was
+    // appended past it.
+    assert_eq!(row.columns.last().unwrap().panes[0], last_before);
 }
 
 #[test]
@@ -145,11 +153,12 @@ fn new_spawn_scrolls_the_new_pane_into_view() {
         row.scroll_x = 0;
     }
     let n_before = layout.focused_row().unwrap().columns.len();
+    let focused_before = layout.focus.column;
     // Spawn one more; focus jumps to it and the strip scrolls right to reveal it.
     let _ = layout.apply(Action::SpawnAgent, view(), follow());
     let row = layout.focused_row().unwrap();
     assert_eq!(row.columns.len(), n_before + 1);
-    assert_eq!(layout.focus.column, row.columns.len() - 1);
+    assert_eq!(layout.focus.column, focused_before + 1);
     let scroll_after = row.scroll_x;
     assert!(scroll_after > 0);
     let (s, e) = layout.focused_range(view().cols).unwrap();
