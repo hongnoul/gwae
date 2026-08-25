@@ -529,7 +529,9 @@ fn render_frame(
     // stacked column, frame the focused pane's own rect ring instead, drawn
     // in the gap/frame cells around it.
     match (skeleton, focus_rect) {
-        (None, Some(rect)) => draw_focus_frame(out, cols, rect, focus_color),
+        // Full-bleed mode: the ring lands on live pane content, so tint the
+        // background instead of writing glyphs over the program's own text.
+        (None, Some(rect)) => tint_focus_ring(out, cols, rect, focus_color),
         (Some(_), Some(rect)) => {
             let stacked = layout
                 .focused_row()
@@ -552,8 +554,13 @@ fn render_frame(
     draw_minimap(out, cols, rows, layout, mm, focus_color);
 }
 
-/// Overlay a 1-cell frame on the edge ring of `rect` using `color`. Corner
-/// cells are handled once; single-row/column rects stay well-formed.
+/// Overlay a thin frame on the edge ring of `rect`: box-drawing glyphs
+/// (`╭─╮│╰╯`) with `color` as the foreground, instead of a full-cell
+/// background slab. The cell's existing background is preserved so the frame
+/// reads as a hairline over whatever is underneath. Single-row/column rects
+/// degrade to a plain `─`/`│` run. Only used where the ring cells are
+/// reserved chrome (skeleton frames, the stacked-pane gap ring); rings over
+/// live content use `tint_focus_ring` so no program output is covered.
 fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
     let stride = cols as usize;
     let w = rect.w as usize;
@@ -562,7 +569,80 @@ fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
     let y0 = rect.y as usize;
     let x1 = x0 + w - 1;
     let y1 = y0 + h - 1;
+    // Replace a cell with a frame glyph. Overwriting half of a wide (2-col)
+    // character would orphan its other half, so the partner cell is blanked:
+    // a wide head loses its continuation, a continuation loses its head.
+    fn put(out: &mut [Cell], idx: usize, ch: char, color: CColor) {
+        let Some(c) = out.get(idx).copied() else {
+            return;
+        };
+        if c.width == 2 {
+            if let Some(n) = out.get_mut(idx + 1) {
+                if n.width == 0 {
+                    *n = Cell {
+                        style: n.style,
+                        ..Cell::default()
+                    };
+                }
+            }
+        } else if c.width == 0 && idx > 0 {
+            if let Some(p) = out.get_mut(idx - 1) {
+                if p.width == 2 {
+                    *p = Cell {
+                        style: p.style,
+                        ..Cell::default()
+                    };
+                }
+            }
+        }
+        let cell = &mut out[idx];
+        cell.ch = ch;
+        cell.width = 1;
+        cell.style.fg = color;
+        cell.style.bold = false;
+        cell.style.underline = false;
+        cell.style.inverse = false;
+    }
+    if h == 1 {
+        for x in x0..=x1 {
+            put(out, y0 * stride + x, '─', color);
+        }
+        return;
+    }
+    if w == 1 {
+        for y in y0..=y1 {
+            put(out, y * stride + x0, '│', color);
+        }
+        return;
+    }
     // Top and bottom rows.
+    for x in (x0 + 1)..x1 {
+        put(out, y0 * stride + x, '─', color);
+        put(out, y1 * stride + x, '─', color);
+    }
+    // Left and right columns.
+    for y in (y0 + 1)..y1 {
+        put(out, y * stride + x0, '│', color);
+        put(out, y * stride + x1, '│', color);
+    }
+    // Rounded corners.
+    put(out, y0 * stride + x0, '╭', color);
+    put(out, y0 * stride + x1, '╮', color);
+    put(out, y1 * stride + x0, '╰', color);
+    put(out, y1 * stride + x1, '╯', color);
+}
+
+/// Tint the background of the edge ring of `rect` with `color`, preserving
+/// the glyphs underneath. Used when the ring overlays live pane content
+/// (full-bleed mode), where writing frame glyphs would cover program output.
+fn tint_focus_ring(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
+    let stride = cols as usize;
+    let w = rect.w as usize;
+    let h = rect.h as usize;
+    let x0 = rect.x as usize;
+    let y0 = rect.y as usize;
+    let x1 = x0 + w - 1;
+    let y1 = y0 + h - 1;
     for x in x0..=x1 {
         if let Some(c) = out.get_mut(y0 * stride + x) {
             c.style.bg = color;
@@ -573,7 +653,6 @@ fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
             }
         }
     }
-    // Left and right columns (corners already painted above).
     for y in (y0 + 1)..y1 {
         if let Some(c) = out.get_mut(y * stride + x0) {
             c.style.bg = color;
@@ -1624,19 +1703,29 @@ mod tests {
             accent,
         );
         let cell = |x: usize, y: usize| out[y * 5 + x];
-        // Ring edge carries the accent; interior stays untouched.
-        for x in 1..=3 {
-            assert_eq!(cell(x, 1).style.bg, accent, "top edge x={x}");
-            assert_eq!(cell(x, 3).style.bg, accent, "bottom edge x={x}");
+        // Ring edge carries thin accent-colored glyphs; bg is untouched.
+        assert_eq!(cell(1, 1).ch, '╭');
+        assert_eq!(cell(3, 1).ch, '╮');
+        assert_eq!(cell(1, 3).ch, '╰');
+        assert_eq!(cell(3, 3).ch, '╯');
+        assert_eq!(cell(2, 1).ch, '─', "top edge");
+        assert_eq!(cell(2, 3).ch, '─', "bottom edge");
+        assert_eq!(cell(1, 2).ch, '│', "left edge");
+        assert_eq!(cell(3, 2).ch, '│', "right edge");
+        for (x, y) in [(1, 1), (2, 1), (1, 2), (3, 2), (2, 3), (3, 3)] {
+            assert_eq!(cell(x, y).style.fg, accent, "fg accent at ({x},{y})");
+            assert_eq!(
+                cell(x, y).style.bg,
+                CColor::Default,
+                "bg untouched at ({x},{y})"
+            );
         }
-        assert_eq!(cell(1, 2).style.bg, accent);
-        assert_eq!(cell(3, 2).style.bg, accent);
         // Interior center: unchanged.
-        assert_eq!(cell(2, 2).style.bg, CColor::Default);
-        // Outside the rect: unchanged. Glyphs are preserved, not blanked.
-        assert_eq!(cell(0, 0).style.bg, CColor::Default);
+        assert_eq!(cell(2, 2).ch, '.');
+        assert_eq!(cell(2, 2).style.fg, CColor::Default);
+        // Outside the rect: unchanged.
+        assert_eq!(cell(0, 0).ch, '.');
         assert_eq!(cell(0, 2).ch, '.');
-        assert_eq!(cell(2, 1).ch, '.', "frame keeps the underlying glyph");
     }
 
     #[test]
@@ -1706,7 +1795,9 @@ mod tests {
             },
             CColor::Idx(1),
         );
-        assert_eq!(out[0].style.bg, CColor::Idx(1));
+        // A degenerate 1x1 rect degrades to a horizontal rule glyph.
+        assert_eq!(out[0].ch, '─');
+        assert_eq!(out[0].style.fg, CColor::Idx(1));
     }
 
     #[test]
@@ -1735,25 +1826,29 @@ mod tests {
         );
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
         assert_eq!(ranges.len(), 4);
-        let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
+        let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
         for (ci, (s, e)) in ranges.iter().enumerate() {
             let want = if ci == 0 { red } else { white };
             let (s, e) = (*s as u16, *e as u16 - 1);
-            // Corners of the box frame.
-            assert_eq!(bg(s, 0), want, "top-left of box {ci}");
-            assert_eq!(bg(e, 0), want, "top-right of box {ci}");
-            assert_eq!(bg(s, rows - 1), want, "bottom-left of box {ci}");
-            assert_eq!(bg(e, rows - 1), want, "bottom-right of box {ci}");
+            // Corners of the box frame: thin rounded glyphs in the frame color.
+            assert_eq!(at(s, 0).ch, '╭', "top-left of box {ci}");
+            assert_eq!(at(e, 0).ch, '╮', "top-right of box {ci}");
+            assert_eq!(at(s, rows - 1).ch, '╰', "bottom-left of box {ci}");
+            assert_eq!(at(e, rows - 1).ch, '╯', "bottom-right of box {ci}");
+            assert_eq!(at(s, 0).style.fg, want, "frame color of box {ci}");
             // Vertical edges run the full strip height.
-            assert_eq!(bg(s, rows / 2), want, "left edge of box {ci}");
-            assert_eq!(bg(e, rows / 2), want, "right edge of box {ci}");
+            assert_eq!(at(s, rows / 2).ch, '│', "left edge of box {ci}");
+            assert_eq!(at(e, rows / 2).ch, '│', "right edge of box {ci}");
+            assert_eq!(at(s, rows / 2).style.fg, want, "left edge color {ci}");
+            assert_eq!(at(e, rows / 2).style.fg, want, "right edge color {ci}");
         }
-        // Box interiors are not tinted by the skeleton.
+        // Box interiors are not touched by the skeleton.
         let (s0, e0) = ranges[0];
         let mid = ((s0 + e0) / 2) as u16;
-        assert_eq!(bg(mid, rows / 2), CColor::Default, "interior untouched");
+        assert_eq!(at(mid, rows / 2).ch, ' ', "interior untouched");
         // The rightmost frame reaches the exact screen edge: full bleed.
-        assert_eq!(bg(cols - 1, 0), white);
+        assert_eq!(at(cols - 1, 0).ch, '╮');
+        assert_eq!(at(cols - 1, 0).style.fg, white);
     }
 
     #[test]
@@ -1811,14 +1906,17 @@ mod tests {
             Some(white),
             &crate::config::Minimap::default(),
         );
-        let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
-        // Placeholder boxes cover [40,60) and [60,80): white frames all the
-        // way to the last screen column.
-        assert_eq!(bg(40, 0), white, "placeholder box 3 left edge");
-        assert_eq!(bg(59, 0), white, "placeholder box 3 right edge");
-        assert_eq!(bg(60, 0), white, "placeholder box 4 left edge");
-        assert_eq!(bg(cols - 1, 0), white, "skeleton reaches screen edge");
-        assert_eq!(bg(cols - 1, rows - 1), white, "bottom-right corner");
+        let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
+        // Placeholder boxes cover [40,60) and [60,80): white thin frames all
+        // the way to the last screen column.
+        assert_eq!(at(40, 0).ch, '╭', "placeholder box 3 left edge");
+        assert_eq!(at(59, 0).ch, '╮', "placeholder box 3 right edge");
+        assert_eq!(at(60, 0).ch, '╭', "placeholder box 4 left edge");
+        assert_eq!(at(cols - 1, 0).ch, '╮', "skeleton reaches screen edge");
+        assert_eq!(at(cols - 1, rows - 1).ch, '╯', "bottom-right corner");
+        for (x, y) in [(40, 0), (59, 0), (60, 0), (cols - 1, 0)] {
+            assert_eq!(at(x, y).style.fg, white, "frame color at ({x},{y})");
+        }
     }
 
     #[test]
@@ -2098,5 +2196,98 @@ mod strip_label_tests {
         let _ = layout.apply(Action::NewColumn, v, f);
         let _ = layout.apply(Action::FocusDown, v, f);
         assert_eq!(strip_number(&layout), 3);
+    }
+}
+
+/// Acceptance for scroll-state paint stability (the user-visible bug: "grids
+/// are painted slightly differently across different scroll states despite
+/// identical panes"). Eight identical quarter columns of real PTY panes at
+/// 342 cols (not divisible by 4, the width where absolute-rounded boundaries
+/// wobble by one cell between stops). Walking focus across the whole strip in
+/// the skeleton renderer, the x-positions of the vertical frame edges painted
+/// on a mid-strip row must be identical in every frame.
+#[test]
+fn identical_grids_paint_identically_across_scroll_states_e2e() {
+    use strimux_layout::{Action, FollowScroll, Preset, Viewport, Width};
+    let cols: u16 = 342;
+    let rows: u16 = 8;
+    let n = 8usize;
+    let mut layout = Layout::new(1);
+    if let Some(r) = layout.row_mut(layout.focus.row) {
+        r.columns.clear();
+    }
+    let row = layout.focus.row;
+    let mut pids = Vec::new();
+    for _ in 0..n {
+        let p = layout.alloc_pane();
+        layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
+        pids.push(p);
+    }
+    // Real PTY children (sleeping shells: content is irrelevant, the frame
+    // geometry is what must not wobble).
+    let (tx, _rx) = channel::<PaneMsg>();
+    let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+    for pid in &pids {
+        let pane = spawn_pane(*pid, "sleep 30", 80, rows, tx.clone()).expect("spawn pane");
+        panes.insert(*pid, pane);
+    }
+
+    let vp = Viewport::new(cols);
+    let f = FollowScroll::default();
+    let mut out = Vec::new();
+    // Frames are thin box-drawing glyphs; the vertical edges (`│`) crossing a
+    // mid-strip row mark every column boundary on screen.
+    let mut boundary_sets: Vec<(i32, Vec<u16>)> = Vec::new();
+    let mut paint = |layout: &Layout, panes: &mut HashMap<PaneId, PtyPane>| -> Vec<u16> {
+        render_frame(
+            &mut out,
+            layout,
+            panes,
+            cols,
+            rows,
+            0,
+            CColor::Idx(100),
+            CColor::Idx(200),
+            Some(CColor::Idx(240)),
+            &crate::config::Minimap::default(),
+        );
+        let y = 2usize;
+        (0..cols)
+            .filter(|x| out[y * cols as usize + *x as usize].ch == '│')
+            .collect()
+    };
+    // Walk focus right across the whole strip, painting at every stop, then
+    // back left (reverse stops can differ from forward ones).
+    let mut boundary_scroll = 0;
+    boundary_sets.push((boundary_scroll, paint(&layout, &mut panes)));
+    for _ in 0..n - 1 {
+        boundary_scroll = layout.apply(Action::FocusRight, vp, f).unwrap();
+        boundary_sets.push((boundary_scroll, paint(&layout, &mut panes)));
+    }
+    for _ in 0..n - 1 {
+        boundary_scroll = layout.apply(Action::FocusLeft, vp, f).unwrap();
+        boundary_sets.push((boundary_scroll, paint(&layout, &mut panes)));
+    }
+    // Every painted frame shows the same vertical-edge skeleton: the grid
+    // never shifts by a cell between scroll states.
+    let first = &boundary_sets[0].1;
+    assert!(
+        !first.is_empty(),
+        "skeleton frame painted no vertical edges"
+    );
+    for (scroll, set) in &boundary_sets {
+        assert_eq!(
+            set, first,
+            "grid boundaries moved at scroll={scroll}: {set:?} != {first:?}"
+        );
+    }
+    // Distinct scroll stops were actually exercised (not one static frame).
+    let stops: std::collections::HashSet<i32> = boundary_sets.iter().map(|(s, _)| *s).collect();
+    assert!(
+        stops.len() >= 4,
+        "expected several scroll stops, got {stops:?}"
+    );
+    for p in panes.values_mut() {
+        let _ = p.child.kill();
     }
 }

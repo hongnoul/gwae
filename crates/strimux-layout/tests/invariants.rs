@@ -606,3 +606,49 @@ fn focus_scroll_states_paint_columns_at_identical_offsets() {
         );
     }
 }
+
+#[test]
+fn visible_ranges_are_identical_at_every_stop_for_uniform_columns() {
+    // The renderer paints with visible_column_x_ranges. At a viewport width
+    // not divisible by 4 (342: the reported wobble width), absolute rounding
+    // shifts inner boundaries by one cell between stops (86/171/257 vs
+    // 85/171/256). Window-anchored rounding must paint the identical grid at
+    // every stop.
+    let q = Width::Preset(Preset::Quarter);
+    let mut layout = layout_with_widths(&[q, q, q, q, q, q, q, q]);
+    for cols in [342u16, 341, 343, 82, 83, 121] {
+        let vp = Viewport::new(cols);
+        let row = layout.focus.row;
+        let stops = scroll_stops(&layout, row, vp.cols);
+        let mut grids: Vec<Vec<(i32, i32)>> = Vec::new();
+        for stop in &stops {
+            let vis = layout.visible_column_x_ranges(row, vp.cols, *stop).unwrap();
+            // Only the on-screen part matters for painting.
+            let on: Vec<(i32, i32)> = vis
+                .into_iter()
+                .filter(|(s, e)| *e > 0 && *s < cols as i32)
+                .collect();
+            // Full tiling: flush at x=0, contiguous, flush at the right edge.
+            assert_eq!(on.first().unwrap().0, 0, "cols={cols} stop={stop}");
+            for w in on.windows(2) {
+                assert_eq!(w[0].1, w[1].0, "gap at cols={cols} stop={stop}");
+            }
+            assert_eq!(
+                on.last().unwrap().1,
+                cols as i32,
+                "right edge uncovered at cols={cols} stop={stop}"
+            );
+            grids.push(on);
+        }
+        // Uniform columns: every stop paints the same 4-column grid shape.
+        let shape = |g: &Vec<(i32, i32)>| -> Vec<i32> { g.iter().map(|(s, _)| *s).collect() };
+        let first = shape(&grids[0]);
+        for (i, g) in grids.iter().enumerate() {
+            assert_eq!(
+                shape(g),
+                first,
+                "grid shape changed at cols={cols} stop index {i}"
+            );
+        }
+    }
+}

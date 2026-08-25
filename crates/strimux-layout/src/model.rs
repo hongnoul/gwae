@@ -211,4 +211,65 @@ impl Layout {
         let ranges = self.column_x_ranges(self.focus.row, viewport_cols)?;
         ranges.get(self.focus.column).copied()
     }
+
+    /// On-screen `[start, end)` x-ranges for every column of `row` at
+    /// `scroll`, with boundary rounding *re-anchored at the first visible
+    /// column*.
+    ///
+    /// `column_x_ranges` rounds cumulative boundaries from strip x=0, so at
+    /// viewport widths not divisible by a preset denominator the rounding
+    /// phase differs per scroll stop: the same four quarter columns paint
+    /// their inner boundaries one cell apart depending on which stop is
+    /// shown (e.g. 86/171/257 vs 85/171/256 at 342 cols). Re-anchoring the
+    /// accumulator at the first visible column makes every stop paint an
+    /// identical grid: uniform columns always land on the same on-screen
+    /// boundaries regardless of how far the strip is scrolled.
+    ///
+    /// At the end stop (`scroll == max_scroll`, not necessarily a column
+    /// boundary) the anchor column is partially clipped on the left; ranges
+    /// are shifted by that clip so the remaining columns still tile flush to
+    /// the right edge. Columns left of the anchor keep their absolute-derived
+    /// (negative) positions; they are off-screen at every valid stop.
+    pub fn visible_column_x_ranges(
+        &self,
+        row: RowId,
+        viewport_cols: u16,
+        scroll: i32,
+    ) -> Option<Vec<(i32, i32)>> {
+        let abs = self.column_x_ranges(row, viewport_cols)?;
+        let r = self.row(row)?;
+        // Anchor: the last column starting at or before `scroll`. At a column
+        // stop this is exactly the first visible column (off == 0).
+        let k = abs
+            .iter()
+            .rposition(|(s, _)| *s as i32 <= scroll)
+            .unwrap_or(0);
+        let off = scroll - abs.get(k).map(|(s, _)| *s as i32).unwrap_or(0);
+        let mut out = vec![(0i32, 0i32); abs.len()];
+        for i in 0..k {
+            out[i] = (abs[i].0 as i32 - scroll, abs[i].1 as i32 - scroll);
+        }
+        // Fresh accumulator from the anchor column: same rounding rule as
+        // column_x_ranges (round-half-up boundaries, no zero-width columns),
+        // but phase-locked to the visible window instead of the strip origin.
+        let mut x12 = 0u64;
+        let mut prev = 0i64;
+        for (i, col) in r.columns.iter().enumerate().skip(k) {
+            x12 += col.width.twelfths(viewport_cols);
+            let end = (((x12 + 6) / 12) as i64).max(prev + 1);
+            out[i] = (prev as i32 - off, end as i32 - off);
+            prev = end;
+        }
+        // The re-anchored rounding phase can differ from the absolute one by
+        // one cell. When the strip extends to (or past) the right viewport
+        // edge in absolute terms, never let that phase shift leave a 1-cell
+        // background sliver there: stretch the final column to the edge.
+        let abs_end = abs.last().map(|(_, e)| *e as i32 - scroll).unwrap_or(0);
+        if abs_end >= viewport_cols as i32 {
+            if let Some(last) = out.last_mut() {
+                last.1 = last.1.max(viewport_cols as i32);
+            }
+        }
+        Some(out)
+    }
 }
