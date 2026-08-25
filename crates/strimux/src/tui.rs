@@ -449,24 +449,42 @@ fn render_frame(
         }
         // Empty right side: placeholder boxes at the default quarter width, so
         // the skeleton always shows the full four-column container even before
-        // panes exist to fill it.
+        // panes exist to fill it. Interiors are reset to the default (pane)
+        // background so an empty box reads exactly like a live one instead of
+        // showing the dimmer `background` fill, and each carries a big
+        // "row,col" identifier centered in the box so empty cells are
+        // addressable at a glance.
         let quarter = (cols / 4).max(1);
+        let mut pcol = ranges.len();
         while edge < cols {
             let w = quarter.min(cols - edge);
             if w < 2 {
                 break;
             }
-            draw_focus_frame(
-                out,
-                cols,
-                Rect {
-                    x: edge,
-                    y: 0,
-                    w,
-                    h: strip_h,
-                },
-                sk,
-            );
+            let boxr = Rect {
+                x: edge,
+                y: 0,
+                w,
+                h: strip_h,
+            };
+            for y in 0..boxr.h {
+                let row = (boxr.y + y) as usize * cols as usize;
+                for x in 0..boxr.w {
+                    if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
+                        *c = Cell::default();
+                    }
+                }
+            }
+            draw_focus_frame(out, cols, boxr, sk);
+            let label = format!("{},{}", layout.focus.row + 1, pcol + 1);
+            let inner = Rect {
+                x: boxr.x + 1,
+                y: boxr.y + 1,
+                w: boxr.w.saturating_sub(2),
+                h: boxr.h.saturating_sub(2),
+            };
+            draw_big_label(out, cols, inner, &label, CColor::Idx(240));
+            pcol += 1;
             edge += w;
         }
     }
@@ -534,6 +552,58 @@ fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
     }
 }
 
+/// 3x5 block-font glyphs for the characters a cell identifier can contain
+/// (digits and the `,` separator). Each glyph is 5 rows of 3 bits, MSB left.
+fn big_glyph(ch: char) -> Option<[u8; 5]> {
+    Some(match ch {
+        '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+        '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+        '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+        '3' => [0b111, 0b001, 0b011, 0b001, 0b111],
+        '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+        '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+        '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+        '7' => [0b111, 0b001, 0b010, 0b010, 0b010],
+        '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+        '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+        ',' => [0b000, 0b000, 0b000, 0b010, 0b100],
+        _ => return None,
+    })
+}
+
+/// Paint `label` centered in `rect` using the 3x5 block font, one screen cell
+/// per font pixel (glyphs separated by a 1-cell gap). Pixels are painted as
+/// background-colored blanks in `color`. Skipped entirely when the rect is too
+/// small to fit the label, so tiny boxes stay clean.
+fn draw_big_label(out: &mut [Cell], cols: u16, rect: Rect, label: &str, color: CColor) {
+    let glyphs: Vec<[u8; 5]> = label.chars().filter_map(big_glyph).collect();
+    if glyphs.is_empty() {
+        return;
+    }
+    let gw = (glyphs.len() * 3 + (glyphs.len() - 1)) as u16; // 3 wide + 1 gap
+    let gh = 5u16;
+    if rect.w < gw || rect.h < gh {
+        return;
+    }
+    let x0 = rect.x + (rect.w - gw) / 2;
+    let y0 = rect.y + (rect.h - gh) / 2;
+    for (gi, glyph) in glyphs.iter().enumerate() {
+        let gx = x0 + (gi as u16) * 4;
+        for (ry, bits) in glyph.iter().enumerate() {
+            for rx in 0..3u16 {
+                if bits & (0b100 >> rx) == 0 {
+                    continue;
+                }
+                let idx = (y0 as usize + ry) * cols as usize + (gx + rx) as usize;
+                if let Some(c) = out.get_mut(idx) {
+                    *c = Cell::default();
+                    c.style.bg = color;
+                }
+            }
+        }
+    }
+}
+
 /// Overlay the minimap in the bottom-right corner. Rows of the map are strips
 /// (rows), and each tile is a column (subdivided by its panes) with width
 /// proportional to the column's real width share. The focused strip is
@@ -568,7 +638,9 @@ fn draw_minimap(
                 continue;
             }
             let idx = y as usize * cols as usize + x as usize;
-            let Some(cell) = out.get_mut(idx) else { continue };
+            let Some(cell) = out.get_mut(idx) else {
+                continue;
+            };
             let bg = if tile.focus_col {
                 focus_color
             } else if tile.focus_row {
@@ -1060,7 +1132,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                 }
                                 let _ = layout.apply(a, v, f);
                                 // A spawn-agent verb ends focused on the new
-                                // rightmost column; mark its pane so sync spawns
+                                // column just right of the previous focus; mark its pane so sync spawns
                                 // the agent harness rather than a shell.
                                 if a == Action::SpawnAgent {
                                     if let Some(pid) = focused_pane(&layout) {
@@ -1105,14 +1177,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         }
 
         // Resize grids & PTYs to match current geometry.
-        for v in focused_pane_views(
-            &layout,
-            cols,
-            rows,
-            cfg.content_width,
-            &panes,
-            cfg.skeleton,
-        ) {
+        for v in focused_pane_views(&layout, cols, rows, cfg.content_width, &panes, cfg.skeleton) {
             let pid = v.pid;
             if let Some(p) = panes.get_mut(&pid) {
                 if p.grid.size()
@@ -1306,7 +1371,13 @@ mod tests {
         };
         row[2].ch = 'a';
         row[3].ch = 'b';
-        let last = vec![Cell { ch: 'x', ..Cell::default() }; 6];
+        let last = vec![
+            Cell {
+                ch: 'x',
+                ..Cell::default()
+            };
+            6
+        ];
         let mut buf = Vec::new();
         assert!(paint(&mut buf, &row, &last, 6, 1));
         let s = String::from_utf8(buf).unwrap();
@@ -1317,7 +1388,10 @@ mod tests {
         // 'a' is re-positioned to its true column (x=2) with an explicit
         // MoveTo (CUP row 1, col 3 -> ESC[1;3H) rather than relying on the
         // host's cursor advance across the wide glyph.
-        assert!(s.contains("\u{1b}[1;3H"), "missing MoveTo before 'a': {s:?}");
+        assert!(
+            s.contains("\u{1b}[1;3H"),
+            "missing MoveTo before 'a': {s:?}"
+        );
     }
 
     #[test]
@@ -1330,7 +1404,13 @@ mod tests {
         row[0].ch = 'u';
         row[0].style.underline = true;
         row[1].ch = 'p';
-        let last = vec![Cell { ch: 'x', ..Cell::default() }; 4];
+        let last = vec![
+            Cell {
+                ch: 'x',
+                ..Cell::default()
+            };
+            4
+        ];
         let mut buf = Vec::new();
         assert!(paint(&mut buf, &row, &last, 4, 1));
         let s = String::from_utf8(buf).unwrap();
@@ -1388,9 +1468,25 @@ mod tests {
     #[test]
     fn draw_focus_frame_rings_the_rect() {
         // 5x5 grid; frame the 3x3 rect at (1,1) -> rows 1..=3, cols 1..=3.
-        let mut out = vec![Cell { ch: '.', ..Cell::default() }; 25];
+        let mut out = vec![
+            Cell {
+                ch: '.',
+                ..Cell::default()
+            };
+            25
+        ];
         let accent = CColor::Idx(36);
-        draw_focus_frame(&mut out, 5, Rect { x: 1, y: 1, w: 3, h: 3 }, accent);
+        draw_focus_frame(
+            &mut out,
+            5,
+            Rect {
+                x: 1,
+                y: 1,
+                w: 3,
+                h: 3,
+            },
+            accent,
+        );
         let cell = |x: usize, y: usize| out[y * 5 + x];
         // Ring edge carries the accent; interior stays untouched.
         for x in 1..=3 {
@@ -1406,7 +1502,6 @@ mod tests {
         assert_eq!(cell(0, 2).ch, '.');
         assert_eq!(cell(2, 1).ch, '.', "frame keeps the underlying glyph");
     }
-
 
     #[test]
     fn draw_minimap_highlights_focus_bottom_right() {
@@ -1435,7 +1530,11 @@ mod tests {
         // The non-focused strip's tile is a dim chrome gray, not the accent.
         let idle = cell(8, 7);
         assert_ne!(idle.style.bg, accent, "idle strip must not use the accent");
-        assert_ne!(idle.style.bg, CColor::Default, "idle strip is painted chrome");
+        assert_ne!(
+            idle.style.bg,
+            CColor::Default,
+            "idle strip is painted chrome"
+        );
         // Nothing above the minimap block is painted by it.
         let above = cell(8, 5);
         assert_eq!(above.style.bg, CColor::Default);
@@ -1451,13 +1550,26 @@ mod tests {
             &crate::config::Minimap::default(),
             accent,
         );
-        assert!(out2.iter().all(|c| c.style.bg == CColor::Default), "no map for one strip");
+        assert!(
+            out2.iter().all(|c| c.style.bg == CColor::Default),
+            "no map for one strip"
+        );
     }
 
     #[test]
     fn draw_focus_frame_single_cell_rect() {
         let mut out = vec![Cell::default(); 1];
-        draw_focus_frame(&mut out, 1, Rect { x: 0, y: 0, w: 1, h: 1 }, CColor::Idx(1));
+        draw_focus_frame(
+            &mut out,
+            1,
+            Rect {
+                x: 0,
+                y: 0,
+                w: 1,
+                h: 1,
+            },
+            CColor::Idx(1),
+        );
         assert_eq!(out[0].style.bg, CColor::Idx(1));
     }
 
@@ -1572,6 +1684,76 @@ mod tests {
         assert_eq!(bg(cols - 1, 0), white, "skeleton reaches screen edge");
         assert_eq!(bg(cols - 1, rows - 1), white, "bottom-right corner");
     }
+
+    #[test]
+    fn placeholder_boxes_are_not_dimmed_and_show_cell_identifiers() {
+        // Empty placeholder boxes read like live panes: their interiors are
+        // reset to the default background (not the dim `background` fill) and
+        // a big block-font "row,col" identifier is centered in each.
+        let layout = Layout::new(2); // boxes 3 and 4 are placeholders
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let cols: u16 = 80;
+        let rows: u16 = 12;
+        let dim = CColor::Idx(235);
+        let label = CColor::Idx(240);
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            dim,
+            CColor::Rgb(0xff, 0, 0),
+            Some(CColor::Rgb(0xff, 0xff, 0xff)),
+            &crate::config::Minimap::default(),
+        );
+        let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
+        // Placeholder interiors are default-bg, never the dim background.
+        for x in 41..59 {
+            for y in 1..rows - 1 {
+                assert_ne!(bg(x, y), dim, "dim background leaked at ({x},{y})");
+            }
+        }
+        // The identifier is drawn in the label color somewhere inside each
+        // placeholder box (boxes 3 and 4 -> labels "1,3" and "1,4").
+        for (x0, x1) in [(41u16, 59u16), (61, 79)] {
+            let painted = (x0..x1)
+                .flat_map(|x| (1..rows - 1).map(move |y| (x, y)))
+                .filter(|&(x, y)| bg(x, y) == label)
+                .count();
+            assert!(
+                painted >= 11,
+                "expected a block-font identifier in box [{x0},{x1}), found {painted} cells"
+            );
+        }
+        // Live (non-placeholder) box interiors carry no identifier.
+        let painted_live = (1..19u16)
+            .flat_map(|x| (1..rows - 1).map(move |y| (x, y)))
+            .filter(|&(x, y)| bg(x, y) == label)
+            .count();
+        assert_eq!(painted_live, 0, "live boxes must not show identifiers");
+    }
+
+    #[test]
+    fn big_label_skipped_when_rect_too_small() {
+        // A rect too small for the 3x5 font stays untouched instead of
+        // rendering a clipped, unreadable fragment.
+        let cols: u16 = 10;
+        let mut out = vec![Cell::default(); (cols as usize) * 4];
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            w: 6,
+            h: 4,
+        };
+        draw_big_label(&mut out, cols, rect, "1,1", CColor::Idx(240));
+        assert!(
+            out.iter().all(|c| c.style.bg == CColor::Default),
+            "no partial label may be painted"
+        );
+    }
 }
 
 #[test]
@@ -1605,21 +1787,54 @@ fn content_scroll_reveals_overflow_e2e() {
 
     // At scroll 0 the viewport shows content columns 0..79 (digits 1,2,...,0).
     panes.get_mut(&pid).unwrap().h_scroll = 0;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, None, &crate::config::Minimap::default());
+    render_frame(
+        &mut out,
+        &layout,
+        &mut panes,
+        80,
+        10,
+        240,
+        CColor::Default,
+        CColor::Default,
+        None,
+        &crate::config::Minimap::default(),
+    );
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
     assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
     assert_eq!(out[77].ch, '8'); // content col 77 -> screen x=77
 
     // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
     panes.get_mut(&pid).unwrap().h_scroll = 60;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, None, &crate::config::Minimap::default());
+    render_frame(
+        &mut out,
+        &layout,
+        &mut panes,
+        80,
+        10,
+        240,
+        CColor::Default,
+        CColor::Default,
+        None,
+        &crate::config::Minimap::default(),
+    );
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
     assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
     assert_eq!(out[77].ch, '8'); // content col 137 -> screen x=77
 
     // Past the 240-col content the window reveals blanks.
     panes.get_mut(&pid).unwrap().h_scroll = 200;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, None, &crate::config::Minimap::default());
+    render_frame(
+        &mut out,
+        &layout,
+        &mut panes,
+        80,
+        10,
+        240,
+        CColor::Default,
+        CColor::Default,
+        None,
+        &crate::config::Minimap::default(),
+    );
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
     assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
     assert_eq!(out[45].ch, ' '); // past content end -> blank

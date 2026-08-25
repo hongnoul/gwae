@@ -30,7 +30,9 @@ pub struct Config {
     pub content_width: u16,
     /// The agent harness command that `;` (spawn-agent) launches.
     pub default_agent: String,
-    /// Number of equal-width panes on screen at first launch.
+    /// Number of equal-width panes on screen at first launch. Default: 1 (a
+    /// single quarter-width pane; the skeleton's placeholder boxes show the
+    /// rest of the container).
     pub startup_panes: usize,
     /// Color of the empty (uncovered) background behind the panes. Accepts a
     /// 256-color index (`236`), a hex RGB (`"#1e1e2e"`), or `"default"`.
@@ -58,7 +60,7 @@ impl Default for Config {
             center_focus: false,
             content_width: 0,
             default_agent: "jcode".to_string(),
-            startup_panes: 4,
+            startup_panes: 1,
             background: Background::default(),
             focus_color: Background(CColor::Rgb(0xff, 0x00, 0x00)),
             skeleton: true,
@@ -202,11 +204,14 @@ mod tests {
     #[test]
     fn defaults_apply_when_omitted() {
         let cfg = parse("");
-        assert_eq!(cfg.startup_panes, 4);
+        assert_eq!(cfg.startup_panes, 1);
         assert_eq!(cfg.background, Background::default());
         assert_eq!(cfg.focus_color, Background(CColor::Rgb(0xff, 0, 0)));
         assert!(cfg.skeleton, "skeleton frames on by default");
-        assert_eq!(cfg.skeleton_color, Background(CColor::Rgb(0xff, 0xff, 0xff)));
+        assert_eq!(
+            cfg.skeleton_color,
+            Background(CColor::Rgb(0xff, 0xff, 0xff))
+        );
     }
 
     #[test]
@@ -224,7 +229,10 @@ mod tests {
         let cfg = parse("skeleton = false");
         assert!(!cfg.skeleton);
         let cfg = parse("skeleton_color = \"#333333\"");
-        assert_eq!(cfg.skeleton_color, Background(CColor::Rgb(0x33, 0x33, 0x33)));
+        assert_eq!(
+            cfg.skeleton_color,
+            Background(CColor::Rgb(0x33, 0x33, 0x33))
+        );
     }
 
     #[test]

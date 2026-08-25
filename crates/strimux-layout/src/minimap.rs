@@ -90,7 +90,9 @@ pub fn build(layout: &Layout, map_w: u16, viewport_cols: u16) -> Minimap {
         let alloc = allocate(&width_cells, total, map_w);
         let mut x = 0u16;
         for (ci, w) in alloc.iter().enumerate() {
-            if *w == 0 { continue; }
+            if *w == 0 {
+                continue;
+            }
             let focus_col = focus_row && ci == layout.focus.column;
             let col = &row.columns[ci];
             let panes = col.panes.as_slice();
@@ -98,22 +100,33 @@ pub fn build(layout: &Layout, map_w: u16, viewport_cols: u16) -> Minimap {
             let mut px = x;
             for (pi, pid) in panes.iter().enumerate() {
                 let ww = pw.get(pi).copied().unwrap_or(0);
-                if ww == 0 { continue; }
-                let status = layout.panes.get(pid).map(|p| p.status).unwrap_or(PaneStatus::Running);
+                if ww == 0 {
+                    continue;
+                }
+                let status = layout
+                    .panes
+                    .get(pid)
+                    .map(|p| p.status)
+                    .unwrap_or(PaneStatus::Running);
                 cells.push(MinimapCell {
                     x: px,
                     y,
                     w: ww,
                     status,
                     focus_row,
-                    focus_col: focus_col && pi == layout.focus.pane.min(panes.len().saturating_sub(1)),
+                    focus_col: focus_col
+                        && pi == layout.focus.pane.min(panes.len().saturating_sub(1)),
                 });
                 px += ww;
             }
             x += *w;
         }
     }
-    Minimap { width: map_w, height, cells }
+    Minimap {
+        width: map_w,
+        height,
+        cells,
+    }
 }
 
 #[cfg(test)]
@@ -148,8 +161,12 @@ mod tests {
     fn split_below_subdivides_a_column() {
         let mut l = Layout::new(2);
         // Split the focused column below: column 0 now has 2 panes.
-        l.apply(crate::verbs::Action::SplitBelow, crate::Viewport::new(80), crate::FollowScroll::default())
-            .unwrap();
+        l.apply(
+            crate::verbs::Action::SplitBelow,
+            crate::Viewport::new(80),
+            crate::FollowScroll::default(),
+        )
+        .unwrap();
         let m = build(&l, 20, 80);
         // Two columns: col0 has 2 panes, col1 has 1 -> 3 tiles.
         assert_eq!(m.cells.len(), 3);

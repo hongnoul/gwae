@@ -119,13 +119,7 @@ fn spawn_agent_inserts_column_right_of_focus_and_focuses_it() {
     // from "end of strip".
     let _ = layout.apply(Action::FocusRight, view(), follow());
     let focused_before = layout.focus.column;
-    let last_before = layout
-        .focused_row()
-        .unwrap()
-        .columns
-        .last()
-        .unwrap()
-        .panes[0];
+    let last_before = layout.focused_row().unwrap().columns.last().unwrap().panes[0];
     let _ = layout.apply(Action::SpawnAgent, view(), follow());
     let row = layout.focused_row().unwrap();
     // A single pane is inserted just after the previously focused column, and
@@ -162,7 +156,10 @@ fn new_spawn_scrolls_the_new_pane_into_view() {
     let scroll_after = row.scroll_x;
     assert!(scroll_after > 0);
     let (s, e) = layout.focused_range(view().cols).unwrap();
-    assert!(s as i32 - scroll_after < view().cols as i32, "new pane off-screen");
+    assert!(
+        s as i32 - scroll_after < view().cols as i32,
+        "new pane off-screen"
+    );
     assert!(e as i32 - scroll_after >= 0);
 }
 
@@ -291,8 +288,13 @@ fn focusing_rightmost_of_exact_fit_strip_never_scrolls() {
             assert_eq!(scroll, 0, "over-scrolled at cols={cols}");
         }
         // Manual scroll right is also clamped: nothing to reveal.
-        let scroll = layout.apply(Action::ScrollViewport(10), vp, follow()).unwrap();
-        assert_eq!(scroll, 0, "manual scroll revealed background at cols={cols}");
+        let scroll = layout
+            .apply(Action::ScrollViewport(10), vp, follow())
+            .unwrap();
+        assert_eq!(
+            scroll, 0,
+            "manual scroll revealed background at cols={cols}"
+        );
     }
 }
 
@@ -311,7 +313,9 @@ fn overflowing_strip_scroll_clamps_to_last_column_edge() {
     let total = ranges.last().unwrap().1 as i32;
     assert_eq!(scroll, total - vp.cols as i32, "scroll stops at strip edge");
     // Further manual scrolling stays clamped.
-    let scroll = layout.apply(Action::ScrollViewport(50), vp, follow()).unwrap();
+    let scroll = layout
+        .apply(Action::ScrollViewport(50), vp, follow())
+        .unwrap();
     assert_eq!(scroll, total - vp.cols as i32);
 }
 
@@ -333,7 +337,10 @@ fn clamp_scrolls_snaps_back_after_viewport_widens() {
     let wide = Viewport::new(300);
     layout.clamp_scrolls(wide);
     let scroll = layout.row(layout.focus.row).unwrap().scroll_x;
-    assert!(scroll <= layout.max_scroll(wide), "stale scroll not clamped");
+    assert!(
+        scroll <= layout.max_scroll(wide),
+        "stale scroll not clamped"
+    );
     let ranges = layout.column_x_ranges(layout.focus.row, wide.cols).unwrap();
     let total = ranges.last().unwrap().1 as i32;
     assert!(

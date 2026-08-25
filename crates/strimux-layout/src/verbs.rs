@@ -347,8 +347,8 @@ impl Layout {
         };
         self.panes.remove(&removed);
         // Was the closed pane the focused one? Remember before indices shift.
-        let was_focused = self.focus.row == row && self.focus.column == col
-            && self.focus.pane == pane_idx;
+        let was_focused =
+            self.focus.row == row && self.focus.column == col && self.focus.pane == pane_idx;
         // Clean up empty columns and rows; never leave gaps (invariant 5).
         let col_emptied = self
             .row(row)
