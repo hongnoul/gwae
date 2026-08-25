@@ -2297,7 +2297,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
 
         if event::poll(Duration::from_millis(cfg.input_poll_ms.clamp(1, 50))).unwrap_or(false) {
             match event::read() {
-                Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Press => {
+                Ok(Event::Key(ke))
+                    if matches!(ke.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                {
                     // Bare Alt hold for quasimode: track before handle_key so chords don't double-count.
                     let bare_alt = is_alt_modifier(&ke);
                     if bare_alt {
