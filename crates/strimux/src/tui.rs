@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use crossterm::cursor;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, KeyboardEnhancementFlags, ModifierKeyCode, MouseButton, MouseEvent,
-    MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    KeyEventState, KeyModifiers, KeyboardEnhancementFlags, ModifierKeyCode, MouseButton,
+    MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -39,6 +39,29 @@ fn is_alt_modifier(ev: &KeyEvent) -> bool {
         ev.code,
         KeyCode::Modifier(ModifierKeyCode::LeftAlt) | KeyCode::Modifier(ModifierKeyCode::RightAlt)
     )
+}
+
+fn physical_shift(ev: &KeyEvent) -> bool {
+    if ev.modifiers.contains(KeyModifiers::SHIFT) {
+        return true;
+    }
+    // With Kitty REPORT_ALTERNATE_KEYS shifted keys arrive as their shifted
+    // codepoint with SHIFT cleared (e.g. Shift+h -> 'H'). Caps Lock alone
+    // also yields uppercase but sets CAPS_LOCK state, so we must not confuse
+    // the two: a Caps-generated 'H' must NOT be treated as an intentional Shift.
+    if let KeyCode::Char(c) = ev.code {
+        if c.is_ascii_uppercase() && !ev.state.contains(KeyEventState::CAPS_LOCK) {
+            return true;
+        }
+    }
+    false
+}
+
+fn logical_char(ev: &KeyEvent) -> Option<char> {
+    match ev.code {
+        KeyCode::Char(c) => Some(c.to_ascii_lowercase()),
+        _ => None,
+    }
 }
 
 /// How long a pane without OSC 133 shell integration must stay silent before
@@ -1510,10 +1533,24 @@ enum Cmd {
 }
 
 /// Encode a key event that is not a strimux chord into PTY bytes.
+///
+/// Alt (Option) is forwarded as Meta: an `ESC` prefix before the base
+/// sequence, matching what a pane sees when run natively outside strimux
+/// (e.g. Alt/Option+Backspace becomes `ESC DEL` / `\x1b\x7f` which
+/// readline interprets as `backward-kill-word`). Previously only `Char`
+/// keys honored the Alt bit; `Backspace`/`Delete`/arrows etc. dropped it
+/// and sent plain `DEL`, so word-delete never fired inside the mux.
 fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
     let alt = ev.modifiers.contains(KeyModifiers::ALT);
     let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
     let mut out = Vec::new();
+    // Meta prefix: ESC before the base sequence. Ctrl combinations take
+    // precedence for the base encoding but still keep the Meta ESC in front
+    // (C-M-... = ESC + C-...), matching xterm's metaSendsEscape.
+    let meta = alt && !matches!(ev.code, KeyCode::Esc);
+    if meta {
+        out.push(0x1b);
+    }
     match ev.code {
         KeyCode::Char(c) => {
             if ctrl {
@@ -1523,10 +1560,6 @@ fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
                 } else {
                     out.extend_from_slice(&[b'^', c as u8, b'\n']);
                 }
-            } else if alt {
-                out.extend_from_slice(&[0x1b]);
-                let mut s = [0u8; 4];
-                out.extend_from_slice(c.encode_utf8(&mut s).as_bytes());
             } else {
                 let mut s = [0u8; 4];
                 out.extend_from_slice(c.encode_utf8(&mut s).as_bytes());
@@ -1546,6 +1579,9 @@ fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
         KeyCode::PageDown => out.extend_from_slice(b"\x1b[6~"),
         KeyCode::Delete => out.extend_from_slice(b"\x1b[3~"),
         KeyCode::Insert => out.extend_from_slice(b"\x1b[2~"),
+        // Crossterm can deliver the legacy BackTab (Shift+Tab) code; forward it
+        // with the same Meta prefix convention.
+        KeyCode::BackTab => out.extend_from_slice(b"\x1b[Z"),
         _ => {}
     }
     out
@@ -1554,7 +1590,7 @@ fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
 /// Map a key event to a command. Returns None when it is a pass-through.
 fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     let alt = ev.modifiers.contains(KeyModifiers::ALT);
-    let shift = ev.modifiers.contains(KeyModifiers::SHIFT);
+    let shift = physical_shift(ev);
     let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
     use KeyCode::*;
     // macOS Option+letter fallback: terminals that don't translate Option to
@@ -1598,36 +1634,66 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         if ctrl && matches!(ev.code, Char('b')) {
             return Some(Cmd::Input(vec![0x02])); // literal Ctrl-b to the pane
         }
+        let lc = logical_char(ev);
+        if let Some(c) = lc {
+            // Shift+hjkl moves the pane (niri-style); plain hjkl focuses.
+            // Use logical_char so Kitty alternate keys (Shift clears) and Caps
+            // Lock are both handled: physical_shift distinguishes them, while
+            // `c` is the layout-agnostic lowercased letter.
+            if c == 'h' || c == 'j' || c == 'k' || c == 'l' {
+                return Some(if shift {
+                    match c {
+                        'h' => Cmd::Act(Action::MovePaneLeft),
+                        'j' => Cmd::Act(Action::MovePaneDown),
+                        'k' => Cmd::Act(Action::MovePaneUp),
+                        'l' => Cmd::Act(Action::MovePaneRight),
+                        _ => unreachable!(),
+                    }
+                } else {
+                    match c {
+                        'h' => Cmd::Act(Action::FocusLeft),
+                        'j' => Cmd::Act(Action::FocusDown),
+                        'k' => Cmd::Act(Action::FocusUp),
+                        'l' => Cmd::Act(Action::FocusRight),
+                        _ => unreachable!(),
+                    }
+                });
+            }
+            let cmd = match c {
+                'c' | 'n' => Action::NewColumn,
+                'r' | 'o' => Action::NewRow,
+                ';' => Action::SpawnAgent,
+                's' | '-' => Action::SplitBelow,
+                'x' => Action::KillPane,
+                'z' | '=' => Action::CycleWidth,
+                'g' => return Some(Cmd::SmartJump),
+                ',' => return Some(Cmd::ScrollPane(-1)),
+                '.' => return Some(Cmd::ScrollPane(1)),
+                '<' => return Some(Cmd::ScrollPane(-16)),
+                '>' => return Some(Cmd::ScrollPane(16)),
+                '[' => return Some(Cmd::Scroll(-200)),
+                ']' => return Some(Cmd::Scroll(200)),
+                'q' => return Some(Cmd::Quit),
+                _ => {
+                    if c.is_ascii_digit() {
+                        Action::JumpToColumn(c.to_digit(10).unwrap_or(1) as usize - 1)
+                    } else {
+                        return Some(Cmd::None);
+                    }
+                }
+            };
+            return Some(Cmd::Act(cmd));
+        }
+        // Non-char codes (e.g. ','/'<' are already handled above) and bare
+        // punctuation that had no `c` hit the fallback.
         let cmd = match ev.code {
-            Char('H') | Char('h') if shift => Action::MovePaneLeft,
-            Char('L') | Char('l') if shift => Action::MovePaneRight,
-            Char('K') | Char('k') if shift => Action::MovePaneUp,
-            Char('J') | Char('j') if shift => Action::MovePaneDown,
-            Char('H') => Action::MovePaneLeft,
-            Char('L') => Action::MovePaneRight,
-            Char('K') => Action::MovePaneUp,
-            Char('J') => Action::MovePaneDown,
-            Char('h') => Action::FocusLeft,
-            Char('l') => Action::FocusRight,
-            Char('k') => Action::FocusUp,
-            Char('j') => Action::FocusDown,
-            Char('c') | Char('n') => Action::NewColumn,
-            Char('r') | Char('o') => Action::NewRow,
             Char(';') => Action::SpawnAgent,
-            Char('s') | Char('-') => Action::SplitBelow,
-            Char('x') => Action::KillPane,
-            Char('z') | Char('=') => Action::CycleWidth,
-            Char('g') => return Some(Cmd::SmartJump),
             Char(',') => return Some(Cmd::ScrollPane(-1)),
             Char('.') => return Some(Cmd::ScrollPane(1)),
             Char('<') => return Some(Cmd::ScrollPane(-16)),
             Char('>') => return Some(Cmd::ScrollPane(16)),
             Char('[') => return Some(Cmd::Scroll(-200)),
             Char(']') => return Some(Cmd::Scroll(200)),
-            Char(c) if c.is_ascii_digit() => {
-                Action::JumpToColumn(c.to_digit(10).unwrap_or(1) as usize - 1)
-            }
-            Char('q') => return Some(Cmd::Quit),
             _ => return Some(Cmd::None), // unknown prefix key just cancels
         };
         return Some(Cmd::Act(cmd));
@@ -1640,42 +1706,86 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         return Some(Cmd::Input(key_bytes(ev)));
     }
     // Alt chords (work when the terminal sends Option as Meta).
-    let cmd = match ev.code {
-        Char('H') | Char('h') if shift => Action::MovePaneLeft,
-        Char('L') | Char('l') if shift => Action::MovePaneRight,
-        Char('K') | Char('k') if shift => Action::MovePaneUp,
-        Char('J') | Char('j') if shift => Action::MovePaneDown,
-        // Some terminals send the uppercase letter without a SHIFT modifier.
-        Char('H') => Action::MovePaneLeft,
-        Char('L') => Action::MovePaneRight,
-        Char('K') => Action::MovePaneUp,
-        Char('J') => Action::MovePaneDown,
-        Char('h') => Action::FocusLeft,
-        Char('l') => Action::FocusRight,
-        Char('k') => Action::FocusUp,
-        Char('j') => Action::FocusDown,
-        Enter if shift => Action::NewRow,
-        Enter => Action::NewColumn,
-        Char('a') => Action::NewColumn,
-        Char(';') => Action::SpawnAgent,
-        Char('s') => Action::SplitBelow,
-        Char('r') => Action::CycleWidth,
-        Char('x') => Action::KillPane,
-        Char('z') => Action::CycleWidth,
-        Char('g') => return Some(Cmd::SmartJump),
-        Char(c) if c.is_ascii_digit() => {
-            Action::JumpToColumn(c.to_digit(10).unwrap_or(1) as usize - 1)
+    if let Some(c) = logical_char(ev) {
+        if c == 'h' || c == 'j' || c == 'k' || c == 'l' {
+            return Some(if shift {
+                match c {
+                    'h' => Cmd::Act(Action::MovePaneLeft),
+                    'j' => Cmd::Act(Action::MovePaneDown),
+                    'k' => Cmd::Act(Action::MovePaneUp),
+                    'l' => Cmd::Act(Action::MovePaneRight),
+                    _ => unreachable!(),
+                }
+            } else {
+                match c {
+                    'h' => Cmd::Act(Action::FocusLeft),
+                    'j' => Cmd::Act(Action::FocusDown),
+                    'k' => Cmd::Act(Action::FocusUp),
+                    'l' => Cmd::Act(Action::FocusRight),
+                    _ => unreachable!(),
+                }
+            });
         }
-        Char('q') => Action::KillPane,
+        let act = match c {
+            'a' => Some(Action::NewColumn),
+            ';' => Some(Action::SpawnAgent),
+            's' => Some(Action::SplitBelow),
+            'r' => Some(Action::CycleWidth),
+            'x' => Some(Action::KillPane),
+            'z' => Some(Action::CycleWidth),
+            'q' => Some(Action::KillPane),
+            'g' => return Some(Cmd::SmartJump),
+            _ if c.is_ascii_digit() => Some(Action::JumpToColumn(
+                c.to_digit(10).unwrap_or(1) as usize - 1,
+            )),
+            _ => None,
+        };
+        if let Some(a) = act {
+            return Some(Cmd::Act(a));
+        }
+        if matches!(c, '[' | ']') {
+            return Some(if c == '[' {
+                Cmd::Scroll(-200)
+            } else {
+                Cmd::Scroll(200)
+            });
+        }
+    }
+    // Shift+arrow and plain arrow scroll the pane content.
+    if matches!(ev.code, Left | Right) {
+        if shift {
+            return Some(match ev.code {
+                Left => Cmd::ScrollPane(-16),
+                Right => Cmd::ScrollPane(16),
+                _ => unreachable!(),
+            });
+        }
+        return Some(match ev.code {
+            Left => Cmd::ScrollPane(-1),
+            Right => Cmd::ScrollPane(1),
+            _ => unreachable!(),
+        });
+    }
+    if ev.code == Enter {
+        return Some(Cmd::Act(if shift {
+            Action::NewRow
+        } else {
+            Action::NewColumn
+        }));
+    }
+    // Alt+digit/punct not listed above: check the original code directly
+    // since those don't need case folding.
+    match ev.code {
+        Char(c) if c.is_ascii_digit() => {
+            return Some(Cmd::Act(Action::JumpToColumn(
+                c.to_digit(10).unwrap_or(1) as usize - 1,
+            )))
+        }
         Char('[') => return Some(Cmd::Scroll(-200)),
         Char(']') => return Some(Cmd::Scroll(200)),
-        Left if shift => return Some(Cmd::ScrollPane(-16)),
-        Right if shift => return Some(Cmd::ScrollPane(16)),
-        Left => return Some(Cmd::ScrollPane(-1)),
-        Right => return Some(Cmd::ScrollPane(1)),
-        _ => return Some(Cmd::Input(key_bytes(ev))),
-    };
-    Some(Cmd::Act(cmd))
+        _ => {}
+    }
+    Some(Cmd::Input(key_bytes(ev)))
 }
 
 /// Kill any pane whose id is no longer in the layout, and spawn missing ones.
@@ -1771,14 +1881,18 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let _ = stdout.flush();
     // Request Kitty keyboard protocol: bare Alt press/release (REPORT_ALL_KEYS)
     // so the reserved-row quasimode (hold ⌥ to reveal) can see the hold
-    // itself, not just chords. Falls back gracefully if the terminal ignores it.
+    // itself, not just chords. REPORT_ALTERNATE_KEYS is required so
+    // Shift+1 yields '!' (not '1') and shifted letters arrive as their
+    // shifted codepoint with SHIFT cleared; without it shift is lost under
+    // the Kitty protocol. Falls back gracefully if the terminal ignores it.
     let kitty_keyboard = matches!(
         execute!(
             stdout,
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
                     | KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES,
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
             )
         ),
         Ok(())
@@ -2528,6 +2642,59 @@ mod tests {
             let ev = KeyEvent::new(KeyCode::Char(g), KeyModifiers::SHIFT);
             assert_eq!(handle_key(&ev), Some(Cmd::Act(act)));
         }
+    }
+
+    #[test]
+    fn caps_lock_does_not_trigger_shift_chords() {
+        // Caps+h sends an uppercase 'H' with CAPS_LOCK state (state is
+        // produced by the kitty bit-64 alternate). It must NOT become
+        // MovePaneLeft (which requires physical Shift).
+        let ev = KeyEvent::new_with_kind_and_state(
+            KeyCode::Char('H'),
+            KeyModifiers::ALT,
+            KeyEventKind::Press,
+            KeyEventState::CAPS_LOCK,
+        );
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::FocusLeft)));
+        // Same for prefix: Caps should not fake Shift+hjkl.
+        IN_PREFIX.store(true, Ordering::Relaxed);
+        let ev = KeyEvent::new_with_kind_and_state(
+            KeyCode::Char('H'),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+            KeyEventState::CAPS_LOCK,
+        );
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::FocusLeft)));
+    }
+
+    #[test]
+    fn kitty_shifted_key_with_shift_cleared_is_still_a_move() {
+        // With REPORT_ALTERNATE_KEYS the shift is consumed: 'H' arrives with no
+        // SHIFT modifier but without CAPS_LOCK, so physical_shift sees it as Shift.
+        let ev = KeyEvent::new(KeyCode::Char('H'), KeyModifiers::ALT);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::MovePaneLeft)));
+        IN_PREFIX.store(true, Ordering::Relaxed);
+        let ev = KeyEvent::new(KeyCode::Char('K'), KeyModifiers::NONE);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::MovePaneUp)));
+    }
+
+    #[test]
+    fn shift_and_caps_typed_text_passes_through_as_shifted() {
+        // Plain Shift+a -> 'A' is pane input, not a strimux chord.
+        let ev = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE);
+        assert_eq!(handle_key(&ev), Some(Cmd::Input(b"A".to_vec())));
+        // Shift+1 -> '!' via the shifted codepoint path.
+        let ev = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE);
+        assert_eq!(handle_key(&ev), Some(Cmd::Input(b"!".to_vec())));
+        // Caps+a also produces 'A' (caps state) but should still type 'A' when
+        // not an Alt/prefix chord, just like Shift. Focus test is plain key:
+        let ev = KeyEvent::new_with_kind_and_state(
+            KeyCode::Char('A'),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+            KeyEventState::CAPS_LOCK,
+        );
+        assert_eq!(handle_key(&ev), Some(Cmd::Input(b"A".to_vec())));
     }
 
     #[test]
