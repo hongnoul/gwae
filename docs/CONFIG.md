@@ -18,6 +18,7 @@ skeleton = true
 skeleton_color = "#6c7086"    # Catppuccin Mocha overlay0
 mouse = true
 scroll_lines = 3
+input_poll_ms = 2
 
 [minimap]
 show = true
@@ -44,6 +45,7 @@ hud_on_attention_ms = 2500
 | `skeleton_color` | color | `#6c7086` | Color of the skeleton frames around unfocused boxes. Accepted forms match `background`. Default is Catppuccin Mocha overlay0. |
 | `mouse` | bool | `true` | Capture the mouse so the wheel scrolls *inside* the pane under the cursor (its own scrollback) instead of reaching the host terminal, where it walks the host's scrollback and the shell's previous/next prompt history. A pane running a full-screen app that asked for mouse reporting gets the event forwarded verbatim, translated into its own grid coordinates; one on the alternate screen without mouse reporting (e.g. `less`) gets arrow keys. Typing snaps a scrolled-back pane to the live bottom. Set to `false` to hand the wheel back to the host terminal. |
 | `scroll_lines` | integer | `3` | Rows of pane scrollback moved per wheel notch. |
+| `input_poll_ms` | integer | `2` | Milliseconds to wait in `event::poll` before checking PTY output and repainting. Lower values reduce perceived typing and backspace latency at the cost of more frequent wakeups. Default `2` (down from `10`) is low latency with modest CPU cost. Valid range `1..50`. Set to `1` for minimum possible input latency. |
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit (the same digit `⌥+1..9` jumps to). Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
 | `minimap.mode` | string | `"reserved_quasimode"` | Presentation: `overlay` (legacy corner), `reserved` (1-row chrome), `reserved_quasimode` (hold ⌥/Alt to reveal or when attention Idle/Failed), `edge_ticks` (frame ticks), `off` (no chrome). In quasimode the 1-row chrome is still reserved so geometry never churns (no SIGWINCH) — it just stays blank at rest. |
 | `minimap.max_width` | integer | `32` | Maximum width (in cells) of the minimap block; it shrinks to fit narrower terminals. Only used for `overlay`. |
