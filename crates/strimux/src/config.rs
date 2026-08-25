@@ -38,6 +38,9 @@ pub struct Config {
     /// Color of the 1-cell accent frame drawn around the focused pane. Accepts
     /// a 256-color index (`36`), a hex RGB (`"#7aa2f7"`), or `"default"`.
     pub focus_color: Background,
+    /// The minimap: a small bottom-right grid showing each strip (row) and its
+    /// panes (columns), with the focused strip and column highlighted.
+    pub minimap: Minimap,
 }
 
 impl Default for Config {
@@ -51,6 +54,7 @@ impl Default for Config {
             startup_panes: 4,
             background: Background::default(),
             focus_color: Background(CColor::Rgb(0x7a, 0xa2, 0xf7)),
+            minimap: Minimap::default(),
         }
     }
 }
@@ -76,6 +80,31 @@ impl Config {
                 Config::default()
             }),
             Err(_) => Config::default(),
+        }
+    }
+}
+
+/// The minimap widget: which strips (rows) and panes (columns) exist and
+/// which is focused. Shown bottom-right; rows of the map are strips, the width
+/// of each tile is proportional to the column's width share.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
+pub struct Minimap {
+    /// Draw the minimap at all.
+    pub show: bool,
+    /// Maximum width (in cells) of the minimap block. The map shrinks to fit
+    /// the panel if the panel is narrower.
+    pub max_width: u16,
+    /// Maximum number of strips (rows) shown; extra strips are cut off.
+    pub max_rows: u16,
+}
+
+impl Default for Minimap {
+    fn default() -> Self {
+        Minimap {
+            show: true,
+            max_width: 32,
+            max_rows: 6,
         }
     }
 }

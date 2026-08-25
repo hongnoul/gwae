@@ -299,6 +299,7 @@ fn render_frame(
     content_width: u16,
     background: CColor,
     focus_color: CColor,
+    mm: &crate::config::Minimap,
 ) {
     out.clear();
     out.resize((cols as usize) * (rows as usize), Cell::default());
@@ -376,6 +377,8 @@ fn render_frame(
     if let Some(rect) = focus_rect {
         draw_focus_frame(out, cols, rect, focus_color);
     }
+    // Overlay the minimap last so chrome always wins over pane content.
+    draw_minimap(out, cols, rows, layout, mm, focus_color);
 }
 
 /// Overlay a 1-cell frame on the edge ring of `rect` using `color`. Corner
@@ -408,6 +411,63 @@ fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
             if let Some(c) = out.get_mut(y * stride + x1) {
                 c.style.bg = color;
             }
+        }
+    }
+}
+
+/// Overlay the minimap in the bottom-right corner. Rows of the map are strips
+/// (rows), and each tile is a column (subdivided by its panes) with width
+/// proportional to the column's real width share. The focused strip is
+/// highlighted and the focused pane tile is painted in the focus accent, so it
+/// always reads which strip/column you're on. Pane status tints idle strips.
+fn draw_minimap(
+    out: &mut [Cell],
+    cols: u16,
+    rows: u16,
+    layout: &Layout,
+    mm: &crate::config::Minimap,
+    focus_color: CColor,
+) {
+    use strimux_layout::{minimap, PaneStatus};
+    // A single strip has nothing to orient against; hide the map.
+    if !mm.show || layout.rows.len() <= 1 {
+        return;
+    }
+    let width = mm.max_width.min(cols.saturating_sub(2).max(1));
+    let map = minimap::build(layout, width, cols);
+    let height = mm.max_rows.min(map.height).min(rows);
+    let ox = cols - map.width;
+    let oy = rows - height;
+    for tile in &map.cells {
+        if tile.y >= height {
+            continue;
+        }
+        for dx in 0..tile.w {
+            let x = ox + tile.x + dx;
+            let y = oy + tile.y;
+            if x >= cols || y >= rows {
+                continue;
+            }
+            let idx = y as usize * cols as usize + x as usize;
+            let Some(cell) = out.get_mut(idx) else { continue };
+            let bg = if tile.focus_col {
+                focus_color
+            } else if tile.focus_row {
+                // Focused strip: brighter than idle strips, muted beside the
+                // isolated focus-col accent.
+                CColor::Idx(244)
+            } else {
+                match tile.status {
+                    PaneStatus::Running => CColor::Idx(240),
+                    PaneStatus::Idle => CColor::Idx(236),
+                    PaneStatus::Done => CColor::Idx(233),
+                }
+            };
+            cell.ch = ' ';
+            cell.width = 1;
+            cell.style.bg = bg;
+            cell.style.fg = CColor::Default;
+            cell.style.bold = false;
         }
     }
 }
@@ -794,8 +854,40 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     }
                 }
                 PaneMsg::Exited(pid) => {
+                    // A pane whose process exited closes naturally, exactly
+                    // like Alt+q: remove it from the layout, compact columns
+                    // (fill left first), and reap the PTY. When the last pane
+                    // exits there is nothing left to show, so strimux quits.
                     if let Some(p) = panes.get_mut(&pid) {
                         p.alive = false;
+                    }
+                    let total: usize = layout
+                        .rows
+                        .iter()
+                        .flat_map(|r| r.columns.iter())
+                        .map(|c| c.panes.len())
+                        .sum();
+                    let in_layout = layout.locate_pane(pid).is_some();
+                    if in_layout && total <= 1 {
+                        break 'main;
+                    }
+                    if in_layout {
+                        let v = Viewport::new(cols);
+                        let f = FollowScroll {
+                            margin: cfg.scroll_margin,
+                            center: cfg.center_focus,
+                        };
+                        let _ = layout.apply(Action::ClosePane(pid), v, f);
+                        agent_panes.remove(&pid);
+                        if let Err(e) =
+                            sync_panes(&mut layout, &mut panes, &cfg, &tx, 0, &agent_panes)
+                        {
+                            tracing::error!("sync panes: {e}");
+                        }
+                    } else {
+                        // Already removed from the layout (explicit kill);
+                        // just drop the dead PTY handle.
+                        panes.remove(&pid);
                     }
                     dirty = true;
                 }
@@ -933,6 +1025,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 cfg.content_width,
                 cfg.background.color(),
                 cfg.focus_color.color(),
+                &cfg.minimap,
             );
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
@@ -1099,6 +1192,53 @@ mod tests {
         assert_eq!(cell(2, 1).ch, '.', "frame keeps the underlying glyph");
     }
 
+
+    #[test]
+    fn draw_minimap_highlights_focus_bottom_right() {
+        use strimux_layout::Width;
+        let mut layout = Layout::default();
+        // Add a second strip so the map has something to orient against.
+        let r2 = layout.new_row("two".to_string());
+        let p = layout.alloc_pane();
+        layout.add_column(r2, Width::Cells(20), vec![p]);
+        let mut out = vec![Cell::default(); 40 * 8];
+        let accent = CColor::Idx(36);
+        draw_minimap(
+            &mut out,
+            40,
+            8,
+            &layout,
+            &crate::config::Minimap::default(),
+            accent,
+        );
+        // Two strips -> map height 2, width 32 (default max). Bottom-right:
+        // ox = 40-32 = 8, oy = 8-2 = 6.
+        let cell = |x: usize, y: usize| out[y * 40 + x];
+        // Focused pane tile (row 0, col 0) is painted with the accent.
+        let focus = cell(8, 6);
+        assert_eq!(focus.style.bg, accent, "focused tile uses the focus color");
+        // The non-focused strip's tile is a dim chrome gray, not the accent.
+        let idle = cell(8, 7);
+        assert_ne!(idle.style.bg, accent, "idle strip must not use the accent");
+        assert_ne!(idle.style.bg, CColor::Default, "idle strip is painted chrome");
+        // Nothing above the minimap block is painted by it.
+        let above = cell(8, 5);
+        assert_eq!(above.style.bg, CColor::Default);
+        assert_eq!(above.ch, ' ');
+        // A single-strip layout hides the minimap entirely.
+        let single = Layout::default();
+        let mut out2 = vec![Cell::default(); 40 * 8];
+        draw_minimap(
+            &mut out2,
+            40,
+            8,
+            &single,
+            &crate::config::Minimap::default(),
+            accent,
+        );
+        assert!(out2.iter().all(|c| c.style.bg == CColor::Default), "no map for one strip");
+    }
+
     #[test]
     fn draw_focus_frame_single_cell_rect() {
         let mut out = vec![Cell::default(); 1];
@@ -1138,21 +1278,21 @@ fn content_scroll_reveals_overflow_e2e() {
 
     // At scroll 0 the viewport shows content columns 0..79 (digits 1,2,...,0).
     panes.get_mut(&pid).unwrap().h_scroll = 0;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default);
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, &crate::config::Minimap::default());
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
     assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
     assert_eq!(out[77].ch, '8'); // content col 77 -> screen x=77
 
     // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
     panes.get_mut(&pid).unwrap().h_scroll = 60;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default);
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, &crate::config::Minimap::default());
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
     assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
     assert_eq!(out[77].ch, '8'); // content col 137 -> screen x=77
 
     // Past the 240-col content the window reveals blanks.
     panes.get_mut(&pid).unwrap().h_scroll = 200;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default);
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, &crate::config::Minimap::default());
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
     assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
     assert_eq!(out[45].ch, ' '); // past content end -> blank

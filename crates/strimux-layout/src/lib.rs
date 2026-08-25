@@ -9,6 +9,7 @@
 //! There is no I/O, no async, no PTY, no terminal emulation here. Those live
 //! in the `strimux` binary and `strimux-term` crate.
 
+pub mod minimap;
 pub mod model;
 pub mod model_serde;
 pub mod verbs;
