@@ -17,7 +17,7 @@ A terminal-native, daemon-free multiplexer for people who live in concurrent CLI
 
 <img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
 
-[Full-quality demo video (mp4)](https://github.com/hongnoul/gwae/raw/main/docs/assets/gwae-demo.mp4) — not sped up.
+Demo use case - learning solid state chemistry. (NOT SPED UP: You could be much faster with practice!)
 
 </div>
 
