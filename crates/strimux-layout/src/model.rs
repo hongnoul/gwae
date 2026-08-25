@@ -317,4 +317,57 @@ impl Layout {
         }
         Some(out)
     }
+
+    /// On-screen x-ranges for the *whole visible grid*: the row's real
+    /// columns (as [`Layout::visible_column_x_ranges`]) followed by enough
+    /// `pad` -width placeholder columns to reach the right viewport edge.
+    ///
+    /// Placeholders continue the *same* twelfths accumulator as the real
+    /// columns instead of being tiled with independent `cols / 4` integer
+    /// arithmetic. That is the whole point: `cols / 4` truncates (at 205
+    /// cols a quarter is 51 cells, while the real grid's boundaries land on
+    /// 51/103/154/205), so an empty cell `1.2` and a populated cell `1.2`
+    /// used to differ by up to a cell, and the grid visibly jittered as
+    /// panes appeared or as you moved between strips with different fill.
+    /// Sharing the accumulator makes every cell address occupy identical
+    /// screen columns whether or not it holds a PTY.
+    ///
+    /// Returns `(ranges, live_count)`; entries at or past `live_count` are
+    /// placeholders.
+    pub fn visible_grid_x_ranges(
+        &self,
+        row: RowId,
+        viewport_cols: u16,
+        scroll: i32,
+        pad: Width,
+    ) -> Option<(Vec<(i32, i32)>, usize)> {
+        let mut out = self.visible_column_x_ranges(row, viewport_cols, scroll)?;
+        let live = out.len();
+        let r = self.row(row)?;
+        // Rebuild the accumulator state the real columns ended on, so the
+        // first placeholder boundary is the continuation of the last live
+        // one rather than a fresh rounding phase.
+        let k = self
+            .column_x_ranges(row, viewport_cols)?
+            .iter()
+            .rposition(|(s, _)| *s as i32 <= scroll)
+            .unwrap_or(0);
+        let off = out.get(k).map(|(s, _)| -*s as i64).unwrap_or(0);
+        let mut x12 = 0u64;
+        for col in r.columns.iter().skip(k) {
+            x12 += col.width.twelfths(viewport_cols);
+        }
+        let mut prev = out.last().map(|(_, e)| *e as i64 + off).unwrap_or(0);
+        // Guard: an empty strip starts the grid flush at the viewport origin.
+        if out.is_empty() {
+            prev = 0;
+        }
+        while (prev - off) < viewport_cols as i64 {
+            x12 += pad.twelfths(viewport_cols);
+            let end = (((x12 + 6) / 12) as i64).max(prev + 1);
+            out.push(((prev - off) as i32, (end - off) as i32));
+            prev = end;
+        }
+        Some((out, live))
+    }
 }

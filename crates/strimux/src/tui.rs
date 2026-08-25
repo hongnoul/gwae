@@ -18,7 +18,7 @@ use crossterm::terminal::{
     LeaveAlternateScreen,
 };
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
-use strimux_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport};
+use strimux_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport, Width};
 use strimux_term::{CColor, Cell, KittyApcExtractor, Size as GridSize, TermGrid, Vt100Grid};
 
 use crate::config::Config;
@@ -717,11 +717,15 @@ fn render_frame(
             .unwrap_or(0)
             .clamp(0, max_scroll);
         // Window-anchored ranges (see focused_pane_views): frames land on the
-        // same on-screen boundaries at every scroll stop.
-        let ranges = layout
-            .visible_column_x_ranges(layout.focus.row, cols, scroll)
+        // same on-screen boundaries at every scroll stop. Placeholder boxes
+        // for the empty right side come from the *same* accumulator, so cell
+        // `1.2` is the identical span of screen columns whether it holds a
+        // PTY or not and the grid never jitters as strips fill or as you
+        // move between strips with different occupancy.
+        let strip_no = strip_number(layout);
+        let (ranges, live) = layout
+            .visible_grid_x_ranges(layout.focus.row, cols, scroll, Width::DEFAULT)
             .unwrap_or_default();
-        let mut edge = 0u16;
         for (ci, (s, e)) in ranges.iter().enumerate() {
             let sx = *s;
             let ex = *e;
@@ -736,7 +740,9 @@ fn render_frame(
             if right <= left {
                 continue;
             }
-            let (color, prio) = if ci == layout.focus.column && !focused_col_split {
+            let placeholder = ci >= live;
+            let (color, prio) = if ci == layout.focus.column && (!focused_col_split || placeholder)
+            {
                 (focus_color, P_FOCUS_COL)
             } else {
                 (sk, P_CHROME)
@@ -747,6 +753,41 @@ fn render_frame(
                 w: right - left + 1,
                 h: strip_h,
             };
+            if placeholder {
+                // Interior only: the ring is painted from the canvas below,
+                // and clearing it here would also wipe the left neighbour's
+                // shared edge. Reset to the default (pane) background so an
+                // empty box reads exactly like a live one.
+                for y in 1..boxr.h.saturating_sub(1) {
+                    let row = (boxr.y + y) as usize * cols as usize;
+                    for x in 1..boxr.w.saturating_sub(1) {
+                        if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
+                            *c = Cell::default();
+                        }
+                    }
+                }
+                canvas.rect(boxr, color, prio);
+                let inner = Rect {
+                    x: boxr.x + 1,
+                    y: boxr.y + 1,
+                    w: boxr.w.saturating_sub(2),
+                    h: boxr.h.saturating_sub(2),
+                };
+                draw_placeholder_contents(
+                    out,
+                    cols,
+                    inner,
+                    &format!("{}.{}", strip_no, ci + 1),
+                    pal.label,
+                    cow,
+                    // Ordinal among *empty* boxes, not the absolute column,
+                    // so the pinned cheat-sheet hint sits where the eye lands
+                    // whatever the layout.
+                    ci - live,
+                    cell_labels,
+                );
+                continue;
+            }
             canvas.rect(boxr, color, prio);
             // Stacked panes: the 1-cell gap between two panes of a column is
             // a shared horizontal rule that tees into the column's verticals,
@@ -758,91 +799,6 @@ fn render_frame(
                     }
                 }
             }
-            edge = edge.max(right.saturating_add(1));
-        }
-        // Empty right side: placeholder boxes at the default quarter width, so
-        // the skeleton always shows the full four-column container even before
-        // panes exist to fill it. Interiors are reset to the default (pane)
-        // background so an empty box reads exactly like a live one instead of
-        // showing the dimmer `background` fill, and each carries a big
-        // `strip.cell` identifier centered in the box so empty cells are
-        // addressable at a glance.
-        // Address strips by their *position* in the stack, not their row id:
-        // ids are monotonic allocation counters, so creating and discarding
-        // strips (j/k past the ends) would otherwise make the label drift
-        // upward (2, 3, 4, ...) for what is visibly always the second strip.
-        let strip_no = strip_number(layout);
-        let quarter = (cols / 4).max(1);
-        let mut pcol = ranges.len();
-        // Placeholders also share their boundary with the live column (or the
-        // placeholder) to their left, so each box starts one cell back.
-        let mut px = edge.saturating_sub(1);
-        while px + 1 < cols {
-            let mut right = (px + quarter).min(cols - 1);
-            // Absorb a runt tail into this box rather than tiling a sliver:
-            // the leftover after a fixed-quarter box is often only a cell or
-            // two, which would otherwise render as a `┼╮` scar at the screen
-            // edge instead of a box.
-            if cols - 1 - right < quarter / 2 {
-                right = cols - 1;
-            }
-            if right <= px + 1 {
-                break;
-            }
-            let boxr = Rect {
-                x: px,
-                y: 0,
-                w: right - px + 1,
-                h: strip_h,
-            };
-            // Interior only: the ring itself is painted from the canvas after
-            // this loop, so clearing it here would be undone anyway -- but
-            // clearing the ring would also wipe the *left* neighbour's shared
-            // edge bookkeeping-free glyph, so keep to the inside.
-            for y in 1..boxr.h.saturating_sub(1) {
-                let row = (boxr.y + y) as usize * cols as usize;
-                for x in 1..boxr.w.saturating_sub(1) {
-                    if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
-                        *c = Cell::default();
-                    }
-                }
-            }
-            // On an empty strip (a freshly created niri-style workspace)
-            // there are no live columns, so the focus lives on a placeholder
-            // box: frame it in the accent color so the strip never looks
-            // focus-less.
-            let (color, prio) = if ranges.is_empty() && pcol == layout.focus.column {
-                (focus_color, P_FOCUS_COL)
-            } else {
-                (sk, P_CHROME)
-            };
-            canvas.rect(boxr, color, prio);
-            let label = format!("{}.{}", strip_no, pcol + 1);
-            // Ordinal among *empty* boxes, not the absolute column: the first
-            // placeholder to the right of the live panes is always 0, so the
-            // pinned cheat-sheet hint sits where the eye lands whatever the
-            // layout. Anchoring to a fixed address instead would put it in
-            // `1.1` (never a placeholder, so invisible) or `1.2` (the first
-            // box a second pane consumes).
-            let cow_ordinal = pcol - ranges.len();
-            let inner = Rect {
-                x: boxr.x + 1,
-                y: boxr.y + 1,
-                w: boxr.w.saturating_sub(2),
-                h: boxr.h.saturating_sub(2),
-            };
-            draw_placeholder_contents(
-                out,
-                cols,
-                inner,
-                &label,
-                pal.label,
-                cow,
-                cow_ordinal,
-                cell_labels,
-            );
-            pcol += 1;
-            px = right;
         }
     }
     // Without the skeleton, focus is a 1-cell accent frame overlaid on the
@@ -4759,6 +4715,7 @@ mod tests {
 
     #[test]
     fn skeleton_frames_four_boxes_with_red_focus() {
+        // (see grid_boundaries_are_identical_whatever_the_occupancy below)
         // The default 4-quarter layout with the skeleton on: every column box
         // gets a full-height white frame and the focused box's frame is the
         // focus color (red by default).
@@ -5867,6 +5824,83 @@ mod tests {
             out2.iter().all(|c| c.ch == ' '),
             "no center map for one pane"
         );
+    }
+
+    /// The vertical rules of the skeleton grid, by screen column.
+    fn frame_boundaries(out: &[Cell], cols: u16, rows: u16) -> Vec<u16> {
+        let y = (rows / 2) as usize;
+        (0..cols)
+            .filter(|x| {
+                let c = out[y * cols as usize + *x as usize];
+                c.ch == '│'
+            })
+            .collect()
+    }
+
+    #[test]
+    fn grid_boundaries_are_identical_whatever_the_occupancy() {
+        // Regression: placeholder boxes for empty cells were tiled with their
+        // own `cols / 4` integer arithmetic while live columns came from the
+        // twelfths accumulator in `column_x_ranges`. At viewport widths not
+        // divisible by 4 the two disagree (at 205 cols, `cols / 4` is 51 but
+        // the real quarter boundaries are 51/103/154/205), so cell `1.2` sat
+        // at a different screen column when empty than when populated, and
+        // the grid jittered as panes appeared or as you moved between strips
+        // with different fill. Every occupancy must paint the same rules.
+        let rows: u16 = 10;
+        let white = CColor::Rgb(0xff, 0xff, 0xff);
+        let red = CColor::Rgb(0xff, 0, 0);
+        // Widths deliberately chosen to be indivisible by 2, 3 and 4, where
+        // the two rounding schemes diverge.
+        for cols in [80u16, 81, 82, 83, 100, 101, 137, 205, 206, 207] {
+            let mut reference: Option<Vec<u16>> = None;
+            for filled in 1..=4usize {
+                let layout = Layout::new(filled);
+                let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+                let mut out = Vec::new();
+                render_frame(
+                    &mut out,
+                    &layout,
+                    &mut panes,
+                    cols,
+                    rows,
+                    0,
+                    &pal_of(CColor::Default, red, white),
+                    true,
+                    &no_map(),
+                    &no_cow(),
+                    true,
+                    None,
+                );
+                let b = frame_boundaries(&out, cols, rows);
+                assert!(
+                    !b.is_empty(),
+                    "no vertical rules at cols={cols} filled={filled}"
+                );
+                match &reference {
+                    None => reference = Some(b),
+                    Some(r) => assert_eq!(
+                        &b, r,
+                        "grid moved at cols={cols} with {filled} live columns: \
+                         {b:?} != {r:?}"
+                    ),
+                }
+            }
+            // And the grid really is the quarter grid: four boxes, so five
+            // rules counting both outer edges.
+            let r = reference.unwrap();
+            assert_eq!(
+                r.len(),
+                5,
+                "expected a 4-box grid at cols={cols}, got {r:?}"
+            );
+            assert_eq!(r[0], 0, "grid starts flush at cols={cols}");
+            assert_eq!(
+                *r.last().unwrap(),
+                cols - 1,
+                "grid ends flush at cols={cols}"
+            );
+        }
     }
 }
 
