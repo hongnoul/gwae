@@ -1113,16 +1113,182 @@ fn draw_status_row(
     }
 }
 
-/// Center HUD: a brief centered box flashed when attention arrives while the
-/// quasimode reserved row is hidden. Paints a 3-row box (frame + text) in the
-/// middle of the viewport so the user notices without the reserved row being
-/// permanently visible.
+/// Centered minimap overlay: the same agent-dashboard tiles as the
+/// bottom-right overlay, but painted in a centered bordered box so
+/// holding ⌥ (the quasimode reveal) is unmissable even on a busy pane.
+/// Used for `ReservedQuasimode` while Alt is held.
+fn draw_center_minimap(
+    out: &mut [Cell],
+    cols: u16,
+    rows: u16,
+    layout: &Layout,
+    mm: &crate::config::Minimap,
+    focus_color: CColor,
+) {
+    if !mm.show || (layout.panes.len() <= 1 && layout.rows.len() <= 1) {
+        return;
+    }
+    if cols < 20 || rows < 8 {
+        return;
+    }
+    use strimux_layout::minimap;
+    fn status_bg(s: PaneStatus) -> CColor {
+        match s {
+            PaneStatus::Running => CColor::Rgb(0x52, 0x6c, 0x96),
+            PaneStatus::Idle => CColor::Rgb(0x96, 0x6b, 0x51),
+            PaneStatus::Done => CColor::Rgb(0x63, 0x88, 0x60),
+            PaneStatus::Failed => CColor::Rgb(0x91, 0x53, 0x64),
+        }
+    }
+    fn status_fg(s: PaneStatus) -> CColor {
+        match s {
+            PaneStatus::Running => CColor::Rgb(0x89, 0xb4, 0xfa),
+            PaneStatus::Idle => CColor::Rgb(0xfa, 0xb3, 0x87),
+            PaneStatus::Done => CColor::Rgb(0xa6, 0xe3, 0xa1),
+            PaneStatus::Failed => CColor::Rgb(0xf3, 0x8b, 0xa8),
+        }
+    }
+    fn status_glyph(s: PaneStatus) -> char {
+        match s {
+            PaneStatus::Running => '»',
+            PaneStatus::Idle => '!',
+            PaneStatus::Done => '✓',
+            PaneStatus::Failed => '✗',
+        }
+    }
+    let width = mm.max_width.min(cols.saturating_sub(6).max(1));
+    let map = minimap::build(layout, width, cols);
+    let height = mm.max_rows.min(map.height).min(rows.saturating_sub(4));
+    if height == 0 || map.width == 0 {
+        return;
+    }
+    // Box: 1-cell frame + map + optional summary row.
+    let has_summary = mm.show_counts;
+    let bw = (map.width + 2) as usize;
+    let bh = (height as usize + 2) + if has_summary { 1 } else { 0 };
+    if bw as u16 >= cols || bh as u16 >= rows {
+        return;
+    }
+    let ox = ((cols as usize).saturating_sub(bw)) / 2;
+    let oy = ((rows as usize).saturating_sub(bh)) / 2;
+    let bg = CColor::Rgb(0x18, 0x18, 0x25);
+    // Fill box interior with bar background.
+    for y in 0..bh {
+        for x in 0..bw {
+            if let Some(c) = out.get_mut((oy + y) * cols as usize + (ox + x)) {
+                *c = Cell {
+                    ch: ' ',
+                    style: strimux_term::Style {
+                        fg: CColor::Rgb(0xa6, 0xad, 0xc8),
+                        bg,
+                        ..Default::default()
+                    },
+                    width: 1,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+    let rect = Rect {
+        x: ox as u16,
+        y: oy as u16,
+        w: bw as u16,
+        h: bh as u16,
+    };
+    draw_focus_frame(out, cols, rect, focus_color);
+    // Title row inside top of frame (optional).
+    let inner_ox = ox + 1;
+    let inner_oy = oy + 1;
+    // Paint minimap tiles inside the frame.
+    let put = |out: &mut [Cell], x: u16, y: u16, ch: char, fg: CColor, bg: CColor, bold: bool| {
+        if x >= cols || y >= rows {
+            return;
+        }
+        let idx = y as usize * cols as usize + x as usize;
+        if let Some(cell) = out.get_mut(idx) {
+            *cell = Cell::default();
+            cell.ch = ch;
+            cell.style.fg = fg;
+            cell.style.bg = bg;
+            cell.style.bold = bold;
+        }
+    };
+    for tile in &map.cells {
+        if tile.y >= height {
+            continue;
+        }
+        let bgc = if tile.focus_col {
+            focus_color
+        } else {
+            status_bg(tile.status)
+        };
+        let fg = CColor::Idx(231);
+        let y = inner_oy as u16 + tile.y;
+        let glyph = status_glyph(tile.status);
+        for dx in 0..tile.w {
+            let x = inner_ox as u16 + tile.x + dx;
+            let ch = if dx == 0 {
+                if tile.pane_idx == 0 {
+                    char::from_digit(tile.column as u32 + 1, 10).unwrap_or('+')
+                } else {
+                    glyph
+                }
+            } else if dx == tile.w - 1 && tile.w >= 2 {
+                glyph
+            } else {
+                ' '
+            };
+            put(out, x, y, ch, fg, bgc, dx == 0 && tile.pane_idx == 0);
+        }
+        if tile.focus_row && tile.x == 0 && inner_ox > 0 {
+            // Chevron would collide with frame, skip in centered mode.
+        }
+    }
+    if has_summary {
+        let statuses = [
+            PaneStatus::Running,
+            PaneStatus::Idle,
+            PaneStatus::Done,
+            PaneStatus::Failed,
+        ];
+        let mut counts = [0usize; 4];
+        for p in layout.panes.values() {
+            counts[statuses.iter().position(|s| *s == p.status).unwrap_or(0)] += 1;
+        }
+        let mut segs: Vec<(String, CColor)> = vec![(
+            format!("{}", layout.panes.len()),
+            CColor::Rgb(0xa6, 0xad, 0xc8),
+        )];
+        for (i, s) in statuses.iter().enumerate() {
+            if counts[i] > 0 {
+                segs.push((format!(" {}{}", status_glyph(*s), counts[i]), status_fg(*s)));
+            }
+        }
+        let total_w: usize = segs.iter().map(|(t, _)| t.chars().count()).sum();
+        // Bottom row inside frame, right-aligned.
+        let y = (oy + bh - 2) as u16;
+        let mut x = (ox + bw).saturating_sub(total_w + 1) as u16;
+        let bar_bg = bg;
+        for (text, fg) in segs {
+            for ch in text.chars() {
+                put(out, x, y, ch, fg, bar_bg, true);
+                x += 1;
+            }
+        }
+    }
+}
+
+/// Center HUD: flashed at startup and when attention arrives while the
+/// quasimode reserved row is hidden, so the user notices without that row
+/// being permanently visible. Always shows a very concise cheat-sheet of
+/// every keybind; when a pane needs you the top line is a smart-jump hint
+/// (` ✗ 1.3 needs you — ⌥+g`).
 fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, focus_color: CColor) {
-    if cols < 20 || rows < 6 {
+    if cols < 30 || rows < 9 {
         return;
     }
     let target = smart_jump_target(layout);
-    let msg = if let Some(pid) = target {
+    let attention: Option<String> = if let Some(pid) = target {
         let status = layout
             .panes
             .get(&pid)
@@ -1142,14 +1308,27 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, focu
                 })
             })
             .unwrap_or_else(|| "?".to_string());
-        format!(" {} {} needs you — ⌥+g ", glyph, addr)
+        Some(format!(" {} {} needs you — ⌥+g ", glyph, addr))
+    } else if has_attention(layout) {
+        Some(" ! needs you — ⌥+g ".to_string())
     } else {
-        " ! needs you — ⌥+g ".to_string()
+        None
     };
-    let pad: usize = 2;
-    let bw = msg.chars().count() + pad * 2 + 2;
-    let bh: usize = 3;
-    if bw as u16 >= cols {
+
+    // Very concise cheat-sheet. Fits ~54 cols; the box auto-centers each line.
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(a) = attention.clone() {
+        lines.push(a);
+    }
+    lines.push(" hjkl focus  ⇧hjkl move  1-9 col  g jump ".to_string());
+    lines.push(" c new  ; agent  s split  r width  x kill  q quit ".to_string());
+    lines.push(" ←→/,. pane  [] view  ⌥+↵ col  ⇧↵ row ".to_string());
+    lines.push(" ⌥+key  /  ^B key  •  click focus  wheel scroll ".to_string());
+
+    let pad: usize = 1;
+    let bw = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) + pad * 2 + 2;
+    let bh = lines.len() + 2;
+    if bw as u16 >= cols || bh as u16 >= rows {
         return;
     }
     let ox = ((cols as usize).saturating_sub(bw)) / 2;
@@ -1178,15 +1357,24 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, focu
         h: bh as u16,
     };
     draw_focus_frame(out, cols, rect, focus_color);
-    let ty = oy + 1;
-    let tx = ox + 1 + pad;
-    for (i, ch) in msg.chars().enumerate() {
-        if let Some(c) = out.get_mut(ty * cols as usize + (tx + i)) {
-            c.ch = ch;
-            c.style.fg = CColor::Idx(231);
-            c.style.bg = bg;
-            c.style.bold = true;
-            c.width = 1;
+    let has_attn = attention.is_some();
+    for (idx, line) in lines.iter().enumerate() {
+        let ty = oy + 1 + idx;
+        let line_len = line.chars().count();
+        let tx = ox + 1 + pad + (bw - 2 - pad * 2 - line_len) / 2;
+        let is_attention = has_attn && idx == 0;
+        for (i, ch) in line.chars().enumerate() {
+            if let Some(c) = out.get_mut(ty * cols as usize + (tx + i)) {
+                c.ch = ch;
+                c.style.fg = if is_attention {
+                    CColor::Idx(231)
+                } else {
+                    CColor::Rgb(0xa6, 0xad, 0xc8)
+                };
+                c.style.bg = bg;
+                c.style.bold = is_attention;
+                c.width = 1;
+            }
         }
     }
 }
@@ -1970,7 +2158,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut bare_alt_held = false;
     let mut chord_alt_until: Option<Instant> = None;
     let mut last_alt_held = false;
-    let mut hud_until: Option<Instant> = None;
+    let mut hud_until: Option<Instant> = if cfg.minimap.hud_on_attention_ms > 0
+        && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
+        && chrome_rows(&cfg) > 0
+    {
+        Some(Instant::now() + Duration::from_millis(cfg.minimap.hud_on_attention_ms as u64))
+    } else {
+        None
+    };
     let mut last_has_attention = has_attention(&layout);
     // Pane ids created by the spawn-agent verb; these are (re)spawned running
     // the configured `default_agent` harness instead of a plain shell.
@@ -2382,6 +2577,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             last_alt_held = effective_alt_held;
         }
         let show_hud = hud_until.map(|t| Instant::now() < t).unwrap_or(false);
+        let show_center_minimap = effective_alt_held
+            && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
+            && chrome_rows(&cfg) > 0
+            && cfg.minimap.show;
         if dirty {
             render_frame(
                 &mut frame,
@@ -2423,6 +2622,16 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
             if show_hud {
                 draw_center_hud(&mut frame, cols, rows, &layout, cfg.focus_color.color());
+            }
+            if show_center_minimap && !show_hud {
+                draw_center_minimap(
+                    &mut frame,
+                    cols,
+                    rows,
+                    &layout,
+                    &cfg.minimap,
+                    cfg.focus_color.color(),
+                );
             }
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
@@ -3482,7 +3691,7 @@ mod tests {
 
     #[test]
     fn center_hud_paints_centered_box_with_attention_hint() {
-        // HUD flash: a centered 3-row box with the smart-jump target hint.
+        // HUD flash: centered box with smart-jump hint + concise keybind cheat-sheet.
         let mut layout = Layout::default();
         let ids: Vec<PaneId> = layout.rows[0]
             .columns
@@ -3496,29 +3705,43 @@ mod tests {
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
         let frame_color = CColor::Rgb(0x74, 0xc7, 0xec);
         draw_center_hud(&mut out, cols, rows, &layout, frame_color);
-        // The box is 3 rows tall centered at (cols,bw) = 80, rows=24 -> oy = 10, mid text row = 11.
         let has_frame = out
             .iter()
             .any(|c| c.ch == '╭' || c.ch == '╮' || c.ch == '╰' || c.ch == '╯');
         assert!(has_frame, "HUD box frame painted");
-        let oy = ((rows as usize) - 3) / 2;
-        let mid = oy + 1;
-        let row: String = (0..cols)
-            .map(|x| out[mid * cols as usize + x as usize].ch)
+        // Whole buffer must contain both the attention hint and keybind lines.
+        let all: Vec<String> = (0..rows)
+            .map(|y| (0..cols).map(|x| out[y as usize * cols as usize + x as usize].ch).collect())
             .collect();
         assert!(
-            row.contains("needs you"),
-            "HUD hint text centered, got {row:?}"
+            all.iter().any(|s| s.contains("needs you")),
+            "HUD hint text present, got {all:?}"
         );
-        assert!(row.contains("⌥+g"), "HUD jump hint present, got {row:?}");
-        // Also verify any row in the box contains the hint, as a fallback if geometry changes.
-        let any_hint = (0..rows).any(|y| {
-            let s: String = (0..cols)
-                .map(|x| out[y as usize * cols as usize + x as usize].ch)
-                .collect();
-            s.contains("needs you")
-        });
-        assert!(any_hint, "HUD hint present somewhere in box");
+        assert!(
+            all.iter().any(|s| s.contains("⌥+g")),
+            "HUD jump hint present, got {all:?}"
+        );
+        assert!(
+            all.iter().any(|s| s.contains("hjkl")),
+            "HUD cheat-sheet present, got {all:?}"
+        );
+        assert!(
+            all.iter().any(|s| s.contains("click focus")),
+            "HUD cheat-sheet covers mouse, got {all:?}"
+        );
+        // Also with no attention the cheat-sheet still paints (startup overlay).
+        for pid in &ids {
+            layout.panes.get_mut(pid).unwrap().status = PaneStatus::Running;
+        }
+        let mut out2 = vec![Cell::default(); cols as usize * rows as usize];
+        draw_center_hud(&mut out2, cols, rows, &layout, frame_color);
+        let all2: Vec<String> = (0..rows)
+            .map(|y| (0..cols).map(|x| out2[y as usize * cols as usize + x as usize].ch).collect())
+            .collect();
+        assert!(
+            all2.iter().any(|s| s.contains("hjkl")),
+            "startup HUD shows cheat-sheet without attention, got {all2:?}"
+        );
         // Tiny viewport: nothing painted.
         let mut tiny = vec![Cell::default(); 10 * 4];
         draw_center_hud(&mut tiny, 10, 4, &layout, frame_color);
