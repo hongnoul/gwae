@@ -459,10 +459,12 @@ impl Layout {
                 r.columns.remove(col);
             }
         }
-        // A row with zero columns disappears, unless it is the one the focus
-        // is standing on: an empty focused strip is a valid resting place
-        // (you can spawn into it), exactly like an empty niri workspace.
-        let row_emptied = self.row_is_empty(row) && self.focus.row != row;
+        // A row with zero columns disappears, even when the focus is standing
+        // on it: killing the last pane of a strip shifts focus to the nearest
+        // surviving strip above (falling back to below) instead of parking on
+        // an empty husk.
+        let row_emptied = self.row_is_empty(row);
+        let row_index = self.rows.iter().position(|r| r.id == row);
         // No panes anywhere: the grid is meaningless, so reset to a default
         // layout rather than leaving an empty husk behind.
         if self.panes.is_empty() {
@@ -470,15 +472,23 @@ impl Layout {
             return Ok(0);
         }
         if row_emptied {
+            let was_focused_row = self.focus.row == row;
             self.rows.retain(|r| r.id != row);
             if self.rows.is_empty() {
                 *self = Layout::default();
                 return Ok(0);
             }
-            if self.focus.row == row {
-                self.focus.row = self.rows[0].id;
+            if was_focused_row {
+                // Prefer the strip above; if the removed strip was the first
+                // one, take the strip that slid up into its place.
+                let idx = row_index
+                    .map(|i| i.saturating_sub(1))
+                    .unwrap_or(0)
+                    .min(self.rows.len() - 1);
+                self.focus.row = self.rows[idx].id;
                 self.focus.column = 0;
                 self.focus.pane = 0;
+                self.clamp_focus_pane();
                 self.refocus_scroll(viewport, follow);
             }
             return Ok(self.focused_scroll());

@@ -33,7 +33,9 @@ coordinate.
 5. Order of columns on a row is total; no gaps (compaction on close). A pane
    whose process exits closes the same way as kill-pane: the column collapses
    and focus fills **left first** (left neighbor, or the pane above in a
-   stack). The last pane exiting quits strimux.
+   stack). A strip whose last pane closes is discarded and focus shifts to the
+   strip **above** (or to the one below when it was the first strip), so the
+   focus never rests on an empty strip. The last pane exiting quits strimux.
 6. Rows never auto-relocate or reorder.
 
 ## Verbs (default keys)
@@ -57,7 +59,7 @@ go to strimux, even with an agent focused.
 | jump N | `⌥+1..9` | jump to Nth column |
 | smart-jump | `⌥+g` | jump to next agent that needs you (OSC 133) |
 | find | `⌥+f` | fuzzy text search over panes |
-| kill-pane | `⌥+x` | close pane; compact columns/rows |
+| kill-pane | `⌥+x` | close pane; compact columns/rows; an emptied strip is dropped and focus shifts up |
 | scroll viewport | `⌥+Ctrl+h/l` | page the row one column stop without moving focus |
 
 ## Scroll behavior

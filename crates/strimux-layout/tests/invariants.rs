@@ -433,15 +433,32 @@ fn spawning_into_a_new_strip_keeps_it() {
 }
 
 #[test]
-fn killing_the_last_pane_of_a_strip_leaves_the_focus_on_it_empty() {
+fn killing_the_last_pane_of_a_strip_shifts_focus_up() {
     let mut layout = Layout::new(1);
+    let first = layout.focus.row;
     let _ = layout.apply(Action::FocusDown, view(), follow());
     let _ = layout.apply(Action::NewColumn, view(), follow());
     let strip = layout.focus.row;
     let _ = layout.apply(Action::KillPane, view(), follow());
-    assert_eq!(layout.focus.row, strip);
-    assert!(layout.row_is_empty(strip));
-    assert_eq!(layout.rows.len(), 2);
+    // The emptied strip is reclaimed and the focus moves to the strip above.
+    assert_eq!(layout.rows.len(), 1);
+    assert_eq!(layout.focus.row, first);
+    assert!(!layout.rows.iter().any(|r| r.id == strip));
+    assert!(!layout.row_is_empty(layout.focus.row));
+}
+
+#[test]
+fn killing_the_last_pane_of_the_first_strip_shifts_focus_down() {
+    let mut layout = Layout::new(1);
+    let first = layout.focus.row;
+    let _ = layout.apply(Action::FocusDown, view(), follow());
+    let _ = layout.apply(Action::NewColumn, view(), follow());
+    let second = layout.focus.row;
+    let _ = layout.apply(Action::FocusUp, view(), follow());
+    assert_eq!(layout.focus.row, first);
+    let _ = layout.apply(Action::KillPane, view(), follow());
+    assert_eq!(layout.focus.row, second);
+    assert_eq!(layout.rows.len(), 1);
 }
 
 #[test]
