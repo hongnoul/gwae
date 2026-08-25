@@ -222,7 +222,7 @@ fn focused_pane_views(
 ) -> Vec<PaneView> {
     let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
     let b: i32 = if inset { 1 } else { 0 }; // border thickness
-    let ranges = layout
+    let abs_ranges = layout
         .column_x_ranges(layout.focus.row, cols)
         .unwrap_or_default();
     // Re-clamp the stored scroll against the *current* strip extent at paint
@@ -230,23 +230,29 @@ fn focused_pane_views(
     // between verbs (e.g. the terminal was resized wider, shrinking the strip
     // relative to the viewport); trusting it verbatim would shift the strip
     // left and reveal background on the right until the next focus change.
-    let total = ranges.last().map(|r| r.1 as i32).unwrap_or(0);
+    let total = abs_ranges.last().map(|r| r.1 as i32).unwrap_or(0);
     let max_scroll = (total - cols as i32).max(0);
     let scroll = layout
         .focused_row()
         .map(|r| r.scroll_x)
         .unwrap_or(0)
         .clamp(0, max_scroll);
+    // Window-anchored ranges: boundary rounding re-anchored at the first
+    // visible column, so every scroll stop paints uniform columns at
+    // identical on-screen offsets (no 1-cell rounding-phase wobble).
+    let ranges = layout
+        .visible_column_x_ranges(layout.focus.row, cols, scroll)
+        .unwrap_or_default();
     let mut out = Vec::new();
     for (ci, (s, e)) in ranges.into_iter().enumerate() {
         // Content spans the column box minus the frame ring.
-        let cs = s as i32 + b;
-        let ce = e as i32 - b;
+        let cs = s + b;
+        let ce = e - b;
         if ce <= cs {
             continue; // column too narrow to hold any content inside a frame
         }
-        let sx = cs - scroll;
-        let ex = ce - scroll;
+        let sx = cs;
+        let ex = ce;
         if ex <= 0 || sx >= cols as i32 {
             continue;
         }
@@ -420,20 +426,25 @@ fn render_frame(
     // occupy the 1-cell ring around each content area and never cover it.
     if let Some(sk) = skeleton {
         let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
-        let ranges = layout
+        let abs_ranges = layout
             .column_x_ranges(layout.focus.row, cols)
             .unwrap_or_default();
-        let total = ranges.last().map(|r| r.1 as i32).unwrap_or(0);
+        let total = abs_ranges.last().map(|r| r.1 as i32).unwrap_or(0);
         let max_scroll = (total - cols as i32).max(0);
         let scroll = layout
             .focused_row()
             .map(|r| r.scroll_x)
             .unwrap_or(0)
             .clamp(0, max_scroll);
+        // Window-anchored ranges (see focused_pane_views): frames land on the
+        // same on-screen boundaries at every scroll stop.
+        let ranges = layout
+            .visible_column_x_ranges(layout.focus.row, cols, scroll)
+            .unwrap_or_default();
         let mut edge = 0u16;
         for (ci, (s, e)) in ranges.iter().enumerate() {
-            let sx = *s as i32 - scroll;
-            let ex = *e as i32 - scroll;
+            let sx = *s;
+            let ex = *e;
             if ex <= 0 || sx >= cols as i32 {
                 continue;
             }
@@ -712,6 +723,15 @@ fn crossterm_color(c: CColor) -> crossterm::style::Color {
 /// The observed failure was a popup row with underlined entries painting an
 /// underline across every cell to its right ("line overflow"), which then
 /// stuck because the diff buffer believed those cells were already blank.
+///
+/// Runs also stop at any glyph whose *host* width (per `unicode-width`)
+/// disagrees with the width the emulator recorded. East-Asian text (Hangul,
+/// CJK) and ambiguous-width symbols are the common case: the host advances the
+/// cursor two columns where the emulator assumed one (or vice versa), and a
+/// long merged run then paints past the pane's right edge, wraps at the screen
+/// margin, and stains the rows below with the run's background ("highlight
+/// overflow"). Cutting the run and re-issuing an explicit `MoveTo` bounds any
+/// disagreement to the offending glyph.
 fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -> bool {
     use crossterm::queue;
     use crossterm::style::{
@@ -738,10 +758,10 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
             let mut run = String::new();
             run.push(cell.ch);
             let mut end = x + 1;
-            if cell.width == 1 {
+            if cell.width == 1 && host_width_agrees(cell) {
                 while end < cc && out[y * cc + end].style == style {
                     let next = out[y * cc + end];
-                    if next.width != 1 {
+                    if next.width != 1 || !host_width_agrees(next) {
                         break;
                     }
                     run.push(next.ch);
@@ -769,6 +789,19 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
         }
     }
     dirty
+}
+
+/// Whether the host terminal is expected to advance the cursor by exactly the
+/// column count the emulator recorded for this cell. Control/zero-width and
+/// ambiguous- or wide-width glyphs that the emulator called single-width are
+/// the disagreement cases; those cells are printed alone so any drift stays
+/// bounded to one column instead of shearing (and wrapping) the whole row.
+fn host_width_agrees(cell: Cell) -> bool {
+    use unicode_width::UnicodeWidthChar;
+    match cell.ch.width() {
+        Some(w) => w as u8 == cell.width,
+        None => false,
+    }
 }
 
 /// A decoded keyboard instruction.
@@ -1013,6 +1046,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         let _ = disable_raw_mode();
         return Err(1);
     }
+    // Turn off the host's automatic margin wrap (DECAWM) for our alt screen.
+    // strimux positions every run absolutely, so wrapping is never wanted: its
+    // only effect is that a run which overshoots the right margin (a glyph the
+    // host renders wider than the emulator assumed) spills onto the next row
+    // and smears that row's background across the screen. With DECAWM off the
+    // overshoot is clamped at the margin and repaired on the next frame.
+    let _ = stdout.write_all(b"\x1b[?7l");
+    let _ = stdout.flush();
     let (cols, mut rows) = term_size().map_err(|e| {
         eprintln!("size: {e}");
         1
@@ -1043,6 +1084,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
             Err(e) => {
                 eprintln!("spawn: {e}");
+                let _ = stdout.write_all(b"\x1b[?7h");
                 let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
                 let _ = disable_raw_mode();
                 return Err(1);
@@ -1278,6 +1320,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     for p in panes.values_mut() {
         let _ = p.child.kill();
     }
+    // Restore the host's autowrap before handing the terminal back.
+    let _ = stdout.write_all(b"\x1b[?7h");
+    let _ = stdout.flush();
     let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
     let _ = disable_raw_mode();
     Ok(())
@@ -1416,6 +1461,73 @@ mod tests {
             s.contains("\u{1b}[1;3H"),
             "missing MoveTo before 'a': {s:?}"
         );
+    }
+
+    #[test]
+    fn paint_cuts_runs_at_width_ambiguous_glyphs() {
+        // A highlighted (styled) row of Hangul: vt100 records each syllable as
+        // a single-width cell, but the host renders it two columns wide. Merged
+        // into one run, the run overshoots the right margin, wraps, and smears
+        // its background down the screen ("highlight overflow"). Each such
+        // glyph must therefore be printed as its own MoveTo-anchored run.
+        let hl = strimux_term::Style {
+            bg: CColor::Idx(238),
+            ..strimux_term::Style::default()
+        };
+        let text = "\u{ac00}\u{b098}\u{b2e4}"; // 가나다
+        let mut row = vec![
+            Cell {
+                style: hl,
+                ..Cell::default()
+            };
+            4
+        ];
+        for (i, ch) in text.chars().enumerate() {
+            row[i] = Cell {
+                ch,
+                style: hl,
+                width: 1, // emulator's (wrong for this host) idea of the width
+            };
+        }
+        let last = vec![Cell::default(); 4];
+        let mut buf = Vec::new();
+        assert!(paint(&mut buf, &row, &last, 4, 1));
+        let s = String::from_utf8(buf).unwrap();
+        // Never merged: no two ambiguous glyphs share a run.
+        assert!(
+            !s.contains("\u{ac00}\u{b098}"),
+            "ambiguous glyphs merged into one run: {s:?}"
+        );
+        // Every glyph is re-anchored with an explicit absolute cursor move, so
+        // a host/emulator width disagreement cannot drift past this cell.
+        for (i, ch) in text.chars().enumerate() {
+            let mv = format!("\x1b[1;{}H", i + 1);
+            let at = s
+                .find(&mv)
+                .unwrap_or_else(|| panic!("no MoveTo for col {i}: {s:?}"));
+            let g = s.find(ch).unwrap();
+            assert!(at < g, "glyph {ch} printed before its MoveTo: {s:?}");
+        }
+    }
+
+    #[test]
+    fn paint_keeps_merging_plain_ascii_runs() {
+        // The cut must be surgical: ordinary text still batches into one run.
+        let mut row = vec![Cell::default(); 6];
+        for (i, ch) in "hello".chars().enumerate() {
+            row[i].ch = ch;
+        }
+        let last = vec![
+            Cell {
+                ch: 'x',
+                ..Cell::default()
+            };
+            6
+        ];
+        let mut buf = Vec::new();
+        assert!(paint(&mut buf, &row, &last, 6, 1));
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("hello"), "ascii run was split: {s:?}");
     }
 
     #[test]

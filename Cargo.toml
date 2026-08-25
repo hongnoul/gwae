@@ -29,6 +29,9 @@ crossterm = "0.28"
 # alacritty_terminal = "0.25"
 # wezterm-term = "0.31"
 
+# --- Width oracle: detect host/emulator disagreement on glyph width. ---
+unicode-width = "0.2"
+
 # --- Config ---
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

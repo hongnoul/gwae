@@ -28,4 +28,5 @@ strimux-testkit = { path = "../strimux-testkit" }
 strimux-core-api = { path = "../strimux-core-api" }
 portable-pty = { workspace = true }
 crossterm = { workspace = true }
+unicode-width = { workspace = true }
 libloading = { workspace = true }
