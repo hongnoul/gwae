@@ -9,15 +9,19 @@
 [![CI](https://github.com/hongnoul/gwae/actions/workflows/ci.yml/badge.svg)](https://github.com/hongnoul/gwae/actions/workflows/ci.yml)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square)](https://github.com/hongnoul/gwae/releases)
 
-**niri's scrolling tiling, for your CLI agents, in any terminal**
+**niri's scrolling tiling, for your CLI agents, in any terminal (Windows, MacOS)**
 
-A terminal-native, daemon-free multiplexer for people who live in concurrent CLI agents. An infinite 2D grid of strips where panes never shrink.
+A terminal-native, daemon-free multiplexer for people who live in concurrent CLI agents.
+
+An infinite 2D grid of strips where panes never shrink.
 
 [Website](https://hongnoul.github.io/gwae/) · [Install](#install) · [Quick Start](#quick-start) · [Keyboard Shortcuts](#keyboard-shortcuts) · [FAQ](#faq) · [Docs](docs/)
 
 <img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
 
-Demo use case - learning solid state chemistry (btm for flex) **NOT SPED UP: You could be much faster with practice!**
+Demo use case - learning solid state chemistry (btm for flex)
+
+**NOT SPED UP: You could be much faster with practice!**
 
 </div>
 
