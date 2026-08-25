@@ -1102,7 +1102,6 @@ fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
     put(out, y1 * stride + x1, '╯', color);
 }
 
-
 /// 3x5 block-font glyphs for the characters a cell identifier can contain
 /// (digits and the `,`/`.` separators). Each glyph is 5 rows of 3 bits, MSB left.
 fn big_glyph(ch: char) -> Option<[u8; 5]> {
@@ -6362,4 +6361,3 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
         let _ = p.child.kill();
     }
 }
-
