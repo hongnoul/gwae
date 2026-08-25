@@ -948,6 +948,16 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     // Remap them to focus navigation so Option+hjkl works with zero config.
     // Only fires when the char arrives as plain input (never when Option-as-Alt
     // is set, which delivers ESC+h instead), so the two paths can't collide.
+    if !alt && !ctrl {
+        match ev.code {
+            // Option+Shift+hjkl move the pane (niri-style), US layout glyphs.
+            Char('\u{d3}') => return Some(Cmd::Act(Action::MovePaneLeft)), // Ó (Option+Shift+h)
+            Char('\u{d4}') => return Some(Cmd::Act(Action::MovePaneDown)), // Ô (Option+Shift+j)
+            Char('\u{f8ff}') => return Some(Cmd::Act(Action::MovePaneUp)), //  (Option+Shift+k)
+            Char('\u{d2}') => return Some(Cmd::Act(Action::MovePaneRight)), // Ò (Option+Shift+l)
+            _ => {}
+        }
+    }
     if !alt && !ctrl && !shift {
         match ev.code {
             Char('\u{2d9}') => return Some(Cmd::Act(Action::FocusLeft)), // ˙ (Option+h)
@@ -974,10 +984,14 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             return Some(Cmd::Input(vec![0x02])); // literal Ctrl-b to the pane
         }
         let cmd = match ev.code {
-            Char('h') if shift => Action::MovePaneLeft,
-            Char('l') if shift => Action::MovePaneRight,
-            Char('k') if shift => Action::MovePaneUp,
-            Char('j') if shift => Action::MovePaneDown,
+            Char('H') | Char('h') if shift => Action::MovePaneLeft,
+            Char('L') | Char('l') if shift => Action::MovePaneRight,
+            Char('K') | Char('k') if shift => Action::MovePaneUp,
+            Char('J') | Char('j') if shift => Action::MovePaneDown,
+            Char('H') => Action::MovePaneLeft,
+            Char('L') => Action::MovePaneRight,
+            Char('K') => Action::MovePaneUp,
+            Char('J') => Action::MovePaneDown,
             Char('h') => Action::FocusLeft,
             Char('l') => Action::FocusRight,
             Char('k') => Action::FocusUp,
@@ -1011,10 +1025,15 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     }
     // Alt chords (work when the terminal sends Option as Meta).
     let cmd = match ev.code {
-        Char('h') if shift => Action::MovePaneLeft,
-        Char('l') if shift => Action::MovePaneRight,
-        Char('k') if shift => Action::MovePaneUp,
-        Char('j') if shift => Action::MovePaneDown,
+        Char('H') | Char('h') if shift => Action::MovePaneLeft,
+        Char('L') | Char('l') if shift => Action::MovePaneRight,
+        Char('K') | Char('k') if shift => Action::MovePaneUp,
+        Char('J') | Char('j') if shift => Action::MovePaneDown,
+        // Some terminals send the uppercase letter without a SHIFT modifier.
+        Char('H') => Action::MovePaneLeft,
+        Char('L') => Action::MovePaneRight,
+        Char('K') => Action::MovePaneUp,
+        Char('J') => Action::MovePaneDown,
         Char('h') => Action::FocusLeft,
         Char('l') => Action::FocusRight,
         Char('k') => Action::FocusUp,
@@ -1453,6 +1472,34 @@ mod tests {
         // macOS Option+q -> œ (U+0153) on the no-Meta path.
         let ev = KeyEvent::new(KeyCode::Char('\u{153}'), KeyModifiers::NONE);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::KillPane)));
+    }
+
+    #[test]
+    fn handle_key_option_shift_hjkl_moves_pane() {
+        // Terminals delivering Option as Meta: Alt+Shift+hjkl.
+        for (c, act) in [
+            ('h', Action::MovePaneLeft),
+            ('j', Action::MovePaneDown),
+            ('k', Action::MovePaneUp),
+            ('l', Action::MovePaneRight),
+        ] {
+            let ev = KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT | KeyModifiers::SHIFT);
+            assert_eq!(handle_key(&ev), Some(Cmd::Act(act.clone())));
+            // Uppercase variant, with or without an explicit SHIFT bit.
+            let up = c.to_ascii_uppercase();
+            let ev = KeyEvent::new(KeyCode::Char(up), KeyModifiers::ALT);
+            assert_eq!(handle_key(&ev), Some(Cmd::Act(act.clone())));
+        }
+        // macOS no-Meta path: Option+Shift+hjkl arrive as Ó Ô  Ò.
+        for (g, act) in [
+            ('\u{d3}', Action::MovePaneLeft),
+            ('\u{d4}', Action::MovePaneDown),
+            ('\u{f8ff}', Action::MovePaneUp),
+            ('\u{d2}', Action::MovePaneRight),
+        ] {
+            let ev = KeyEvent::new(KeyCode::Char(g), KeyModifiers::SHIFT);
+            assert_eq!(handle_key(&ev), Some(Cmd::Act(act)));
+        }
     }
 
     #[test]
