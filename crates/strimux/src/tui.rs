@@ -1656,19 +1656,41 @@ fn draw_quit_confirm(out: &mut [Cell], cols: u16, rows: u16, panes: usize, pal: 
 /// pane's working area meaningfully, and it sits on the theme's `surface` so
 /// it reads as chrome rather than as pane output.
 fn draw_toast(out: &mut [Cell], cols: u16, rows: u16, text: &str, pal: &Palette, ok: bool) {
+    draw_toast_at(out, cols, rows, text, pal, ok, None)
+}
+
+/// Like [`draw_toast`] but optionally anchored to the bottom-left of a rect
+/// (a pane) instead of the bottom-left of the screen. A drag-copy note belongs
+/// to the pane the text came from, so with several panes on screen it is
+/// obvious which pane's selection was copied.
+fn draw_toast_at(
+    out: &mut [Cell],
+    cols: u16,
+    rows: u16,
+    text: &str,
+    pal: &Palette,
+    ok: bool,
+    anchor: Option<Rect>,
+) {
     if cols < 8 || rows == 0 {
         return;
     }
     let body: Vec<char> = format!(" {text} ").chars().collect();
     // Clip to the screen rather than wrapping: a toast is a hint, and a
     // truncated hint is better than one that reflows the layout.
-    let w = body.len().min(cols as usize);
-    let y = (rows - 1) as usize;
+    let (x0, y) = match anchor.filter(|r| r.w > 0 && r.h > 0) {
+        Some(r) => (
+            r.x.min(cols.saturating_sub(1)) as usize,
+            (r.y + r.h - 1).min(rows - 1) as usize,
+        ),
+        None => (0, (rows - 1) as usize),
+    };
+    let w = body.len().min((cols as usize).saturating_sub(x0));
     // Errors use the failed tint so a broken config is not mistaken for a
     // successful reload at a glance.
     let fg = if ok { pal.text } else { pal.failed };
     for (x, ch) in body.iter().take(w).enumerate() {
-        if let Some(c) = out.get_mut(y * cols as usize + x) {
+        if let Some(c) = out.get_mut(y * cols as usize + x0 + x) {
             *c = Cell {
                 ch: *ch,
                 style: strimux_term::Style {
@@ -2692,6 +2714,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut reload_check = Instant::now();
     let mut reload_note: Option<String> = None;
     let mut reload_note_until: Option<Instant> = None;
+    // Where the note is drawn: `None` = bottom-left of the screen,
+    // `Some(rect)` = bottom-left of that pane (drag-copy notes).
+    let mut reload_note_anchor: Option<Rect> = None;
     // Theme picker (⌥+t): Some(index into Palette::NAMES) while open. The
     // selection previews live, so the whole screen is the preview and the
     // picker itself only needs to show the name.
@@ -2834,6 +2859,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         // are; only adopt what is re-read every frame.
                         cfg.adopt_appearance(new);
                         pal = new_pal;
+                        reload_note_anchor = None;
                         reload_note = Some(match bad {
                             Some(name) => format!("unknown theme {name:?}"),
                             None => format!("config reloaded: {}", cfg.theme_name()),
@@ -2844,6 +2870,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         // Keep the running config: a half-written file (the
                         // editor saved mid-keystroke) must not blow away a
                         // working theme.
+                        reload_note_anchor = None;
                         reload_note = Some(format!("config error: {}", first_line(&e)));
                         dirty = true;
                     }
@@ -2856,6 +2883,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             if Instant::now() >= t {
                 reload_note = None;
                 reload_note_until = None;
+                reload_note_anchor = None;
                 dirty = true;
             }
         }
@@ -2961,6 +2989,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         match close {
                             Some(true) => {
                                 theme_pick = None;
+                                reload_note_anchor = None;
                                 reload_note = Some(format!(
                                     "theme: {} — add `theme = \"{}\"` to keep it",
                                     Palette::NAMES[sel],
@@ -3214,6 +3243,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                             } else {
                                                 "clipboard unavailable".to_string()
                                             });
+                                            reload_note_anchor = views
+                                                .iter()
+                                                .find(|v| v.pid == s.pane)
+                                                .map(|v| v.rect);
                                             reload_note_until = Some(Instant::now() + NOTE_LINGER);
                                         }
                                         None => selection = None,
@@ -3391,7 +3424,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
             if let Some(note) = &reload_note {
                 let ok = !note.contains("error") && !note.starts_with("unknown theme");
-                draw_toast(&mut frame, cols, rows, note, &pal, ok);
+                draw_toast_at(&mut frame, cols, rows, note, &pal, ok, reload_note_anchor);
             }
             // Topmost: the destructive confirmation must never be obscured by
             // chrome that happens to be showing when the chord is pressed.
@@ -4213,6 +4246,36 @@ mod tests {
         // The text itself is unchanged: highlighting only restyles.
         assert_eq!(at(0, 0).ch, 'h');
         assert_eq!(at(4, 0).ch, 'o');
+    }
+
+    #[test]
+    fn toast_anchors_to_pane_bottom_left() {
+        let (cols, rows) = (40u16, 10u16);
+        let mut frame = vec![Cell::default(); cols as usize * rows as usize];
+        let rect = Rect {
+            x: 20,
+            y: 2,
+            w: 20,
+            h: 5,
+        };
+        draw_toast_at(
+            &mut frame,
+            cols,
+            rows,
+            "copied 3 lines",
+            &Palette::default(),
+            true,
+            Some(rect),
+        );
+        let row: String = (0..cols)
+            .map(|x| frame[6 * cols as usize + x as usize].ch)
+            .collect();
+        assert!(row.trim_start().starts_with("copied 3 lines"), "{row:?}");
+        assert_eq!(row.find('c'), Some(21), "starts at the pane's left edge");
+        // Screen-anchored toasts still land on the last row at column 0.
+        let mut frame = vec![Cell::default(); cols as usize * rows as usize];
+        draw_toast(&mut frame, cols, rows, "hi", &Palette::default(), true);
+        assert_eq!(frame[9 * cols as usize + 1].ch, 'h');
     }
 
     #[test]
