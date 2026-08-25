@@ -1,5 +1,5 @@
 # Maintainer: hongnoul
-# AUR PKGBUILD template. Filled in at first release.
+# AUR PKGBUILD for strimux v1.0.0.
 pkgname=strimux-bin
 pkgver=1.0.0
 pkgrel=1
@@ -9,7 +9,7 @@ url="https://github.com/hongnoul/gwae"
 license=('MIT')
 depends=()
 source=("strimux-$pkgver-x86_64-unknown-linux-musl.tar.gz::https://github.com/hongnoul/gwae/releases/download/v$pkgver/strimux-x86_64-unknown-linux-musl.tar.gz")
-sha256sums=('PENDING')
+sha256sums=('bea6d1c6c3414668f0d45417255bbd86566eedbafac2bd7ff859a46a78d569e2')
 
 package() {
   install -Dm755 strimux "$pkgdir/usr/bin/strimux"

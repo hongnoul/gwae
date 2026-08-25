@@ -9,10 +9,10 @@ class Strimux < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/hongnoul/gwae/releases/download/v1.0.0/strimux-aarch64-apple-darwin.tar.gz"
-      sha256 "PENDING"
+      sha256 "918aa91b52f11fce6dc01360cbe2d6e630aeb7d6e2896b943c2022112ada01c6"
     else
       url "https://github.com/hongnoul/gwae/releases/download/v1.0.0/strimux-x86_64-apple-darwin.tar.gz"
-      sha256 "PENDING"
+      sha256 "00c0a5b725fd275f46eefc61852451422930da2bb1eee12dc621e1f2a8788282"
     end
   end
 
