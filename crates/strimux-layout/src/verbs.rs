@@ -65,9 +65,9 @@ impl Layout {
             Action::CycleWidth => Ok(self.apply_cycle_width()),
             Action::SplitBelow => self.apply_split_below(),
             Action::KillPane => self.apply_kill_pane(),
-            Action::NewColumn => Ok(self.apply_new_column()),
-            Action::NewRow => Ok(self.apply_new_row()),
-            Action::SpawnAgent => Ok(self.apply_new_column()),
+            Action::NewColumn => Ok(self.apply_new_column(viewport, follow)),
+            Action::NewRow => Ok(self.apply_new_row(viewport, follow)),
+            Action::SpawnAgent => Ok(self.apply_new_column(viewport, follow)),
             Action::ScrollViewport(d) => Ok(self.apply_scroll(d)),
             Action::JumpToColumn(n) => self.apply_jump(n, viewport, follow),
         }
@@ -349,21 +349,26 @@ impl Layout {
         Ok(self.focused_scroll())
     }
 
-    fn apply_new_column(&mut self) -> i32 {
+    fn apply_new_column(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
         let pane = self.alloc_pane();
         let col = self.add_column(self.focus.row, Width::DEFAULT, vec![pane]);
         self.focus.column = col;
         self.focus.pane = 0;
+        // The new column is appended at the rightmost edge, which can be
+        // off-screen (e.g. whatever fixed width it has). Follow-scroll so the
+        // freshly spawned pane is immediately in view.
+        self.refocus_scroll(viewport, follow);
         self.focused_scroll()
     }
 
-    fn apply_new_row(&mut self) -> i32 {
+    fn apply_new_row(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
         let row = self.new_row("row".to_string());
         let pane = self.alloc_pane();
         self.add_column(row, Width::DEFAULT, vec![pane]);
         self.focus.row = row;
         self.focus.column = 0;
         self.focus.pane = 0;
+        self.refocus_scroll(viewport, follow);
         self.focused_scroll()
     }
 

@@ -324,20 +324,28 @@ fn render_frame(
                 continue;
             }
         };
+        // Paint every cell of the visible rect so nothing from the previous
+        // frame bleeds through ("paint overflow"). When `pane_window` reveals
+        // fewer columns than the rect is wide (a pane clipped at the content or
+        // viewport edge), the uncovered tail is filled with blank cells, which
+        // for the focused pane keeps the highlight a clean, unbroken rectangle.
         for gy in 0..v.rect.h {
-            let mut gx = 0u16;
-            for gi in g_start..g_end {
-                let idx =
-                    ((v.rect.y as usize + gy as usize) * cols as usize) + (v.rect.x as usize + gx as usize);
+            for gx in 0..v.rect.w {
+                let idx = ((v.rect.y as usize + gy as usize) * cols as usize)
+                    + (v.rect.x as usize + gx as usize);
                 if idx >= out.len() {
                     continue;
                 }
-                let mut cell = pane.grid.cell(gi, gy);
+                let gi = g_start + gx;
+                let mut cell = if gi < g_end {
+                    pane.grid.cell(gi, gy)
+                } else {
+                    Cell::default()
+                };
                 if is_focus && cell.style.bg == CColor::Default {
                     cell.style.bg = FOCUS_TINT;
                 }
                 out[idx] = cell;
-                gx += 1;
             }
         }
     }

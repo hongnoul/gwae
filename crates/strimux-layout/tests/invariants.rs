@@ -130,3 +130,29 @@ fn spawn_agent_adds_rightmost_column_and_focuses_it() {
         row.columns.last().unwrap().panes[0]
     );
 }
+
+#[test]
+fn new_spawn_scrolls_the_new_pane_into_view() {
+    // Several fixed 1/4 columns overflow the viewport, so a rightmost spawned
+    // column can start off-screen. Spawning must both focus the new pane and
+    // follow-scroll so it is visible immediately.
+    let mut layout = Layout::default();
+    for _ in 0..8 {
+        let _ = layout.apply(Action::NewColumn, view(), follow());
+    }
+    // Simulate an unscrolled strip: the focused rightmost column is off-screen.
+    if let Some(row) = layout.row_mut(layout.focus.row) {
+        row.scroll_x = 0;
+    }
+    let n_before = layout.focused_row().unwrap().columns.len();
+    // Spawn one more; focus jumps to it and the strip scrolls right to reveal it.
+    let _ = layout.apply(Action::SpawnAgent, view(), follow());
+    let row = layout.focused_row().unwrap();
+    assert_eq!(row.columns.len(), n_before + 1);
+    assert_eq!(layout.focus.column, row.columns.len() - 1);
+    let scroll_after = row.scroll_x;
+    assert!(scroll_after > 0);
+    let (s, e) = layout.focused_range(view().cols).unwrap();
+    assert!(s as i32 - scroll_after < view().cols as i32, "new pane off-screen");
+    assert!(e as i32 - scroll_after >= 0);
+}
