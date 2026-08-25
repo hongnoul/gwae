@@ -149,6 +149,13 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 /// hint in the one place the eye actually lands - immediately right of the live
 /// panes - for every layout, instead of only in the pristine startup grid.
 ///
+/// It also handles a full strip for free. Only the focused strip is rendered,
+/// so when `n.1..4` are all live panes there is no placeholder and no hint;
+/// moving down to strip `n+1` (which niri-style semantics create empty past
+/// the end) makes its first cell the first empty box, and the pin lands on
+/// `n+1.1`. The ordinal is per-render and per-strip, so this needs no
+/// special case.
+///
 /// The remaining boxes deal out the rest of the pool without repeats. A plain
 /// hash would collide and print the same hint two boxes apart, which reads as a
 /// bug on a screen showing eight boxes at once; instead the ordinal walks the

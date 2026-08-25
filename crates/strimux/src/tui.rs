@@ -22,6 +22,47 @@ use strimux_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport}
 use strimux_term::{CColor, Cell, KittyApcExtractor, Size as GridSize, TermGrid, Vt100Grid};
 
 use crate::config::Config;
+use crate::select::{self, Selection};
+
+/// What a mouse event inside a pane should do.
+///
+/// Mouse capture is what lets the wheel scroll the pane under the cursor, but
+/// it also takes click-drag selection away from the host terminal. These are
+/// the three ways an event can be resolved, in the order a terminal user
+/// expects:
+///  - the child asked for mouse reporting, so it owns the event (vim, an agent
+///    TUI) - unless Shift is held, the long-standing xterm convention for
+///    "give me the multiplexer's selection instead";
+///  - otherwise a left press/drag/release drives our own drag-to-copy;
+///  - everything else (the wheel) keeps scrolling scrollback as before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MouseRole {
+    /// Forward verbatim to the child as an SGR mouse report.
+    Forward,
+    /// Drive strimux's own drag-to-copy selection.
+    Select,
+    /// Wheel scrolling (or anything else we handle locally).
+    Local,
+}
+
+/// Decide what a mouse event does inside the pane under the cursor.
+fn mouse_role(kind: MouseEventKind, modifiers: KeyModifiers, child_wants_mouse: bool) -> MouseRole {
+    let shift = modifiers.contains(KeyModifiers::SHIFT);
+    let selecting = matches!(
+        kind,
+        MouseEventKind::Down(MouseButton::Left)
+            | MouseEventKind::Drag(MouseButton::Left)
+            | MouseEventKind::Up(MouseButton::Left)
+    );
+    if child_wants_mouse && !(shift && selecting) {
+        return MouseRole::Forward;
+    }
+    if selecting {
+        MouseRole::Select
+    } else {
+        MouseRole::Local
+    }
+}
 
 fn chrome_rows(_cfg: &Config) -> u16 {
     // Bottom status row has been removed; chrome is always 0.
@@ -494,6 +535,7 @@ fn render_frame(
     mm: &crate::config::Minimap,
     cow: &crate::config::Cowsay,
     cell_labels: bool,
+    selection: Option<&Selection<PaneId>>,
 ) {
     // Every chrome color in this function comes from the palette; the
     // skeleton frame color is just `pal.overlay`, kept in a local so the
@@ -586,6 +628,16 @@ fn render_frame(
                         style: cell.style,
                         ..Cell::default()
                     };
+                }
+                // Highlight a drag selection by inverting the cell, the same
+                // affordance a terminal's own selection uses. Inversion (not a
+                // fixed background) keeps every glyph readable whatever colors
+                // the program inside the pane is using.
+                if selection
+                    .map(|s| s.contains(v.pid, gi, gy))
+                    .unwrap_or(false)
+                {
+                    cell.style.inverse = !cell.style.inverse;
                 }
                 out[idx] = cell;
             }
@@ -684,11 +736,17 @@ fn render_frame(
         // placeholder) to their left, so each box starts one cell back.
         let mut px = edge.saturating_sub(1);
         while px + 1 < cols {
-            let w = quarter.min(cols - px);
-            if w < 2 {
+            let mut right = (px + quarter).min(cols - 1);
+            // Absorb a runt tail into this box rather than tiling a sliver:
+            // the leftover after a fixed-quarter box is often only a cell or
+            // two, which would otherwise render as a `┼╮` scar at the screen
+            // edge instead of a box.
+            if cols - 1 - right < quarter / 2 {
+                right = cols - 1;
+            }
+            if right <= px + 1 {
                 break;
             }
-            let right = (px + w - 1).min(cols - 1);
             let boxr = Rect {
                 x: px,
                 y: 0,
@@ -2569,6 +2627,8 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // is up. Quitting kills every pane's process, so the chord arms this
     // overlay and a second deliberate keystroke commits.
     let mut quit_confirm = false;
+    // Drag-to-copy: the live (or just-completed) pane selection, if any.
+    let mut selection: Option<Selection<PaneId>> = None;
 
     'main: loop {
         while let Ok(msg) = rx.try_recv() {
@@ -2738,6 +2798,13 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     // it explicitly, so remember whether it was up before we
                     // dismiss it here.
                     let hud_was_active = hud_active;
+                    // Typing dismisses a finished selection, the way it does in
+                    // any editor: the highlight is a transient artifact of the
+                    // drag, and leaving it inverted over live pane output would
+                    // read as corruption. A drag still in flight is left alone.
+                    if selection.take_if(|s| !s.dragging).is_some() {
+                        dirty = true;
+                    }
                     if hud_active {
                         hud_active = false;
                         dirty = true;
@@ -2969,7 +3036,96 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         cfg.skeleton,
                         chrome,
                     );
-                    if let Some((pid, gx, gy)) = pane_at(&views, me.column, me.row) {
+                    // A drag that wanders outside the pane (or off-screen)
+                    // must still extend and finish the selection, exactly as
+                    // it does in a browser or a native terminal. So resolve
+                    // the target against the *owning* pane of a live drag
+                    // first, clamping the point to that pane's rect, and only
+                    // fall back to "whatever pane is under the cursor" when no
+                    // drag is in flight.
+                    let mut handled = false;
+                    let hit = selection
+                        .filter(|s| s.dragging)
+                        .and_then(|s| clamped_pane_point(&views, s.pane, me.column, me.row))
+                        .or_else(|| pane_at(&views, me.column, me.row));
+                    if let Some((pid, gx, gy)) = hit {
+                        let child_wants_mouse = panes
+                            .get(&pid)
+                            .map(|p| p.grid.wants_mouse())
+                            .unwrap_or(false);
+                        if mouse_role(me.kind, me.modifiers, child_wants_mouse) == MouseRole::Select
+                        {
+                            let point = select::Point::new(gx, gy);
+                            match me.kind {
+                                MouseEventKind::Down(MouseButton::Left) => {
+                                    // Press arms a selection but shows nothing
+                                    // yet: a plain click must clear the old
+                                    // highlight, not paint a one-cell one.
+                                    if selection.is_some() {
+                                        dirty = true;
+                                    }
+                                    selection = Some(Selection {
+                                        pane: pid,
+                                        anchor: point,
+                                        cursor: point,
+                                        dragging: true,
+                                    });
+                                    // Clicking a pane still focuses it.
+                                    if focused_pane(&layout) != Some(pid) {
+                                        let v = Viewport::new(cols);
+                                        let f = FollowScroll {
+                                            margin: cfg.scroll_margin,
+                                            center: cfg.center_focus,
+                                        };
+                                        let _ = layout.apply(Action::FocusPane(pid), v, f);
+                                        dirty = true;
+                                    }
+                                }
+                                MouseEventKind::Drag(MouseButton::Left) => {
+                                    if let Some(s) = selection.as_mut() {
+                                        if s.dragging && s.cursor != point {
+                                            s.cursor = point;
+                                            dirty = true;
+                                        }
+                                    }
+                                }
+                                MouseEventKind::Up(MouseButton::Left) => {
+                                    if let Some(s) = selection.as_mut() {
+                                        s.cursor = point;
+                                        s.dragging = false;
+                                    }
+                                    // A press+release without movement is a
+                                    // plain click, not a selection: drop it so
+                                    // no stray highlight lingers and nothing
+                                    // overwrites the user's clipboard.
+                                    let done = selection.filter(|s| !s.is_empty());
+                                    match done {
+                                        Some(s) => {
+                                            let text = panes
+                                                .get(&s.pane)
+                                                .map(|p| select::selected_text(&p.grid, &s))
+                                                .unwrap_or_default();
+                                            let copied = select::copy_to_clipboard(&text);
+                                            reload_note = Some(if copied {
+                                                copy_note(&text)
+                                            } else {
+                                                "clipboard unavailable".to_string()
+                                            });
+                                            reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                        }
+                                        None => selection = None,
+                                    }
+                                    dirty = true;
+                                }
+                                _ => {}
+                            }
+                            handled = true;
+                        }
+                    }
+                    if let Some((pid, gx, gy)) = (!handled)
+                        .then(|| pane_at(&views, me.column, me.row))
+                        .flatten()
+                    {
                         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left))
                             && focused_pane(&layout) != Some(pid)
                         {
@@ -3124,6 +3280,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 &cfg.minimap,
                 &cfg.cowsay,
                 cfg.cell_labels,
+                selection.as_ref(),
             );
             if show_hud {
                 draw_center_hud(&mut frame, cols, rows, &layout, &pal);
@@ -3263,6 +3420,41 @@ fn pane_at(views: &[PaneView], x: u16, y: u16) -> Option<(PaneId, u16, u16)> {
             None
         }
     })
+}
+
+/// Resolve `(x, y)` inside `pid`'s view, clamping a point that has wandered
+/// outside the pane's rect to its nearest edge cell.
+///
+/// This is what makes a drag that leaves the pane behave like a native
+/// selection: dragging off the right edge selects to end of line, dragging
+/// below the last row selects to the bottom, instead of the selection simply
+/// freezing at the last in-bounds position.
+fn clamped_pane_point(
+    views: &[PaneView],
+    pid: PaneId,
+    x: u16,
+    y: u16,
+) -> Option<(PaneId, u16, u16)> {
+    let v = views.iter().find(|v| v.pid == pid)?;
+    let r = v.rect;
+    let sx = x.clamp(r.x, r.x + r.w.saturating_sub(1));
+    let sy = y.clamp(r.y, r.y + r.h.saturating_sub(1));
+    let gx = ((sx - r.x) as i32 + v.col_x0 as i32 + v.h_scroll)
+        .clamp(0, v.grid_cols.saturating_sub(1) as i32) as u16;
+    Some((pid, gx, sy - r.y))
+}
+
+/// The toast shown after a successful drag-copy: how much was taken, in the
+/// unit the user was actually thinking in (lines when multi-line, characters
+/// otherwise).
+fn copy_note(text: &str) -> String {
+    let lines = text.lines().count();
+    if lines > 1 {
+        format!("copied {lines} lines")
+    } else {
+        let n = text.chars().count();
+        format!("copied {n} char{}", if n == 1 { "" } else { "s" })
+    }
 }
 
 /// Encode a mouse event as an SGR (1006) report for a child that asked for
@@ -3747,6 +3939,138 @@ mod tests {
         assert!(pane_at(&views, 79, 3).is_some());
         assert!(pane_at(&views, 200, 3).is_none());
         assert!(pane_at(&views, 5, 200).is_none());
+    }
+
+    #[test]
+    fn drag_outside_a_pane_clamps_to_its_edges() {
+        use strimux_layout::{Preset, Width};
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        for _ in 0..2 {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Half), vec![p]);
+        }
+        let panes = HashMap::new();
+        let views = focused_pane_views(&layout, 80, 24, 0, &panes, false);
+        let left = views[0].pid;
+        let r = views[0].rect;
+        // Inside the pane the clamp is a no-op: same answer as `pane_at`.
+        assert_eq!(clamped_pane_point(&views, left, 5, 3), Some((left, 5, 3)));
+        // Dragging right, past the pane into its neighbour, still extends the
+        // left pane's selection to its last column instead of freezing.
+        let (pid, gx, gy) = clamped_pane_point(&views, left, 200, 3).unwrap();
+        assert_eq!(pid, left);
+        assert_eq!(gx, r.w - 1);
+        assert_eq!(gy, 3);
+        // Dragging below the last row clamps to the bottom row.
+        let (_, _, gy) = clamped_pane_point(&views, left, 5, 200).unwrap();
+        assert_eq!(gy, r.h - 1);
+        // Dragging above/left of the pane clamps to its first cell.
+        assert_eq!(clamped_pane_point(&views, left, 0, 0), Some((left, 0, 0)));
+        // A pane that is not on screen cannot be resolved at all.
+        let gone: PaneId = 9999;
+        assert_eq!(clamped_pane_point(&views, gone, 5, 3), None);
+    }
+
+    #[test]
+    fn left_drag_selects_but_a_reporting_child_keeps_its_mouse() {
+        let plain = KeyModifiers::NONE;
+        // No mouse reporting: left press/drag/release drive our selection.
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            assert_eq!(mouse_role(kind, plain, false), MouseRole::Select);
+            // A child that asked for mouse reporting owns them instead, so
+            // clicking inside vim or an agent TUI behaves natively.
+            assert_eq!(mouse_role(kind, plain, true), MouseRole::Forward);
+            // ...unless Shift is held: the xterm convention for "let the
+            // multiplexer select instead of the app".
+            assert_eq!(
+                mouse_role(kind, KeyModifiers::SHIFT, true),
+                MouseRole::Select
+            );
+        }
+        // The wheel is never a selection; it stays local scrollback control.
+        assert_eq!(
+            mouse_role(MouseEventKind::ScrollUp, plain, false),
+            MouseRole::Local
+        );
+        assert_eq!(
+            mouse_role(MouseEventKind::ScrollUp, plain, true),
+            MouseRole::Forward
+        );
+        // Shift+wheel is still the child's business when it reports mouse.
+        assert_eq!(
+            mouse_role(MouseEventKind::ScrollUp, KeyModifiers::SHIFT, true),
+            MouseRole::Forward
+        );
+        // Right-drag is not our selection either.
+        assert_eq!(
+            mouse_role(MouseEventKind::Drag(MouseButton::Right), plain, false),
+            MouseRole::Local
+        );
+    }
+
+    #[test]
+    fn selection_highlight_inverts_exactly_the_dragged_cells() {
+        let mut layout = Layout::new(1);
+        let pid = *layout
+            .focused_row()
+            .and_then(|r| r.columns.first())
+            .and_then(|c| c.panes.first())
+            .unwrap();
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let (tx, _rx) = channel::<PaneMsg>();
+        let mut pane = spawn_pane(pid, "sleep 30", 80, 24, tx).expect("spawn pane");
+        pane.grid.feed(b"hello world\r\nsecond line");
+        panes.insert(pid, pane);
+        let (cols, rows) = (80u16, 24u16);
+        let sel = Selection {
+            pane: pid,
+            anchor: select::Point::new(0, 0),
+            cursor: select::Point::new(4, 0),
+            dragging: true,
+        };
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            &Palette::default(),
+            false,
+            &no_map(),
+            &no_cow(),
+            false,
+            Some(&sel),
+        );
+        let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
+        // "hello" is inverted, both ends inclusive; the space after is not.
+        for x in 0..=4u16 {
+            assert!(at(x, 0).style.inverse, "cell {x} should be highlighted");
+        }
+        assert!(
+            !at(5, 0).style.inverse,
+            "past the drag end, not highlighted"
+        );
+        assert!(!at(0, 1).style.inverse, "other rows untouched");
+        // The text itself is unchanged: highlighting only restyles.
+        assert_eq!(at(0, 0).ch, 'h');
+        assert_eq!(at(4, 0).ch, 'o');
+    }
+
+    #[test]
+    fn copy_note_counts_lines_or_characters() {
+        assert_eq!(copy_note("hello"), "copied 5 chars");
+        assert_eq!(copy_note("x"), "copied 1 char");
+        assert_eq!(copy_note("a\nb\nc"), "copied 3 lines");
     }
 
     #[test]
@@ -4244,6 +4568,7 @@ mod tests {
             &no_map(),
             &no_cow(),
             true,
+            None,
         );
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
         assert_eq!(ranges.len(), 4);
@@ -4330,6 +4655,7 @@ mod tests {
             &no_map(),
             &no_cow(),
             true,
+            None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
@@ -4391,6 +4717,7 @@ mod tests {
             &no_map(),
             &no_cow(),
             true,
+            None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
         let views = focused_pane_views(&layout, cols, rows, 0, &panes, true);
@@ -4473,20 +4800,39 @@ mod tests {
             &no_map(),
             &no_cow(),
             true,
+            None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
         // Placeholder boxes tile the empty right side, sharing each boundary
         // column with their neighbour: interior boundaries are tees, only the
-        // screen edge is a true corner.
-        assert_eq!(at(40, 0).ch, '┬', "boundary between live and placeholder");
-        assert_eq!(at(59, 0).ch, '┬', "placeholder/placeholder boundary");
+        // screen edge is a true corner. The live half ends on the boundary
+        // column the first placeholder adopts as its own left edge.
+        let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
+        let live_end = ranges.last().unwrap().1 as u16;
+        assert_eq!(
+            at(live_end, 0).ch,
+            '┬',
+            "boundary between live and placeholder at {live_end}"
+        );
         assert_eq!(at(cols - 1, 0).ch, '╮', "skeleton reaches screen edge");
         assert_eq!(at(cols - 1, rows - 1).ch, '╯', "bottom-right corner");
-        assert_eq!(at(40, rows / 2).ch, '│', "shared boundary is one rule");
-        assert_eq!(at(41, rows / 2).ch, ' ', "no double border at 41");
-        assert_eq!(at(39, rows / 2).ch, ' ', "no double border at 39");
-        for (x, y) in [(40, 0), (59, 0), (cols - 1, 0)] {
-            assert_eq!(at(x, y).style.fg, white, "frame color at ({x},{y})");
+        assert_eq!(at(live_end, rows / 2).ch, '│', "boundary is one rule");
+        // No double border: the cells flanking a shared boundary are interior.
+        assert_eq!(at(live_end - 1, rows / 2).ch, ' ', "no rule left of it");
+        assert_eq!(at(live_end + 1, rows / 2).ch, ' ', "no rule right of it");
+        // Exactly one placeholder boundary between the live half and the edge,
+        // and no sliver box hugging the right edge.
+        let mid_rules: Vec<u16> = ((live_end + 1)..cols - 1)
+            .filter(|x| at(*x, rows / 2).ch == '│')
+            .collect();
+        assert_eq!(
+            mid_rules.len(),
+            1,
+            "one placeholder divider, got {mid_rules:?}"
+        );
+        assert_eq!(at(cols - 2, rows / 2).ch, ' ', "no sliver before the edge");
+        for x in [live_end, mid_rules[0], cols - 1] {
+            assert_eq!(at(x, 0).style.fg, white, "frame color at x={x}");
         }
     }
 
@@ -4514,6 +4860,7 @@ mod tests {
             &no_map(),
             &no_cow(),
             true,
+            None,
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
         // Placeholder interiors are default-bg, never the dim background.
@@ -4564,6 +4911,7 @@ mod tests {
             &no_map(),
             cow,
             true,
+            None,
         );
         (0..rows)
             .map(|y| {
@@ -4572,6 +4920,72 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    /// A full strip has no placeholder to pin to. The user's next empty box
+    /// is `n+1.1`, the first cell of the strip below, so the cheat-sheet hint
+    /// must appear there rather than being lost until a pane is closed.
+    #[test]
+    fn a_full_strip_moves_the_pinned_hint_to_the_next_strip() {
+        let cow = crate::config::Cowsay {
+            enabled: true,
+            messages: vec![
+                "PINNED hint".to_string(),
+                "filler one".to_string(),
+                "filler two".to_string(),
+            ],
+        };
+        // Four panes fill the strip: no empty box remains beside them.
+        let mut layout = Layout::new(4);
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let render = |layout: &Layout, panes: &mut HashMap<PaneId, PtyPane>| -> String {
+            let mut out = Vec::new();
+            render_frame(
+                &mut out,
+                layout,
+                panes,
+                160,
+                40,
+                0,
+                &pal_of(
+                    CColor::Idx(235),
+                    CColor::Rgb(0xff, 0, 0),
+                    CColor::Rgb(0xff, 0xff, 0xff),
+                ),
+                true,
+                &no_map(),
+                &cow,
+                true,
+                None,
+            );
+            (0..40)
+                .map(|y| {
+                    (0..160)
+                        .map(|x| out[y as usize * 160 + x as usize].ch)
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        // The full strip itself has nowhere to put the cow.
+        let full = render(&layout, &mut panes);
+        assert!(
+            !full.contains("PINNED"),
+            "a full strip has no placeholder to pin to:\n{full}"
+        );
+        // Moving down past the last strip creates an empty one (niri
+        // workspace semantics); its first cell is the newly-visible empty box
+        // and must carry the pinned hint.
+        layout.apply(
+            Action::FocusDown,
+            Viewport::new(160),
+            FollowScroll::default(),
+        );
+        let next = render(&layout, &mut panes);
+        assert!(
+            next.contains("PINNED"),
+            "the pinned hint should move to the next strip's first cell:\n{next}"
+        );
     }
 
     #[test]
@@ -4622,6 +5036,7 @@ mod tests {
             &no_map(),
             &cow,
             true,
+            None,
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
         let painted = (61..89u16)
@@ -5101,6 +5516,7 @@ fn content_scroll_reveals_overflow_e2e() {
             messages: Vec::new(),
         },
         true,
+        None,
     );
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
     assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
@@ -5123,6 +5539,7 @@ fn content_scroll_reveals_overflow_e2e() {
             messages: Vec::new(),
         },
         true,
+        None,
     );
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
     assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
@@ -5145,6 +5562,7 @@ fn content_scroll_reveals_overflow_e2e() {
             messages: Vec::new(),
         },
         true,
+        None,
     );
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
     assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
@@ -5232,6 +5650,7 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
             messages: Vec::new(),
         },
         true,
+        None,
     );
     // The top row shows each pane's letter across its exact range: the
     // rightmost screen cell belongs to pane 'D' and no boundary bleeds.
@@ -5335,6 +5754,7 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
                 messages: Vec::new(),
             },
             true,
+            None,
         );
         let y = 2usize;
         (0..cols)
