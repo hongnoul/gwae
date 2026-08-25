@@ -180,7 +180,7 @@ impl Default for Minimap {
             max_width: 32,
             max_rows: 6,
             show_counts: true,
-            hud_on_attention_ms: 0,
+            hud_on_attention_ms: 2500,
         }
     }
 }

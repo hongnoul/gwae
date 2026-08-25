@@ -456,6 +456,7 @@ fn strip_number(layout: &Layout) -> usize {
         + 1
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_frame(
     out: &mut Vec<Cell>,
     layout: &Layout,
@@ -513,9 +514,9 @@ fn render_frame(
             let live = pane.grid.scrollback_offset() == 0;
             if live {
                 // Only paint when row is inside the visible rect and col inside the window.
-                let in_window = (cur_col as u16) >= g_start && (cur_col as u16) < g_end;
+                let in_window = cur_col >= g_start && cur_col < g_end;
                 if in_window && cur_row < v.rect.h {
-                    let gx = cur_col as u16 - g_start;
+                    let gx = cur_col - g_start;
                     let sx = v.rect.x + gx;
                     let sy = v.rect.y + cur_row;
                     focused_cursor_abs = Some((sx, sy, hide));
@@ -1033,6 +1034,68 @@ fn draw_status_row(
                     cx += 1;
                 }
             }
+        }
+    }
+}
+
+/// Center HUD: a brief centered box flashed when attention arrives while the
+/// quasimode reserved row is hidden. Paints a 3-row box (frame + text) in the
+/// middle of the viewport so the user notices without the reserved row being
+/// permanently visible.
+fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, focus_color: CColor) {
+    if cols < 20 || rows < 6 {
+        return;
+    }
+    let target = smart_jump_target(layout);
+    let msg = if let Some(pid) = target {
+        let status = layout.panes.get(&pid).map(|p| p.status).unwrap_or(PaneStatus::Idle);
+        let glyph = status_glyph_for(status);
+        let addr = layout
+            .rows
+            .iter()
+            .enumerate()
+            .find_map(|(ri, row)| {
+                row.columns.iter().enumerate().find_map(|(ci, col)| {
+                    col.panes.iter().position(|p| *p == pid).map(|_| format!("{}.{}", ri + 1, ci + 1))
+                })
+            })
+            .unwrap_or_else(|| "?".to_string());
+        format!(" {} {} needs you — ⌥+g ", glyph, addr)
+    } else {
+        " ! needs you — ⌥+g ".to_string()
+    };
+    let pad: usize = 2;
+    let bw = msg.chars().count() + pad * 2 + 2;
+    let bh: usize = 3;
+    if bw as u16 >= cols {
+        return;
+    }
+    let ox = ((cols as usize).saturating_sub(bw)) / 2;
+    let oy = ((rows as usize).saturating_sub(bh)) / 2;
+    let bg = CColor::Rgb(0x18, 0x18, 0x25);
+    for y in 0..bh {
+        for x in 0..bw {
+            if let Some(c) = out.get_mut((oy + y) * cols as usize + (ox + x)) {
+                *c = Cell {
+                    ch: ' ',
+                    style: strimux_term::Style { fg: CColor::Rgb(0xa6, 0xad, 0xc8), bg, ..Default::default() },
+                    width: 1,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+    let rect = Rect { x: ox as u16, y: oy as u16, w: bw as u16, h: bh as u16 };
+    draw_focus_frame(out, cols, rect, focus_color);
+    let ty = oy + 1;
+    let tx = ox + 1 + pad;
+    for (i, ch) in msg.chars().enumerate() {
+        if let Some(c) = out.get_mut(ty * cols as usize + (tx + i)) {
+            c.ch = ch;
+            c.style.fg = CColor::Idx(231);
+            c.style.bg = bg;
+            c.style.bold = true;
+            c.width = 1;
         }
     }
 }
@@ -1688,8 +1751,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut last: Vec<Cell> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
     let mut dirty = true;
-    let mut alt_held = false;
+    let mut bare_alt_held = false;
+    let mut chord_alt_until: Option<Instant> = None;
     let mut last_alt_held = false;
+    let mut hud_until: Option<Instant> = None;
     let mut last_has_attention = has_attention(&layout);
     // Pane ids created by the spawn-agent verb; these are (re)spawned running
     // the configured `default_agent` harness instead of a plain shell.
@@ -1816,8 +1881,32 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     // Bare Alt hold for quasimode: track before handle_key so chords don't double-count.
                     let bare_alt = is_alt_modifier(&ke);
                     if bare_alt {
-                        if !alt_held {
-                            alt_held = true;
+                        if !bare_alt_held {
+                            bare_alt_held = true;
+                            dirty = true;
+                        }
+                    } else {
+                        // Fallback for terminals that don't send bare Alt press/release
+                        // (no Kitty keyboard protocol): any Alt chord counts as "held"
+                        // for a short window so quasimode still reveals on press-and-hold
+                        // via repeated chords (Option+hjkl etc.) or a single chord.
+                        let alt_chord = ke.modifiers.contains(KeyModifiers::ALT)
+                            || matches!(
+                                ke.code,
+                                KeyCode::Char('\u{2d9}')
+                                    | KeyCode::Char('\u{2206}')
+                                    | KeyCode::Char('\u{2da}')
+                                    | KeyCode::Char('\u{ac}')
+                                    | KeyCode::Char('\u{2026}')
+                                    | KeyCode::Char('\u{153}')
+                                    | KeyCode::Char('\u{a9}')
+                                    | KeyCode::Char('\u{d3}')
+                                    | KeyCode::Char('\u{d4}')
+                                    | KeyCode::Char('\u{f8ff}')
+                                    | KeyCode::Char('\u{d2}')
+                            );
+                        if alt_chord {
+                            chord_alt_until = Some(Instant::now() + Duration::from_millis(600));
                             dirty = true;
                         }
                     }
@@ -1901,9 +1990,13 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     }
                 }
                 Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Release => {
-                    if is_alt_modifier(&ke) && alt_held {
-                        alt_held = false;
+                    if is_alt_modifier(&ke) && bare_alt_held {
+                        bare_alt_held = false;
                         dirty = true;
+                    } else if ke.modifiers.contains(KeyModifiers::ALT)
+                        || is_alt_modifier(&ke)
+                    {
+                        // Keep chord hold alive until its timeout expires.
                     }
                 }
                 Ok(Event::Mouse(me)) => {
@@ -1918,9 +2011,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         chrome,
                     );
                     if let Some((pid, gx, gy)) = pane_at(&views, me.column, me.row) {
-                        // Bare minimum touchpad/cursor support: left click focuses the clicked pane.
-                        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                            if focused_pane(&layout) != Some(pid) {
+                        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left))
+                            && focused_pane(&layout) != Some(pid)
+                        {
                                 let v = Viewport::new(cols);
                                 let f = FollowScroll {
                                     margin: cfg.scroll_margin,
@@ -1929,7 +2022,6 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                 let _ = layout.apply(Action::FocusPane(pid), v, f);
                                 dirty = true;
                             }
-                        }
                         if let Some(p) = panes.get_mut(&pid) {
                             let wheel = matches!(
                                 me.kind,
@@ -2035,13 +2127,39 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
         }
 
-        // Track attention & alt flip for quasimode repaint
+        // Track attention & alt flip for quasimode repaint, plus HUD flash
+        let now_for_hud = Instant::now();
+        if let Some(t) = chord_alt_until {
+            if now_for_hud >= t {
+                chord_alt_until = None;
+            }
+        }
+        let chord_alt_held = chord_alt_until.is_some();
+        let effective_alt_held = bare_alt_held || chord_alt_held;
+        let hud_visible = hud_until.map(|t| now_for_hud < t).unwrap_or(false);
+        if !hud_visible && hud_until.is_some() {
+            hud_until = None;
+            dirty = true;
+        }
         let cur_has_attention = has_attention(&layout);
-        if cur_has_attention != last_has_attention || alt_held != last_alt_held {
+        if !last_has_attention
+            && cur_has_attention
+            && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
+            && cfg.minimap.hud_on_attention_ms > 0
+            && !effective_alt_held
+            && chrome_rows(&cfg) > 0
+            && !cfg.minimap.should_paint(effective_alt_held, cur_has_attention)
+        {
+            // Attention just arose while the quasimode row is hidden: flash center HUD.
+            hud_until = Some(now_for_hud + Duration::from_millis(cfg.minimap.hud_on_attention_ms as u64));
+            dirty = true;
+        }
+        if cur_has_attention != last_has_attention || effective_alt_held != last_alt_held {
             dirty = true;
             last_has_attention = cur_has_attention;
-            last_alt_held = alt_held;
+            last_alt_held = effective_alt_held;
         }
+        let show_hud = hud_until.map(|t| Instant::now() < t).unwrap_or(false);
         if dirty {
             render_frame(
                 &mut frame,
@@ -2059,7 +2177,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             let chrome = chrome_rows(&cfg);
             if chrome > 0
                 && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
-                && !cfg.minimap.should_paint(alt_held, cur_has_attention)
+                && !cfg.minimap.should_paint(effective_alt_held, cur_has_attention)
                 && rows > 1
             {
                 let y = (rows - 1) as usize;
@@ -2070,6 +2188,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         *c = Cell { ch: ' ', style: strimux_term::Style { bg: cfg.background.color(), ..Default::default() }, width: 1, ..Default::default() };
                     }
                 }
+            }
+            if show_hud {
+                draw_center_hud(&mut frame, cols, rows, &layout, cfg.focus_color.color());
             }
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
