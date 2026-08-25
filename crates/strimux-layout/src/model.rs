@@ -67,6 +67,14 @@ pub struct Layout {
     pub rows: Vec<Row>,
     pub focus: Focus,
     pub panes: HashMap<PaneId, Pane>,
+    /// Per-strip focus memory: last focused pane per strip.
+    /// Restored when navigating back to a strip so cross-strip movement
+    /// does not snap to the leftmost pane. Stored as a pane id so
+    /// inserts/removals on the strip while it is off-focus keep memory
+    /// pointed at the same pane; missing or stale entries fall back
+    /// to the nearest-column heuristic.
+    #[serde(default)]
+    pub row_focus: HashMap<RowId, PaneId>,
     next_row: RowId,
     next_pane: PaneId,
 }
@@ -93,6 +101,7 @@ impl Layout {
                 pane: 0,
             },
             panes: HashMap::new(),
+            row_focus: HashMap::new(),
             next_row: 0,
             next_pane: 0,
         };
@@ -105,7 +114,36 @@ impl Layout {
         }
         layout.focus.row = row;
         layout.focus.column = 0;
+        if let Some(pid) = layout.focused_pane_id() {
+            layout.row_focus.insert(row, pid);
+        }
         layout
+    }
+
+    /// Remember the current focus for its strip (by pane id).
+    pub fn remember_focus(&mut self) {
+        let row = self.focus.row;
+        if let Some(pid) = self.focused_pane_id() {
+            self.row_focus.insert(row, pid);
+        }
+    }
+
+    /// Remembered `(column, pane)` for `row`, if the stored pane still
+    /// lives on that row. Returns `None` when memory is missing or stale
+    /// so the caller can fall back to the x-center heuristic.
+    pub fn remembered_focus(&self, row: RowId) -> Option<(usize, usize)> {
+        let pid = *self.row_focus.get(&row)?;
+        let (r, col, pane) = self.locate_pane(pid)?;
+        if r != row {
+            return None;
+        }
+        Some((col, pane))
+    }
+
+    /// Remove stale per-strip memory for rows that no longer exist.
+    pub fn gc_row_focus(&mut self) {
+        let live: std::collections::HashSet<RowId> = self.rows.iter().map(|r| r.id).collect();
+        self.row_focus.retain(|k, _| live.contains(k));
     }
 
     pub fn alloc_pane(&mut self) -> PaneId {

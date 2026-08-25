@@ -116,6 +116,7 @@ impl Layout {
         }
         self.focus.column -= 1;
         self.clamp_focus_pane();
+        self.remember_focus();
         self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
     }
@@ -127,6 +128,7 @@ impl Layout {
         }
         self.focus.column += 1;
         self.clamp_focus_pane();
+        self.remember_focus();
         self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
     }
@@ -134,6 +136,7 @@ impl Layout {
     fn focus_up(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
         if self.focus.pane > 0 {
             self.focus.pane -= 1;
+            self.remember_focus();
             return Ok(self.focused_scroll());
         }
         self.cross_row(-1, viewport, follow)
@@ -147,6 +150,7 @@ impl Layout {
             .unwrap_or(1);
         if self.focus.pane + 1 < max {
             self.focus.pane += 1;
+            self.remember_focus();
             return Ok(self.focused_scroll());
         }
         self.cross_row(1, viewport, follow)
@@ -181,18 +185,31 @@ impl Layout {
             self.new_row(format!("strip {}", self.rows.len() + 1));
         }
         let target_id = self.rows[ti].id;
-        let x_center = self.focused_x_center(viewport.cols);
-        let col = self.nearest_column(target_id, x_center, viewport.cols);
         let from = self.focus.row;
-        self.focus.row = target_id;
-        self.focus.column = col;
-        self.focus.pane = 0;
-        self.clamp_focus_pane();
+        // Remember where we were on the source strip.
+        self.remember_focus();
+        // Restore remembered focus for the target strip if we have one;
+        // otherwise fall back to the nearest column to the x-center heuristic.
+        if let Some((col, pane)) = self.remembered_focus(target_id) {
+            self.focus.row = target_id;
+            self.focus.column = col;
+            self.focus.pane = pane;
+            self.clamp_focus_pane();
+        } else {
+            let x_center = self.focused_x_center(viewport.cols);
+            let col = self.nearest_column(target_id, x_center, viewport.cols);
+            self.focus.row = target_id;
+            self.focus.column = col;
+            self.focus.pane = 0;
+            self.clamp_focus_pane();
+        }
         // Leaving an empty strip behind drops it, so only the strip you are
         // standing on can ever be empty.
         if from != target_id && self.row_is_empty(from) {
             self.rows.retain(|r| r.id != from);
+            self.gc_row_focus();
         }
+        self.remember_focus();
         self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
     }
@@ -249,6 +266,7 @@ impl Layout {
             row.columns.swap(c, t);
         }
         self.focus.column = t;
+        self.remember_focus();
         self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
     }
@@ -284,6 +302,7 @@ impl Layout {
             }
         }
         self.focus.pane = t;
+        self.remember_focus();
         Ok(self.focused_scroll())
     }
 
@@ -365,6 +384,8 @@ impl Layout {
         if self.row_is_empty(from) {
             self.rows.retain(|r| r.id != from);
         }
+        self.gc_row_focus();
+        self.remember_focus();
         self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
     }
@@ -396,6 +417,7 @@ impl Layout {
                 self.focus.pane = insert;
             }
         }
+        self.remember_focus();
         Ok(self.focused_scroll())
     }
 }
@@ -479,6 +501,7 @@ impl Layout {
         if row_emptied {
             let was_focused_row = self.focus.row == row;
             self.rows.retain(|r| r.id != row);
+            self.gc_row_focus();
             if self.rows.is_empty() {
                 *self = Layout::default();
                 return Ok(0);
@@ -491,9 +514,15 @@ impl Layout {
                     .unwrap_or(0)
                     .min(self.rows.len() - 1);
                 self.focus.row = self.rows[idx].id;
-                self.focus.column = 0;
-                self.focus.pane = 0;
+                if let Some((c, pane)) = self.remembered_focus(self.focus.row) {
+                    self.focus.column = c;
+                    self.focus.pane = pane;
+                } else {
+                    self.focus.column = 0;
+                    self.focus.pane = 0;
+                }
                 self.clamp_focus_pane();
+                self.remember_focus();
                 self.refocus_scroll(viewport, follow);
             }
             return Ok(self.focused_scroll());
@@ -527,7 +556,11 @@ impl Layout {
             let cols = self.row(row).map(|r| r.columns.len()).unwrap_or(1);
             self.focus.column = self.focus.column.min(cols.saturating_sub(1));
             self.clamp_focus_pane();
+            self.remember_focus();
             self.refocus_scroll(viewport, follow);
+        } else {
+            // Focus was on another strip; still GC stale row_focus entries
+            self.gc_row_focus();
         }
         Ok(self.focused_scroll())
     }
@@ -541,6 +574,7 @@ impl Layout {
         let col = self.insert_column(self.focus.row, at, Width::DEFAULT, vec![pane]);
         self.focus.column = col;
         self.focus.pane = 0;
+        self.remember_focus();
         // The new column may be off-screen (e.g. whatever fixed width it has).
         // Follow-scroll so the freshly spawned pane is immediately in view.
         self.refocus_scroll(viewport, follow);
@@ -554,6 +588,7 @@ impl Layout {
         self.focus.row = row;
         self.focus.column = 0;
         self.focus.pane = 0;
+        self.remember_focus();
         self.refocus_scroll(viewport, follow);
         self.focused_scroll()
     }
@@ -620,6 +655,7 @@ impl Layout {
         }
         self.focus.column = n;
         self.clamp_focus_pane();
+        self.remember_focus();
         Ok(self.focused_scroll())
     }
 
@@ -636,10 +672,13 @@ impl Layout {
             return Ok(self.focused_scroll());
         };
         let from = self.focus.row;
+        self.remember_focus();
         self.focus = crate::model::Focus { row, column, pane };
         if from != row && self.row_is_empty(from) {
             self.rows.retain(|r| r.id != from);
+            self.gc_row_focus();
         }
+        self.remember_focus();
         self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
     }
