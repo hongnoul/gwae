@@ -477,10 +477,20 @@ fn focused_pane_views_with_chrome(
         let inner_top = b as u16;
         let inner_h = ((strip_h as i32) - 2 * b).max(1) as u16;
         let inner_bottom = inner_top + inner_h;
-        let pane_h = ((inner_h as i32 - (p as i32 - 1) * gap as i32) / p as i32).max(1) as u16;
+        // Split the inner height across the stack *exactly*: floor division
+        // alone strands `avail % p` rows at the bottom of the column, which
+        // paint as unassigned background (visible from 7 panes down on a
+        // typical strip). Hand the remainder out one row at a time to the
+        // top panes so the stack always tiles the full strip.
+        let avail = (inner_h as i32 - (p as i32 - 1) * gap as i32).max(0);
+        let base = avail / p as i32;
+        let rem = avail % p as i32;
+        let mut y = inner_top;
         for (pi, pid) in col.panes.iter().enumerate() {
-            let y = inner_top + (pi as u16) * (pane_h + gap);
-            let h = pane_h.min(inner_bottom.saturating_sub(y));
+            let want = (base + ((pi as i32) < rem) as i32).max(0) as u16;
+            let row_y = y;
+            y = y.saturating_add(want).saturating_add(gap);
+            let h = want.min(inner_bottom.saturating_sub(row_y));
             if h == 0 {
                 continue;
             }
@@ -490,7 +500,7 @@ fn focused_pane_views_with_chrome(
                 col: ci,
                 rect: Rect {
                     x: left,
-                    y,
+                    y: row_y,
                     w: wv,
                     h,
                 },
@@ -4089,6 +4099,59 @@ mod tests {
         assert!(pane_at(&views, 79, 3).is_some());
         assert!(pane_at(&views, 200, 3).is_none());
         assert!(pane_at(&views, 5, 200).is_none());
+    }
+
+    /// A vertical split must tile the whole strip no matter how many panes
+    /// are in the stack. Floor-dividing the inner height stranded
+    /// `inner_h % p` rows at the bottom, which showed up as unpainted
+    /// background from ~7 panes down (the first count where the remainder
+    /// exceeds a cell on a typical strip).
+    #[test]
+    fn a_vertical_stack_tiles_the_full_strip_at_any_pane_count() {
+        use strimux_layout::{Preset, Width};
+        let panes_map = HashMap::new();
+        let (cols, rows) = (80u16, 40u16);
+        for p in 1..=12usize {
+            let mut layout = Layout::new(1);
+            if let Some(r) = layout.row_mut(layout.focus.row) {
+                r.columns.clear();
+            }
+            let row = layout.focus.row;
+            let ids: Vec<_> = (0..p).map(|_| layout.alloc_pane()).collect();
+            layout.add_column(row, Width::Preset(Preset::Full), ids);
+            for inset in [false, true] {
+                let views = focused_pane_views(&layout, cols, rows, 0, &panes_map, inset);
+                assert_eq!(views.len(), p, "{p} panes, inset={inset}");
+                let b = inset as u16;
+                let inner_top = b;
+                let inner_bottom = rows - b;
+                assert_eq!(views[0].rect.y, inner_top, "{p} panes: stack starts at top");
+                // Panes tile with exactly one gap row between them...
+                for w in views.windows(2) {
+                    assert_eq!(
+                        w[1].rect.y,
+                        w[0].rect.y + w[0].rect.h + 1,
+                        "{p} panes, inset={inset}: one gap row between panes"
+                    );
+                }
+                // ...and the last pane reaches the bottom of the strip, so no
+                // row is left unassigned.
+                let last = views.last().unwrap();
+                assert_eq!(
+                    last.rect.y + last.rect.h,
+                    inner_bottom,
+                    "{p} panes, inset={inset}: stack reaches the bottom"
+                );
+                // Heights stay balanced: at most one row apart.
+                let hs: Vec<u16> = views.iter().map(|v| v.rect.h).collect();
+                let (lo, hi) = (*hs.iter().min().unwrap(), *hs.iter().max().unwrap());
+                assert!(hi - lo <= 1, "{p} panes: heights {hs:?} are balanced");
+                // The emulator grid matches the painted rect.
+                for v in &views {
+                    assert_eq!(v.grid_rows, v.rect.h);
+                }
+            }
+        }
     }
 
     #[test]
