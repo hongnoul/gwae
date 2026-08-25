@@ -72,7 +72,7 @@ impl Layout {
             Action::NewColumn => Ok(self.apply_new_column(viewport, follow)),
             Action::NewRow => Ok(self.apply_new_row(viewport, follow)),
             Action::SpawnAgent => Ok(self.apply_new_column(viewport, follow)),
-            Action::ScrollViewport(d) => Ok(self.apply_scroll(d)),
+            Action::ScrollViewport(d) => Ok(self.apply_scroll(d, viewport)),
             Action::JumpToColumn(n) => self.apply_jump(n, viewport, follow),
         }
     }
@@ -425,9 +425,16 @@ impl Layout {
         self.focused_scroll()
     }
 
-    fn apply_scroll(&mut self, delta: i32) -> i32 {
+    fn apply_scroll(&mut self, delta: i32, viewport: Viewport) -> i32 {
+        // Clamp to the strip extent so scrolling never reveals background past
+        // the last column's right edge.
+        let max_scroll = self
+            .column_x_ranges(self.focus.row, viewport.cols)
+            .and_then(|r| r.last().map(|(_, e)| *e as i32 - viewport.cols as i32))
+            .unwrap_or(0)
+            .max(0);
         if let Some(r) = self.row_mut(self.focus.row) {
-            r.scroll_x = (r.scroll_x + delta).max(0);
+            r.scroll_x = (r.scroll_x + delta).clamp(0, max_scroll);
         }
         self.focused_scroll()
     }

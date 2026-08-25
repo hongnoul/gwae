@@ -72,9 +72,14 @@ pub fn follow_focus_scroll(
         None => return 0,
     };
     let scroll = layout.row(row).map(|r| r.scroll_x).unwrap_or(0);
+    // Never scroll past the end of the strip: the focus margin (and centering)
+    // must not reveal empty background to the right of the last column when
+    // the strip already ends at (or before) the right viewport edge.
+    let total = ranges.last().map(|r| r.1).unwrap_or(0) as i32;
+    let max_scroll = (total - viewport_cols as i32).max(0);
     if opts.center {
         let center = (s as i32 + e as i32) / 2;
-        return (center - (viewport_cols as i32) / 2).max(0);
+        return (center - (viewport_cols as i32) / 2).clamp(0, max_scroll);
     }
     follow_scroll(
         s as i32,
@@ -83,4 +88,5 @@ pub fn follow_focus_scroll(
         viewport_cols as i32,
         opts.margin as i32,
     )
+    .min(max_scroll)
 }

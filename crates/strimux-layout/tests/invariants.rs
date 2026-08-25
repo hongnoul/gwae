@@ -267,6 +267,45 @@ fn four_quarters_tile_the_viewport_exactly() {
     }
 }
 
+#[test]
+fn focusing_rightmost_of_exact_fit_strip_never_scrolls() {
+    // Regression: with four 1/4 columns tiling the viewport exactly, moving
+    // focus to the rightmost pane must not scroll (the follow margin would
+    // otherwise push scroll_x past the strip and reveal background on the
+    // right edge).
+    let q = Width::Preset(Preset::Quarter);
+    for cols in [80u16, 81, 82, 83, 120, 341, 342, 343, 344] {
+        let mut layout = layout_with_widths(&[q, q, q, q]);
+        let vp = Viewport::new(cols);
+        for _ in 0..3 {
+            let scroll = layout.apply(Action::FocusRight, vp, follow()).unwrap();
+            assert_eq!(scroll, 0, "over-scrolled at cols={cols}");
+        }
+        // Manual scroll right is also clamped: nothing to reveal.
+        let scroll = layout.apply(Action::ScrollViewport(10), vp, follow()).unwrap();
+        assert_eq!(scroll, 0, "manual scroll revealed background at cols={cols}");
+    }
+}
+
+#[test]
+fn overflowing_strip_scroll_clamps_to_last_column_edge() {
+    // Six 1/4 columns overflow the viewport. Focusing the last one scrolls,
+    // but never past the strip's right edge.
+    let q = Width::Preset(Preset::Quarter);
+    let mut layout = layout_with_widths(&[q, q, q, q, q, q]);
+    let vp = Viewport::new(120);
+    let mut scroll = 0;
+    for _ in 0..5 {
+        scroll = layout.apply(Action::FocusRight, vp, follow()).unwrap();
+    }
+    let ranges = layout.column_x_ranges(layout.focus.row, vp.cols).unwrap();
+    let total = ranges.last().unwrap().1 as i32;
+    assert_eq!(scroll, total - vp.cols as i32, "scroll stops at strip edge");
+    // Further manual scrolling stays clamped.
+    let scroll = layout.apply(Action::ScrollViewport(50), vp, follow()).unwrap();
+    assert_eq!(scroll, total - vp.cols as i32);
+}
+
 /// Any mix of preset columns tiles contiguously, each boundary lands within
 /// one cell of its exact fractional position, and a strip whose nominal
 /// shares sum to <= 1 never overflows the viewport.
