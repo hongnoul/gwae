@@ -230,7 +230,15 @@ fn focused_pane_views(
             continue;
         };
         let full_w = (e - s) as u16;
-        let grid_cols = full_w.max(content_width);
+        // The ring insets a pane's visible content by one cell each side, so the
+        // emulator must be sized to the interior, not the full column width,
+        // otherwise content wraps 2 cells too late and hides under the ring.
+        let interior_w = if full_w >= 3 { full_w - 2 } else { full_w };
+        let grid_cols = if content_width == 0 {
+            interior_w.max(1)
+        } else {
+            full_w.max(content_width)
+        };
         let col_x0 = (left as i32 - sx).max(0) as u16; // grid col at `left`
         let p = col.panes.len().max(1);
         let gap = 1u16;
@@ -241,6 +249,7 @@ fn focused_pane_views(
             if h == 0 {
                 continue;
             }
+            let interior_h = if h >= 3 { h - 2 } else { h };
             let h_scroll = panes.get(pid).map(|p| p.h_scroll).unwrap_or(0);
             out.push(PaneView {
                 pid: *pid,
@@ -253,7 +262,7 @@ fn focused_pane_views(
                 col_x0,
                 h_scroll,
                 grid_cols,
-                grid_rows: h,
+                grid_rows: interior_h,
             });
         }
     }
