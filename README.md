@@ -2,8 +2,20 @@
 
 > Infinite spatial canvas terminal multiplexer
 
-**strimux** is a terminal-native, daemon-free terminal multiplexer.
-It aims to provide niri's developer experience in Windows and MacOS.
+**strimux** is a terminal-native, daemon-free multiplexer for CLI agents. Claude
+Code, Jcode, and any other TUI each own a terminal; strimux gives them room: an
+**infinite 2D grid of strips** where every pane keeps its full, natural size.
+New panes slot in to the right of a row, you scroll the viewport across, and
+unlimited named rows stack below. It runs in any terminal on **macOS, Windows,
+and Linux**.
+
+- Panes never shrink. No cramming; agents stay readable at full size.
+- Keyboard-first: `⌥+hjkl` (the **Option** key on macOS, Alt elsewhere) moves
+  focus, `⌥+Shift+hjkl` moves panes.
+- Agent-aware via the standard **OSC 133** protocol only - panes stay ordinary
+  PTY TUIs. The minimap colors agents and `⌥+g` jumps to the one that needs you.
+- Single process, **no daemon**, no attach/detach. Persistence is each
+  harness's own `--resume`.
 
 ## Status
 
@@ -48,7 +60,7 @@ width, each running your shell (`run` puts its command in the first pane).
 All four spawn up front so the screen is usable immediately.
 
 Inside a session, navigation uses a `Ctrl-b` prefix so it works on **every**
-terminal with **zero configuration** (including macOS, where the Option key
+terminal with **zero configuration** (including macOS, where the Option key `⌥`
 does not become Alt by default). Press `Ctrl-b`, then a command key; the status
 line shows the pending prefix.
 
@@ -68,10 +80,10 @@ line shows the pending prefix.
 | `Ctrl-b` `Ctrl-b` | send a literal `Ctrl-b` to the pane |
 | `Esc` | cancel the pending prefix |
 
-The equivalent `Alt` chords remain available for terminals where
-Option-as-Alt is configured (`Alt+hjkl` to focus, `Alt+Shift+hjkl` to move,
-`Alt+a` new column, `Alt+;` spawn an agent pane, `Alt+s` split, `Alt+z` width,
-`Alt+x` kill, `Alt+q` quit).
+The equivalent `⌥` (Option) chords remain available for terminals where
+the modifier arrives as Meta/Alt (`⌥+hjkl` to focus, `⌥+Shift+hjkl` to move,
+`⌥+a` new column, `⌥+;` spawn an agent pane, `⌥+s` split, `⌥+z` width,
+`⌥+x` kill, `⌥+q` quit).
 
 All other keys pass through to the focused pane.
 

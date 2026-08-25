@@ -7,8 +7,8 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
-- **Spawn an agent pane with `;`**: `Ctrl-b ;` / `Alt+;` (macOS Option+`) spawns
-  a new pane running the configured agent harness (`config.default_agent`,
+- **Spawn an agent pane with `;`**: `Ctrl-b ;` / `⌥+;` (the Option key on macOS)
+  spawns a new pane running the configured agent harness (`config.default_agent`,
   default `jcode`) at the rightmost of the focused strip and switches focus to
   it. Configurable via `default_agent = "claude"` (or any command).
 - **Hot module reload for development**: three new crates/bins let you develop
@@ -26,11 +26,11 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   ~0.05 ms.
 - **Content-width / horizontal-overflow scroll**: a pane's logical grid width
   is decoupled from its visible column width (`config.content_width`, default
-  240). `Alt+Left/Right` pans across overflowing content.
-- Interactive keybindings: focus (`Alt+hjkl`), move (`Alt+Shift+hjkl`), new
-  column (`Alt+a`/`Alt+Enter`), split below (`Alt+s`), cycle width (`Alt+r/z`),
-  kill pane (`Alt+x`), row viewport scroll (`Alt+[/]`), column jump (`Alt+1..9`),
-  quit (`Alt+q`).
+  240). `⌥+Left/Right` pans across overflowing content.
+- Interactive keybindings: focus (`⌥+hjkl`), move (`⌥+Shift+hjkl`), new
+  column (`⌥+a`/`⌥+Enter`), split below (`⌥+s`), cycle width (`⌥+r/z`),
+  kill pane (`⌥+x`), row viewport scroll (`⌥+[/]`), column jump (`⌥+1..9`),
+  quit (`⌥+q`). (`⌥` is the Option key on macOS, Alt elsewhere.)
 - `Makefile` with `build` / `install` / `check` / `test` targets.
 - Timeline: README status/usage, e2e PTY render test, `pane_window` unit tests.
 - Cargo workspace scaffold with four crates:

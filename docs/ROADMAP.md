@@ -14,13 +14,13 @@ Kill the biggest risk first: prove the render path.
 - [ ] Layout core (done in scaffold: rows/columns/panes + verbs + scroll)
 - [ ] First row as a niri strip: new-column, split, focus+follow, cycle-width, consume/expel
 - [ ] Infinite rows; status bar with a 2D minimap
-- [ ] `$mod` = `Alt+hjkl` focus / `Alt+Shift+hjkl` move
+- [ ] `$mod` = `⌥+hjkl` (Option key on macOS, Alt elsewhere) focus / `⌥+Shift+hjkl` move
 - **Exit**: dogfood one daily agent session in a row
 
 ## M2 - Agent-first ergonomics (3-4 weeks) <- make-or-break
-- [ ] Agent launcher + `Alt+a` default-harness spawn
+- [ ] Agent launcher + `⌥+a` / `;` default-harness spawn
 - [ ] **OSC 133 status**: minimap dots + status tick
-- [ ] **Smart-jump** `Alt+g`; fuzzy `Alt+f` text summon
+- [ ] **Smart-jump** `⌥+g`; fuzzy `⌥+f` text summon
 - [ ] Pane headers with resume hints; TOML config; layout property tests
 - **Exit**: dogfood daily Claude Code + Jcode sessions
 

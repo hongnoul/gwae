@@ -59,9 +59,9 @@ session state** (ADR-015). Resume is the harness's job (`claude --resume`,
 ## Terminal requirements
 
 Minimum 256-color + standard cursor addressing; wants truecolor, synchronized
-updates, kitty keyboard protocol, mouse SGR (passed through). `Alt` is the
-universal `$mod` (ADR-014); macOS may add an optional `Cmd+hjkl` snippet via
-`strimux setup`.
+updates, kitty keyboard protocol, mouse SGR (passed through). `⌥` (the Option
+key on macOS, Alt elsewhere) is the universal `$mod` (ADR-014); macOS may add an
+optional `Cmd+hjkl` snippet via `strimux setup`.
 
 ## Open questions
 

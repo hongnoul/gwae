@@ -32,26 +32,27 @@ coordinate.
 
 ## Verbs (default keys)
 
-`$mod` = `Alt`; `$mod` chords always go to strimux, even with an agent focused.
+`$mod` = `⌥` (the **Option** key on macOS, Alt elsewhere); `$mod` chords always
+go to strimux, even with an agent focused.
 
 | Verb | Key | Semantics |
 |---|---|---|
-| focus left/right | `Alt+h/l` | move focus to adjacent column; scroll minimally |
-| focus up/down | `Alt+k/j` | move within column; cross row at edge |
-| move-pane left/right | `Alt+Shift+h/l` | swap column with neighbor |
-| move-pane up/down | `Alt+Shift+k/j` | move pane within column; cross row at edge |
-| new-column | `Alt+Enter` | new column right of focused (launcher) |
-| new-agent | `Alt+a` | new column running the default agent harness |
-| split-down | `Alt+s` | new pane below focused |
-| new-row | `Alt+Shift+Enter` | new row below focused |
-| cycle-width | `Alt+r` | next preset width |
-| consume / expel | `Alt+,` / `Alt+.` | stack a neighbor / push pane out |
-| center | `Alt+z` | center focused column |
-| jump N | `Alt+1..9` | jump to Nth column |
-| smart-jump | `Alt+g` | jump to next agent that needs you (OSC 133) |
-| find | `Alt+f` | fuzzy text search over panes |
-| kill-pane | `Alt+x` | close pane; compact columns/rows |
-| scroll viewport | `Alt+Ctrl+h/l` | scroll the row without moving focus |
+| focus left/right | `⌥+h/l` | move focus to adjacent column; scroll minimally |
+| focus up/down | `⌥+k/j` | move within column; cross row at edge |
+| move-pane left/right | `⌥+Shift+h/l` | swap column with neighbor |
+| move-pane up/down | `⌥+Shift+k/j` | move pane within column; cross row at edge |
+| new-column | `⌥+Enter` | new column right of focused (launcher) |
+| new-agent | `⌥+a` / `;` | new column running the default agent harness |
+| split-down | `⌥+s` | new pane below focused |
+| new-row | `⌥+Shift+Enter` | new row below focused |
+| cycle-width | `⌥+r` | next preset width |
+| consume / expel | `⌥+,` / `⌥+.` | stack a neighbor / push pane out |
+| center | `⌥+z` | center focused column |
+| jump N | `⌥+1..9` | jump to Nth column |
+| smart-jump | `⌥+g` | jump to next agent that needs you (OSC 133) |
+| find | `⌥+f` | fuzzy text search over panes |
+| kill-pane | `⌥+x` | close pane; compact columns/rows |
+| scroll viewport | `⌥+Ctrl+h/l` | scroll the row without moving focus |
 
 ## Scroll behavior
 
