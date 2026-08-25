@@ -178,6 +178,25 @@ impl Pty {
         out
     }
 
+    /// Read until *every* needle has shown up. The prompt paints across
+    /// several writes, so asserting sibling strings on the read that saw the
+    /// first one is a race that only slow machines (CI) lose.
+    fn wait_for_all(&self, needles: &[&str]) -> String {
+        let mut out = String::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            if needles.iter().all(|n| out.contains(n)) {
+                return out;
+            }
+            match self.rx.recv_timeout(Duration::from_millis(250)) {
+                Ok(b) => out.push_str(&String::from_utf8_lossy(&b)),
+                Err(_) => continue,
+            }
+        }
+        let missing: Vec<&&str> = needles.iter().filter(|n| !out.contains(**n)).collect();
+        panic!("never saw {missing:?} in:\n{out}");
+    }
+
     /// Fast-forward the guided setup the gateway runs after the agent pick:
     /// `q` takes the default for every remaining question, then Enter
     /// dismisses the summary screen. The flow runs in raw mode, so these are
@@ -271,7 +290,11 @@ fn with_nothing_installed_the_pane_explains_itself_and_still_gives_a_shell() {
     // The exact scenario that used to produce a silent blank pane.
     let sb = Sandbox::new(&[]);
     let mut p = sb.spawn(&[]);
-    let seen = p.wait_for("No agent harness found");
+    let seen = p.wait_for_all(&[
+        "No agent harness found",
+        "Enter alone opens a shell",
+        "jcode",
+    ]);
     assert!(
         seen.contains("Enter alone opens a shell"),
         "must say what it is doing instead; got:\n{seen}"
@@ -295,7 +318,7 @@ fn with_nothing_installed_the_pane_explains_itself_and_still_gives_a_shell() {
 fn an_installed_harness_is_offered_chosen_saved_and_executed() {
     let sb = Sandbox::new(&["claude", "aider"]);
     let mut p = sb.spawn(&[]);
-    let seen = p.wait_for("Which agent");
+    let seen = p.wait_for_all(&["Which agent", "claude", "aider"]);
     assert!(seen.contains("claude"), "got:\n{seen}");
     assert!(seen.contains("aider"), "got:\n{seen}");
 
@@ -333,6 +356,13 @@ fn a_configured_but_missing_harness_names_it_and_offers_what_exists() {
     sb.write_config("default_agent = \"jcode\"\n");
     let mut p = sb.spawn(&[]);
     let seen = p.wait_for("`jcode` is not installed");
+    // The offer list may land in a later write than the headline on a slow
+    // machine; wait for it rather than asserting on the first paint.
+    let seen = if seen.contains("codex") {
+        seen
+    } else {
+        p.wait_for_all(&["`jcode` is not installed", "codex"])
+    };
     assert!(
         seen.contains("codex"),
         "must offer the alternative; got:\n{seen}"
@@ -397,7 +427,7 @@ fn print_reports_the_resolution_without_prompting_or_running_anything() {
     let sb = Sandbox::new(&["claude"]);
     sb.write_config("default_agent = \"claude\"\n");
     let p = sb.spawn(&["--print"]);
-    let seen = p.wait_for("default_agent: claude");
+    let seen = p.wait_for_all(&["default_agent: claude", "[ok]"]);
     assert!(seen.contains("[ok]"), "got:\n{seen}");
     assert!(
         !seen.contains("AGENT-RAN"),
@@ -492,7 +522,7 @@ fn a_bare_enter_takes_the_listed_default() {
     let seen = if seen.contains("(default)") {
         seen
     } else {
-        p.wait_for("(default)")
+        p.wait_for_all(&["Which agent", "(default)"])
     };
     assert!(
         seen.contains("(default)"),
@@ -565,7 +595,7 @@ fn a_configured_command_with_arguments_is_exec_d_with_them() {
     }
     sb.write_config("default_agent = \"claude --resume --foo\"\n");
     let p = sb.spawn(&[]);
-    let seen = p.wait_for("ARGS:");
+    let seen = p.wait_for_all(&["ARGS:", "--resume --foo"]);
     assert!(
         seen.contains("--resume --foo"),
         "args must reach the harness; got:\n{seen}"
@@ -642,7 +672,7 @@ fn the_config_can_teach_it_a_name_it_could_never_guess() {
     stub(&sb.bin, "zz");
     sb.write_config("agents = [\"zz\"]\n");
     let mut p = sb.spawn(&[]);
-    let seen = p.wait_for("Which agent");
+    let seen = p.wait_for_all(&["Which agent", "zz"]);
     assert!(seen.contains("zz"), "got:\n{seen}");
     p.send("1\n");
     p.skip_onboarding();
