@@ -170,6 +170,51 @@ const BREW_INSTALL: &str = "NONINTERACTIVE=1 /bin/bash -c \"$(curl -fsSL \
 /// Where to send someone we cannot help.
 pub const MANUAL_HINT: &str = "see https://github.com/ClementTsang/bottom";
 
+/// The prefixes a package manager installs binaries into, in the order they
+/// should be preferred (Apple Silicon, Intel, Linuxbrew).
+///
+/// Needed because a *freshly installed* Homebrew is not on this process's
+/// `PATH`: the environment was inherited when strimux started, long before
+/// `/opt/homebrew/bin` existed. Without this, the second step of
+/// [`Plan::BrewThenInstall`] would always fail with "brew not found" moments
+/// after successfully installing brew.
+const PREFIXES: [&str; 3] = ["/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"];
+
+/// `PATH` with every known package-manager prefix **appended**, so a command
+/// run straight after an install can find what was just installed.
+///
+/// Appended, not prepended: the user's own `PATH` is their explicit statement
+/// about which tools to use, and a package-manager prefix that jumped the
+/// queue would silently shadow it. These directories are a fallback for the
+/// one case the inherited `PATH` cannot cover - a prefix that did not exist
+/// when this process started.
+fn augmented_path() -> std::ffi::OsString {
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(&current).collect();
+    for p in PREFIXES {
+        let bin = std::path::Path::new(p).join("bin");
+        if bin.is_dir() && !dirs.contains(&bin) {
+            dirs.push(bin);
+        }
+    }
+    std::env::join_paths(dirs).unwrap_or(current)
+}
+
+/// Resolve a program against [`augmented_path`], so a just-installed `brew` is
+/// found even though this process started before it existed.
+fn resolve(prog: &str) -> std::path::PathBuf {
+    if prog.starts_with('/') {
+        return std::path::PathBuf::from(prog);
+    }
+    for dir in std::env::split_paths(&augmented_path()) {
+        let c = dir.join(prog);
+        if c.is_file() {
+            return c;
+        }
+    }
+    std::path::PathBuf::from(prog)
+}
+
 /// Run the plan, returning what to tell the user. The only function here that
 /// touches the machine.
 ///
@@ -182,8 +227,13 @@ pub fn run(p: &Plan) -> Outcome {
         Plan::Manual => Outcome::Failed(MANUAL_HINT.to_string()),
         _ => {
             for (prog, args) in commands(p) {
-                let ok = Command::new(prog)
+                // Resolved (and run) against an augmented PATH: step two of
+                // `BrewThenInstall` runs seconds after step one created
+                // `/opt/homebrew/bin/brew`, which our inherited PATH knows
+                // nothing about.
+                let ok = Command::new(resolve(prog))
                     .args(&args)
+                    .env("PATH", augmented_path())
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
@@ -207,15 +257,12 @@ pub fn run(p: &Plan) -> Outcome {
     }
 }
 
-/// Whether a freshly installed Homebrew has the binary, even though this
-/// process's `PATH` predates it.
+/// Whether a freshly installed package manager has left the binary somewhere,
+/// even though this process's `PATH` predates it.
 fn brew_prefix_has_it() -> bool {
-    for prefix in ["/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"] {
-        if std::path::Path::new(prefix).join("bin").join(TOOL).exists() {
-            return true;
-        }
-    }
-    false
+    PREFIXES
+        .iter()
+        .any(|p| std::path::Path::new(p).join("bin").join(TOOL).exists())
 }
 
 #[cfg(test)]
@@ -305,6 +352,48 @@ mod tests {
         assert_eq!(plan(f), Plan::AlreadyInstalled);
         assert!(commands(&plan(f)).is_empty());
         unsafe { std::env::remove_var(SKIP_ENV) };
+    }
+
+    #[test]
+    fn a_just_installed_package_manager_is_still_findable() {
+        // The bug this guards: step two of `BrewThenInstall` runs seconds
+        // after step one created `/opt/homebrew/bin/brew`, but this process
+        // inherited its PATH at launch and knows nothing about it. Resolving
+        // against the augmented PATH is what stops "installed brew, then could
+        // not find brew" from being the normal outcome on a fresh Mac.
+        let path = augmented_path();
+        let dirs: Vec<_> = std::env::split_paths(&path).collect();
+        let inherited: Vec<_> =
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+        for prefix in PREFIXES {
+            let bin = std::path::Path::new(prefix).join("bin");
+            if bin.is_dir() {
+                assert!(
+                    dirs.contains(&bin),
+                    "{bin:?} exists but is not on the augmented PATH"
+                );
+            }
+        }
+        // The user's own PATH keeps priority: a prefix that jumped the queue
+        // would shadow the tools they deliberately put in front. That is not
+        // hypothetical - it made the e2e install case pick the developer's
+        // real brew over the stub the test had staged.
+        assert_eq!(
+            dirs[..inherited.len()],
+            inherited[..],
+            "the inherited PATH must come first, untouched"
+        );
+        // An absolute program is passed through untouched (the brew installer
+        // is spelled `/bin/bash`, which must not be re-resolved).
+        assert_eq!(resolve("/bin/bash"), std::path::PathBuf::from("/bin/bash"));
+        // A program that exists resolves to a real file...
+        assert!(resolve("sh").is_file(), "sh should resolve");
+        // ...and one that does not is returned as-is, so the spawn fails with
+        // a normal "not found" rather than this function panicking.
+        assert_eq!(
+            resolve("strimux-no-such-program-xyz"),
+            std::path::PathBuf::from("strimux-no-such-program-xyz")
+        );
     }
 
     #[test]

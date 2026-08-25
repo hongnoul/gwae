@@ -1176,6 +1176,22 @@ mod tests {
     }
 
     #[test]
+    fn no_question_has_more_than_nine_options() {
+        // A digit answers *immediately*, with no Enter to disambiguate it. That
+        // is only safe while every list is single-digit: a tenth option would
+        // make `1` ambiguous between "option 1" and the first half of "10",
+        // and the flow would have to start waiting again.
+        for q in all() {
+            assert!(
+                q.options.len() <= 9,
+                "{} has {} options; instant digits need <= 9",
+                q.key,
+                q.options.len()
+            );
+        }
+    }
+
+    #[test]
     fn retired_questions_are_gone_for_good() {
         // Mouse capture is no longer a knob, and the inset skeleton frames are
         // a hand-edit-only taste; asking about either is what this rework
