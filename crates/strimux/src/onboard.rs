@@ -674,7 +674,6 @@ pub fn render_sized(
     let (Some(h), Some(mut prefs)) = (height, previewable(q, answered_so_far)) else {
         return s;
     };
-    if true { return s; }
     prefs.apply(q.key, q.options[cursor].value);
     s.push_str("\r\n");
     s.push_str(&crate::preview::render_h(&prefs, h, true));

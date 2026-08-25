@@ -91,7 +91,9 @@ impl Drop for Sandbox {
 /// screen can be read one repaint at a time.
 struct Session {
     child: Box<dyn portable_pty::Child + Send + Sync>,
-    master: Box<dyn portable_pty::MasterPty + Send>,
+    /// Held only to keep the PTY open for the life of the session: dropping
+    /// the master would hang up on the child mid-question.
+    _master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     rx: Receiver<Vec<u8>>,
     buf: String,
@@ -133,7 +135,7 @@ impl Session {
         });
         Session {
             child,
-            master: pair.master,
+            _master: pair.master,
             writer,
             rx,
             buf: String::new(),
