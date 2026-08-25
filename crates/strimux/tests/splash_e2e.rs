@@ -239,6 +239,9 @@ fn a_keypress_skips_the_card_immediately() {
 }
 
 #[test]
+#[ignore = "races the outer compositor's first paint against a ~1s transient \
+            animation; a loaded CI runner coalesces the frames and misses it. \
+            Runs in the nightly e2e workflow (--ignored) and locally."]
 fn the_card_renders_inside_a_strimux_pane() {
     // The actual question this feature raises: a strimux pane is a hosted
     // vt100 grid recomposited by strimux's own renderer, so the animation has
