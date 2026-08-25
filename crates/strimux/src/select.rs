@@ -1,7 +1,7 @@
 //! Drag-to-copy selection inside a PTY pane.
 //!
-//! strimux captures the mouse (so the wheel scrolls the pane under the cursor
-//! instead of the host's scrollback), which also takes native click-drag
+//! strimux captures the mouse (for click-to-focus, and to forward events to a
+//! child that asked for mouse reporting), which takes native click-drag
 //! selection away from the host terminal. This module gives it back: a left
 //! drag inside a pane highlights cells and, on release, copies the selected
 //! text to the system clipboard, exactly like jcode's own transcript

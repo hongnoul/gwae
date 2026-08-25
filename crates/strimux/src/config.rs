@@ -414,7 +414,7 @@ mod tests {
         let cfg = parse("");
         let m = keys::mod_key();
         // Chord hints must name the modifier. A few bindings are mouse or
-        // key-range prose (`1-9`, `click`, `wheel`) and correctly have no
+        // key-range prose (`1-9`, `click`, `↑/↓`) and correctly have no
         // modifier to name.
         let chord_hints = cfg
             .cowsay

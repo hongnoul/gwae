@@ -1,6 +1,6 @@
 //! Command-line interface for the `strimux` binary.
 //!
-//! Single binary, subcommands: `run` (default), `new`, `agent`, `tune`, `setup`, `doctor`.
+//! Single binary, subcommands: `run` (default), `new`, `agent`, `init`, `tune`, `setup`, `doctor`.
 //! There is deliberately no `server`/`ctl`/`ls`/`kill-server`: strimux is
 //! daemon-free (ADR-003 reversed, ADR-011).
 
@@ -47,6 +47,16 @@ pub enum Command {
         /// settings or your terminal's config).
         #[arg(long)]
         apply: bool,
+    },
+    /// Guided first-run setup: theme, layout, chrome, mouse, latency. Safe to
+    /// re-run; it only rewrites the keys you answer and keeps your comments.
+    Init {
+        /// Print every question and option instead of asking anything.
+        #[arg(long)]
+        print: bool,
+        /// Print every frame of the opening title card instead of playing it.
+        #[arg(long)]
+        print_splash: bool,
     },
     /// Install optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty).
     Setup,

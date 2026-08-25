@@ -9,7 +9,7 @@
 - **Agent-aware, zero instrumentation.** Speaks the standard **OSC 133** protocol only. Panes stay ordinary PTYs. The minimap tints by status and `⌥+g` jumps to the one that needs you.
 - **Single process, no daemon.** No socket, no attach/detach. Crashing one pane's emulator can't take the TUI down. Persistence is each harness's own `--resume`.
 - **Kitty graphics passthrough.** `kitten icat` and jcode screenshots render inside their pane — APC sequences forwarded verbatim and clipped to the pane rect.
-- **Mouse that helps.** Click to focus, drag to copy. A pane running a full-screen app that asked for mouse reporting gets every event forwarded verbatim in its own coordinates, so the wheel behaves inside vim or an agent TUI exactly as it would natively.
+- **Mouse that helps, and stays out of the way.** Click to focus, drag to copy. A pane running a full-screen app that asked for mouse reporting gets every event forwarded verbatim in its own coordinates, so the wheel behaves inside vim or an agent TUI exactly as it would natively. strimux claims no wheel of its own; scrollback is `⌥+↑/↓`.
 - **Catppuccin Mocha by default.** Base `#1e1e2e`, focus sapphire `#74c7ec`, overlay `#6c7086`. Every color is themeable, 8 presets ship, `⌥+t` previews them live, and saving the config re-themes the running session without restarting a single pane.
 
 ```sh
@@ -93,6 +93,8 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | `⌥+x` / `⌥+q` (`œ`) | Kill focused pane — columns compact, focus keeps its slot (falls left only at right edge); emptied strip is dropped, last pane quits strimux |
 | `⌥+←` / `⌥+→` | Scroll pane's logical content horizontally (when `content_width` > column width) |
 | `⌥+[` / `⌥+]` | Scroll the row viewport left / right without moving focus |
+| `⌥+↑` / `⌥+↓` | **Scrollback** — read back through the focused pane's history, 3 rows a notch. `⌥+Shift+↑/↓` and `⌥+PageUp/PageDown` move ~a screenful. Typing snaps back to live. A full-screen app (vim, `less`) owns its own scrolling, so it gets the arrow keys instead |
+| `⌥+←` / `⌥+→` | Pan wide content sideways when `content_width` exceeds the column (`⌥+Shift` for a bigger step) |
 | `⌥+1` … `⌥+9` | Jump to column N in focused strip. Keep `⌥` down and keep typing to address columns past 9 (`⌥` + `1` `2` → column 12); the number commits when `⌥` is released, or after ~500ms on terminals that don't report the release |
 | `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
 | `⌥+t` (`†` on macOS) | **Theme picker** — step presets with `←`/`→`, live-previewed on the real UI; `⏎` keeps, `esc` restores |

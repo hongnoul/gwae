@@ -7,6 +7,15 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **`⌥+↑` / `⌥+↓` read back through a pane's scrollback.** With the wheel no
+  longer claimed by strimux (see Removed), the keyboard is the only route into
+  a pane's history, so it needed one: `⌥+↑`/`⌥+↓` move three rows a notch, and
+  `⌥+Shift+↑/↓` or `⌥+PageUp/PageDown` move about a screenful. Typing snaps the
+  pane back to live, and a full-screen app on the alternate screen (vim,
+  `less`) has no scrollback of ours to move, so it gets the arrow keys it
+  expects instead. Covered by `tests/scrollback_e2e.rs`, which drives the real
+  binary and reconstructs the painted screen.
+
 - **Onboarding offers to install `btm`.** The last question of the guided setup
   offers [bottom](https://github.com/ClementTsang/bottom), the system monitor
   that makes a good permanent neighbour to an agent pane, defaulting to yes. On
@@ -121,10 +130,10 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
   had to translate the wheel into arrow keys for alt-screen pagers, and it put
   two knobs in the config (and two questions in setup) for behavior most users
   never asked to change. The wheel now goes to a child that requested mouse
-  reporting, verbatim in its own coordinates, and nowhere else; scrollback
-  moves by keyboard. Mouse capture itself stays on, since click-to-focus and
-  drag-to-copy depend on it. Old configs keep loading: the keys are simply no
-  longer read.
+  reporting, verbatim in its own coordinates, and nowhere else. Mouse capture
+  itself stays on, since click-to-focus and drag-to-copy depend on it. Old
+  configs keep loading: the keys are simply no longer read. Scrollback moves
+  with the new `⌥+↑/↓` binding below.
 
 ### Fixed
 - **Hints no longer teach bindings that do not exist.** The default cowsay list

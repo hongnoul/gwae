@@ -388,11 +388,19 @@ pub fn set_scalar_text(text: &str, key: &str, value: &str) -> String {
             .iter()
             .position(|l| l.trim_start().starts_with('['))
             .unwrap_or(out.len());
-        if at > 0 && !out[at.saturating_sub(1)].trim().is_empty() {
+        let at = if at > 0 && !out[at.saturating_sub(1)].trim().is_empty() {
             out.insert(at, String::new());
             out.insert(at + 1, line);
+            at + 1
         } else {
             out.insert(at, line);
+            at
+        };
+        // Keep a blank line between the key and a following table header, so
+        // repeated writes cannot glue `key = v` onto `[table]` and make the
+        // file read as if the key were inside it.
+        if out.get(at + 1).map(|l| l.trim_start().starts_with('[')) == Some(true) {
+            out.insert(at + 1, String::new());
         }
     }
     let mut s = out.join("\n");
@@ -667,38 +675,6 @@ fn prompt(n: usize) -> Choice {
     }
 }
 
-/// Offer the latency tuning once, right after the user has chosen an agent.
-///
-/// Deliberately only on the interactive path: someone who already configured
-/// `default_agent` is past onboarding and must never be interrupted on the
-/// way into their harness. Silent when there is nothing to improve, so a
-/// tuned machine (or a second run) sees nothing at all.
-fn offer_latency_tuning(input_poll_ms: u64, cfg_path: &Path) {
-    let settings = crate::latency::audit(input_poll_ms);
-    let p = crate::latency::pending(&settings);
-    if p.is_empty() {
-        return;
-    }
-    let (ours, theirs) = crate::latency::ours_and_theirs(&p);
-    println!(
-        "\n{DIM}One more thing: {} input-latency setting(s) on this machine are\nslower than they need to be for a terminal you type in all day.{RESET}",
-        p.len()
-    );
-    // Fix ours without asking: it is our own config file, the change is one
-    // integer, and it is trivially reversible. Everything else is only ever
-    // printed, since it is the user's machine or another program's file.
-    if !ours.is_empty() {
-        match crate::latency::save_input_poll(cfg_path, 1) {
-            Ok(()) => println!("{DIM}Set strimux's own {RESET}input_poll_ms = 1{DIM}.{RESET}"),
-            Err(e) => println!("{YELLOW}Could not write {}: {e}{RESET}", cfg_path.display()),
-        }
-    }
-    if let Some(steps) = crate::latency::render_manual_steps(&theirs) {
-        print!("{steps}");
-    }
-    println!("\n{DIM}Full explanation any time: {RESET}{CYAN}strimux tune{RESET}\n");
-}
-
 /// `strimux agent`: resolve, maybe ask, save, and exec. Never returns.
 pub fn run(
     default_agent: &str,
@@ -742,7 +718,7 @@ pub fn run(
                             cfg_path.display()
                         ),
                     }
-                    offer_latency_tuning(input_poll_ms, cfg_path);
+                    crate::onboard::maybe_run(cfg_path, input_poll_ms);
                     cmd
                 }
                 _ => fallback_shell(),
@@ -766,7 +742,7 @@ pub fn run(
                             cfg_path.display()
                         ),
                     }
-                    offer_latency_tuning(input_poll_ms, cfg_path);
+                    crate::onboard::maybe_run(cfg_path, input_poll_ms);
                     pick
                 }
                 None => fallback_shell(),

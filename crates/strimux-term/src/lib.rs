@@ -141,8 +141,9 @@ impl Vt100Grid {
     }
 
     /// True when the child has taken over the alternate screen (a full-screen
-    /// app like vim or less). Such apps own scrolling themselves, so wheel
-    /// events must be forwarded to them instead of moving our scrollback.
+    /// app like vim or less). Such apps own scrolling themselves and keep no
+    /// scrollback of ours, so a scroll request is translated into the arrow
+    /// keys they expect rather than moving a buffer that does not exist.
     pub fn alternate_screen(&self) -> bool {
         self.parser.screen().alternate_screen()
     }
@@ -480,7 +481,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wheel_scrollback_moves_view_and_returns() {
+    fn scrollback_moves_view_and_returns() {
         let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
         for i in 0..10 {
             g.feed(format!("line{i}\r\n").as_bytes());

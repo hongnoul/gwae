@@ -26,22 +26,22 @@ use crate::select::{self, Selection};
 
 /// What a mouse event inside a pane should do.
 ///
-/// Mouse capture is what lets the wheel scroll the pane under the cursor, but
-/// it also takes click-drag selection away from the host terminal. These are
-/// the three ways an event can be resolved, in the order a terminal user
-/// expects:
+/// Mouse capture is what gives strimux click-to-focus and drag-to-copy, which
+/// it takes away from the host terminal. These are the three ways an event can
+/// be resolved, in the order a terminal user expects:
 ///  - the child asked for mouse reporting, so it owns the event (vim, an agent
 ///    TUI) - unless Shift is held, the long-standing xterm convention for
 ///    "give me the multiplexer's selection instead";
 ///  - otherwise a left press/drag/release drives our own drag-to-copy;
-///  - everything else (the wheel) keeps scrolling scrollback as before.
+///  - anything else is handled locally, or not at all. strimux claims no wheel
+///    of its own: scrollback moves with `⌥+↑/↓` (see `handle_key`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MouseRole {
     /// Forward verbatim to the child as an SGR mouse report.
     Forward,
     /// Drive strimux's own drag-to-copy selection.
     Select,
-    /// Wheel scrolling (or anything else we handle locally).
+    /// Handled locally, or ignored. strimux has no wheel behavior of its own.
     Local,
 }
 
@@ -2166,6 +2166,10 @@ enum Cmd {
     Act(Action),
     Scroll(i32),
     ScrollPane(i32),
+    /// Move the focused pane's *vertical* scrollback by this many rows
+    /// (positive = back into history). The keyboard route into scrollback,
+    /// and since strimux no longer claims the wheel, the only one.
+    ScrollBack(i32),
     Input(Vec<u8>),
     /// Smart-jump: focus the next pane that needs the user (`⌥+g`). Resolved
     /// against the live layout in the main loop, not here.
@@ -2443,6 +2447,20 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
                 Cmd::Scroll(200)
             });
         }
+    }
+    // Up/Down move the focused pane's scrollback: strimux does not claim the
+    // wheel, so this is how you read back through a pane's history. Shift (and
+    // PageUp/PageDown) move by a screenful-ish jump rather than a line.
+    if matches!(ev.code, Up | Down | PageUp | PageDown) {
+        let step = if shift || matches!(ev.code, PageUp | PageDown) {
+            20
+        } else {
+            3
+        };
+        return Some(match ev.code {
+            Up | PageUp => Cmd::ScrollBack(step),
+            _ => Cmd::ScrollBack(-step),
+        });
     }
     // Shift+arrow and plain arrow scroll the pane content.
     if matches!(ev.code, Left | Right) {
@@ -3067,6 +3085,26 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                 );
                                 dirty = true;
                             }
+                            Cmd::ScrollBack(d) => {
+                                if let Some(pid) = focused_pane(&layout) {
+                                    if let Some(p) = panes.get_mut(&pid) {
+                                        // A full-screen app (vim, less) owns
+                                        // its own scrolling and has no
+                                        // scrollback of ours to move, so send
+                                        // it the arrow keys it expects instead.
+                                        if p.grid.alternate_screen() {
+                                            let key: &[u8] =
+                                                if d > 0 { b"\x1b[A" } else { b"\x1b[B" };
+                                            for _ in 0..d.abs().min(20) {
+                                                let _ = p.writer.write_all(key);
+                                            }
+                                            let _ = p.writer.flush();
+                                        } else if p.grid.scroll_by(d) {
+                                            dirty = true;
+                                        }
+                                    }
+                                }
+                            }
                             Cmd::ScrollPane(d) => {
                                 if let Some(pid) = focused_pane(&layout) {
                                     if let Some(p) = panes.get_mut(&pid) {
@@ -3669,6 +3707,53 @@ mod tests {
     }
 
     #[test]
+    fn alt_up_down_is_the_keyboard_route_into_scrollback() {
+        // strimux no longer claims the wheel, so this is the *only* way to
+        // read back through a pane's history. If it regressed, scrollback
+        // would exist with nothing able to reach it.
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::Up, KeyModifiers::ALT)),
+            Some(Cmd::ScrollBack(3)),
+            "no way back into scrollback"
+        );
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)),
+            Some(Cmd::ScrollBack(-3))
+        );
+        // Shift and PageUp/PageDown take a bigger bite.
+        assert_eq!(
+            handle_key(&KeyEvent::new(
+                KeyCode::Up,
+                KeyModifiers::ALT | KeyModifiers::SHIFT
+            )),
+            Some(Cmd::ScrollBack(20))
+        );
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::PageUp, KeyModifiers::ALT)),
+            Some(Cmd::ScrollBack(20))
+        );
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::PageDown, KeyModifiers::ALT)),
+            Some(Cmd::ScrollBack(-20))
+        );
+        // Without Alt these are ordinary keys the program inside the pane
+        // owns: stealing a bare Up arrow would break every shell's history.
+        assert!(matches!(
+            handle_key(&KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            Some(Cmd::Input(_))
+        ));
+        assert!(matches!(
+            handle_key(&KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)),
+            Some(Cmd::Input(_))
+        ));
+        // And the horizontal pan it sits next to still works.
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)),
+            Some(Cmd::ScrollPane(-1))
+        );
+    }
+
+    #[test]
     fn handle_key_alt_q_kills_pane() {
         let ev = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::ALT);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::KillPane)));
@@ -4177,7 +4262,8 @@ mod tests {
                 MouseRole::Select
             );
         }
-        // The wheel is never a selection; it stays local scrollback control.
+        // The wheel is never a selection: strimux resolves it locally, which
+        // now means it does nothing unless the child asked for reporting.
         assert_eq!(
             mouse_role(MouseEventKind::ScrollUp, plain, false),
             MouseRole::Local

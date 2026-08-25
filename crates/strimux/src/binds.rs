@@ -209,6 +209,14 @@ pub const BINDS: &[Bind] = &[
         effect: Effect::Unverifiable,
     },
     Bind {
+        trigger: Trigger::ModProse("↑/↓"),
+        hint: "reads back through this pane's history",
+        glyph: None,
+        group: Group::Navigate,
+        desc: "scrollback",
+        effect: Effect::Unverifiable,
+    },
+    Bind {
         trigger: Trigger::ModProse("←/→"),
         hint: "pans wide content sideways",
         glyph: None,
