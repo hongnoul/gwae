@@ -571,10 +571,17 @@ fn render_frame(
     }
 
     let focused = focused_pane(layout);
-    let mut focus_rect: Option<Rect> = None;
     let mut focused_cursor_abs: Option<(u16, u16, bool)> = None; // (screen x,y, hide)
     let pane_views =
         focused_pane_views(layout, cols, rows, content_width, panes, skeleton.is_some());
+    // The ring follows the *layout*, not the pty: a pane whose process has not
+    // been spawned (or has already exited) still occupies its rect and can
+    // still be focused, so take the rect from the view list rather than from
+    // the paint loop below, which skips panes with no live emulator.
+    let focus_rect = pane_views
+        .iter()
+        .find(|v| Some(v.pid) == focused)
+        .map(|v| v.rect);
     for v in &pane_views {
         let Some(pane) = panes.get_mut(&v.pid) else {
             continue;
@@ -595,7 +602,6 @@ fn render_frame(
             }
         };
         if is_focus {
-            focus_rect = Some(v.rect);
             // Map the emulator cursor into screen coords, accounting for the
             // pane's content-window ([g_start, g_end) visible in rect).
             let (cur_row, cur_col) = pane.grid.cursor_position();
@@ -676,6 +682,17 @@ fn render_frame(
     const P_CHROME: u8 = 1;
     const P_FOCUS_COL: u8 = 2;
     const P_FOCUS_PANE: u8 = 3;
+    // A column holding a single pane *is* that pane, so framing the whole box
+    // in the accent is the focus ring. Once the column is split, the box is a
+    // container of several panes and only one of them has focus: highlighting
+    // the container would claim focus for its siblings too. In that case the
+    // column keeps plain chrome and the accent ring is drawn tight around the
+    // focused split below (`P_FOCUS_PANE`).
+    let focused_col_split = layout
+        .focused_row()
+        .and_then(|r| r.columns.get(layout.focus.column))
+        .map(|c| c.panes.len() > 1)
+        .unwrap_or(false);
     if let Some(sk) = skeleton {
         let chrome = mm.chrome_rows();
         let strip_h = rows.saturating_sub(chrome).max(1);
@@ -709,7 +726,7 @@ fn render_frame(
             if right <= left {
                 continue;
             }
-            let (color, prio) = if ci == layout.focus.column {
+            let (color, prio) = if ci == layout.focus.column && !focused_col_split {
                 (focus_color, P_FOCUS_COL)
             } else {
                 (sk, P_CHROME)
@@ -829,13 +846,10 @@ fn render_frame(
         // Full-bleed mode: the ring lands on live pane content, so tint the
         // background instead of writing glyphs over the program's own text.
         (None, Some(rect)) => tint_focus_ring(out, cols, rect, focus_color),
-        (Some(_), Some(rect)) => {
-            let stacked = layout
-                .focused_row()
-                .and_then(|r| r.columns.get(layout.focus.column))
-                .map(|c| c.panes.len() > 1)
-                .unwrap_or(false);
-            if stacked {
+        // Skeleton mode with a split column: the container frame stays chrome,
+        // so ring the focused split itself.
+        (Some(_), Some(rect)) if focused_col_split => {
+            {
                 // Grow the rect by 1 so the ring lands on the frame/gap cells
                 // around the pane, not on its content.
                 let x = rect.x.saturating_sub(1);
@@ -4954,6 +4968,92 @@ mod tests {
         // Pane content is never covered: the row below the divider belongs to
         // the lower pane's content area, not to any frame.
         assert!(stacked[1].rect.y > divider_y);
+    }
+
+    #[test]
+    fn focus_ring_tracks_the_focused_split_not_the_whole_column() {
+        // A split column is a *container*: focus belongs to one of its panes,
+        // so the accent must ring only that pane. The container's own outer
+        // frame stays plain chrome, otherwise the unfocused sibling looks
+        // focused too.
+        let mut layout = Layout::new(1);
+        let row = layout.focus.row;
+        let a = layout.alloc_pane();
+        let b = layout.alloc_pane();
+        layout.add_column(row, strimux_layout::Width::Cells(20), vec![a, b]);
+        layout.focus.column = layout.focused_row().unwrap().columns.len() - 1;
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let (cols, rows) = (80u16, 14u16);
+        let white = CColor::Rgb(0xff, 0xff, 0xff);
+        let red = CColor::Rgb(0xff, 0, 0);
+        let render = |layout: &Layout, panes: &mut HashMap<PaneId, PtyPane>| {
+            let mut out = Vec::new();
+            render_frame(
+                &mut out,
+                layout,
+                panes,
+                cols,
+                rows,
+                0,
+                &pal_of(CColor::Default, red, white),
+                true,
+                &no_map(),
+                &no_cow(),
+                true,
+                None,
+            );
+            out
+        };
+        let ranges = layout.column_x_ranges(row, cols).unwrap();
+        let (cs, ce) = ranges[layout.focus.column];
+        let (cs, ce) = (cs as u16, (ce as u16).min(cols - 1));
+        let views = focused_pane_views(&layout, cols, rows, 0, &panes, true);
+        let stacked: Vec<&PaneView> = views
+            .iter()
+            .filter(|v| v.col == layout.focus.column)
+            .collect();
+        assert_eq!(stacked.len(), 2);
+        let divider_y = stacked[1].rect.y - 1;
+        let top_mid_y = divider_y / 2;
+        let bot_mid_y = divider_y + (rows - 1 - divider_y) / 2;
+
+        for (pane_idx, own_y, other_y) in
+            [(0usize, top_mid_y, bot_mid_y), (1, bot_mid_y, top_mid_y)]
+        {
+            layout.focus.pane = pane_idx;
+            let out = render(&layout, &mut panes);
+            let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
+            // The focused split's own side edges carry the accent...
+            assert_eq!(at(cs, own_y).style.fg, red, "focused split left edge");
+            assert_eq!(at(ce, own_y).style.fg, red, "focused split right edge");
+            // ...while the sibling half of the same container does not.
+            assert_eq!(at(cs, other_y).style.fg, white, "sibling split left edge");
+            assert_eq!(at(ce, other_y).style.fg, white, "sibling split right edge");
+        }
+
+        // Collapsing the split back to a single pane restores the whole-column
+        // ring: there the column and the pane are the same thing.
+        let mut single = Layout::new(1);
+        let row = single.focus.row;
+        let p = single.alloc_pane();
+        single.add_column(row, strimux_layout::Width::Cells(20), vec![p]);
+        single.focus.column = single.focused_row().unwrap().columns.len() - 1;
+        single.focus.pane = 0;
+        let out = render(&single, &mut panes);
+        let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
+        let ranges = single.column_x_ranges(row, cols).unwrap();
+        let (cs, ce) = ranges[single.focus.column];
+        let (cs, ce) = (cs as u16, (ce as u16).min(cols - 1));
+        assert_eq!(
+            at(cs, rows / 2).style.fg,
+            red,
+            "unsplit column rings accent"
+        );
+        assert_eq!(
+            at(ce, rows / 2).style.fg,
+            red,
+            "unsplit column rings accent"
+        );
     }
 
     #[test]
