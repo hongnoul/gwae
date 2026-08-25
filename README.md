@@ -198,7 +198,7 @@ Key reference (defaults in parentheses):
 | `scroll_margin` | int | `2` | Reserved under quantization (kept for future continuous mode) |
 | `center_focus` | bool | `false` | Center focused column at nearest quantized stop |
 | `content_width` | int | `0` | Logical pane width; `0` = follow column width (wrap). `>0` = horizontal overflow panned with `⌥+←/→` |
-| `default_agent` | string | `jcode` | Command launched by `;` |
+| `default_agent` | string | `jcode` | Command launched by `;`; falls back to `$SHELL` if not on `PATH` |
 | `startup_panes` | int | `1` | Quarter-width panes at launch; remainder shows as skeleton placeholders |
 | `theme` | string/table | `catppuccin-mocha` | Palette preset or `[theme]` table with `preset` + per-key overrides; see Appearance / `docs/CONFIG.md` |
 | `background` | color | theme `base` | Legacy alias for `theme.base` |

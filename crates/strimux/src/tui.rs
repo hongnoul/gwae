@@ -267,6 +267,37 @@ fn emit_title(stdout: &mut impl Write, title: &str) -> std::io::Result<()> {
     stdout.flush()
 }
 
+/// True when the first word of `cmd` resolves to an executable we can spawn:
+/// either an explicit path that exists, or a bare name found on `PATH`. Used
+/// so the spawn-agent verb can degrade to a shell instead of producing a pane
+/// whose child dies immediately with "no such file or directory".
+fn agent_on_path(cmd: &str) -> bool {
+    let argv = shell_split(cmd);
+    let Some(exe) = argv.first() else {
+        return false;
+    };
+    fn executable(p: &std::path::Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::metadata(p)
+                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
+        }
+        #[cfg(not(unix))]
+        {
+            p.is_file()
+        }
+    }
+    if exe.contains('/') || exe.contains('\\') {
+        return executable(std::path::Path::new(exe));
+    }
+    let Ok(path) = std::env::var("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| executable(&dir.join(exe)))
+}
+
 /// Spawn a PTY running `cmd` at the given grid size, wiring a reader thread.
 fn spawn_pane(
     id: PaneId,
@@ -2178,8 +2209,90 @@ enum Cmd {
     /// Toggle the centered cheat-sheet HUD (`⌥+/`), the same overlay shown
     /// once at startup. Any other key still dismisses it.
     ToggleHud,
+    /// One digit of a column jump (`⌥+1`, or `⌥+1 2` while Option stays down).
+    ///
+    /// Deliberately *not* resolved to a column here: a single keypress is
+    /// ambiguous, because `⌥+1` may be the whole address or the first half of
+    /// `⌥+12`. Only the main loop knows when the chord ends (Option released,
+    /// or the idle timeout), so it owns the accumulator; this just reports
+    /// "digit N was typed as part of a jump".
+    JumpDigit(u32),
     Quit,
     None,
+}
+
+/// Accumulates the digits of a column jump typed while the modifier is held.
+///
+/// `⌥+1..9` used to jump on the keystroke itself, which made columns 10 and
+/// up unreachable by address: there is no `⌥+10` key. Holding Option is
+/// already a mode (it reveals the HUD/minimap), so the natural fix is to let
+/// that mode collect a *number* rather than a single digit and commit it when
+/// the mode ends.
+///
+/// Commit happens on whichever comes first:
+/// * Option released (the precise signal, available under the Kitty keyboard
+///   protocol, which strimux requests at startup);
+/// * [`Self::TIMEOUT`] of no further digits (the fallback for terminals that
+///   never report a bare release, where the accumulator would otherwise hang
+///   forever and swallow the jump);
+/// * any other chord, which ends the number the same way a non-digit ends a
+///   count in vi.
+///
+/// Kept free of terminal types so the whole state machine is unit testable.
+#[derive(Debug, Default)]
+struct JumpAccum {
+    /// The 1-based column number typed so far, if any.
+    value: Option<usize>,
+    /// When an un-committed number goes stale. Refreshed by every digit.
+    deadline: Option<Instant>,
+}
+
+impl JumpAccum {
+    /// How long a pending number survives without a release event. Long
+    /// enough to type a second digit deliberately, short enough that a
+    /// terminal without release reporting still feels immediate.
+    const TIMEOUT: Duration = Duration::from_millis(500);
+
+    /// Absurd addresses are refused rather than accumulated forever: a jump is
+    /// clamped to the columns that exist anyway, and this keeps `value` from
+    /// overflowing when a key repeat spams digits.
+    const MAX: usize = 999;
+
+    /// Record one digit. `0` extends an existing number (`⌥+1 0` -> 10) but
+    /// starts nothing on its own, since there is no column 0.
+    fn push(&mut self, d: u32, now: Instant) {
+        let d = d as usize;
+        let next = match self.value {
+            Some(v) => v * 10 + d,
+            None if d == 0 => return,
+            None => d,
+        };
+        if next > Self::MAX {
+            return;
+        }
+        self.value = Some(next);
+        self.deadline = Some(now + Self::TIMEOUT);
+    }
+
+    /// Take the accumulated number as a 0-based column index, clearing state.
+    fn take(&mut self) -> Option<usize> {
+        self.deadline = None;
+        self.value.take().map(|v| v.saturating_sub(1))
+    }
+
+    /// Commit if the idle timeout has passed. Returns the column index to
+    /// focus, if any.
+    fn take_if_expired(&mut self, now: Instant) -> Option<usize> {
+        match self.deadline {
+            Some(t) if now >= t => self.take(),
+            _ => None,
+        }
+    }
+
+    /// Whether a number is being typed right now (drives the HUD hint).
+    fn pending(&self) -> Option<usize> {
+        self.value
+    }
 }
 
 /// Encode a key event that is not a strimux chord into PTY bytes.
@@ -2348,9 +2461,9 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             'g' => return Some(Cmd::SmartJump),
             't' => return Some(Cmd::ThemePick(0)),
             '/' | '?' => return Some(Cmd::ToggleHud),
-            _ if c.is_ascii_digit() => Some(Action::JumpToColumn(
-                c.to_digit(10).unwrap_or(1) as usize - 1,
-            )),
+            _ if c.is_ascii_digit() => {
+                return Some(Cmd::JumpDigit(c.to_digit(10).unwrap_or(1)));
+            }
             _ => None,
         };
         if let Some(a) = act {
@@ -2390,9 +2503,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     // since those don't need case folding.
     match ev.code {
         Char(c) if c.is_ascii_digit() => {
-            return Some(Cmd::Act(Action::JumpToColumn(
-                c.to_digit(10).unwrap_or(1) as usize - 1,
-            )))
+            return Some(Cmd::JumpDigit(c.to_digit(10).unwrap_or(1)))
         }
         Char('[') => return Some(Cmd::Scroll(-200)),
         Char(']') => return Some(Cmd::Scroll(200)),
@@ -2433,8 +2544,16 @@ fn sync_panes(
         if panes.contains_key(&pid) {
             continue;
         }
+        // Agent panes fall back to a plain shell when the configured harness
+        // isn't on PATH: a missing `jcode` must not leave a dead/blank pane.
         let cmd = if agent_panes.contains(&pid) {
-            cfg.default_agent.clone()
+            let want = cfg.default_agent.clone();
+            if agent_on_path(&want) {
+                want
+            } else {
+                tracing::warn!(agent = %want, "default_agent not on PATH; falling back to shell");
+                String::new()
+            }
         } else {
             String::new()
         };
@@ -2602,6 +2721,8 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut dirty = true;
     let mut bare_alt_held = false;
     let mut chord_alt_until: Option<Instant> = None;
+    // Digits of an in-flight `⌥+<number>` column jump. See `JumpAccum`.
+    let mut jump = JumpAccum::default();
     let mut last_alt_held = false;
     // Startup-only cheat-sheet HUD: shown once at init, dismissed on first key.
     let mut hud_active: bool = true;
@@ -2914,7 +3035,27 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         continue;
                     }
                     if let Some(cmd) = handle_key(&ke) {
+                        // Any command other than another digit ends the number
+                        // being typed, the way a non-count key ends a vi count.
+                        // The pending jump commits first, so `⌥+1 2` then
+                        // `⌥+s` lands the split on column 12, not on wherever
+                        // focus happened to be.
+                        if !matches!(cmd, Cmd::JumpDigit(_)) {
+                            if let Some(n) = jump.take() {
+                                let v = Viewport::new(cols);
+                                let f = FollowScroll {
+                                    margin: cfg.scroll_margin,
+                                    center: cfg.center_focus,
+                                };
+                                let _ = layout.apply(Action::JumpToColumn(n), v, f);
+                                dirty = true;
+                            }
+                        }
                         match cmd {
+                            Cmd::JumpDigit(d) => {
+                                jump.push(d, Instant::now());
+                                dirty = true;
+                            }
                             // Arm the disclaimer rather than exiting: the
                             // second press (handled above) is the one that
                             // actually kills every pane.
@@ -2975,6 +3116,17 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                     if let Some(pid) = focused_pane(&layout) {
                                         agent_panes.insert(pid);
                                     }
+                                    // Say so out loud when the harness isn't
+                                    // installed: the pane will come up as a
+                                    // plain shell and that should not look
+                                    // like strimux silently misfired.
+                                    if !agent_on_path(&cfg.default_agent) {
+                                        reload_note = Some(format!(
+                                            "agent error: `{}` not on PATH — opened a shell instead",
+                                            cfg.default_agent
+                                        ));
+                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                    }
                                 }
                                 if let Err(e) =
                                     sync_panes(&mut layout, &mut panes, &cfg, &tx, 0, &agent_panes)
@@ -3015,6 +3167,18 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 }
                 Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Release => {
                     if is_alt_modifier(&ke) && bare_alt_held {
+                        // Releasing the modifier ends the chord, so a pending
+                        // `⌥+<number>` commits here: this is the whole point
+                        // of accumulating, and it is what makes columns past 9
+                        // addressable at all.
+                        if let Some(n) = jump.take() {
+                            let v = Viewport::new(cols);
+                            let f = FollowScroll {
+                                margin: cfg.scroll_margin,
+                                center: cfg.center_focus,
+                            };
+                            let _ = layout.apply(Action::JumpToColumn(n), v, f);
+                        }
                         bare_alt_held = false;
                         // Bare release means the physical key is up — drop the
                         // fallback window too so a preceding Alt+hjkl chord
@@ -3257,6 +3421,18 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 chord_alt_until = None;
             }
         }
+        // Fallback commit for terminals that never report a bare Option
+        // release: without this a typed number would sit in the accumulator
+        // forever and the jump would simply never happen.
+        if let Some(n) = jump.take_if_expired(now_for_hud) {
+            let v = Viewport::new(cols);
+            let f = FollowScroll {
+                margin: cfg.scroll_margin,
+                center: cfg.center_focus,
+            };
+            let _ = layout.apply(Action::JumpToColumn(n), v, f);
+            dirty = true;
+        }
         let chord_alt_held = chord_alt_until.is_some();
         let effective_alt_held = bare_alt_held || chord_alt_held;
         let cur_has_attention = has_attention(&layout);
@@ -3291,8 +3467,21 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             if let Some(sel) = theme_pick {
                 draw_theme_picker(&mut frame, cols, rows, sel, &pal);
             }
+            // Echo the number as it is typed. Without this, a multi-digit
+            // jump is invisible until it commits and `⌥+1 2` is
+            // indistinguishable from a dropped keystroke.
+            if let Some(n) = jump.pending() {
+                draw_toast(
+                    &mut frame,
+                    cols,
+                    rows,
+                    &format!("{} → column {}", crate::keys::mod_key(), n),
+                    &pal,
+                    true,
+                );
+            }
             if let Some(note) = &reload_note {
-                let ok = !note.starts_with("config error") && !note.starts_with("unknown theme");
+                let ok = !note.contains("error") && !note.starts_with("unknown theme");
                 draw_toast(&mut frame, cols, rows, note, &pal, ok);
             }
             // Topmost: the destructive confirmation must never be obscured by
@@ -4018,7 +4207,7 @@ mod tests {
 
     #[test]
     fn selection_highlight_inverts_exactly_the_dragged_cells() {
-        let mut layout = Layout::new(1);
+        let layout = Layout::new(1);
         let pid = *layout
             .focused_row()
             .and_then(|r| r.columns.first())
@@ -5794,5 +5983,32 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
     );
     for p in panes.values_mut() {
         let _ = p.child.kill();
+    }
+}
+
+#[cfg(test)]
+mod agent_path_tests {
+    use super::agent_on_path;
+
+    #[test]
+    fn bare_name_on_path_resolves_and_missing_one_does_not() {
+        // `sh` is on PATH everywhere we run; a nonsense name never is, and the
+        // spawn-agent verb relies on that distinction to fall back to a shell.
+        assert!(agent_on_path("sh"));
+        assert!(!agent_on_path("strimux-no-such-agent-xyz"));
+        assert!(!agent_on_path("   "));
+    }
+
+    #[test]
+    fn explicit_path_must_exist_and_be_executable() {
+        assert!(agent_on_path("/bin/sh"));
+        assert!(!agent_on_path("/bin/definitely-not-here"));
+        // A directory is not spawnable even though the path exists.
+        assert!(!agent_on_path("/bin"));
+    }
+
+    #[test]
+    fn only_the_first_word_is_probed_so_args_do_not_break_lookup() {
+        assert!(agent_on_path("sh -c 'echo hi'"));
     }
 }
