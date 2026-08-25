@@ -65,6 +65,19 @@ pub struct Layout {
 }
 impl Default for Layout {
     fn default() -> Self {
+        Layout::new(Self::INITIAL_STRIPS)
+    }
+}
+
+impl Layout {
+    /// The default number of equal-width panes on screen at first launch.
+    pub const INITIAL_STRIPS: usize = 4;
+
+    /// Build a fresh layout with `strips` equal-width quarter panes in a single
+    /// row, focused on the first. Panes keep a fixed `1/4` share of the
+    /// viewport regardless of `strips`, so fewer `strips` than 4 leave the right
+    /// side of the screen empty (uncovered background).
+    pub fn new(strips: usize) -> Self {
         let mut layout = Layout {
             rows: Vec::new(),
             focus: Focus {
@@ -77,9 +90,9 @@ impl Default for Layout {
             next_pane: 0,
         };
         let row = layout.new_row("main".to_string());
-        // A single strip of `INITIAL_STRIPS` panes, each 1/4 of the viewport.
+        // A single strip of `n` panes, each 1/4 of the viewport.
         let width = Width::Preset(crate::width::Preset::Quarter);
-        for _ in 0..Layout::INITIAL_STRIPS {
+        for _ in 0..strips {
             let pane = layout.alloc_pane();
             layout.add_column(row, width, vec![pane]);
         }
@@ -87,11 +100,6 @@ impl Default for Layout {
         layout.focus.column = 0;
         layout
     }
-}
-
-impl Layout {
-    /// The default number of equal-width panes on screen at first launch.
-    pub const INITIAL_STRIPS: usize = 4;
 
     pub fn alloc_pane(&mut self) -> PaneId {
         let id = self.next_pane;

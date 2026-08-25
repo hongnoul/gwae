@@ -301,9 +301,19 @@ fn render_frame(
     cols: u16,
     rows: u16,
     content_width: u16,
+    background: CColor,
 ) {
     out.clear();
     out.resize((cols as usize) * (rows as usize), Cell::default());
+    // Paint the uncovered background first so any cell not overwritten by a
+    // pane (the empty right side with fewer than four panes, gaps, and the
+    // overflow tail past a pane's content) shows the configured color rather
+    // than the terminal's default black. Pane cells are painted over this next,
+    // and the focused-pane tint layers on top of default-bg pane cells, so
+    // nothing here bleeds into a pane.
+    for c in out.iter_mut() {
+        c.style.bg = background;
+    }
 
     let focused = focused_pane(layout);
     for v in focused_pane_views(layout, cols, rows, content_width, panes) {
@@ -665,7 +675,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     if std::env::var_os("STRIMUX_DEBUG_SIZE").is_some() {
         eprintln!("[strimux] initial terminal size -> {cols} cols x {rows} rows");
     }
-    let mut layout = Layout::default();
+    let mut layout = Layout::new(cfg.startup_panes.max(1));
     let (tx, rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     let initial = command.clone().unwrap_or_default();
@@ -856,6 +866,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 cols,
                 rows,
                 cfg.content_width,
+                cfg.background.color(),
             );
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
@@ -993,21 +1004,21 @@ fn content_scroll_reveals_overflow_e2e() {
 
     // At scroll 0 the viewport shows content columns 0..79 (digits 1,2,...,0).
     panes.get_mut(&pid).unwrap().h_scroll = 0;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default);
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
     assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
     assert_eq!(out[77].ch, '8'); // content col 77 -> screen x=77
 
     // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
     panes.get_mut(&pid).unwrap().h_scroll = 60;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default);
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
     assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
     assert_eq!(out[77].ch, '8'); // content col 137 -> screen x=77
 
     // Past the 240-col content the window reveals blanks.
     panes.get_mut(&pid).unwrap().h_scroll = 200;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default);
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
     assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
     assert_eq!(out[45].ch, ' '); // past content end -> blank

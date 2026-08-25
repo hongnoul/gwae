@@ -5,9 +5,12 @@
 //! M0 and grows with the layout. `docs/CONFIG.md` is generated from the doc
 //! comments here.
 
+use serde::de::{self, Visitor};
 use serde::Deserialize;
+use std::fmt;
 use std::path::PathBuf;
 use strimux_layout::Width;
+use strimux_term::CColor;
 
 /// The resolved view of the config file, with defaults filled in.
 #[derive(Debug, Clone, Deserialize)]
@@ -27,6 +30,11 @@ pub struct Config {
     pub content_width: u16,
     /// The agent harness command that `;` (spawn-agent) launches.
     pub default_agent: String,
+    /// Number of equal-width panes on screen at first launch.
+    pub startup_panes: usize,
+    /// Color of the empty (uncovered) background behind the panes. Accepts a
+    /// 256-color index (`236`), a hex RGB (`"#1e1e2e"`), or `"default"`.
+    pub background: Background,
 }
 
 impl Default for Config {
@@ -37,6 +45,8 @@ impl Default for Config {
             center_focus: false,
             content_width: 0,
             default_agent: "jcode".to_string(),
+            startup_panes: 4,
+            background: Background::default(),
         }
     }
 }
@@ -63,5 +73,128 @@ impl Config {
             }),
             Err(_) => Config::default(),
         }
+    }
+}
+
+/// The empty (uncovered) background color behind the panes. Wraps a `CColor`
+/// and parses it from TOML as either a 256-color index, a hex RGB string, or
+/// the literal `"default"` (the terminal's own background).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Background(pub CColor);
+
+impl Default for Background {
+    fn default() -> Self {
+        Background(CColor::Default)
+    }
+}
+
+impl Background {
+    /// Resolve to the color used when painting uncovered background cells.
+    pub fn color(self) -> CColor {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for Background {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(BackgroundVisitor)
+    }
+}
+
+struct BackgroundVisitor;
+
+impl<'de> Visitor<'de> for BackgroundVisitor {
+    type Value = Background;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a 256-color index (0-255), a hex RGB string like \"#1e1e2e\", or \"default\"")
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        let i = v.min(255) as u8;
+        Ok(Background(CColor::Idx(i)))
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        let i = v.clamp(0, 255) as u8;
+        Ok(Background(CColor::Idx(i)))
+    }
+
+    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        if s.eq_ignore_ascii_case("default") {
+            return Ok(Background(CColor::Default));
+        }
+        let hex = s.trim_start_matches('#');
+        if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(de::Error::custom(
+                "background string must be \"default\" or a 6-digit hex RGB like \"#1e1e2e\"",
+            ));
+        }
+        let r = u8::from_str_radix(&hex[0..2], 16).map_err(de::Error::custom)?;
+        let g = u8::from_str_radix(&hex[2..4], 16).map_err(de::Error::custom)?;
+        let b = u8::from_str_radix(&hex[4..6], 16).map_err(de::Error::custom)?;
+        Ok(Background(CColor::Rgb(r, g, b)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(toml: &str) -> Config {
+        toml::from_str(toml).expect("config parses")
+    }
+
+    #[test]
+    fn defaults_apply_when_omitted() {
+        let cfg = parse("");
+        assert_eq!(cfg.startup_panes, 4);
+        assert_eq!(cfg.background, Background::default());
+    }
+
+    #[test]
+    fn background_index_parses() {
+        let cfg = parse("background = 235");
+        assert_eq!(cfg.background, Background(CColor::Idx(235)));
+    }
+
+    #[test]
+    fn background_hex_parses() {
+        let cfg = parse("background = \"#1e1e2e\"");
+        assert_eq!(cfg.background, Background(CColor::Rgb(0x1e, 0x1e, 0x2e)));
+        // Leading '#' is optional.
+        let cfg = parse("background = '1e1e2e'");
+        assert_eq!(cfg.background, Background(CColor::Rgb(0x1e, 0x1e, 0x2e)));
+    }
+
+    #[test]
+    fn background_default_literal() {
+        let cfg = parse("background = \"default\"");
+        assert_eq!(cfg.background, Background(CColor::Default));
+    }
+
+    #[test]
+    fn startup_panes_parses() {
+        let cfg = parse("startup_panes = 2");
+        assert_eq!(cfg.startup_panes, 2);
+    }
+
+    #[test]
+    fn sample_user_config() {
+        let cfg = parse("startup_panes = 2\nbackground = 235");
+        assert_eq!(cfg.startup_panes, 2);
+        assert_eq!(cfg.background, Background(CColor::Idx(235)));
     }
 }

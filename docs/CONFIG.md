@@ -23,6 +23,8 @@ default_agent = "claude"
 | `center_focus` | bool | `false` | Always center the focused column (niri's centered mode) instead of scrolling minimally. |
 | `content_width` | integer | `0` | Logical grid content width (cells) of every pane, decoupled from the visible column width. Long lines up to this width do not wrap and can be revealed with horizontal pane scroll (`⌥+Left/Right`, the Option key on macOS). `0` (the default) follows the visible column width so lines wrap normally and there is no horizontal overflow to manage in a pane. |
 | `default_agent` | string | `"jcode"` | The agent harness command that `;` (spawn-agent) launches. |
+| `startup_panes` | integer | `4` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (covered by `background`). `2` gives two quarter panes with the right half empty. |
+| `background` | color | `default` | Color of the empty (uncovered) background behind the panes. Accepted forms: a 256-color index (`235`), a hex RGB string (`"#1e1e2e"`), or the literal `"default"` (the terminal's own background, usually black). Pane content always paints over it. |
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.
