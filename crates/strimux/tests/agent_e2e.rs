@@ -59,8 +59,19 @@ impl Sandbox {
         std::fs::read_to_string(self.config_path()).unwrap_or_default()
     }
 
+    /// Run the full TUI, so `⌥+;` is exercised the way a user presses it.
+    fn spawn_tui(&self) -> Pty {
+        self.spawn_with(&["run", "sleep 60"])
+    }
+
     /// Run `strimux agent` in a PTY with only the sandbox's bin on PATH.
     fn spawn(&self, args: &[&str]) -> Pty {
+        let mut v = vec!["agent"];
+        v.extend_from_slice(args);
+        self.spawn_with(&v)
+    }
+
+    fn spawn_with(&self, args: &[&str]) -> Pty {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: 24,
@@ -75,7 +86,6 @@ impl Sandbox {
         // `sh` must stay reachable: the gateway's last resort is $SHELL.
         cmd.env("PATH", format!("{}:/bin:/usr/bin", self.bin.display()));
         cmd.env("SHELL", "/bin/sh");
-        cmd.arg("agent");
         for a in args {
             cmd.arg(a);
         }
@@ -130,6 +140,22 @@ impl Pty {
             }
         }
         assert!(out.contains(needle), "never saw {needle:?} in:\n{out}");
+        out
+    }
+
+    /// Accumulate output until `done` is satisfied, or the timeout expires.
+    fn collect_until(&self, timeout: Duration, done: impl Fn(&str) -> bool) -> String {
+        let mut out = String::new();
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if done(&out) {
+                return out;
+            }
+            if let Ok(b) = self.rx.recv_timeout(Duration::from_millis(250)) {
+                out.push_str(&String::from_utf8_lossy(&b));
+            }
+        }
+        assert!(done(&out), "condition never met in:\n{out}");
         out
     }
 
@@ -283,5 +309,71 @@ fn print_reports_the_resolution_without_prompting_or_running_anything() {
     let p = sb.spawn(&["--print"]);
     let seen = p.wait_for("No agent harness found");
     assert!(!seen.contains("SHELL-IS-ALIVE"));
+    p.kill();
+}
+
+/// Strip escape sequences and squeeze whitespace, so a phrase can be found in
+/// TUI output where the renderer chops every line into positioned cells.
+fn screen_text(raw: &str) -> String {
+    let mut out = String::new();
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // CSI/OSC/etc: consume up to the final byte of the sequence.
+            match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() || c == '~' {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    for c in chars.by_ref() {
+                        if c == '\x07' || c == '\\' {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn pressing_the_spawn_agent_key_opens_the_gateway_in_the_new_pane() {
+    // The binding itself, end to end: this is the path that used to produce a
+    // blank pane, and no unit test of the gateway can prove the TUI reaches it.
+    let sb = Sandbox::new(&["claude"]);
+    let mut p = sb.spawn_tui();
+    // Let the first pane settle so the spawn lands in a steady layout.
+    std::thread::sleep(Duration::from_millis(700));
+
+    // ⌥+; as a terminal actually sends it: ESC-prefixed (Meta).
+    p.send("\x1b;");
+    // The pane is a quarter of the screen, so the gateway's lines are wrapped
+    // and split across cell-positioned writes; assert on fragments that fit.
+    let seen = p.collect_until(Duration::from_secs(10), |raw| {
+        let t = screen_text(raw);
+        t.contains("Which agent should") && t.contains("claude")
+    });
+    let text = screen_text(&seen);
+    assert!(text.contains("Found on your PATH"), "got:\n{text}");
+
+    // Pick it, and prove the choice reached the config from a real keypress.
+    p.send("1\n");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !sb.read_config().contains("default_agent") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    assert!(
+        sb.read_config().contains("default_agent = \"claude\""),
+        "got:\n{}",
+        sb.read_config()
+    );
     p.kill();
 }

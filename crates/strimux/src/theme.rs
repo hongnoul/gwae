@@ -314,7 +314,11 @@ pub fn blend(top: CColor, bottom: CColor, alpha: f32, fallback: (u8, u8, u8)) ->
     }
     let (tr, tg, tb) = to_rgb(top, fallback);
     let (br, bg_, bb) = to_rgb(bottom, fallback);
-    let mix = |t: u8, b: u8| (t as f32 * a + b as f32 * (1.0 - a)).round().clamp(0.0, 255.0) as u8;
+    let mix = |t: u8, b: u8| {
+        (t as f32 * a + b as f32 * (1.0 - a))
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
     CColor::Rgb(mix(tr, br), mix(tg, bg_), mix(tb, bb))
 }
 
