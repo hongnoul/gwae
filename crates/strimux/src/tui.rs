@@ -4,17 +4,20 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size as term_size, EnterAlternateScreen,
     LeaveAlternateScreen,
 };
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
-use strimux_layout::{Action, FollowScroll, Layout, PaneId, Viewport};
+use strimux_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport};
 use strimux_term::{CColor, Cell, Size as GridSize, TermGrid, Vt100Grid};
 
 use crate::config::Config;
@@ -22,6 +25,12 @@ use crate::config::Config;
 /// Rows reserved for bottom chrome. There is no status bar, so panes fill the
 /// full viewport height.
 const CHROME_ROWS: u16 = 0;
+
+/// How long a pane without OSC 133 shell integration must stay silent before
+/// the activity heuristic calls it idle ("wants attention") instead of
+/// working. Long enough that a compiler pausing between crates doesn't
+/// flicker, short enough that a finished agent surfaces quickly.
+const QUIET_AFTER: Duration = Duration::from_secs(4);
 
 /// True while the user is inside the `Ctrl-b` prefix and the next key is a
 /// strimux command rather than pane input. Works on every terminal, no
@@ -36,6 +45,11 @@ pub struct PtyPane {
     pub grid: Vt100Grid,
     pub alive: bool,
     pub h_scroll: i32,
+    /// When the pane last emitted any output (activity heuristic).
+    pub last_output: Instant,
+    /// True once the child has spoken OSC 133; from then on the explicit
+    /// protocol owns the status and the activity heuristic stands down.
+    pub saw_osc133: bool,
 }
 
 /// Message a per-pane reader thread sends to the main loop.
@@ -75,6 +89,54 @@ fn query_reply(bytes: &[u8]) -> Option<Vec<u8>> {
         return Some(b"\x1b[1;1R".to_vec());
     }
     None
+}
+
+/// Scan a PTY output chunk for OSC 133 shell-integration markers and return
+/// the status implied by the *last* one present. The protocol (emitted by
+/// fish/zsh integrations and agent harnesses like jcode):
+///   `133;A`   prompt shown  -> the pane is waiting for input (Idle)
+///   `133;C`   command start -> the pane is working (Running)
+///   `133;D;n` command done  -> Done when n == 0 (or omitted), Failed else
+/// `133;B` (prompt end / input start) is ignored: focus-wise it is still the
+/// prompt. Sequences may be terminated by BEL or ST and may split across
+/// reads; a marker whose terminator hasn't arrived yet is picked up on a
+/// later chunk (the payload we need sits right after the `133;` prefix).
+fn scan_osc133(bytes: &[u8]) -> Option<PaneStatus> {
+    let mut status = None;
+    let mut i = 0;
+    while i + 6 <= bytes.len() {
+        // ESC ] 1 3 3 ;
+        if bytes[i] == 0x1b && bytes[i + 1] == b']' && bytes[i + 2..i + 6] == *b"133;" {
+            let rest = &bytes[i + 6..];
+            match rest.first() {
+                Some(b'A') => status = Some(PaneStatus::Idle),
+                Some(b'C') => status = Some(PaneStatus::Running),
+                Some(b'D') => {
+                    // Exit code follows as `;n` up to BEL/ESC; absent means 0.
+                    let code: u32 = rest
+                        .get(1)
+                        .filter(|c| **c == b';')
+                        .map(|_| {
+                            rest[2..]
+                                .iter()
+                                .take_while(|c| c.is_ascii_digit())
+                                .fold(0u32, |a, c| a.saturating_mul(10) + (*c - b'0') as u32)
+                        })
+                        .unwrap_or(0);
+                    status = Some(if code == 0 {
+                        PaneStatus::Done
+                    } else {
+                        PaneStatus::Failed
+                    });
+                }
+                _ => {}
+            }
+            i += 6;
+        } else {
+            i += 1;
+        }
+    }
+    status
 }
 
 /// Strip control characters that could escape an OSC title sequence and clip
@@ -170,6 +232,8 @@ fn spawn_pane(
         grid: Vt100Grid::new(GridSize { cols: gw, rows: gh }),
         alive: true,
         h_scroll: 0,
+        last_output: Instant::now(),
+        saw_osc133: false,
     })
 }
 
@@ -718,11 +782,15 @@ fn draw_big_label(out: &mut [Cell], cols: u16, rect: Rect, label: &str, color: C
     }
 }
 
-/// Overlay the minimap in the bottom-right corner. Rows of the map are strips
-/// (rows), and each tile is a column (subdivided by its panes) with width
-/// proportional to the column's real width share. The focused strip is
-/// highlighted and the focused pane tile is painted in the focus accent, so it
-/// always reads which strip/column you're on. Pane status tints idle strips.
+/// Overlay the minimap in the bottom-right corner: an agent dashboard, not
+/// just a position indicator. Rows of the map are strips, each tile is a pane
+/// (columns subdivided by their stacks) with width proportional to the
+/// column's real width share. Every tile is painted in its *status* color
+/// (working / wants-attention / done / failed), carries the pane's column
+/// digit (the same digit `⌥+1..9` jumps to) and, when wide enough, a status
+/// glyph. The focused pane's tile is painted in the focus accent and the
+/// focused strip gets a `❯` chevron in the gutter. An optional one-line
+/// summary above the map counts panes by status: `4 »2 !1 ✓1`.
 fn draw_minimap(
     out: &mut [Cell],
     cols: u16,
@@ -731,48 +799,123 @@ fn draw_minimap(
     mm: &crate::config::Minimap,
     focus_color: CColor,
 ) {
-    use strimux_layout::{minimap, PaneStatus};
-    // A single strip has nothing to orient against; hide the map.
-    if !mm.show || layout.rows.len() <= 1 {
+    use strimux_layout::minimap;
+    // With a single pane there is nothing to triage; hide the map.
+    if !mm.show || (layout.panes.len() <= 1 && layout.rows.len() <= 1) {
         return;
+    }
+    /// Muted background per status: dark enough to stay chrome, distinct
+    /// enough to triage at a glance.
+    fn status_bg(s: PaneStatus) -> CColor {
+        match s {
+            PaneStatus::Running => CColor::Idx(24), // deep blue: working
+            PaneStatus::Idle => CColor::Idx(130),   // amber: wants attention
+            PaneStatus::Done => CColor::Idx(22),    // green: finished ok
+            PaneStatus::Failed => CColor::Idx(88),  // red: finished non-zero
+        }
+    }
+    /// Bright foreground per status, for the summary counts.
+    fn status_fg(s: PaneStatus) -> CColor {
+        match s {
+            PaneStatus::Running => CColor::Idx(39),
+            PaneStatus::Idle => CColor::Idx(214),
+            PaneStatus::Done => CColor::Idx(40),
+            PaneStatus::Failed => CColor::Idx(196),
+        }
+    }
+    /// Single-width status glyph (every one is width 1 per unicode-width, so
+    /// the painter never has to cut a run around it).
+    fn status_glyph(s: PaneStatus) -> char {
+        match s {
+            PaneStatus::Running => '»',
+            PaneStatus::Idle => '!',
+            PaneStatus::Done => '✓',
+            PaneStatus::Failed => '✗',
+        }
     }
     let width = mm.max_width.min(cols.saturating_sub(2).max(1));
     let map = minimap::build(layout, width, cols);
     let height = mm.max_rows.min(map.height).min(rows);
     let ox = cols - map.width;
     let oy = rows - height;
+    let put = |out: &mut [Cell], x: u16, y: u16, ch: char, fg: CColor, bg: CColor, bold: bool| {
+        if x >= cols || y >= rows {
+            return;
+        }
+        let idx = y as usize * cols as usize + x as usize;
+        if let Some(cell) = out.get_mut(idx) {
+            *cell = Cell::default();
+            cell.ch = ch;
+            cell.style.fg = fg;
+            cell.style.bg = bg;
+            cell.style.bold = bold;
+        }
+    };
     for tile in &map.cells {
         if tile.y >= height {
             continue;
         }
+        let bg = if tile.focus_col {
+            focus_color
+        } else {
+            status_bg(tile.status)
+        };
+        let fg = CColor::Idx(231);
+        let y = oy + tile.y;
+        let glyph = status_glyph(tile.status);
         for dx in 0..tile.w {
             let x = ox + tile.x + dx;
-            let y = oy + tile.y;
-            if x >= cols || y >= rows {
-                continue;
-            }
-            let idx = y as usize * cols as usize + x as usize;
-            let Some(cell) = out.get_mut(idx) else {
-                continue;
-            };
-            let bg = if tile.focus_col {
-                focus_color
-            } else if tile.focus_row {
-                // Focused strip: brighter than idle strips, muted beside the
-                // isolated focus-col accent.
-                CColor::Idx(244)
-            } else {
-                match tile.status {
-                    PaneStatus::Running => CColor::Idx(240),
-                    PaneStatus::Idle => CColor::Idx(236),
-                    PaneStatus::Done => CColor::Idx(233),
+            // First cell: the pane's column digit (what ⌥+1..9 jumps to);
+            // stacked sub-panes past the first repeat the status glyph
+            // instead. Last cell of a wide tile: the status glyph.
+            let ch = if dx == 0 {
+                if tile.pane_idx == 0 {
+                    char::from_digit(tile.column as u32 + 1, 10).unwrap_or('+')
+                } else {
+                    glyph
                 }
+            } else if dx == tile.w - 1 && tile.w >= 2 {
+                glyph
+            } else {
+                ' '
             };
-            cell.ch = ' ';
-            cell.width = 1;
-            cell.style.bg = bg;
-            cell.style.fg = CColor::Default;
-            cell.style.bold = false;
+            put(out, x, y, ch, fg, bg, dx == 0 && tile.pane_idx == 0);
+        }
+        // Focused strip: a chevron in the gutter just left of the map row.
+        if tile.focus_row && tile.x == 0 && ox > 0 {
+            put(out, ox - 1, y, '❯', focus_color, CColor::Default, true);
+        }
+    }
+    // Summary bar above the map: total pane count plus per-status tallies
+    // (zero counts are skipped). Right-aligned flush with the map.
+    if mm.show_counts && oy > 0 {
+        let statuses = [
+            PaneStatus::Running,
+            PaneStatus::Idle,
+            PaneStatus::Done,
+            PaneStatus::Failed,
+        ];
+        let mut counts = [0usize; 4];
+        for p in layout.panes.values() {
+            counts[statuses.iter().position(|s| *s == p.status).unwrap_or(0)] += 1;
+        }
+        // Segments: (text, fg). The total is dim; each tally is colored.
+        let mut segs: Vec<(String, CColor)> =
+            vec![(format!("{}", layout.panes.len()), CColor::Idx(245))];
+        for (i, s) in statuses.iter().enumerate() {
+            if counts[i] > 0 {
+                segs.push((format!(" {}{}", status_glyph(*s), counts[i]), status_fg(*s)));
+            }
+        }
+        let total_w: usize = segs.iter().map(|(t, _)| t.chars().count()).sum();
+        let y = oy - 1;
+        let mut x = cols.saturating_sub(total_w as u16);
+        let bar_bg = CColor::Idx(234);
+        for (text, fg) in segs {
+            for ch in text.chars() {
+                put(out, x, y, ch, fg, bar_bg, true);
+                x += 1;
+            }
         }
     }
 }
@@ -890,6 +1033,9 @@ enum Cmd {
     Scroll(i32),
     ScrollPane(i32),
     Input(Vec<u8>),
+    /// Smart-jump: focus the next pane that needs the user (`⌥+g`). Resolved
+    /// against the live layout in the main loop, not here.
+    SmartJump,
     Quit,
     Repaint,
     None,
@@ -966,6 +1112,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{ac}') => return Some(Cmd::Act(Action::FocusRight)), // ¬ (Option+l)
             Char('\u{2026}') => return Some(Cmd::Act(Action::SpawnAgent)), // … (Option+;)
             Char('\u{153}') => return Some(Cmd::Act(Action::KillPane)),  // œ (Option+q)
+            Char('\u{a9}') => return Some(Cmd::SmartJump),               // © (Option+g)
             _ => {}
         }
     }
@@ -1002,6 +1149,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('s') | Char('-') => Action::SplitBelow,
             Char('x') => Action::KillPane,
             Char('z') | Char('=') => Action::CycleWidth,
+            Char('g') => return Some(Cmd::SmartJump),
             Char(',') => return Some(Cmd::ScrollPane(-1)),
             Char('.') => return Some(Cmd::ScrollPane(1)),
             Char('<') => return Some(Cmd::ScrollPane(-16)),
@@ -1046,6 +1194,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         Char('r') => Action::CycleWidth,
         Char('x') => Action::KillPane,
         Char('z') => Action::CycleWidth,
+        Char('g') => return Some(Cmd::SmartJump),
         Char(c) if c.is_ascii_digit() => {
             Action::JumpToColumn(c.to_digit(10).unwrap_or(1) as usize - 1)
         }
@@ -1152,6 +1301,15 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // overshoot is clamped at the margin and repaired on the next frame.
     let _ = stdout.write_all(b"\x1b[?7l");
     let _ = stdout.flush();
+    // Capture the mouse so wheel events land here instead of the host
+    // terminal, where they scroll the host's own scrollback / prompt history
+    // right past the layout we are drawing. We route each notch to the pane
+    // under the cursor.
+    if cfg.mouse {
+        if let Err(e) = execute!(stdout, EnableMouseCapture) {
+            tracing::warn!("enable mouse: {e}");
+        }
+    }
     let (cols, mut rows) = term_size().map_err(|e| {
         eprintln!("size: {e}");
         1
@@ -1183,6 +1341,12 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             Err(e) => {
                 eprintln!("spawn: {e}");
                 let _ = stdout.write_all(b"\x1b[?7h");
+                if cfg.mouse {
+                    let _ = execute!(stdout, DisableMouseCapture);
+                }
+                if cfg.mouse {
+                    let _ = execute!(stdout, DisableMouseCapture);
+                }
                 let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
                 let _ = disable_raw_mode();
                 return Err(1);
@@ -1206,6 +1370,20 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 PaneMsg::Output(pid, bytes) => {
                     if let Some(p) = panes.get_mut(&pid) {
                         p.grid.feed(&bytes);
+                        p.last_output = Instant::now();
+                        // Explicit OSC 133 status beats the activity
+                        // heuristic from the first marker onward.
+                        if let Some(st) = scan_osc133(&bytes) {
+                            p.saw_osc133 = true;
+                            if let Some(lp) = layout.panes.get_mut(&pid) {
+                                lp.status = st;
+                            }
+                        } else if !p.saw_osc133 {
+                            // Fresh output from a protocol-less pane: working.
+                            if let Some(lp) = layout.panes.get_mut(&pid) {
+                                lp.status = PaneStatus::Running;
+                            }
+                        }
                         // Answer terminal capability/status queries (fish's DA
                         // probe etc.) so children don't warn or hang.
                         if let Some(reply) = query_reply(&bytes) {
@@ -1257,6 +1435,30 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         if refresh_size(&mut cols, &mut rows) {
             layout.clamp_scrolls(Viewport::new(cols));
             dirty = true;
+        }
+
+        // Activity heuristic for panes that never speak OSC 133 (plain
+        // shells, most TUIs): output within the window means "working",
+        // silence past it flips to "wants attention" so the minimap and
+        // smart-jump still triage them. Panes with real shell integration
+        // are owned by the explicit protocol above and skipped here.
+        let now = Instant::now();
+        for (pid, p) in panes.iter() {
+            if p.saw_osc133 {
+                continue;
+            }
+            let quiet = now.duration_since(p.last_output) >= QUIET_AFTER;
+            let want = if quiet {
+                PaneStatus::Idle
+            } else {
+                PaneStatus::Running
+            };
+            if let Some(lp) = layout.panes.get_mut(pid) {
+                if lp.status != want {
+                    lp.status = want;
+                    dirty = true;
+                }
+            }
         }
 
         if event::poll(Duration::from_millis(10)).unwrap_or(false) {
@@ -1313,9 +1515,27 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                             Cmd::Input(bytes) => {
                                 if let Some(pid) = focused_pane(&layout) {
                                     if let Some(p) = panes.get_mut(&pid) {
+                                        // Typing means you want the prompt:
+                                        // snap a scrolled-back pane to live.
+                                        if p.grid.scroll_to_bottom() {
+                                            dirty = true;
+                                        }
                                         let _ = p.writer.write_all(&bytes);
                                         let _ = p.writer.flush();
                                     }
+                                }
+                            }
+                            Cmd::SmartJump => {
+                                // Jump to the next pane that needs attention
+                                // (failed > waiting > done), if any.
+                                if let Some(target) = smart_jump_target(&layout) {
+                                    let v = Viewport::new(cols);
+                                    let f = FollowScroll {
+                                        margin: cfg.scroll_margin,
+                                        center: cfg.center_focus,
+                                    };
+                                    let _ = layout.apply(Action::FocusPane(target), v, f);
+                                    dirty = true;
                                 }
                             }
                             Cmd::Repaint => dirty = true,
@@ -1324,6 +1544,61 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     }
                 }
                 Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Release => {}
+                Ok(Event::Mouse(me)) => {
+                    let views = focused_pane_views(
+                        &layout,
+                        cols,
+                        rows,
+                        cfg.content_width,
+                        &panes,
+                        cfg.skeleton,
+                    );
+                    if let Some((pid, gx, gy)) = pane_at(&views, me.column, me.row) {
+                        if let Some(p) = panes.get_mut(&pid) {
+                            let wheel = matches!(
+                                me.kind,
+                                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                            );
+                            // A child that asked for mouse reporting (or that
+                            // owns the alternate screen, where there is no
+                            // scrollback to move) gets the event verbatim, so
+                            // wheel scrolling inside vim/less/an agent TUI
+                            // behaves exactly as it would natively.
+                            if p.grid.wants_mouse() {
+                                if let Some(bytes) = sgr_mouse_report(&me, gx, gy) {
+                                    let _ = p.writer.write_all(&bytes);
+                                    let _ = p.writer.flush();
+                                }
+                            } else if wheel {
+                                if p.grid.alternate_screen() {
+                                    // Alternate screen without mouse reporting
+                                    // (e.g. `less`): translate the wheel into
+                                    // arrow keys, the conventional fallback.
+                                    let n = cfg.scroll_lines.max(1);
+                                    let key: &[u8] = if me.kind == MouseEventKind::ScrollUp {
+                                        b"\x1b[A"
+                                    } else {
+                                        b"\x1b[B"
+                                    };
+                                    for _ in 0..n {
+                                        let _ = p.writer.write_all(key);
+                                    }
+                                    let _ = p.writer.flush();
+                                } else {
+                                    let n = cfg.scroll_lines.max(1) as i32;
+                                    let d = if me.kind == MouseEventKind::ScrollUp {
+                                        n
+                                    } else {
+                                        -n
+                                    };
+                                    if p.grid.scroll_by(d) {
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 Ok(Event::Resize(c, r)) => {
                     cols = c.max(1);
                     rows = r.max(2);
@@ -1421,9 +1696,61 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // Restore the host's autowrap before handing the terminal back.
     let _ = stdout.write_all(b"\x1b[?7h");
     let _ = stdout.flush();
+    if cfg.mouse {
+        let _ = execute!(stdout, DisableMouseCapture);
+    }
     let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
     let _ = disable_raw_mode();
     Ok(())
+}
+
+/// Pick the pane a smart-jump (`⌥+g`) should land on: the next pane, in
+/// layout order starting just past the focused one and wrapping, whose status
+/// needs the user. Priority: Failed beats Idle (attention) beats Done;
+/// Running panes are never targets (they're fine on their own). Returns None
+/// when every other pane is happily working.
+fn smart_jump_target(layout: &Layout) -> Option<PaneId> {
+    let focused = focused_pane(layout);
+    // Flatten the grid in reading order: strips top-down, columns
+    // left-to-right, stacks top-down.
+    let order: Vec<PaneId> = layout
+        .rows
+        .iter()
+        .flat_map(|r| r.columns.iter())
+        .flat_map(|c| c.panes.iter().copied())
+        .collect();
+    let start = focused
+        .and_then(|f| order.iter().position(|p| *p == f))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let rank = |s: PaneStatus| match s {
+        PaneStatus::Failed => Some(0u8),
+        PaneStatus::Idle => Some(1),
+        PaneStatus::Done => Some(2),
+        PaneStatus::Running => None,
+    };
+    let mut best: Option<(u8, usize, PaneId)> = None;
+    for (i, pid) in order
+        .iter()
+        .enumerate()
+        .cycle()
+        .skip(start)
+        .take(order.len())
+    {
+        if Some(*pid) == focused {
+            continue;
+        }
+        let Some(st) = layout.panes.get(pid).map(|p| p.status) else {
+            continue;
+        };
+        let Some(r) = rank(st) else { continue };
+        // Distance from the focused pane, wrapping: nearer wins within a rank.
+        let dist = (i + order.len() - start) % order.len();
+        if best.map(|(br, bd, _)| (r, dist) < (br, bd)).unwrap_or(true) {
+            best = Some((r, dist, *pid));
+        }
+    }
+    best.map(|(_, _, pid)| pid)
 }
 
 /// Total number of panes currently present in the layout.
@@ -1443,6 +1770,65 @@ fn focused_pane(layout: &Layout) -> Option<PaneId> {
         .and_then(|r| r.columns.get(layout.focus.column))
         .and_then(|c| c.panes.get(layout.focus.pane))
         .copied()
+}
+
+/// The pane whose on-screen rect contains `(x, y)`, plus the cell coordinates
+/// *inside* that pane's grid. Only panes in the focused strip are visible, so
+/// only those can be hit.
+fn pane_at(views: &[PaneView], x: u16, y: u16) -> Option<(PaneId, u16, u16)> {
+    views.iter().find_map(|v| {
+        let r = v.rect;
+        if x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h {
+            let gx = (x - r.x) as i32 + v.col_x0 as i32 + v.h_scroll;
+            if gx < 0 || gx >= v.grid_cols as i32 {
+                return None;
+            }
+            Some((v.pid, gx as u16, y - r.y))
+        } else {
+            None
+        }
+    })
+}
+
+/// Encode a mouse event as an SGR (1006) report for a child that asked for
+/// mouse reporting, with coordinates translated into the pane's own grid
+/// (1-based, as the protocol requires).
+fn sgr_mouse_report(ev: &MouseEvent, gx: u16, gy: u16) -> Option<Vec<u8>> {
+    let button = |b: MouseButton| match b {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    };
+    let (mut code, release) = match ev.kind {
+        MouseEventKind::Down(b) => (button(b), false),
+        MouseEventKind::Up(b) => (button(b), true),
+        MouseEventKind::Drag(b) => (button(b) + 32, false),
+        MouseEventKind::Moved => (35, false),
+        MouseEventKind::ScrollUp => (64, false),
+        MouseEventKind::ScrollDown => (65, false),
+        MouseEventKind::ScrollLeft => (66, false),
+        MouseEventKind::ScrollRight => (67, false),
+    };
+    if ev.modifiers.contains(KeyModifiers::SHIFT) {
+        code += 4;
+    }
+    if ev.modifiers.contains(KeyModifiers::ALT) {
+        code += 8;
+    }
+    if ev.modifiers.contains(KeyModifiers::CONTROL) {
+        code += 16;
+    }
+    let final_byte = if release { 'm' } else { 'M' };
+    Some(
+        format!(
+            "\x1b[<{};{};{}{}",
+            code,
+            gx as u32 + 1,
+            gy as u32 + 1,
+            final_byte
+        )
+        .into_bytes(),
+    )
 }
 
 #[cfg(test)]
@@ -1613,6 +1999,7 @@ mod tests {
                 ch,
                 style: hl,
                 width: 1, // emulator's (wrong for this host) idea of the width
+                ..Cell::default()
             };
         }
         let last = vec![Cell::default(); 4];
@@ -1686,6 +2073,71 @@ mod tests {
         assert!(
             under + reset_after < plain,
             "underline leaks into the plain run: {s:?}"
+        );
+    }
+
+    #[test]
+    fn mouse_hit_test_maps_screen_cell_to_pane_grid() {
+        use strimux_layout::{Preset, Width};
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        for _ in 0..2 {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Half), vec![p]);
+        }
+        let panes = HashMap::new();
+        let views = focused_pane_views(&layout, 80, 24, 0, &panes, false);
+        assert_eq!(views.len(), 2);
+        // A click in the left half hits the left pane at its own grid column.
+        let (pid, gx, gy) = pane_at(&views, 5, 3).expect("hit left pane");
+        assert_eq!(pid, views[0].pid);
+        assert_eq!((gx, gy), (5, 3));
+        // A click in the right half hits the right pane, and the grid column
+        // is relative to that pane, not the screen.
+        let (pid, gx, gy) = pane_at(&views, 45, 7).expect("hit right pane");
+        assert_eq!(pid, views[1].pid);
+        assert_eq!((gx, gy), (45 - views[1].rect.x, 7));
+        // Past the last pane's right edge there is nothing to hit.
+        assert!(pane_at(&views, 79, 3).is_some());
+        assert!(pane_at(&views, 200, 3).is_none());
+        assert!(pane_at(&views, 5, 200).is_none());
+    }
+
+    #[test]
+    fn sgr_mouse_report_encodes_wheel_and_buttons() {
+        let ev = |kind| MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        // Coordinates are 1-based in the protocol.
+        assert_eq!(
+            sgr_mouse_report(&ev(MouseEventKind::ScrollUp), 4, 2).unwrap(),
+            b"\x1b[<64;5;3M".to_vec()
+        );
+        assert_eq!(
+            sgr_mouse_report(&ev(MouseEventKind::ScrollDown), 0, 0).unwrap(),
+            b"\x1b[<65;1;1M".to_vec()
+        );
+        // Release uses the lowercase final byte.
+        assert_eq!(
+            sgr_mouse_report(&ev(MouseEventKind::Up(MouseButton::Left)), 0, 0).unwrap(),
+            b"\x1b[<0;1;1m".to_vec()
+        );
+        // Modifiers add their bits.
+        let shifted = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::SHIFT,
+        };
+        assert_eq!(
+            sgr_mouse_report(&shifted, 0, 0).unwrap(),
+            b"\x1b[<4;1;1M".to_vec()
         );
     }
 
@@ -1799,20 +2251,37 @@ mod tests {
         // Focused pane tile (row 0, col 0) is painted with the accent.
         let focus = cell(8, 6);
         assert_eq!(focus.style.bg, accent, "focused tile uses the focus color");
-        // The non-focused strip's tile is a dim chrome gray, not the accent.
-        let idle = cell(8, 7);
-        assert_ne!(idle.style.bg, accent, "idle strip must not use the accent");
+        // The tile carries its column digit (column 0 -> '1').
+        assert_eq!(focus.ch, '1', "tile shows the ⌥+digit column address");
+        // The non-focused strip's tile is a status tint, not the accent.
+        let other = cell(8, 7);
+        assert_ne!(other.style.bg, accent, "idle strip must not use the accent");
         assert_ne!(
-            idle.style.bg,
+            other.style.bg,
             CColor::Default,
-            "idle strip is painted chrome"
+            "other strip is painted chrome"
         );
-        // Nothing above the minimap block is painted by it.
-        let above = cell(8, 5);
+        // Fresh panes are Running: a deep-blue tint carrying a `»` glyph at
+        // the tile's right edge.
+        assert_eq!(other.style.bg, CColor::Idx(24), "running tint");
+        let other_end = cell(8 + 31, 7);
+        assert_eq!(other_end.ch, '»', "status glyph at the tile end");
+        // The focused strip carries a chevron in the gutter left of the map.
+        assert_eq!(cell(7, 6).ch, '❯', "focused-strip chevron");
+        assert_eq!(cell(7, 6).style.fg, accent);
+        // The summary bar sits directly above the map: total 5 panes, all
+        // running -> "5 »5" right-aligned at the screen edge.
+        let bar: String = (0..40).map(|x| cell(x, 5).ch).collect();
+        assert!(
+            bar.trim_start().ends_with("5 »5"),
+            "summary bar shows totals, got {bar:?}"
+        );
+        // Nothing above the summary bar is painted by the minimap.
+        let above = cell(8, 4);
         assert_eq!(above.style.bg, CColor::Default);
         assert_eq!(above.ch, ' ');
-        // A single-strip layout hides the minimap entirely.
-        let single = Layout::default();
+        // A single-pane layout hides the minimap entirely.
+        let single = Layout::new(1);
         let mut out2 = vec![Cell::default(); 40 * 8];
         draw_minimap(
             &mut out2,
@@ -1824,8 +2293,121 @@ mod tests {
         );
         assert!(
             out2.iter().all(|c| c.style.bg == CColor::Default),
-            "no map for one strip"
+            "no map for one pane"
         );
+        // A single *strip* of several panes now shows the map: multiple
+        // agents need triage even without a second strip.
+        let strip = Layout::default(); // 4 panes, one strip
+        let mut out3 = vec![Cell::default(); 40 * 8];
+        draw_minimap(
+            &mut out3,
+            40,
+            8,
+            &strip,
+            &crate::config::Minimap::default(),
+            accent,
+        );
+        assert!(
+            out3.iter().any(|c| c.style.bg != CColor::Default),
+            "multi-pane single strip draws the map"
+        );
+    }
+
+    #[test]
+    fn draw_minimap_status_colors_and_failed_glyph() {
+        use strimux_layout::Width;
+        let mut layout = Layout::default(); // 4 quarter panes on strip 1
+        let r2 = layout.new_row("two".to_string());
+        let p = layout.alloc_pane();
+        layout.add_column(r2, Width::Cells(20), vec![p]);
+        // Statuses: pane1 focused (accent), pane2 done, pane3 failed,
+        // pane4 idle; the strip-2 pane keeps Running.
+        let ids: Vec<PaneId> = {
+            let row = layout.rows[0].clone();
+            row.columns.iter().flat_map(|c| c.panes.clone()).collect()
+        };
+        layout.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Done;
+        layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Failed;
+        layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Idle;
+        let cols = 40usize;
+        let mut out = vec![Cell::default(); cols * 8];
+        let accent = CColor::Idx(36);
+        draw_minimap(
+            &mut out,
+            cols as u16,
+            8,
+            &layout,
+            &crate::config::Minimap::default(),
+            accent,
+        );
+        let cell = |x: usize, y: usize| out[y * cols + x];
+        // Map: ox=8, oy=6. Strip 1 has 4 tiles of 8 cells each.
+        let (ox, y) = (8usize, 6usize);
+        assert_eq!(cell(ox, y).style.bg, accent, "tile 1 focused");
+        assert_eq!(cell(ox + 8, y).style.bg, CColor::Idx(22), "tile 2 done");
+        assert_eq!(cell(ox + 16, y).style.bg, CColor::Idx(88), "tile 3 failed");
+        assert_eq!(cell(ox + 24, y).style.bg, CColor::Idx(130), "tile 4 idle");
+        // Tiles carry their ⌥+digit address and end-of-tile status glyph.
+        assert_eq!(cell(ox + 8, y).ch, '2');
+        assert_eq!(cell(ox + 15, y).ch, '✓', "done glyph");
+        assert_eq!(cell(ox + 23, y).ch, '✗', "failed glyph");
+        assert_eq!(cell(ox + 31, y).ch, '!', "attention glyph");
+        // Summary counts every status: 5 panes, 1 running, 1 attention,
+        // 1 done, 1 failed (focused pane is still Running).
+        let bar: String = (0..cols).map(|x| cell(x, 5).ch).collect();
+        assert!(
+            bar.trim_start().ends_with("5 »2 !1 ✓1 ✗1"),
+            "summary tallies by status, got {bar:?}"
+        );
+    }
+
+    #[test]
+    fn scan_osc133_maps_protocol_to_status() {
+        // Prompt marker -> waiting for input.
+        assert_eq!(scan_osc133(b"\x1b]133;A\x07"), Some(PaneStatus::Idle));
+        // Command start -> running.
+        assert_eq!(scan_osc133(b"\x1b]133;C\x07"), Some(PaneStatus::Running));
+        // Command done, exit 0 (and the bare form) -> done.
+        assert_eq!(scan_osc133(b"\x1b]133;D;0\x07"), Some(PaneStatus::Done));
+        assert_eq!(scan_osc133(b"\x1b]133;D\x1b\\"), Some(PaneStatus::Done));
+        // Non-zero exit -> failed.
+        assert_eq!(scan_osc133(b"\x1b]133;D;127\x07"), Some(PaneStatus::Failed));
+        // The *last* marker in a chunk wins (C then D;1 -> failed).
+        assert_eq!(
+            scan_osc133(b"\x1b]133;C\x07output\x1b]133;D;1\x07"),
+            Some(PaneStatus::Failed)
+        );
+        // Ordinary output and other OSCs carry no status.
+        assert_eq!(scan_osc133(b"plain output"), None);
+        assert_eq!(scan_osc133(b"\x1b]2;title\x07"), None);
+        // B (input start) is not a status change.
+        assert_eq!(scan_osc133(b"\x1b]133;B\x07"), None);
+    }
+
+    #[test]
+    fn smart_jump_prefers_failed_then_attention() {
+        let mut layout = Layout::default(); // 4 panes, focus on pane 0
+        let ids: Vec<PaneId> = layout.rows[0]
+            .columns
+            .iter()
+            .flat_map(|c| c.panes.clone())
+            .collect();
+        // All running: nothing needs the user.
+        assert_eq!(smart_jump_target(&layout), None);
+        // Pane 3 done, pane 2 idle, pane 1 failed: failed wins outright.
+        layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Done;
+        assert_eq!(smart_jump_target(&layout), Some(ids[3]));
+        layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Idle;
+        assert_eq!(
+            smart_jump_target(&layout),
+            Some(ids[2]),
+            "attention beats done"
+        );
+        layout.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Failed;
+        assert_eq!(smart_jump_target(&layout), Some(ids[1]), "failed beats all");
+        // The focused pane is never a target even when it failed.
+        layout.panes.get_mut(&ids[0]).unwrap().status = PaneStatus::Failed;
+        assert_eq!(smart_jump_target(&layout), Some(ids[1]));
     }
 
     #[test]
@@ -1845,6 +2427,16 @@ mod tests {
         // A degenerate 1x1 rect degrades to a horizontal rule glyph.
         assert_eq!(out[0].ch, '─');
         assert_eq!(out[0].style.fg, CColor::Idx(1));
+    }
+
+
+    /// A disabled minimap config for geometry tests that assert the bottom
+    /// screen rows the map would otherwise overlay.
+    fn no_map() -> crate::config::Minimap {
+        crate::config::Minimap {
+            show: false,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -1869,7 +2461,7 @@ mod tests {
             CColor::Default,
             red,
             Some(white),
-            &crate::config::Minimap::default(),
+            &no_map(),
         );
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
         assert_eq!(ranges.len(), 4);
@@ -1951,7 +2543,7 @@ mod tests {
             CColor::Default,
             CColor::Rgb(0xff, 0, 0),
             Some(white),
-            &crate::config::Minimap::default(),
+            &no_map(),
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
         // Placeholder boxes cover [40,60) and [60,80): white thin frames all
@@ -1988,7 +2580,7 @@ mod tests {
             dim,
             CColor::Rgb(0xff, 0, 0),
             Some(CColor::Rgb(0xff, 0xff, 0xff)),
-            &crate::config::Minimap::default(),
+            &no_map(),
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
         // Placeholder interiors are default-bg, never the dim background.

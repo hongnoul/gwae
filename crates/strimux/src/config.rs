@@ -50,6 +50,13 @@ pub struct Config {
     /// The minimap: a small bottom-right grid showing each strip (row) and its
     /// panes (columns), with the focused strip and column highlighted.
     pub minimap: Minimap,
+    /// Capture the mouse so the wheel scrolls *inside* the pane under the
+    /// cursor (its scrollback) instead of reaching the host terminal, where it
+    /// walks the shell's previous/next prompt history. Disable to hand the
+    /// wheel back to the host terminal entirely.
+    pub mouse: bool,
+    /// Rows of pane scrollback moved per wheel notch.
+    pub scroll_lines: u16,
 }
 
 impl Default for Config {
@@ -66,6 +73,8 @@ impl Default for Config {
             skeleton: true,
             skeleton_color: Background(CColor::Rgb(0xff, 0xff, 0xff)),
             minimap: Minimap::default(),
+            mouse: true,
+            scroll_lines: 3,
         }
     }
 }
@@ -108,6 +117,9 @@ pub struct Minimap {
     pub max_width: u16,
     /// Maximum number of strips (rows) shown; extra strips are cut off.
     pub max_rows: u16,
+    /// Draw the one-line status summary above the map: total pane count and
+    /// per-status tallies (working / attention / done / failed).
+    pub show_counts: bool,
 }
 
 impl Default for Minimap {
@@ -116,6 +128,7 @@ impl Default for Minimap {
             show: true,
             max_width: 32,
             max_rows: 6,
+            show_counts: true,
         }
     }
 }
@@ -202,12 +215,21 @@ mod tests {
     }
 
     #[test]
+    fn mouse_keys_parse() {
+        let cfg = parse("mouse = false\nscroll_lines = 7\n");
+        assert!(!cfg.mouse);
+        assert_eq!(cfg.scroll_lines, 7);
+    }
+
+    #[test]
     fn defaults_apply_when_omitted() {
         let cfg = parse("");
         assert_eq!(cfg.startup_panes, 1);
         assert_eq!(cfg.background, Background::default());
         assert_eq!(cfg.focus_color, Background(CColor::Rgb(0xff, 0, 0)));
         assert!(cfg.skeleton, "skeleton frames on by default");
+        assert!(cfg.mouse, "mouse captured by default");
+        assert_eq!(cfg.scroll_lines, 3);
         assert_eq!(
             cfg.skeleton_color,
             Background(CColor::Rgb(0xff, 0xff, 0xff))

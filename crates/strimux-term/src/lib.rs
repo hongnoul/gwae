@@ -31,17 +31,46 @@ pub struct Style {
 /// The renderer must skip width-0 cells (the wide glyph already covers that
 /// column); printing them as spaces shears every following cell one column
 /// to the right.
+///
+/// `combining` carries the zero-width codepoints attached to `ch` (accents,
+/// variation selectors, and Kitty image-placeholder diacritics), NUL-padded.
+/// Dropping them breaks composed text (é as e+U+0301) and completely breaks
+/// Kitty Unicode-placeholder images, whose row/column addressing lives in
+/// combining diacritics after U+10EEEE. Capacity matches vt100's six
+/// codepoints per cell (one base + five combining).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
     pub ch: char,
+    pub combining: [char; MAX_COMBINING],
     pub style: Style,
     pub width: u8,
+}
+
+/// Maximum combining codepoints stored per cell (vt100 keeps 6 total).
+pub const MAX_COMBINING: usize = 5;
+
+/// A `combining` array holding no codepoints.
+pub const NO_COMBINING: [char; MAX_COMBINING] = ['\0'; MAX_COMBINING];
+
+impl Cell {
+    /// Append every codepoint of this cell (base char plus combining marks)
+    /// to `out`, in order.
+    pub fn push_codepoints(&self, out: &mut String) {
+        out.push(self.ch);
+        for &c in &self.combining {
+            if c == '\0' {
+                break;
+            }
+            out.push(c);
+        }
+    }
 }
 
 impl Default for Cell {
     fn default() -> Self {
         Cell {
             ch: ' ',
+            combining: NO_COMBINING,
             style: Style::default(),
             width: 1,
         }
@@ -90,6 +119,8 @@ pub struct Vt100Grid {
     parser: vt100::Parser,
     rows: u16,
     cols: u16,
+    /// How many scrollback rows are currently scrolled into view.
+    scrollback_offset: usize,
 }
 
 impl Vt100Grid {
@@ -99,7 +130,46 @@ impl Vt100Grid {
             parser,
             rows: size.rows,
             cols: size.cols,
+            scrollback_offset: 0,
         }
+    }
+
+    /// True when the child has taken over the alternate screen (a full-screen
+    /// app like vim or less). Such apps own scrolling themselves, so wheel
+    /// events must be forwarded to them instead of moving our scrollback.
+    pub fn alternate_screen(&self) -> bool {
+        self.parser.screen().alternate_screen()
+    }
+
+    /// True when the child asked for mouse reporting (any xterm mouse mode).
+    pub fn wants_mouse(&self) -> bool {
+        self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None
+    }
+
+    /// The number of scrollback rows currently scrolled into view.
+    pub fn scrollback_offset(&self) -> usize {
+        self.scrollback_offset
+    }
+
+    /// Scroll the view by `delta` rows (positive = back into history).
+    /// Returns true when the visible offset actually changed.
+    pub fn scroll_by(&mut self, delta: i32) -> bool {
+        let want = (self.scrollback_offset as i64 + delta as i64).max(0) as usize;
+        self.parser.set_scrollback(want);
+        let now = self.parser.screen().scrollback();
+        let changed = now != self.scrollback_offset;
+        self.scrollback_offset = now;
+        changed
+    }
+
+    /// Jump back to the live bottom of the buffer.
+    pub fn scroll_to_bottom(&mut self) -> bool {
+        if self.scrollback_offset == 0 {
+            return false;
+        }
+        self.parser.set_scrollback(0);
+        self.scrollback_offset = 0;
+        true
     }
 }
 
@@ -120,6 +190,10 @@ impl TermGrid for Vt100Grid {
     fn feed(&mut self, bytes: &[u8]) -> Vec<Damage> {
         // vt100 does not report incremental damage, so we re-render the whole grid.
         self.parser.process(bytes);
+        // vt100 shifts the scrollback offset itself when new lines scroll the
+        // buffer (so a scrolled-back view stays pinned to the same content);
+        // adopt its value so our cached offset never drifts.
+        self.scrollback_offset = self.parser.screen().scrollback();
         vec![Damage {
             x: 0,
             y: 0,
@@ -131,7 +205,17 @@ impl TermGrid for Vt100Grid {
     fn cell(&self, x: u16, y: u16) -> Cell {
         match self.parser.screen().cell(y, x) {
             Some(c) => {
-                let ch = c.contents().chars().next().unwrap_or(' ');
+                // vt100 hands back the whole cluster; the first codepoint is
+                // the base glyph and the rest are combining marks (accents,
+                // variation selectors, Kitty placeholder diacritics) that must
+                // be carried through or composed text and Kitty images break.
+                let contents = c.contents();
+                let mut cps = contents.chars();
+                let ch = cps.next().unwrap_or(' ');
+                let mut combining = NO_COMBINING;
+                for (slot, cp) in combining.iter_mut().zip(cps) {
+                    *slot = cp;
+                }
                 let style = Style {
                     fg: map_color(c.fgcolor()),
                     bg: map_color(c.bgcolor()),
@@ -146,7 +230,12 @@ impl TermGrid for Vt100Grid {
                 } else {
                     1
                 };
-                Cell { ch, style, width }
+                Cell {
+                    ch,
+                    combining,
+                    style,
+                    width,
+                }
             }
             None => Cell::default(),
         }
@@ -195,6 +284,52 @@ impl TermGrid for NullGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wheel_scrollback_moves_view_and_returns() {
+        let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
+        for i in 0..10 {
+            g.feed(format!("line{i}\r\n").as_bytes());
+        }
+        // The live view shows the tail.
+        assert_eq!(g.cell(0, 0).ch, 'l');
+        assert_eq!(g.scrollback_offset(), 0);
+        // Scrolling back reveals older lines.
+        assert!(g.scroll_by(3));
+        assert_eq!(g.scrollback_offset(), 3);
+        let scrolled: String = (0..6).map(|x| g.cell(x, 0).ch).collect();
+        assert_eq!(scrolled, "line5 ");
+        // Scrolling forward past live is clamped at the bottom.
+        assert!(g.scroll_by(-99));
+        assert_eq!(g.scrollback_offset(), 0);
+        assert!(!g.scroll_by(-1));
+    }
+
+    #[test]
+    fn scroll_to_bottom_snaps_back_to_live() {
+        let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
+        for i in 0..10 {
+            g.feed(format!("line{i}\r\n").as_bytes());
+        }
+        g.scroll_by(5);
+        assert!(g.scroll_to_bottom());
+        assert_eq!(g.scrollback_offset(), 0);
+        assert!(!g.scroll_to_bottom());
+    }
+
+    #[test]
+    fn alt_screen_and_mouse_modes_are_reported() {
+        let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
+        assert!(!g.alternate_screen());
+        assert!(!g.wants_mouse());
+        g.feed(b"\x1b[?1049h");
+        assert!(g.alternate_screen());
+        g.feed(b"\x1b[?1000h");
+        assert!(g.wants_mouse());
+        g.feed(b"\x1b[?1000l\x1b[?1049l");
+        assert!(!g.alternate_screen());
+        assert!(!g.wants_mouse());
+    }
 
     #[test]
     fn vt100_feed_writes_cells() {

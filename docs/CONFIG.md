@@ -16,6 +16,14 @@ background = "#1e1e2e"
 focus_color = "#ff0000"
 skeleton = true
 skeleton_color = "#ffffff"
+mouse = true
+scroll_lines = 3
+
+[minimap]
+show = true
+max_width = 32
+max_rows = 6
+show_counts = true
 ```
 
 ## Keys
@@ -32,6 +40,12 @@ skeleton_color = "#ffffff"
 | `focus_color` | color | `#ff0000` | Color of the 1-cell accent frame drawn around the focused box (an overlay on the pane's edge cells; it never shifts or resizes the pane). Accepted forms match `background`. Set to `default` to draw with the terminal's own background. |
 | `skeleton` | bool | `true` | Draw the skeleton: a 1-cell frame around every column box at full strip height, so the four-column container always reads. Pane content is inset 1 cell inside its frame, so the frame never covers anything a program draws. With fewer columns than fit, placeholder quarter-width boxes tile the empty right side; their interiors use the default (pane) background rather than `background`, so empty grids are not dimmed, and each shows a big block-font `strip.cell` identifier centered in the box. The focused box's frame uses `focus_color` instead of `skeleton_color`. |
 | `skeleton_color` | color | `#ffffff` | Color of the skeleton frames around unfocused boxes. Accepted forms match `background`. |
+| `mouse` | bool | `true` | Capture the mouse so the wheel scrolls *inside* the pane under the cursor (its own scrollback) instead of reaching the host terminal, where it walks the host's scrollback and the shell's previous/next prompt history. A pane running a full-screen app that asked for mouse reporting gets the event forwarded verbatim, translated into its own grid coordinates; one on the alternate screen without mouse reporting (e.g. `less`) gets arrow keys. Typing snaps a scrolled-back pane to the live bottom. Set to `false` to hand the wheel back to the host terminal. |
+| `scroll_lines` | integer | `3` | Rows of pane scrollback moved per wheel notch. |
+| `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit (the same digit `⌥+1..9` jumps to). Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
+| `minimap.max_width` | integer | `32` | Maximum width (in cells) of the minimap block; it shrinks to fit narrower terminals. |
+| `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown; extra strips are cut off. |
+| `minimap.show_counts` | bool | `true` | Draw the one-line summary above the map: total pane count plus per-status tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts are skipped). |
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.

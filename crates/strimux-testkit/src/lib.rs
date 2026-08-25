@@ -67,6 +67,7 @@ impl TermGrid for FakeTerminal {
             ch,
             style: Style::default(),
             width: 1,
+            ..Cell::default()
         }
     }
 

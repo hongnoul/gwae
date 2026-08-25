@@ -33,6 +33,9 @@ pub enum Action {
     SpawnAgent,
     ScrollViewport(i32),
     JumpToColumn(usize),
+    /// Jump focus directly to a pane anywhere in the grid (smart-jump: the
+    /// caller picks the pane, e.g. the next one whose status needs attention).
+    FocusPane(PaneId),
 }
 
 impl Layout {
@@ -74,6 +77,7 @@ impl Layout {
             Action::SpawnAgent => Ok(self.apply_new_column(viewport, follow)),
             Action::ScrollViewport(d) => Ok(self.apply_scroll(d, viewport)),
             Action::JumpToColumn(n) => self.apply_jump(n, viewport, follow),
+            Action::FocusPane(pid) => self.apply_focus_pane(pid, viewport, follow),
         }
     }
 }
@@ -616,6 +620,27 @@ impl Layout {
         }
         self.focus.column = n;
         self.clamp_focus_pane();
+        Ok(self.focused_scroll())
+    }
+
+    /// Smart-jump: focus a pane anywhere in the grid by id, crossing strips
+    /// if needed and following the focus with the scroll. Leaving an empty
+    /// strip drops it, exactly like directional row-crossing does.
+    fn apply_focus_pane(
+        &mut self,
+        pid: PaneId,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> LayoutResult<i32> {
+        let Some((row, column, pane)) = self.locate_pane(pid) else {
+            return Ok(self.focused_scroll());
+        };
+        let from = self.focus.row;
+        self.focus = crate::model::Focus { row, column, pane };
+        if from != row && self.row_is_empty(from) {
+            self.rows.retain(|r| r.id != from);
+        }
+        self.refocus_scroll(viewport, follow);
         Ok(self.focused_scroll())
     }
 }

@@ -1,6 +1,6 @@
 //! strimux-layout/src/minimap.rs
 
-use crate::{Layout, PaneStatus};
+use crate::{Layout, PaneId, PaneStatus};
 
 /// A single block in the minimap: one (strip, column, pane) tile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +17,13 @@ pub struct MinimapCell {
     pub focus_row: bool,
     /// True when this tile is the focused pane (strip + column + pane).
     pub focus_col: bool,
+    /// The pane this tile represents.
+    pub pane: PaneId,
+    /// 0-based column index of the pane within its strip (the `strip.cell`
+    /// address digit shown on the tile).
+    pub column: usize,
+    /// 0-based index of the pane within its column stack.
+    pub pane_idx: usize,
 }
 
 /// The computed minimap geometry.
@@ -116,6 +123,9 @@ pub fn build(layout: &Layout, map_w: u16, viewport_cols: u16) -> Minimap {
                     focus_row,
                     focus_col: focus_col
                         && pi == layout.focus.pane.min(panes.len().saturating_sub(1)),
+                    pane: *pid,
+                    column: ci,
+                    pane_idx: pi,
                 });
                 px += ww;
             }

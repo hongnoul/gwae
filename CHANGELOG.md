@@ -6,6 +6,31 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 
 ## [Unreleased]
 
+### Added
+- **The minimap is now an agent dashboard**: each pane's tile is tinted by
+  live status - blue `»` working, amber `!` wants attention, green `✓` done,
+  red `✗` failed (non-zero exit) - with the pane's `⌥+digit` column address in
+  its first cell, a `❯` chevron marking the focused strip, and a one-line
+  summary above the map tallying panes by status (`5 »2 !1 ✓1 ✗1`). Status is
+  driven by OSC 133 shell integration when the pane emits it (`A` prompt,
+  `C` running, `D;n` done/failed); panes without shell integration fall back
+  to an output-activity heuristic (a few seconds of silence → wants
+  attention). The map now appears whenever more than one pane exists, not
+  only with multiple strips. Configurable under `[minimap]`
+  (`show`, `max_width`, `max_rows`, `show_counts`).
+- **Smart-jump (`⌥+g`, prefix `g`)**: jump straight to the pane that needs
+  you - failed beats waiting-for-input beats done, nearest first in layout
+  order - crossing strips and following with the scroll. Does nothing while
+  every other pane is happily working.
+- **Touchpad/wheel scrolling scrolls the pane, not the host terminal**: strimux
+  now captures the mouse, so a scroll gesture moves the scrollback of the pane
+  under the cursor instead of falling through to the host terminal (where it
+  scrolled the host's own buffer and walked the shell's previous/next prompt
+  history). Panes that requested mouse reporting receive the event verbatim in
+  their own grid coordinates; a pane on the alternate screen without mouse
+  reporting (e.g. `less`) receives arrow keys. Typing snaps a scrolled-back
+  pane back to the live bottom. Configurable with `mouse` and `scroll_lines`.
+
 ### Fixed
 - **Pane close keeps the focus position**: closing a pane (`⌥+q` or process
   exit) used to always shift focus to the left neighbor. Focus now stays in

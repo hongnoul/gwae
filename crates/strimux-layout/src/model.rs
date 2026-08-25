@@ -16,9 +16,16 @@ pub type RowId = u64;
 /// it colors the minimap and powers smart-jump, never the layout itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PaneStatus {
+    /// A command is executing (OSC 133;C) or the pane is actively emitting
+    /// output (activity heuristic for panes without shell integration).
     Running,
+    /// At the prompt / waiting for input (OSC 133;A) or output has gone
+    /// quiet: the pane wants your attention.
     Idle,
+    /// The last command finished successfully (OSC 133;D with exit 0).
     Done,
+    /// The last command finished with a non-zero exit (OSC 133;D;n, n != 0).
+    Failed,
 }
 
 /// One PTY-backed pane. The layout only tracks its id and status; the actual
