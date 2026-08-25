@@ -77,6 +77,9 @@ pub struct Config {
     pub mouse: bool,
     /// Rows of pane scrollback moved per wheel notch.
     pub scroll_lines: u16,
+    /// Cowsay art drawn in empty placeholder boxes, under the big cell
+    /// identifier.
+    pub cowsay: Cowsay,
     /// Milliseconds to wait in `event::poll` before checking PTY output and
     /// repainting. Lower values reduce perceived typing and backspace latency
     /// at the cost of more frequent wakeups. Default is 2ms (from 10ms) for
@@ -106,6 +109,7 @@ impl Default for Config {
             minimap: Minimap::default(),
             mouse: true,
             scroll_lines: 3,
+            cowsay: Cowsay::default(),
             input_poll_ms: default_input_poll_ms(),
         }
     }
@@ -166,16 +170,64 @@ impl Config {
         (p, bad)
     }
 
+    /// Adopt the appearance settings from `new`, keeping everything that
+    /// cannot safely change while the TUI is running.
+    ///
+    /// Live reload only re-reads the file; it does not re-run startup. So
+    /// settings that were *consumed once* at launch are deliberately kept:
+    /// `startup_panes` (the panes already exist), `mouse` (capture was
+    /// enabled or not against the host terminal), and `default_agent` (panes
+    /// already spawned with it keep running). Everything that is read afresh
+    /// every frame - colors, skeleton, minimap, scroll behavior - is adopted,
+    /// which is exactly the set a user edits when tweaking a theme.
+    pub fn adopt_appearance(&mut self, new: Config) {
+        let Config {
+            startup_panes,
+            mouse,
+            default_agent,
+            ..
+        } = self.clone();
+        *self = Config {
+            startup_panes,
+            mouse,
+            default_agent,
+            ..new
+        };
+    }
+
     /// Load config from `path`, falling back to defaults if the file is
     /// missing or unparseable (with a warning).
     pub fn load(path: &std::path::Path) -> Config {
-        match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
+        match Config::load_checked(path) {
+            Ok(c) => c,
+            Err(e) => {
                 tracing::warn!("ignoring config {path:?}: {e}");
                 Config::default()
-            }),
-            Err(_) => Config::default(),
+            }
         }
+    }
+
+    /// Load config from `path`, returning the parse error instead of
+    /// swallowing it.
+    ///
+    /// A missing file is not an error: it yields the defaults, same as
+    /// [`Config::load`]. Live reload uses this so it can tell the user their
+    /// edit is broken rather than silently reverting their theme to the
+    /// defaults, which would look like the reload itself had misbehaved.
+    pub fn load_checked(path: &std::path::Path) -> Result<Config, String> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => toml::from_str(&text).map_err(|e| e.to_string()),
+            Err(_) => Ok(Config::default()),
+        }
+    }
+
+    /// The config file's last-modified time, or `None` when there is no file
+    /// (or the filesystem does not report one).
+    ///
+    /// Used to detect edits without a filesystem-watch dependency: one `stat`
+    /// per poll is cheap next to the render loop's existing work.
+    pub fn mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
+        std::fs::metadata(path).ok()?.modified().ok()
     }
 }
 
@@ -234,6 +286,44 @@ impl<'de> Deserialize<'de> for MinimapMode {
             }
         }
         deserializer.deserialize_any(V)
+    }
+}
+
+/// Cowsay art in empty placeholder boxes.
+///
+/// The default messages are *keybinding hints*, so an empty grid documents
+/// itself: a new user sees how to put something in the box they are looking
+/// at. Replace `messages` to say anything else (fortunes, reminders, ...).
+///
+/// Which box gets which message is chosen by hashing the cell's coordinates,
+/// never randomly, so a given box always says the same thing. That keeps the
+/// frame diff stable, so idle strimux does not repaint every frame.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Cowsay {
+    /// Draw the cow at all.
+    pub enabled: bool,
+    /// The pool of messages. Each empty box picks one by position. An empty
+    /// list disables the cow just like `enabled = false`.
+    pub messages: Vec<String>,
+}
+
+impl Default for Cowsay {
+    fn default() -> Self {
+        Cowsay {
+            enabled: true,
+            // Keybinding hints, matching the ⌥ HUD cheat-sheet.
+            messages: vec![
+                "Alt-Enter opens a column here".to_string(),
+                "Press c for a new pane".to_string(),
+                "Press ; to spawn an agent".to_string(),
+                "hjkl moves focus".to_string(),
+                "Press s to split this column".to_string(),
+                "1-9 jumps straight to a column".to_string(),
+                "Press r to cycle this column's width".to_string(),
+                "Hold Alt for the cheat-sheet".to_string(),
+            ],
+        }
     }
 }
 
@@ -301,6 +391,44 @@ mod tests {
 
     fn parse(toml: &str) -> Config {
         toml::from_str(toml).expect("config parses")
+    }
+
+    #[test]
+    fn cowsay_defaults_to_keybinding_hints() {
+        let cfg = parse("");
+        assert!(cfg.cowsay.enabled, "cow on by default");
+        assert!(
+            !cfg.cowsay.messages.is_empty(),
+            "default messages must exist or the cow never draws"
+        );
+    }
+
+    #[test]
+    fn cowsay_section_parses() {
+        // Exactly the shape documented in docs/CONFIG.md.
+        let cfg = parse("[cowsay]\nenabled = false\nmessages = [\"a\", \"b\"]\n");
+        assert!(!cfg.cowsay.enabled);
+        assert_eq!(cfg.cowsay.messages, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn cowsay_partial_section_keeps_other_defaults() {
+        // `#[serde(default)]`: naming only `enabled` must not wipe the
+        // built-in hint list out from under the user.
+        let cfg = parse("[cowsay]\nenabled = false\n");
+        assert!(!cfg.cowsay.enabled);
+        assert!(!cfg.cowsay.messages.is_empty(), "messages were cleared");
+    }
+
+    #[test]
+    fn cowsay_is_adopted_on_live_reload() {
+        // Cowsay is read afresh every frame, so editing it in the config file
+        // must take effect without a restart, like the other appearance keys.
+        let mut cfg = Config::default();
+        let new = parse("[cowsay]\nenabled = false\nmessages = [\"z\"]\n");
+        cfg.adopt_appearance(new);
+        assert!(!cfg.cowsay.enabled, "cowsay.enabled not adopted");
+        assert_eq!(cfg.cowsay.messages, vec!["z".to_string()]);
     }
 
     #[test]

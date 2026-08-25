@@ -485,6 +485,7 @@ fn render_frame(
     pal: &Palette,
     skeleton: bool,
     mm: &crate::config::Minimap,
+    cow: &crate::config::Cowsay,
 ) {
     // Every chrome color in this function comes from the palette; the
     // skeleton frame color is just `pal.overlay`, kept in a local so the
@@ -680,7 +681,7 @@ fn render_frame(
                 w: boxr.w.saturating_sub(2),
                 h: boxr.h.saturating_sub(2),
             };
-            draw_big_label(out, cols, inner, &label, pal.label);
+            draw_placeholder_contents(out, cols, inner, &label, pal.label, cow, strip_no, pcol);
             pcol += 1;
             edge += w;
         }
@@ -910,6 +911,110 @@ fn draw_big_label(out: &mut [Cell], cols: u16, rect: Rect, label: &str, color: C
     }
 }
 
+/// Fill the interior of an empty placeholder box: the big block-font cell
+/// identifier, and (room permitting) a cowsay hint under it.
+///
+/// The identifier is the box's *addressing* affordance and always wins: the
+/// cow is only drawn when it fits underneath without crowding the label, so
+/// narrow or short boxes silently degrade to the label alone rather than to a
+/// clipped mess. Vertically the pair is centered as a unit, so the box doesn't
+/// look top-heavy.
+#[allow(clippy::too_many_arguments)]
+fn draw_placeholder_contents(
+    out: &mut [Cell],
+    cols: u16,
+    rect: Rect,
+    label: &str,
+    color: CColor,
+    cow: &crate::config::Cowsay,
+    strip_no: usize,
+    pcol: usize,
+) {
+    let art = if cow.enabled {
+        crate::cowsay::message_for(&cow.messages, strip_no, pcol)
+            .map(|m| crate::cowsay::cow_frame(m, rect.w.min(40)))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    // 5 rows of block font, then a blank spacer row, then the art.
+    const LABEL_H: u16 = 5;
+    let art_h = art.len() as u16;
+    let fits = !art.is_empty() && rect.h >= LABEL_H + 1 + art_h;
+    if !fits {
+        draw_big_label(out, cols, rect, label, color);
+        return;
+    }
+    let total = LABEL_H + 1 + art_h;
+    let top = rect.y + (rect.h - total) / 2;
+    draw_big_label(
+        out,
+        cols,
+        Rect {
+            x: rect.x,
+            y: top,
+            w: rect.w,
+            h: LABEL_H,
+        },
+        label,
+        color,
+    );
+    draw_art(
+        out,
+        cols,
+        Rect {
+            x: rect.x,
+            y: top + LABEL_H + 1,
+            w: rect.w,
+            h: art_h,
+        },
+        &art,
+        color,
+    );
+}
+
+/// Paint a block of pre-wrapped ASCII art centered in `rect`.
+///
+/// Unlike [`draw_big_label`], which paints background-colored blanks, this
+/// writes real glyphs in `color`. The block is centered as a unit (each line
+/// keeps its relative indentation, so the cow doesn't shear), and any line
+/// that would run past the rect is clipped rather than wrapping into the
+/// neighbouring box.
+fn draw_art(out: &mut [Cell], cols: u16, rect: Rect, lines: &[String], color: CColor) {
+    let bw = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
+    if bw == 0 || bw > rect.w {
+        return;
+    }
+    let x0 = rect.x + (rect.w - bw) / 2;
+    for (ly, line) in lines.iter().enumerate() {
+        let y = rect.y + ly as u16;
+        if y >= rect.y + rect.h {
+            break;
+        }
+        for (lx, ch) in line.chars().enumerate() {
+            let x = x0 + lx as u16;
+            if x >= rect.x + rect.w || x >= cols {
+                break;
+            }
+            if ch == ' ' {
+                continue;
+            }
+            let idx = y as usize * cols as usize + x as usize;
+            if let Some(c) = out.get_mut(idx) {
+                *c = Cell {
+                    ch,
+                    style: strimux_term::Style {
+                        fg: color,
+                        ..Default::default()
+                    },
+                    width: 1,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+}
+
 fn status_glyph_for(s: PaneStatus) -> char {
     match s {
         PaneStatus::Running => '\u{00bb}', // »
@@ -1071,6 +1176,39 @@ fn draw_center_minimap(
 /// Persists until the next key press. Always shows a very concise
 /// cheat-sheet of every keybind; when a pane needs you the top line is a
 /// smart-jump hint (` ✗ 1.3 needs you — ⌥+g`).
+/// Draw a one-line toast along the bottom of the screen.
+///
+/// Used to report config reloads. It is a single row so it never covers a
+/// pane's working area meaningfully, and it sits on the theme's `surface` so
+/// it reads as chrome rather than as pane output.
+fn draw_toast(out: &mut [Cell], cols: u16, rows: u16, text: &str, pal: &Palette, ok: bool) {
+    if cols < 8 || rows == 0 {
+        return;
+    }
+    let body: Vec<char> = format!(" {text} ").chars().collect();
+    // Clip to the screen rather than wrapping: a toast is a hint, and a
+    // truncated hint is better than one that reflows the layout.
+    let w = body.len().min(cols as usize);
+    let y = (rows - 1) as usize;
+    // Errors use the failed tint so a broken config is not mistaken for a
+    // successful reload at a glance.
+    let fg = if ok { pal.text } else { pal.failed };
+    for (x, ch) in body.iter().take(w).enumerate() {
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            *c = Cell {
+                ch: *ch,
+                style: strimux_term::Style {
+                    fg,
+                    bg: pal.surface,
+                    ..Default::default()
+                },
+                width: 1,
+                ..Default::default()
+            };
+        }
+    }
+}
+
 fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, pal: &Palette) {
     let focus_color = pal.accent;
     if cols < 30 || rows < 9 {
@@ -1759,13 +1897,29 @@ fn refresh_size(cols: &mut u16, rows: &mut u16) -> bool {
     }
 }
 
+/// How often the config file is checked for edits.
+///
+/// Fast enough that saving a theme feels immediate, slow enough that the
+/// `stat` never shows up next to the render loop's own work.
+const CONFIG_POLL: Duration = Duration::from_millis(400);
+
+/// How long the reload note stays on screen.
+const NOTE_LINGER: Duration = Duration::from_millis(2500);
+
+/// The first line of a multi-line error, for one-line status display.
+fn first_line(s: &str) -> &str {
+    s.lines().next().unwrap_or(s).trim()
+}
+
 /// Run the interactive TUI.
 pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     use std::io;
-    // Resolve the theme once: preset lookup + `[theme]` overrides + the
-    // legacy top-level color keys. Every chrome color painted below reads
-    // from this palette.
-    let pal = cfg.palette();
+    // Config and palette are re-resolved whenever the config file changes on
+    // disk (see the reload check in the render loop), so both are mutable.
+    let mut cfg = cfg;
+    // The theme: preset lookup + `[theme]` overrides + the legacy top-level
+    // color keys. Every chrome color painted below reads from this palette.
+    let mut pal = cfg.palette();
     let mut stdout = io::stdout();
     enable_raw_mode().map_err(|e| {
         eprintln!("raw mode: {e}");
@@ -1884,6 +2038,13 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // The title currently shown on the host terminal; we only write when it
     // changes so we don't spam the host with identical OSC sequences.
     let mut last_title: String = String::new();
+    // Live config reload state: the file we watch, its last seen mtime, when
+    // we last checked, and the transient note shown after a reload.
+    let cfg_path = Config::default_path();
+    let mut cfg_mtime = Config::mtime(&cfg_path);
+    let mut reload_check = Instant::now();
+    let mut reload_note: Option<String> = None;
+    let mut reload_note_until: Option<Instant> = None;
 
     'main: loop {
         while let Ok(msg) = rx.try_recv() {
@@ -1994,6 +2155,53 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     lp.status = want;
                     dirty = true;
                 }
+            }
+        }
+
+        // Live config reload. Editing the config file repaints the running
+        // session, so tweaking a theme is a save away rather than a restart:
+        // restarting would kill every pane, which is exactly what someone
+        // running long-lived agents cannot afford.
+        //
+        // Polled by mtime rather than a filesystem watcher: one `stat` at the
+        // rate below is negligible next to the render loop, and it avoids a
+        // dependency plus the cross-platform watcher differences on the three
+        // OSes strimux supports.
+        if reload_check.elapsed() >= CONFIG_POLL {
+            reload_check = Instant::now();
+            let now = Config::mtime(&cfg_path);
+            if now != cfg_mtime {
+                cfg_mtime = now;
+                match Config::load_checked(&cfg_path) {
+                    Ok(new) => {
+                        let (new_pal, bad) = new.palette_checked();
+                        // Keep the panes and their harnesses exactly as they
+                        // are; only adopt what is re-read every frame.
+                        cfg.adopt_appearance(new);
+                        pal = new_pal;
+                        reload_note = Some(match bad {
+                            Some(name) => format!("unknown theme {name:?}"),
+                            None => format!("config reloaded: {}", cfg.theme_name()),
+                        });
+                        dirty = true;
+                    }
+                    Err(e) => {
+                        // Keep the running config: a half-written file (the
+                        // editor saved mid-keystroke) must not blow away a
+                        // working theme.
+                        reload_note = Some(format!("config error: {}", first_line(&e)));
+                        dirty = true;
+                    }
+                }
+                reload_note_until = Some(Instant::now() + NOTE_LINGER);
+            }
+        }
+        // Expire the reload note so it does not sit on screen forever.
+        if let Some(t) = reload_note_until {
+            if Instant::now() >= t {
+                reload_note = None;
+                reload_note_until = None;
+                dirty = true;
             }
         }
 
@@ -2297,12 +2505,17 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 &pal,
                 cfg.skeleton,
                 &cfg.minimap,
+                &cfg.cowsay,
             );
             if show_hud {
                 draw_center_hud(&mut frame, cols, rows, &layout, &pal);
             }
             if show_center_minimap && !show_hud {
                 draw_center_minimap(&mut frame, cols, rows, &layout, &cfg.minimap, &pal);
+            }
+            if let Some(note) = &reload_note {
+                let ok = !note.starts_with("config error") && !note.starts_with("unknown theme");
+                draw_toast(&mut frame, cols, rows, note, &pal, ok);
             }
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
@@ -3329,6 +3542,16 @@ mod tests {
 
     /// A disabled minimap config for geometry tests that assert the bottom
     /// screen rows the map would otherwise overlay.
+    /// A disabled cow, for tests that assert on placeholder box contents and
+    /// predate the cowsay feature. Keeping them cow-free means those
+    /// assertions still describe exactly what they did before.
+    fn no_cow() -> crate::config::Cowsay {
+        crate::config::Cowsay {
+            enabled: false,
+            messages: Vec::new(),
+        }
+    }
+
     fn no_map() -> crate::config::Minimap {
         crate::config::Minimap {
             show: false,
@@ -3359,6 +3582,7 @@ mod tests {
             &pal_of(CColor::Default, red, white),
             true,
             &no_map(),
+            &no_cow(),
         );
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
         assert_eq!(ranges.len(), 4);
@@ -3440,6 +3664,7 @@ mod tests {
             &pal_of(CColor::Default, CColor::Rgb(0xff, 0, 0), white),
             true,
             &no_map(),
+            &no_cow(),
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
         // Placeholder boxes cover [40,60) and [60,80): white thin frames all
@@ -3476,6 +3701,7 @@ mod tests {
             &pal_of(dim, CColor::Rgb(0xff, 0, 0), CColor::Rgb(0xff, 0xff, 0xff)),
             true,
             &no_map(),
+            &no_cow(),
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
         // Placeholder interiors are default-bg, never the dim background.
@@ -3502,6 +3728,142 @@ mod tests {
             .filter(|&(x, y)| bg(x, y) == label)
             .count();
         assert_eq!(painted_live, 0, "live boxes must not show identifiers");
+    }
+
+    /// Render a 2-column layout and return the placeholder box region as text,
+    /// one string per screen row, so cow assertions can just look for the art.
+    fn placeholder_rows(cols: u16, rows: u16, cow: &crate::config::Cowsay) -> Vec<String> {
+        let layout = Layout::new(2); // boxes 3 and 4 are placeholders
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            &pal_of(
+                CColor::Idx(235),
+                CColor::Rgb(0xff, 0, 0),
+                CColor::Rgb(0xff, 0xff, 0xff),
+            ),
+            true,
+            &no_map(),
+            cow,
+        );
+        (0..rows)
+            .map(|y| {
+                (0..cols)
+                    .map(|x| out[y as usize * cols as usize + x as usize].ch)
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn placeholder_boxes_show_a_cow_when_there_is_room() {
+        // A tall, wide-enough box gets the hint cow under its identifier.
+        let cow = crate::config::Cowsay {
+            enabled: true,
+            messages: vec!["press c for a new pane".to_string()],
+        };
+        let text = placeholder_rows(120, 24, &cow).join("\n");
+        assert!(
+            text.contains("^__^"),
+            "expected the cow's head in a roomy box:\n{text}"
+        );
+        assert!(
+            text.contains("(oo)"),
+            "expected the cow's face in a roomy box:\n{text}"
+        );
+        assert!(
+            text.contains("press c for a new pane"),
+            "expected the message in the bubble:\n{text}"
+        );
+    }
+
+    #[test]
+    fn cow_never_displaces_the_cell_identifier() {
+        // The identifier is the addressing affordance and must survive: in a
+        // box with the cow, the block-font label is still painted.
+        let cols: u16 = 120;
+        let rows: u16 = 24;
+        let layout = Layout::new(2);
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let label = CColor::Rgb(0x58, 0x5b, 0x70);
+        let cow = crate::config::Cowsay {
+            enabled: true,
+            messages: vec!["hi".to_string()],
+        };
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            &pal_of(CColor::Idx(235), CColor::Rgb(0xff, 0, 0), label),
+            true,
+            &no_map(),
+            &cow,
+        );
+        let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
+        let painted = (61..89u16)
+            .flat_map(|x| (1..rows - 1).map(move |y| (x, y)))
+            .filter(|&(x, y)| bg(x, y) == label)
+            .count();
+        assert!(
+            painted >= 11,
+            "identifier missing from a box with a cow, found {painted} cells"
+        );
+    }
+
+    #[test]
+    fn short_boxes_drop_the_cow_and_keep_the_identifier() {
+        // Not enough vertical room for label + spacer + art: degrade to the
+        // label alone rather than painting a clipped cow.
+        let cow = crate::config::Cowsay {
+            enabled: true,
+            messages: vec!["press c for a new pane".to_string()],
+        };
+        let text = placeholder_rows(120, 10, &cow).join("\n");
+        assert!(
+            !text.contains("^__^"),
+            "a short box must not draw a clipped cow:\n{text}"
+        );
+    }
+
+    #[test]
+    fn narrow_boxes_drop_the_cow() {
+        // Quarter of 80 cols = 20-wide boxes, under the cow's fixed 23: the
+        // art would be clipped, so it is skipped entirely.
+        let cow = crate::config::Cowsay {
+            enabled: true,
+            messages: vec!["press c for a new pane".to_string()],
+        };
+        let text = placeholder_rows(80, 24, &cow).join("\n");
+        assert!(
+            !text.contains("^__^"),
+            "a narrow box must not draw a clipped cow:\n{text}"
+        );
+    }
+
+    #[test]
+    fn disabled_cow_paints_nothing() {
+        let text = placeholder_rows(120, 24, &no_cow()).join("\n");
+        assert!(!text.contains("^__^"), "cow drawn while disabled:\n{text}");
+    }
+
+    #[test]
+    fn cow_is_identical_across_repaints() {
+        // The frame differ compares against the previous frame, so an unstable
+        // (e.g. randomly chosen) message would force a repaint every frame.
+        let cow = crate::config::Cowsay::default();
+        let a = placeholder_rows(120, 24, &cow);
+        let b = placeholder_rows(120, 24, &cow);
+        assert_eq!(a, b, "placeholder cow changed between identical renders");
     }
 
     #[test]
@@ -3734,6 +4096,10 @@ fn content_scroll_reveals_overflow_e2e() {
         &Palette::default(),
         false,
         &crate::config::Minimap::default(),
+        &crate::config::Cowsay {
+            enabled: false,
+            messages: Vec::new(),
+        },
     );
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
     assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
@@ -3751,6 +4117,10 @@ fn content_scroll_reveals_overflow_e2e() {
         &Palette::default(),
         false,
         &crate::config::Minimap::default(),
+        &crate::config::Cowsay {
+            enabled: false,
+            messages: Vec::new(),
+        },
     );
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
     assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
@@ -3768,6 +4138,10 @@ fn content_scroll_reveals_overflow_e2e() {
         &Palette::default(),
         false,
         &crate::config::Minimap::default(),
+        &crate::config::Cowsay {
+            enabled: false,
+            messages: Vec::new(),
+        },
     );
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
     assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
@@ -3850,6 +4224,10 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
         &Palette::default(),
         false,
         &crate::config::Minimap::default(),
+        &crate::config::Cowsay {
+            enabled: false,
+            messages: Vec::new(),
+        },
     );
     // The top row shows each pane's letter across its exact range: the
     // rightmost screen cell belongs to pane 'D' and no boundary bleeds.
@@ -3948,6 +4326,10 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
             &Palette::default(),
             true,
             &crate::config::Minimap::default(),
+            &crate::config::Cowsay {
+                enabled: false,
+                messages: Vec::new(),
+            },
         );
         let y = 2usize;
         (0..cols)

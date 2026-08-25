@@ -6,6 +6,7 @@
 
 mod cli;
 mod config;
+mod cowsay;
 mod theme;
 mod tui;
 

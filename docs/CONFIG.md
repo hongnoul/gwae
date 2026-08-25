@@ -33,6 +33,10 @@ mode = "off"
 max_width = 32
 max_rows = 6
 show_counts = true
+
+[cowsay]
+enabled = true
+# messages = ["your own message", "another one"]
 ```
 
 ## Checking your config
@@ -101,6 +105,8 @@ and a config file that is not being applied at all points at the syntax error:
 | `minimap.max_width` | integer | `32` | Maximum width of the minimap. Used for `overlay` and the centered minimap while holding `⌥`/Alt. |
 | `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown. Used for `overlay` and the centered minimap while holding `⌥`/Alt. |
 | `minimap.show_counts` | bool | `true` | Summary tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts skipped), above the map. |
+| `cowsay.enabled` | bool | `true` | Draw a small cowsay under the block-font identifier in empty placeholder boxes, so an empty grid documents itself. The cow is skipped when the box is too small for it to fit whole (under 23 cells wide, or too short for label + art), so the identifier is never crowded out. |
+| `cowsay.messages` | array of strings | keybinding hints | The pool each empty box draws its line from. Which box says what is chosen by hashing the cell's position, never randomly, so a given box always says the same thing and idle strimux does not repaint. An empty list disables the cow just like `enabled = false`. |
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.

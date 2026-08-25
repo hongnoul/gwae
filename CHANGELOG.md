@@ -7,6 +7,18 @@ changelog, updated per PR). strimux is pre-1.0; the format is based on
 ## [Unreleased]
 
 ### Added
+- **Empty grid cells now document themselves with a cowsay hint**: an empty
+  placeholder box showed only its big block-font `strip.cell` identifier, which
+  says *where* you are but not what to do about it. Each empty box now draws a
+  small cow under the identifier speaking a keybinding hint (`Alt-Enter opens a
+  column here`, `Press ; to spawn an agent`, ...), so a fresh workspace teaches
+  its own bindings. The art is generated in-process (no `cowsay(1)` dependency)
+  and wrapped to the box width. Which box says what is chosen by hashing the
+  cell's position, never randomly, so a box always says the same thing and idle
+  strimux still paints zero cells per frame. The identifier always wins: boxes
+  too narrow (under 23 cells) or too short for both degrade to the label alone
+  rather than a clipped cow. Configure via `[cowsay]` `enabled` / `messages`;
+  both are picked up by live config reload.
 - **Kitty graphics passthrough: images now render inside panes**: vt100 (the
   hosted emulator) silently swallows Kitty graphics APCs, so any child that
   drew images (jcode diagrams/screenshots, `kitten icat`) showed nothing.
