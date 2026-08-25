@@ -352,6 +352,18 @@ fn render_frame(
                 } else {
                     Cell::default()
                 };
+                // A wide character clipped at an edge cannot be shown as half
+                // a glyph: an orphaned continuation cell at the left edge, or
+                // a wide head whose second column falls past the right edge,
+                // is blanked so the glyph never spills into a neighbor.
+                if (gx == 0 && cell.width == 0)
+                    || (cell.width == 2 && (gx + 1 >= v.rect.w || gi + 1 >= g_end))
+                {
+                    cell = Cell {
+                        style: cell.style,
+                        ..Cell::default()
+                    };
+                }
                 if is_focus && cell.style.bg == CColor::Default {
                     cell.style.bg = FOCUS_TINT;
                 }
@@ -370,6 +382,15 @@ fn crossterm_color(c: CColor) -> crossterm::style::Color {
 }
 
 /// Diff and paint `out` vs `last` into `buf`. Returns true if anything changed.
+///
+/// Wide (two-column) characters need care to avoid shearing the row:
+///  - width-0 continuation cells are skipped, because the wide glyph printed
+///    just before them already covers that column; printing their placeholder
+///    space would shift everything after it one column right.
+///  - every run starts with an explicit `MoveTo`, and a run is cut right after
+///    any non-single-width cell, so even if the host terminal disagrees with
+///    the emulator about a glyph's width (a classic emoji problem) the drift
+///    is bounded to that one glyph instead of shearing the rest of the row.
 fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -> bool {
     use crossterm::queue;
     use crossterm::style::{
@@ -383,25 +404,33 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
             continue;
         }
         dirty = true;
-        let _ = queue!(
-            buf,
-            cursor::MoveTo(0, y as u16),
-            SetAttribute(Attribute::Reset)
-        );
+        let _ = queue!(buf, SetAttribute(Attribute::Reset));
         // Group cells into style runs and print each run.
         let mut x = 0usize;
         while x < cc {
             let cell = out[y * cc + x];
+            if cell.width == 0 {
+                // Continuation of a wide char; the glyph already covers it.
+                x += 1;
+                continue;
+            }
             let style = cell.style;
             let mut run = String::new();
             run.push(cell.ch);
             let mut end = x + 1;
-            while end < cc && out[y * cc + end].style == style {
-                run.push(out[y * cc + end].ch);
-                end += 1;
+            if cell.width == 1 {
+                while end < cc && out[y * cc + end].style == style {
+                    let next = out[y * cc + end];
+                    if next.width != 1 {
+                        break;
+                    }
+                    run.push(next.ch);
+                    end += 1;
+                }
             }
             let _ = queue!(
                 buf,
+                cursor::MoveTo(x as u16, y as u16),
                 SetForegroundColor(crossterm_color(style.fg)),
                 SetBackgroundColor(crossterm_color(style.bg)),
             );
@@ -417,9 +446,6 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
             let _ = queue!(buf, Print(run));
             x = end;
         }
-        use crossterm::terminal::Clear;
-        use crossterm::terminal::ClearType;
-        let _ = queue!(buf, Clear(ClearType::UntilNewLine));
     }
     dirty
 }
@@ -871,7 +897,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
             if !buf.is_empty() {
+                // Synchronized update (ESC[?2026h/l): the host terminal holds
+                // the screen and applies the whole frame atomically, so a
+                // repaint can never be displayed half-drawn (visible shearing
+                // when a vsync lands mid-write). Terminals that don't support
+                // it ignore the markers.
+                let _ = stdout.write_all(b"\x1b[?2026h");
                 let _ = stdout.write_all(&buf);
+                let _ = stdout.write_all(b"\x1b[?2026l");
                 let _ = stdout.flush();
                 last = frame.clone();
             }
@@ -970,6 +1003,38 @@ mod tests {
         // A column fully left of the viewport (col_x0 negative equivalent:
         // h_scroll cannot hold it, but a col offset past content is clipped).
         assert_eq!(pane_window(240, 0, 80, 240), None);
+    }
+
+    #[test]
+    fn paint_skips_wide_continuation_cells() {
+        // Row: wide '你' (head width 2, then a width-0 continuation), then "ab".
+        // If the continuation's placeholder space were printed, 'a' would land
+        // one column too far right and shear the row.
+        let mut row = vec![Cell::default(); 6];
+        row[0] = Cell {
+            ch: '你',
+            width: 2,
+            ..Cell::default()
+        };
+        row[1] = Cell {
+            ch: ' ',
+            width: 0,
+            ..Cell::default()
+        };
+        row[2].ch = 'a';
+        row[3].ch = 'b';
+        let last = vec![Cell { ch: 'x', ..Cell::default() }; 6];
+        let mut buf = Vec::new();
+        assert!(paint(&mut buf, &row, &last, 6, 1));
+        let s = String::from_utf8(buf).unwrap();
+        // The wide glyph is printed exactly once and the continuation's
+        // placeholder space is never printed between it and 'a'.
+        assert_eq!(s.matches('你').count(), 1);
+        assert!(!s.contains("你 a"), "continuation cell was printed: {s:?}");
+        // 'a' is re-positioned to its true column (x=2) with an explicit
+        // MoveTo (CUP row 1, col 3 -> ESC[1;3H) rather than relying on the
+        // host's cursor advance across the wide glyph.
+        assert!(s.contains("\u{1b}[1;3H"), "missing MoveTo before 'a': {s:?}");
     }
 }
 

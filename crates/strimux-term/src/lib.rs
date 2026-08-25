@@ -23,11 +23,19 @@ pub struct Style {
     pub inverse: bool,
 }
 
-/// A single cell: a character and its style.
+/// A single cell: a character, its style, and its terminal column width.
+///
+/// `width` is the number of screen columns the glyph occupies when printed:
+/// 1 for ordinary characters, 2 for wide (CJK/emoji) characters, and 0 for
+/// the continuation cell that sits under the right half of a wide character.
+/// The renderer must skip width-0 cells (the wide glyph already covers that
+/// column); printing them as spaces shears every following cell one column
+/// to the right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
     pub ch: char,
     pub style: Style,
+    pub width: u8,
 }
 
 impl Default for Cell {
@@ -35,6 +43,7 @@ impl Default for Cell {
         Cell {
             ch: ' ',
             style: Style::default(),
+            width: 1,
         }
     }
 }
@@ -130,7 +139,14 @@ impl TermGrid for Vt100Grid {
                     underline: c.underline(),
                     inverse: c.inverse(),
                 };
-                Cell { ch, style }
+                let width = if c.is_wide() {
+                    2
+                } else if c.is_wide_continuation() {
+                    0
+                } else {
+                    1
+                };
+                Cell { ch, style, width }
             }
             None => Cell::default(),
         }
@@ -223,6 +239,23 @@ mod tests {
         let g = NullGrid::new(Size { cols: 10, rows: 10 });
         assert_eq!(g.cell(3, 4), Cell::default());
         assert_eq!(g.size(), Size { cols: 10, rows: 10 });
+    }
+
+    #[test]
+    fn vt100_reports_wide_char_widths() {
+        let mut g = Vt100Grid::new(Size { cols: 20, rows: 5 });
+        // "你" is a two-column CJK glyph followed by an ASCII 'a'.
+        g.feed("你a".as_bytes());
+        let head = g.cell(0, 0);
+        assert_eq!(head.ch, '你');
+        assert_eq!(head.width, 2);
+        // The cell under its right half is a zero-width continuation.
+        let cont = g.cell(1, 0);
+        assert_eq!(cont.width, 0);
+        // Ordinary characters land after the full glyph width.
+        let a = g.cell(2, 0);
+        assert_eq!(a.ch, 'a');
+        assert_eq!(a.width, 1);
     }
 
     #[test]
