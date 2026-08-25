@@ -5,6 +5,7 @@
 //! M0 and grows with the layout. `docs/CONFIG.md` is generated from the doc
 //! comments here.
 
+#[cfg(test)]
 use crate::keys;
 use crate::theme::{Palette, ThemeSpec};
 use serde::de::{self, Visitor};
@@ -412,7 +413,20 @@ mod tests {
         // elsewhere, never both and never the wrong one.
         let cfg = parse("");
         let m = keys::mod_key();
+        // Chord hints must name the modifier. A few bindings are mouse or
+        // key-range prose (`1-9`, `click`, `wheel`) and correctly have no
+        // modifier to name.
+        let chord_hints = cfg
+            .cowsay
+            .messages
+            .iter()
+            .filter(|msg| !msg.starts_with(['1', 'c', 'w', '←', '↵', '⇧']))
+            .count();
+        assert!(chord_hints > 0, "some hints are chords");
         for msg in &cfg.cowsay.messages {
+            if msg.starts_with(['1', 'c', 'w', '←', '↵', '⇧', 'E', 'S']) {
+                continue;
+            }
             assert!(msg.contains(m), "hint {msg:?} does not mention {m:?}");
         }
         let other = if cfg!(target_os = "macos") {

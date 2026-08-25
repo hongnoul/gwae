@@ -4,6 +4,7 @@
 //! buffer. This scaffold wires the CLI, config, and a `Layout` smoke demo; the
 //! renderer/PTY loop lands in the M0 spike.
 
+mod binds;
 mod cli;
 mod config;
 mod cowsay;

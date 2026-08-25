@@ -83,14 +83,14 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | `⌥+k` / `⌥+j` | Focus up / down within stack; at edge crosses strips. Past the last strip creates an empty strip (niri workspace semantics); leaving an empty strip discards it |
 | `⌥+Shift+h` / `⌥+Shift+l` | Move focused column left / right (swap with neighbor) |
 | `⌥+Shift+k` / `⌥+Shift+j` | Move pane up / down within stack; at the stack edge carries the pane to the neighboring strip (creating one past the end), discarding an emptied strip |
-| `⌥+Enter` | New column to the right of focused |
+| `⌥+Enter` / `⌥+a` | New column to the right of focused |
 | `⌥+;` (`…` on macOS) | Spawn agent pane (`default_agent`, default `jcode`) at strip end and focus it |
 | `⌥+s` | Split focused column — new pane below |
 | `⌥+r` | Cycle focused column width `1/3 → 1/2 → 1/4` |
 | `⌥+f` (`ƒ` on macOS) | Toggle focused column between full width and `1/4` |
 | `⌥+x` / `⌥+q` (`œ`) | Kill focused pane — columns compact, focus keeps its slot (falls left only at right edge); emptied strip is dropped, last pane quits strimux |
 | `⌥+←` / `⌥+→` | Scroll pane's logical content horizontally (when `content_width` > column width) |
-| `⌥+Ctrl+h` / `⌥+Ctrl+l` | Scroll row viewport one quantized stop without moving focus |
+| `⌥+[` / `⌥+]` | Scroll the row viewport left / right without moving focus |
 | `⌥+1` … `⌥+9` | Jump to column N in focused strip |
 | `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
 | `⌥+t` (`†` on macOS) | **Theme picker** — step presets with `←`/`→`, live-previewed on the real UI; `⏎` keeps, `esc` restores |
@@ -100,6 +100,16 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 | wheel | Scrolls pane scrollback under cursor; `Shift+wheel` etc. forwarded as SGR when pane wants mouse, else translated to `↑`/`↓` for alt-screen pagers |
 
 All other keys pass through to the focused pane. Closing a pane by `exit` / process death behaves identically to `kill-pane`.
+
+### Adding a keybinding
+
+Bindings live in **one place**: `crates/strimux/src/binds.rs`. Each entry declares its trigger, the `Cmd` it must produce, a short cheat-sheet label, and a **mandatory one-line cowsay hint** — the `hint` field is not optional, so a binding and its natural-language explanation are bijective by construction and the cow can never fall behind the dispatcher. The cheat-sheet HUD, the cowsay hints and this table all render from that registry.
+
+The dispatcher in `tui::handle_key` remains the authority; the registry only *claims* what it does. Tests enforce the agreement, so a new or re-bound key fails the build until every surface is consistent:
+
+- `advertised_bindings_match_the_dispatcher` — replays each entry (Meta path plus the macOS glyph fallback) through the real `handle_key` and requires the declared effect.
+- `hints_are_bijective_with_bindings` — one non-empty, unique hint per binding, each leading with its own key label.
+- `every_binding_is_documented_in_the_readme` — the table above must list it.
 
 ---
 

@@ -130,12 +130,27 @@ fn empty_message_list_disables_the_cow() {
 }
 
 #[test]
-fn default_config_shows_a_keybinding_hint() {
-    // Out of the box, with no `[cowsay]` section at all, empty boxes should
-    // document the keybindings. This is the actual shipped default.
+fn default_config_keeps_the_grid_bare() {
+    // The shipped default is a bare skeleton: `cowsay.enabled` is false, so
+    // no cow appears without opting in.
     let painted = paint(NO_CHROME, 120, 30);
     assert!(
-        painted.contains("^__^"),
-        "default config painted no cow in the empty grid"
+        !painted.contains("^__^"),
+        "default config painted a cow; it is opt-in"
+    );
+}
+
+#[test]
+fn enabling_the_cow_shows_a_real_keybinding_hint() {
+    // Turning the cow on with no `messages` must fall back to the default
+    // hint pool, which is generated from the binding registry. Every hint is
+    // therefore a chord `handle_key` actually implements.
+    let cfg = format!("[cowsay]\nenabled = true\n{NO_CHROME}");
+    let painted = paint(&cfg, 120, 30);
+    assert!(painted.contains("^__^"), "enabled cow did not paint");
+    let mods = ["⌥", "Alt"];
+    assert!(
+        mods.iter().any(|m| painted.contains(m)),
+        "default hint should name the modifier key"
     );
 }
