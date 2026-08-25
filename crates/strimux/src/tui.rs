@@ -30,6 +30,7 @@ pub struct PtyPane {
     pub child: Box<dyn PtyChild + Send + Sync>,
     pub grid: Vt100Grid,
     pub alive: bool,
+    pub h_scroll: i32,
 }
 
 /// Message a per-pane reader thread sends to the main loop.
@@ -119,6 +120,7 @@ fn spawn_pane(
         child,
         grid: Vt100Grid::new(GridSize { cols: gw, rows: gh }),
         alive: true,
+        h_scroll: 0,
     })
 }
 
@@ -150,13 +152,20 @@ fn shell_split(cmd: &str) -> Vec<String> {
 struct PaneView {
     pid: PaneId,
     rect: Rect,          // screen rect (already clipped to viewport horizontally)
-    grid_x0: u16,        // grid column at the left edge of `rect`
-    grid_cols: u16,      // full logical width of the grid
+    col_x0: u16,         // grid column at the left edge of `rect` (before content scroll)
+    h_scroll: i32,       // pane content scroll in cells
+    grid_cols: u16,      // full logical content width of the grid
     grid_rows: u16,      // vertical size of the grid
 }
 
 /// Compute visible pane views for the focused row.
-fn focused_pane_views(layout: &Layout, cols: u16, rows: u16) -> Vec<PaneView> {
+fn focused_pane_views(
+    layout: &Layout,
+    cols: u16,
+    rows: u16,
+    content_width: u16,
+    panes: &HashMap<PaneId, PtyPane>,
+) -> Vec<PaneView> {
     let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
     let scroll = layout.focused_row().map(|r| r.scroll_x).unwrap_or(0);
     let ranges = layout
@@ -179,7 +188,8 @@ fn focused_pane_views(layout: &Layout, cols: u16, rows: u16) -> Vec<PaneView> {
             continue;
         };
         let full_w = (e - s) as u16;
-        let grid_x0 = (left as i32 - sx).max(0) as u16; // grid col at `left`
+        let grid_cols = full_w.max(content_width);
+        let col_x0 = (left as i32 - sx).max(0) as u16; // grid col at `left`
         let p = col.panes.len().max(1);
         let gap = 1u16;
         let pane_h = ((strip_h as i32 - (p as i32 - 1) * gap as i32) / p as i32).max(1) as u16;
@@ -189,16 +199,36 @@ fn focused_pane_views(layout: &Layout, cols: u16, rows: u16) -> Vec<PaneView> {
             if h == 0 {
                 continue;
             }
+            let h_scroll = panes.get(pid).map(|p| p.h_scroll).unwrap_or(0);
             out.push(PaneView {
                 pid: *pid,
                 rect: Rect { x: left, y, w: wv, h },
-                grid_x0,
-                grid_cols: full_w,
+                col_x0,
+                h_scroll,
+                grid_cols,
                 grid_rows: h,
             });
         }
     }
     out
+}
+
+/// The grid-column range `[start, end)` of a pane's content revealed by `w`
+/// screen cells at the rect, given the viewport column offset `col_x0`, the
+/// pane content scroll `h_scroll`, and the content width `grid_cols`. Returns
+/// `None` when the window is fully clipped (offscreen or past the content).
+fn pane_window(col_x0: u16, h_scroll: i32, w: u16, grid_cols: u16) -> Option<(u16, u16)> {
+    let start = col_x0 as i32 + h_scroll;
+    if start < 0 || start >= grid_cols as i32 {
+        return None;
+    }
+    let start = start as u16;
+    let end = (start + w).min(grid_cols);
+    if end <= start {
+        None
+    } else {
+        Some((start, end))
+    }
 }
 
 /// Build the full frame (cols x rows) including the bottom status line.
@@ -208,26 +238,28 @@ fn render_frame(
     panes: &mut HashMap<PaneId, PtyPane>,
     cols: u16,
     rows: u16,
+    content_width: u16,
 ) {
     out.clear();
     out.resize((cols as usize) * (rows as usize), Cell::default());
 
-    for v in focused_pane_views(layout, cols, rows) {
+    for v in focused_pane_views(layout, cols, rows, content_width, panes) {
         let Some(pane) = panes.get_mut(&v.pid) else { continue };
-        // Keep the emulator at its full logical width; only reflow vertically.
+        // Keep the emulator at its full logical content width; only reflow vertically.
         pane.grid.resize(GridSize { cols: v.grid_cols, rows: v.grid_rows });
+        let Some((g_start, g_end)) = pane_window(v.col_x0, v.h_scroll, v.rect.w, v.grid_cols) else {
+            continue;
+        };
         for gy in 0..v.rect.h {
-            for gx in 0..v.rect.w {
-                let gi = v.grid_x0 as usize + gx as usize;
-                if gi >= v.grid_cols as usize {
-                    continue;
-                }
+            let mut gx = 0u16;
+            for gi in g_start..g_end {
                 let idx = ((v.rect.y as usize + gy as usize) * cols as usize)
                     + (v.rect.x as usize + gx as usize);
                 if idx >= out.len() {
                     continue;
                 }
-                out[idx] = pane.grid.cell(gi as u16, gy);
+                out[idx] = pane.grid.cell(gi, gy);
+                gx += 1;
             }
         }
     }
@@ -242,10 +274,15 @@ fn render_frame(
         inverse: false,
     };
     let scroll = layout.focused_row().map(|r| r.scroll_x).unwrap_or(0);
+    let pscroll = focused_pane(layout)
+        .and_then(|id| panes.get(&id))
+        .map(|p| p.h_scroll)
+        .unwrap_or(0);
     let mut st = format!(
-        " strimux | row:{} | scroll:{} | focus: col {} pane {} | cols {} | Alt+hjkl nav, Alt+Enter new, Alt+x kill, Alt+q quit",
+        " strimux | row:{} | scroll:{} px:{} | focus: col {} pane {} | cols {} | Alt+hjkl nav, Alt+Left/Right pane scroll, Alt+Enter new, Alt+x kill, Alt+q quit",
         layout.focused_row().map(|r| r.name.as_str()).unwrap_or("?"),
         scroll,
+        pscroll,
         layout.focus.column,
         layout.focus.pane,
         layout.focused_row().map(|r| r.columns.len()).unwrap_or(0),
@@ -326,6 +363,7 @@ fn paint(
 enum Cmd {
     Act(Action),
     Scroll(i32),
+    ScrollPane(i32),
     Input(Vec<u8>),
     Quit,
     None,
@@ -408,6 +446,10 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         Char('q') => return Some(Cmd::Quit),
         Char('[') => return Some(Cmd::Scroll(-200)),
         Char(']') => return Some(Cmd::Scroll(200)),
+        Left if shift => return Some(Cmd::ScrollPane(-16)),
+        Right if shift => return Some(Cmd::ScrollPane(16)),
+        Left => return Some(Cmd::ScrollPane(-1)),
+        Right => return Some(Cmd::ScrollPane(1)),
         _ => return Some(Cmd::Input(key_bytes(ev))),
     };
     Some(Cmd::Act(cmd))
@@ -514,6 +556,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                 let _ = layout.apply(Action::ScrollViewport(d), v, FollowScroll::default());
                                 dirty = true;
                             }
+                            Cmd::ScrollPane(d) => {
+                                if let Some(pid) = focused_pane(&layout) {
+                                    if let Some(p) = panes.get_mut(&pid) {
+                                        p.h_scroll = (p.h_scroll + d).max(0);
+                                        dirty = true;
+                                    }
+                                }
+                            }
                             Cmd::Act(a) => {
                                 let v = Viewport::new(cols);
                                 let f = FollowScroll { margin: cfg.scroll_margin, center: cfg.center_focus };
@@ -549,7 +599,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         }
 
         // Resize grids & PTYs to match current geometry.
-        for v in focused_pane_views(&layout, cols, rows) {
+        for v in focused_pane_views(&layout, cols, rows, cfg.content_width, &panes) {
             let pid = v.pid;
             if let Some(p) = panes.get_mut(&pid) {
                 if p.grid.size() != (GridSize { cols: v.grid_cols, rows: v.grid_rows }) {
@@ -566,7 +616,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         }
 
         if dirty {
-            render_frame(&mut frame, &layout, &mut panes, cols, rows);
+            render_frame(&mut frame, &layout, &mut panes, cols, rows, cfg.content_width);
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
             if !buf.is_empty() {
@@ -594,4 +644,40 @@ fn focused_pane(layout: &Layout) -> Option<PaneId> {
         .and_then(|r| r.columns.get(layout.focus.column))
         .and_then(|c| c.panes.get(layout.focus.pane))
         .copied()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pane_window_shows_leading_content() {
+        // 240-col content, 80-col rect, no scroll: reveal [0, 80).
+        assert_eq!(pane_window(0, 0, 80, 240), Some((0, 80)));
+    }
+
+    #[test]
+    fn pane_scroll_reveals_overflow() {
+        // Scrolling 10 cells pans the window right within the content.
+        assert_eq!(pane_window(0, 10, 80, 240), Some((10, 90)));
+    }
+
+    #[test]
+    fn pane_scroll_clamps_to_content_end() {
+        // Scrolling near the end reveals a partial (clipped) window.
+        assert_eq!(pane_window(0, 200, 80, 240), Some((200, 240)));
+    }
+
+    #[test]
+    fn pane_scroll_beyond_content_is_clipped() {
+        // Scrolling past the content yields nothing.
+        assert_eq!(pane_window(0, 250, 80, 240), None);
+    }
+
+    #[test]
+    fn offscreen_column_is_clipped() {
+        // A column fully left of the viewport (col_x0 negative equivalent:
+        // h_scroll cannot hold it, but a col offset past content is clipped).
+        assert_eq!(pane_window(240, 0, 80, 240), None);
+    }
 }
