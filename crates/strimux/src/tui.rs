@@ -681,3 +681,56 @@ mod tests {
         assert_eq!(pane_window(240, 0, 80, 240), None);
     }
 }
+
+#[test]
+fn content_scroll_reveals_overflow_e2e() {
+    let mut layout = Layout::default();
+    let pid = focused_pane(&layout).expect("default layout has a focused pane");
+    // Widen the single default column to the full viewport so we see 80 cells.
+    if let Some(row) = layout.row_mut(layout.focus.row) {
+        row.columns[0].width = strimux_layout::Width::Cells(80);
+    }
+    let (tx, rx) = channel::<PaneMsg>();
+    let cmd = "sh -c \"for i in $(seq 1 240); do printf '%s' $((i % 10)); done; echo\"";
+    let pane = spawn_pane(pid, cmd, 240, 10, tx.clone()).expect("spawn pane");
+    let mut pane = pane;
+    // Feed PTY output until the 240-cell digit line has landed.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    'feed: while std::time::Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(PaneMsg::Output(_, bytes)) => {
+                pane.grid.feed(&bytes);
+                if pane.grid.cell(239, 0).ch != ' ' {
+                    break 'feed;
+                }
+            }
+            Ok(PaneMsg::Exited(_)) | Err(_) => break 'feed,
+        }
+    }
+    let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+    panes.insert(pid, pane);
+    let mut out = Vec::new();
+
+    // At scroll 0 the viewport shows content columns 0..80 (digits 1,2,...,0).
+    panes.get_mut(&pid).unwrap().h_scroll = 0;
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
+    assert_eq!(out[0].ch, '1');   // content col 0  -> i=1
+    assert_eq!(out[9].ch, '0');   // content col 9  -> i=10
+    assert_eq!(out[79].ch, '0');  // content col 79 -> i=80
+
+    // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
+    panes.get_mut(&pid).unwrap().h_scroll = 60;
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
+    assert_eq!(out[0].ch, '1');   // content col 60 -> i=61
+    assert_eq!(out[1].ch, '2');   // content col 61 -> i=62
+    assert_eq!(out[79].ch, '0');  // content col 139 -> i=140
+
+    // Past the 240-col content the window reveals blanks.
+    panes.get_mut(&pid).unwrap().h_scroll = 200;
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
+    assert_eq!(out[0].ch, '1');   // content col 200 -> i=201
+    assert_eq!(out[40].ch, ' ');  // content col 240 does not exist
+    assert_eq!(out[79].ch, ' ');
+
+    let _ = panes.get_mut(&pid).unwrap().child.kill();
+}
