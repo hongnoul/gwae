@@ -15,7 +15,7 @@ use crossterm::terminal::{
 };
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 use strimux_layout::{Action, FollowScroll, Layout, PaneId, Viewport};
-use strimux_term::{CColor, Cell, Size as GridSize, Style, TermGrid, Vt100Grid};
+use strimux_term::{CColor, Cell, Size as GridSize, TermGrid, Vt100Grid};
 
 use crate::config::Config;
 
@@ -23,24 +23,10 @@ use crate::config::Config;
 /// full viewport height.
 const CHROME_ROWS: u16 = 0;
 
-/// Style of the one-cell ring drawn around the focused pane.
-const FOCUS_RING: Style = Style {
-    fg: CColor::Idx(15),  // bright white
-    bg: CColor::Idx(39),  // vivid cyan
-    bold: true,
-    underline: false,
-    inverse: false,
-};
-
-/// Style of the one-cell ring drawn around every other (non-focused) pane, so
-/// all panes are framed uniformly and only the focused ring stands out.
-const PANEL_RING: Style = Style {
-    fg: CColor::Idx(239), // dim gray
-    bg: CColor::Default,
-    bold: false,
-    underline: false,
-    inverse: false,
-};
+/// Background tint applied to the focused pane so it reads as "active"
+/// without spending any layout cells on a border. Full-bleed panes keep every
+/// usable column; focus is shown purely by color, so nothing shifts or resizes.
+const FOCUS_TINT: CColor = CColor::Idx(237); // dark gray, visible against black bg
 
 /// True while the user is inside the `Ctrl-b` prefix and the next key is a
 /// strimux command rather than pane input. Works on every terminal, no
@@ -256,15 +242,10 @@ fn focused_pane_views(
             continue;
         };
         let full_w = (e - s) as u16;
-        // The ring insets a pane's visible content by one cell each side, so the
-        // emulator must be sized to the interior, not the full column width,
-        // otherwise content wraps 2 cells too late and hides under the ring.
-        let interior_w = if full_w >= 3 { full_w - 2 } else { full_w };
-        let grid_cols = if content_width == 0 {
-            interior_w.max(1)
-        } else {
-            full_w.max(content_width)
-        };
+        // Panes are full-bleed (no border), so the emulator matches the visible
+        // pane exactly: the full column width unless an explicit content_width
+        // extends the logical width for horizontal scrolling.
+        let grid_cols = full_w.max(content_width);
         let col_x0 = (left as i32 - sx).max(0) as u16; // grid col at `left`
         let p = col.panes.len().max(1);
         let gap = 1u16;
@@ -275,7 +256,6 @@ fn focused_pane_views(
             if h == 0 {
                 continue;
             }
-            let interior_h = if h >= 3 { h - 2 } else { h };
             let h_scroll = panes.get(pid).map(|p| p.h_scroll).unwrap_or(0);
             out.push(PaneView {
                 pid: *pid,
@@ -288,40 +268,17 @@ fn focused_pane_views(
                 col_x0,
                 h_scroll,
                 grid_cols,
-                grid_rows: interior_h,
+                grid_rows: h,
             });
         }
     }
     out
 }
 
-/// Draw a one-cell ring around a pane's `rect` with `style`, clipping writes
-/// to the frame so panes flush against the edge still show a visible border.
-fn draw_ring(out: &mut [Cell], r: Rect, cols: u16, rows: u16, style: Style) {
-    let cc = cols as usize;
-    let mut put = |x: u16, y: u16, ch: char| {
-        if x < cols && y < rows {
-            out[(y as usize) * cc + (x as usize)] = Cell { ch, style };
-        }
-    };
-    if r.w == 0 || r.h == 0 {
-        return;
-    }
-    let x2 = (r.x + r.w).saturating_sub(1).min(cols.saturating_sub(1));
-    let y2 = (r.y + r.h).saturating_sub(1).min(rows.saturating_sub(1));
-    for x in r.x..=x2 {
-        put(x, r.y, '─');
-        put(x, y2, '─');
-    }
-    for y in r.y..=y2 {
-        put(r.x, y, '│');
-        put(x2, y, '│');
-    }
-    put(r.x, r.y, '┌');
-    put(x2, r.y, '┐');
-    put(r.x, y2, '└');
-    put(x2, y2, '┘');
-}
+/// The grid-column range `[start, end)` of a pane's content revealed by `w`
+/// screen cells, given the viewport column offset `col_x0`, the pane content
+/// scroll `h_scroll`, and the content width `grid_cols`. Returns `None` when
+/// the window is fully clipped (offscreen or past the content).
 fn pane_window(col_x0: u16, h_scroll: i32, w: u16, grid_cols: u16) -> Option<(u16, u16)> {
     let start = col_x0 as i32 + h_scroll;
     if start < 0 || start >= grid_cols as i32 {
@@ -354,36 +311,35 @@ fn render_frame(
             continue;
         };
         let is_focus = focused == Some(v.pid);
-        // Always frame a pane with a one-cell ring, so every pane is inset by
-        // the same amount and the focused one does not appear to "shrink".
-        // Keep the ring insetting content so it never covers text.
-        let (ix, iy, iw, ih) = if v.rect.w >= 3 && v.rect.h >= 3 {
-            (v.rect.x + 1, v.rect.y + 1, v.rect.w - 2, v.rect.h - 2)
-        } else {
-            (v.rect.x, v.rect.y, v.rect.w, v.rect.h)
-        };
-        // Keep the emulator at its full logical content width; only reflow vertically.
+        // Panes are full-bleed: content spans the whole rect (no border inset),
+        // so the emulator size matches the visible size exactly. Focus is shown
+        // as a background tint, never by shifting or resizing the pane.
         pane.grid.resize(GridSize {
             cols: v.grid_cols,
-            rows: ih,
+            rows: v.grid_rows,
         });
-        let Some((g_start, g_end)) = pane_window(v.col_x0, v.h_scroll, iw, v.grid_cols) else {
-            continue;
+        let (g_start, g_end) = match pane_window(v.col_x0, v.h_scroll, v.rect.w, v.grid_cols) {
+            Some(x) => x,
+            None => {
+                continue;
+            }
         };
-        for gy in 0..ih {
+        for gy in 0..v.rect.h {
             let mut gx = 0u16;
             for gi in g_start..g_end {
                 let idx =
-                    ((iy as usize + gy as usize) * cols as usize) + (ix as usize + gx as usize);
+                    ((v.rect.y as usize + gy as usize) * cols as usize) + (v.rect.x as usize + gx as usize);
                 if idx >= out.len() {
                     continue;
                 }
-                out[idx] = pane.grid.cell(gi, gy);
+                let mut cell = pane.grid.cell(gi, gy);
+                if is_focus && cell.style.bg == CColor::Default {
+                    cell.style.bg = FOCUS_TINT;
+                }
+                out[idx] = cell;
                 gx += 1;
             }
         }
-        let ring_style = if is_focus { FOCUS_RING } else { PANEL_RING };
-        draw_ring(out, v.rect, cols, rows, ring_style);
     }
 }
 
@@ -948,26 +904,26 @@ fn content_scroll_reveals_overflow_e2e() {
     panes.insert(pid, pane);
     let mut out = Vec::new();
 
-    // At scroll 0 the viewport shows content columns 0..80 (digits 1,2,...,0).
+    // At scroll 0 the viewport shows content columns 0..79 (digits 1,2,...,0).
     panes.get_mut(&pid).unwrap().h_scroll = 0;
     render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
-    assert_eq!(out[1 * 80 + 1].ch, '1'); // content col 0 at ring-inset x=1 -> i=1
-    assert_eq!(out[1 * 80 + 10].ch, '0'); // content col 9  -> i=10
-    assert_eq!(out[1 * 80 + 78].ch, '8'); // content col 77 -> i=78
+    assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
+    assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
+    assert_eq!(out[77].ch, '8'); // content col 77 -> screen x=77
 
     // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
     panes.get_mut(&pid).unwrap().h_scroll = 60;
     render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
-    assert_eq!(out[1 * 80 + 1].ch, '1'); // content col 60 -> i=61
-    assert_eq!(out[1 * 80 + 2].ch, '2'); // content col 61 -> i=62
-    assert_eq!(out[1 * 80 + 78].ch, '8'); // content col 137 -> i=138
+    assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
+    assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
+    assert_eq!(out[77].ch, '8'); // content col 137 -> screen x=77
 
     // Past the 240-col content the window reveals blanks.
     panes.get_mut(&pid).unwrap().h_scroll = 200;
     render_frame(&mut out, &layout, &mut panes, 80, 10, 240);
-    assert_eq!(out[1 * 80 + 1].ch, '1'); // content col 200 -> i=201
-    assert_eq!(out[1 * 80 + 40].ch, '0'); // content col 239 -> i=240
-    assert_eq!(out[1 * 80 + 45].ch, ' '); // past content end -> blank
+    assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
+    assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
+    assert_eq!(out[45].ch, ' '); // past content end -> blank
 
     let _ = panes.get_mut(&pid).unwrap().child.kill();
 }
