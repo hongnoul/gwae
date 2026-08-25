@@ -51,7 +51,7 @@ hud_on_attention_ms = 2500
 | `minimap.max_width` | integer | `32` | Maximum width (in cells) of the minimap block; it shrinks to fit narrower terminals. Used for `overlay` and the centered minimap while holding ⌥/Alt in `reserved_quasimode`. |
 | `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown; extra strips are cut off. Used for `overlay` and the centered minimap while holding ⌥/Alt in `reserved_quasimode`. |
 | `minimap.show_counts` | bool | `true` | Draw the one-line summary above the map (overlay) or on the right of the reserved row: total pane count plus per-status tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts skipped). |
-| `minimap.hud_on_attention_ms` | integer | `2500` | Milliseconds to flash a centered HUD box (attention hint `» 1.3 needs you — ⌥+g` + keybind cheat-sheet) at startup and when attention (Idle/Failed) arises while `reserved_quasimode` is hidden and Alt is not held. `0` disables. |
+| `minimap.hud_on_attention_ms` | integer | `2500` | Non-zero enables a centered HUD box (attention hint `» 1.3 needs you — ⌥+g` + keybind cheat-sheet) at startup and when attention (Idle/Failed) arises while `reserved_quasimode` is hidden and Alt is not held. The HUD persists until the next key press (any key); `0` disables. The value is a backward-compatible enable flag (any non-zero enables). |
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.

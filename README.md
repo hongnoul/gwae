@@ -125,13 +125,13 @@ Bottom chrome (default: a **reserved 1-row status bar in quasimode**) shows:
 - Column digit (`⌥+1..9`) in the tile's first cell
 - One-line summary on the right: `5 »2 !1 ✓1 ✗1` (zeros omitted)
 
-Holding `⌥`/Alt in `reserved_quasimode` also paints a **centered minimap overlay** (sized by `max_width`/`max_rows`) for a quick glance, and a **centered HUD** (` » 1.3 needs you — ⌥+g` + keybind cheat-sheet) flashes at startup and when attention (Idle/Failed) arises while the quasimode row is hidden (`hud_on_attention_ms`, default `2500`; `0` to disable).
+Holding `⌥`/Alt in `reserved_quasimode` also paints a **centered minimap overlay** (sized by `max_width`/`max_rows`) for a quick glance, and a **centered HUD** (` » 1.3 needs you — ⌥+g` + keybind cheat-sheet) is shown at startup and when attention (Idle/Failed) arises while the quasimode row is hidden; the HUD persists until the next key press (any key; `hud_on_attention_ms = 0` to disable).
 
 The minimap appears whenever there is more than one pane (not only with multiple strips). Four modes cover every taste and avoid geometry churn:
 
 | `minimap.mode` | Behavior |
 |---|---|
-| `reserved_quasimode` *(default)* | Row is always reserved (no SIGWINCH churn) but paints only while `⌥`/Alt is held or a pane needs attention; while held also paints a centered minimap overlay sized by `max_width`/`max_rows`. Optional centered HUD flash at startup and on attention (`hud_on_attention_ms`, default `2500`) |
+| `reserved_quasimode` *(default)* | Row is always reserved (no SIGWINCH churn) but paints only while `⌥`/Alt is held or a pane needs attention; while held also paints a centered minimap overlay sized by `max_width`/`max_rows`. Centered HUD at startup and on attention persists until the next key press (`hud_on_attention_ms = 0` to disable) |
 | `reserved` | Always visible reserved row |
 | `overlay` | Classic bottom-right overlay (legacy) — `max_width`/`max_rows` apply here |
 | `edge_ticks` | Single-cell ticks on the outer frame, no box |
@@ -202,7 +202,7 @@ Key reference (defaults in parentheses):
 | `minimap.max_width` | int | `32` | Used for `overlay` and centered minimap while holding ⌥/Alt in `reserved_quasimode` |
 | `minimap.max_rows` | int | `6` | Used for `overlay` and centered minimap while holding ⌥/Alt in `reserved_quasimode` |
 | `minimap.show_counts` | bool | `true` | Summary tallies |
-| `minimap.hud_on_attention_ms` | int | `2500` | Centered HUD (startup + attention) with cheat-sheet; `0` disables |
+| `minimap.hud_on_attention_ms` | int | `2500` | Centered HUD (startup + attention) with cheat-sheet, persists until key press; `0` disables (non-zero enables, value kept for compat) |
 
 ---
 

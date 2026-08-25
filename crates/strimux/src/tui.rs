@@ -1278,11 +1278,11 @@ fn draw_center_minimap(
     }
 }
 
-/// Center HUD: flashed at startup and when attention arrives while the
+/// Center HUD: shown at startup and when attention arrives while the
 /// quasimode reserved row is hidden, so the user notices without that row
-/// being permanently visible. Always shows a very concise cheat-sheet of
-/// every keybind; when a pane needs you the top line is a smart-jump hint
-/// (` ✗ 1.3 needs you — ⌥+g`).
+/// being permanently visible. Persists until the next key press. Always
+/// shows a very concise cheat-sheet of every keybind; when a pane needs
+/// you the top line is a smart-jump hint (` ✗ 1.3 needs you — ⌥+g`).
 fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, layout: &Layout, focus_color: CColor) {
     if cols < 30 || rows < 9 {
         return;
@@ -2167,14 +2167,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let mut bare_alt_held = false;
     let mut chord_alt_until: Option<Instant> = None;
     let mut last_alt_held = false;
-    let mut hud_until: Option<Instant> = if cfg.minimap.hud_on_attention_ms > 0
+    let mut hud_active: bool = cfg.minimap.hud_on_attention_ms > 0
         && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
-        && chrome_rows(&cfg) > 0
-    {
-        Some(Instant::now() + Duration::from_millis(cfg.minimap.hud_on_attention_ms as u64))
-    } else {
-        None
-    };
+        && chrome_rows(&cfg) > 0;
     let mut last_has_attention = has_attention(&layout);
     // Pane ids created by the spawn-agent verb; these are (re)spawned running
     // the configured `default_agent` harness instead of a plain shell.
@@ -2300,6 +2295,11 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 Ok(Event::Key(ke))
                     if matches!(ke.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
+                    // Init/attention HUD persists until the next key press.
+                    if hud_active {
+                        hud_active = false;
+                        dirty = true;
+                    }
                     // Bare Alt hold for quasimode: track before handle_key so chords don't double-count.
                     let bare_alt = is_alt_modifier(&ke);
                     if bare_alt {
@@ -2563,7 +2563,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
         }
 
-        // Track attention & alt flip for quasimode repaint, plus HUD flash
+        // Track attention & alt flip for quasimode repaint, plus HUD (persist-until-key).
         let now_for_hud = Instant::now();
         if let Some(t) = chord_alt_until {
             if now_for_hud >= t {
@@ -2572,22 +2572,17 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         }
         let chord_alt_held = chord_alt_until.is_some();
         let effective_alt_held = bare_alt_held || chord_alt_held;
-        let hud_visible = hud_until.map(|t| now_for_hud < t).unwrap_or(false);
-        if !hud_visible && hud_until.is_some() {
-            hud_until = None;
-            dirty = true;
-        }
         let cur_has_attention = has_attention(&layout);
         if !last_has_attention
             && cur_has_attention
             && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
             && cfg.minimap.hud_on_attention_ms > 0
             && !effective_alt_held
+            && !hud_active
             && chrome_rows(&cfg) > 0
         {
-            // Attention just arose while the quasimode row is hidden: flash center HUD.
-            hud_until =
-                Some(now_for_hud + Duration::from_millis(cfg.minimap.hud_on_attention_ms as u64));
+            // Attention just arose while the quasimode row is hidden: re-show HUD until next key.
+            hud_active = true;
             dirty = true;
         }
         if cur_has_attention != last_has_attention || effective_alt_held != last_alt_held {
@@ -2595,7 +2590,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             last_has_attention = cur_has_attention;
             last_alt_held = effective_alt_held;
         }
-        let show_hud = hud_until.map(|t| Instant::now() < t).unwrap_or(false);
+        let show_hud = hud_active;
         let show_center_minimap = effective_alt_held
             && cfg.minimap.mode == crate::config::MinimapMode::ReservedQuasimode
             && chrome_rows(&cfg) > 0

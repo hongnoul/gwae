@@ -160,10 +160,13 @@ pub struct Minimap {
     /// Draw the one-line status summary above the map (overlay) or on the
     /// right side of the reserved row.
     pub show_counts: bool,
-    /// Milliseconds to flash a centered HUD (attention hint + cheat-sheet)
-    /// at startup and when a background pane transitions to attention while the
-    /// quasimode row is hidden and Alt is not held. `0` disables the HUD
-    /// entirely.
+    /// If non-zero, a centered HUD (attention hint + cheat-sheet) is shown
+    /// at startup and when a background pane transitions to attention while
+    /// the quasimode row is hidden and Alt is not held. The HUD persists
+    /// until the next key press (any key) rather than decaying after a
+    /// fixed time; `0` disables it entirely. The numeric value is an
+    /// enable flag for backward compat (historical ms duration, any non-zero
+    /// enables).
     pub hud_on_attention_ms: u16,
 }
 
