@@ -48,8 +48,9 @@ pub enum Command {
         #[arg(long)]
         apply: bool,
     },
-    /// Guided first-run setup: theme, layout, chrome, mouse, latency. Safe to
-    /// re-run; it only rewrites the keys you answer and keeps your comments.
+    /// Guided first-run setup: theme, layout, chrome, and an offer to install
+    /// btm. Safe to re-run; it only rewrites the keys you answer and keeps
+    /// your comments. Input latency is tuned silently, without asking.
     Init {
         /// Print every question and option instead of asking anything.
         #[arg(long)]

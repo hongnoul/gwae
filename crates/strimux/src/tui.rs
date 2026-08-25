@@ -3316,7 +3316,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                             // event, translated into its own grid coordinates,
                             // so vim/less/an agent TUI behave exactly as they
                             // would natively. strimux claims no wheel of its
-                            // own: scrollback moves by keyboard only.
+                            // own: scrollback is `⌥+↑/↓` (see `handle_key`).
                             if p.grid.wants_mouse() {
                                 if let Some(bytes) = sgr_mouse_report(&me, gx, gy) {
                                     let _ = p.writer.write_all(&bytes);
