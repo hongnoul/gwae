@@ -15,9 +15,11 @@ A terminal-native, daemon-free multiplexer for people who live in concurrent CLI
 
 [Website](https://hongnoul.github.io/gwae/) · [Install](#install) · [Quick Start](#quick-start) · [Keyboard Shortcuts](#keyboard-shortcuts) · [FAQ](#faq) · [Docs](docs/)
 
-</div>
+<img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
 
-https://github.com/hongnoul/gwae/raw/main/docs/assets/gwae-demo.mp4
+[Full-quality demo video (mp4)](https://github.com/hongnoul/gwae/raw/main/docs/assets/gwae-demo.mp4) — not sped up.
+
+</div>
 
 ---
 
