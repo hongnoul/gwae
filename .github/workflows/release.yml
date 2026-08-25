@@ -4,12 +4,46 @@ on:
   push:
     tags: ["v*"]
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
 
 jobs:
+  create-release:
+    name: Create draft release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        run: scripts/generate_release_notes.sh "${GITHUB_REF_NAME}" > release_notes.md
+
+      - name: Create draft release if missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file release_notes.md
+          fi
+          gh release edit "${GITHUB_REF_NAME}" --notes-file release_notes.md
+
   build:
     name: build (${{ matrix.target }})
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -20,50 +54,60 @@ jobs:
             target: x86_64-apple-darwin
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
-          - os: ubuntu-24.04
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
           - os: windows-2022
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      # Asset names carry no version so that the
+      # /releases/latest/download/<asset> redirect (used by scripts/install.sh)
+      # stays stable; the tag directory in the URL pins the version.
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          tar -C . -czf strimux-${{ github.ref_name }}-${{ matrix.target }}.tar.gz strimux
+          tar -czf strimux-${{ matrix.target }}.tar.gz strimux
+          shasum -a 256 strimux-${{ matrix.target }}.tar.gz > strimux-${{ matrix.target }}.tar.gz.sha256
       - name: Package (windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
-          7z a strimux-${{ github.ref_name }}-${{ matrix.target }}.zip strimux.exe
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: strimux-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/strimux-*
+          7z a strimux-${{ matrix.target }}.zip strimux.exe
+          (Get-FileHash strimux-${{ matrix.target }}.zip -Algorithm SHA256).Hash.ToLower() + "  strimux-${{ matrix.target }}.zip" | Out-File -Encoding ascii strimux-${{ matrix.target }}.zip.sha256
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            target/${{ matrix.target }}/release/strimux-${{ matrix.target }}.* \
+            --clobber
 
-  release:
-    name: Attach to GitHub Release
+  publish:
+    name: Publish release
     needs: build
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
+    timeout-minutes: 10
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*.tar.gz, artifacts/**/*.zip
+      - name: Undraft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false --latest

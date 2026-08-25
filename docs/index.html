@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="strimux is niri's scrolling tiling for your CLI agents, in any terminal: an infinite 2D grid of strips where panes never shrink. Daemon-free, single process, macOS / Linux / Windows."
+    />
+    <link rel="canonical" href="https://hongnoul.github.io/gwae/" />
+    <meta
+      property="og:title"
+      content="strimux — niri's scrolling tiling, for your CLI agents, in any terminal"
+    />
+    <meta
+      property="og:description"
+      content="An infinite 2D grid of strips where panes never shrink. Daemon-free, agent-aware, any terminal."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://hongnoul.github.io/gwae/" />
+    <meta name="twitter:card" content="summary" />
+    <meta
+      name="twitter:title"
+      content="strimux — niri's scrolling tiling, for your CLI agents, in any terminal"
+    />
+    <meta
+      name="twitter:description"
+      content="An infinite 2D grid of strips where panes never shrink. Daemon-free, agent-aware, any terminal."
+    />
+    <title>strimux</title>
+    <style>
+      /* Mono, monochrome, minimal. */
+      :root {
+        --ink: #111;
+        --muted: #666;
+        --faint: #999;
+        --rule: #ccc;
+        --wash: #f4f4f4;
+        --bg: #fff;
+        --radius: 8px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo,
+          Consolas, monospace;
+        color: var(--ink);
+        background: var(--bg);
+        line-height: 1.65;
+        font-size: 16px;
+        -webkit-font-smoothing: antialiased;
+      }
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 0 1.5rem 6rem;
+      }
+      a {
+        color: var(--ink);
+      }
+      a:hover {
+        color: var(--muted);
+      }
+
+      /* Hero */
+      .hero {
+        min-height: 88vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+      .hero h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: -0.02em;
+      }
+      .hero .tagline {
+        color: var(--muted);
+        margin: 0.75rem 0 2rem;
+      }
+      .hero .grid-art {
+        color: var(--faint);
+        font-size: 0.8rem;
+        line-height: 1.25;
+        margin: 0 0 1.5rem;
+        white-space: pre;
+      }
+      .install {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.75rem;
+        background: var(--wash);
+        border: 1px solid var(--rule);
+        border-radius: var(--radius);
+        padding: 0.7rem 1rem;
+        font-size: 0.9rem;
+      }
+      .install button {
+        font: inherit;
+        font-size: 0.8rem;
+        border: 1px solid var(--rule);
+        background: var(--bg);
+        border-radius: 6px;
+        padding: 0.15rem 0.6rem;
+        cursor: pointer;
+        color: var(--muted);
+      }
+      .install button:hover {
+        color: var(--ink);
+      }
+      .links {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin-top: 1.25rem;
+      }
+      .stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.75rem;
+        justify-content: center;
+        margin-top: 2.25rem;
+      }
+      .stat {
+        display: flex;
+        flex-direction: column;
+        max-width: 200px;
+      }
+      .stat .n {
+        font-size: 1.35rem;
+        font-weight: 700;
+      }
+      .stat .l {
+        color: var(--muted);
+        font-size: 0.8rem;
+        line-height: 1.4;
+      }
+
+      /* Sections */
+      section {
+        margin-top: 4.5rem;
+      }
+      h2 {
+        font-size: 1.15rem;
+        border-bottom: 1px solid var(--rule);
+        padding-bottom: 0.4rem;
+      }
+      pre {
+        background: var(--wash);
+        border: 1px solid var(--rule);
+        border-radius: var(--radius);
+        padding: 1rem 1.25rem;
+        overflow-x: auto;
+        font-size: 0.85rem;
+        line-height: 1.55;
+      }
+      code {
+        font-family: inherit;
+      }
+      p code,
+      li code,
+      td code {
+        background: var(--wash);
+        border: 1px solid var(--rule);
+        border-radius: 4px;
+        padding: 0.05rem 0.3rem;
+        font-size: 0.85em;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.85rem;
+      }
+      th,
+      td {
+        text-align: left;
+        border-bottom: 1px solid var(--rule);
+        padding: 0.45rem 0.75rem 0.45rem 0;
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+      ul {
+        padding-left: 1.2rem;
+      }
+      li {
+        margin: 0.35rem 0;
+      }
+      footer {
+        margin-top: 5rem;
+        color: var(--faint);
+        font-size: 0.85rem;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <pre class="grid-art">
+┌────────┐┌────────┐┌────────┐┌────────┐
+│ claude ││ jcode  ││ nvim   ││ htop  →│  …the row scrolls,
+│   »    ││   !    ││        ││        │   the panes don't shrink
+└────────┘└────────┘└────────┘└────────┘</pre>
+        <h1>strimux</h1>
+        <p class="tagline">
+          niri's scrolling tiling, for your CLI agents, in any terminal.<br />
+          An infinite 2D grid of strips where panes never shrink.<br />
+          No daemon. No compositor. One process.
+        </p>
+        <div class="install">
+          <code id="install-cmd"
+            >curl -fsSL
+            https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh
+            | bash</code
+          >
+          <button
+            onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent.replace(/\s+/g,' ').trim());this.textContent='copied';setTimeout(()=>this.textContent='copy',1200)"
+          >
+            copy
+          </button>
+        </div>
+        <p class="links">
+          <a href="https://github.com/hongnoul/gwae">GitHub</a> ·
+          <a href="https://github.com/hongnoul/gwae/releases/latest"
+            >Releases</a
+          >
+          · MIT · macOS / Linux / Windows
+        </p>
+        <div
+          class="stats"
+          title="See docs/LATENCY.md and the E2E suite for methodology"
+        >
+          <div class="stat">
+            <span class="n">1</span>
+            <span class="l">process. No daemon, no socket, no attach</span>
+          </div>
+          <div class="stat">
+            <span class="n">~0.05 ms</span>
+            <span class="l">full 300×80 repaint</span>
+          </div>
+          <div class="stat">
+            <span class="n">0</span>
+            <span class="l">agent instrumentation: standard OSC 133 only</span>
+          </div>
+          <div class="stat">
+            <span class="n">∞</span>
+            <span class="l">columns right, strips down. None ever shrink</span>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Onboarding</h2>
+        <p>
+          <strong
+            >Install → Guided setup → Spawn agents → Hold ⌥ to triage</strong
+          >
+        </p>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash
+strimux                  # one strip, one quarter-width pane
+strimux init             # guided setup: theme, layout, chrome (live preview)
+strimux run "claude"     # your agent in column 0
+strimux doctor           # config + theme validity, layout smoke</code></pre>
+        <ul>
+          <li>
+            First run walks a short guided setup: theme with live swatches,
+            panes at launch, column width — every question drawn over a live
+            mockup of the grid, repainted on each keypress.
+          </li>
+          <li>
+            <code>⌥+;</code> spawns your agent in a new column right of focus.
+            <code>⌥+Enter</code> opens a column, <code>⌥+Shift+Enter</code> a
+            new strip below.
+          </li>
+          <li>
+            Hold <code>⌥</code> for the minimap: one tile per pane, tinted by
+            status. <code>⌥+g</code> smart-jumps to the pane that needs you.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Why</h2>
+        <p>
+          Every terminal multiplexer divides a fixed screen: more agents means
+          smaller panes, until nothing is readable. niri solved this on the
+          desktop with scrolling tiling — columns keep their size, the
+          viewport moves. strimux brings that model into the terminal you
+          already use.
+        </p>
+        <ul>
+          <li>
+            <strong>Panes never shrink.</strong> Fixed-width columns; a row
+            that outgrows the screen scrolls past the viewport edge — it
+            doesn't cram.
+          </li>
+          <li>
+            <strong>Quantized scroll.</strong> The viewport rests only on
+            column boundaries, so the same grid paints pixel-identically in
+            every scroll state. No slivers, no wobble.
+          </li>
+          <li>
+            <strong>Single process.</strong> No socket, no attach/detach.
+            Persistence is each harness's own <code>--resume</code>.
+          </li>
+          <li>
+            <strong>Kitty graphics passthrough.</strong> Screenshots and
+            <code>kitten icat</code> render inside their pane, clipped to the
+            pane rect.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>For coding agents</h2>
+        <p>
+          strimux hosts ordinary PTYs, so every agent works out of the box:
+          Claude Code, Jcode, Codex, OpenCode, Gemini CLI, anything you can
+          launch from a command line. Status tracking speaks the standard
+          <a
+            href="https://gitlab.freedesktop.org/terminal-wg/specifications/-/blob/master/docs/OSC-133.md"
+            >OSC 133</a
+          >
+          protocol only, with a quiet-heuristic fallback for shells without
+          integration.
+        </p>
+        <pre><code>»  working          command running
+!  wants attention  idle with output / prompt waiting
+✓  done             exited 0
+✗  failed           non-zero exit</code></pre>
+        <p>
+          <code>⌥+g</code> jumps to the pane that needs you most: failed beats
+          wants-attention beats done, nearest first, crossing strips and
+          following with the scroll.
+        </p>
+      </section>
+
+      <section>
+        <h2>Compared</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Layout</th>
+              <th>In a terminal?</th>
+              <th>Detach?</th>
+              <th>Platforms</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>tmux</td>
+              <td>plane tiling</td>
+              <td>yes</td>
+              <td>yes (server)</td>
+              <td>macOS/Linux/*BSD</td>
+            </tr>
+            <tr>
+              <td>Zellij</td>
+              <td>plane tiling + floating</td>
+              <td>yes</td>
+              <td>yes</td>
+              <td>macOS/Linux/Windows</td>
+            </tr>
+            <tr>
+              <td>Séance</td>
+              <td>niri strip (GUI)</td>
+              <td>no</td>
+              <td>socket</td>
+              <td>Linux (GTK)</td>
+            </tr>
+            <tr>
+              <td>tairi</td>
+              <td>niri strip (GUI)</td>
+              <td>no</td>
+              <td>workspaces</td>
+              <td>macOS</td>
+            </tr>
+            <tr>
+              <td><strong>strimux</strong></td>
+              <td><strong>2D niri strip grid</strong></td>
+              <td><strong>yes</strong></td>
+              <td><strong>no (<code>--resume</code>)</strong></td>
+              <td><strong>macOS/Windows/Linux</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Philosophy</h2>
+        <ul>
+          <li>
+            <strong>No daemon, deliberately.</strong> Your agents already
+            persist themselves. A shell that must survive the terminal belongs
+            in tmux, which runs happily inside a strimux pane.
+          </li>
+          <li>
+            <strong>Zero instrumentation.</strong> Panes stay ordinary PTYs
+            speaking standard protocols. Nothing to install into your agent.
+          </li>
+          <li>
+            <strong>Every binding self-documents.</strong> Keybindings, the
+            cheat-sheet HUD, hints, and the README render from one registry —
+            tests fail the build when any surface drifts.
+          </li>
+          <li>
+            <strong>Structured, not free-form.</strong> A grid of strips, not
+            a canvas. No floating panes, no plugin system.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Usage</h2>
+        <pre><code>⌥+h/j/k/l        focus left / down / up / right (crosses strips)
+⌥+Shift+hjkl     move column / carry pane
+⌥+Enter          new column right of focus
+⌥+;              spawn agent column
+⌥+s              split: new pane below
+⌥+r              cycle column width 1/3 → 1/2 → 1/4
+⌥+f              toggle full width
+⌥+↑/↓            scrollback (typing snaps back to live)
+⌥+1..9           jump to column N
+⌥+g              smart-jump to the pane that needs you
+⌥+t              live theme picker
+⌥+/              cheat-sheet HUD</code></pre>
+        <p>
+          All other keys pass through to the focused pane. Full table in the
+          <a href="https://github.com/hongnoul/gwae#keyboard-shortcuts"
+            >README</a
+          >.
+        </p>
+      </section>
+
+      <section>
+        <h2>Architecture</h2>
+        <pre><code>strimux (one process)
+├── Layout core (rows/strips/columns/panes) — pure, no I/O
+├── Pane tasks (one per PTY: bytes → parse → grid + OSC 133)
+├── Composer (coalesce damage → single 2D cell buffer)
+├── Render (diff buffer → batched ANSI, sync-update markers)
+├── Input (raw mode: decode keys, route to pane or ⌥)
+└── Minimap / smart-jump (per-pane status → chrome)</code></pre>
+        <p>
+          Layout invariants are <code>proptest</code> properties; E2E tests
+          drive the real binary through a live PTY. See
+          <a
+            href="https://github.com/hongnoul/gwae/blob/main/docs/ARCHITECTURE.md"
+            >ARCHITECTURE.md</a
+          >
+          and the normative
+          <a
+            href="https://github.com/hongnoul/gwae/blob/main/docs/LAYOUT-SPEC.md"
+            >LAYOUT-SPEC.md</a
+          >.
+        </p>
+      </section>
+
+      <footer>
+        <p>
+          <a href="https://github.com/hongnoul/gwae">GitHub</a> ·
+          <a href="https://github.com/hongnoul/gwae/releases/latest"
+            >Releases</a
+          >
+          ·
+          <a href="https://github.com/hongnoul/gwae/blob/main/LICENSE">MIT</a>
+        </p>
+        <p>strimux — panes never shrink.</p>
+      </footer>
+    </main>
+  </body>
+</html>

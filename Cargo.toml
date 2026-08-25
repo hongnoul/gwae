@@ -9,10 +9,10 @@ members = [
 # Workspace-wide version (SemVer) is defined under [workspace.package].
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.85"
-repository = "https://github.com/hongnoul/strimux"
+repository = "https://github.com/hongnoul/gwae"
 license = "MIT"
 
 [workspace.dependencies]

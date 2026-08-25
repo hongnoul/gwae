@@ -10,7 +10,7 @@
       in {
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "strimux";
-          version = "0.1.0";
+          version = "1.0.0";
           src = self;
           nativeBuildInputs = with pkgs; [ cargo rustc pkg-config ];
           buildPhase = "cargo build --release";
@@ -18,7 +18,7 @@
           meta = {
             description = "niri's scrolling tiling for your CLI agents, in any terminal";
             license = pkgs.lib.licenses.mit;
-            homepage = "https://github.com/hongnoul/strimux";
+            homepage = "https://github.com/hongnoul/gwae";
           };
         };
       });

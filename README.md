@@ -1,82 +1,129 @@
+<div align="center">
+
 # strimux
 
-> **niri's scrolling tiling, for your CLI agents, in any terminal.**
+[![Latest Release](https://badgen.net/github/release/hongnoul/gwae?icon=github)](https://github.com/hongnoul/gwae/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![CI](https://github.com/hongnoul/gwae/actions/workflows/ci.yml/badge.svg)](https://github.com/hongnoul/gwae/actions/workflows/ci.yml)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square)](https://github.com/hongnoul/gwae/releases)
 
-**strimux** is a terminal-native, daemon-free multiplexer for people who live in concurrent CLI agents. Claude Code, Jcode, yazi, nvim — each owns a real PTY. strimux gives them room: an **infinite 2D grid of strips** where every column keeps its full size, the row scrolls past the viewport edge, and strips stack infinitely downward. No compositor. No GUI. No daemon. Any terminal on **macOS, Windows, and Linux**.
+**niri's scrolling tiling, for your CLI agents, in any terminal**
 
-- **Panes never shrink.** Fixed-width columns (`1/4` by default, `1/3 → 1/2 → 1/4` on `⌥+r`). A row that outgrows the screen scrolls — it doesn't cram.
-- **Quantized scroll.** Viewport rests only on column boundaries, so the same grid paints pixel-identically in every scroll state. No slivers, no wobble.
-- **Agent-aware, zero instrumentation.** Speaks the standard **OSC 133** protocol only. Panes stay ordinary PTYs. The minimap tints by status and `⌥+g` jumps to the one that needs you.
-- **Single process, no daemon.** No socket, no attach/detach. Crashing one pane's emulator can't take the TUI down. Persistence is each harness's own `--resume`.
-- **Kitty graphics passthrough.** `kitten icat` and jcode screenshots render inside their pane — APC sequences forwarded verbatim and clipped to the pane rect.
-- **Mouse that helps, and stays out of the way.** Click to focus, drag to copy. A pane running a full-screen app that asked for mouse reporting gets every event forwarded verbatim in its own coordinates, so the wheel behaves inside vim or an agent TUI exactly as it would natively. strimux claims no wheel of its own; scrollback is `⌥+↑/↓`.
-- **Catppuccin Mocha by default.** Base `#1e1e2e`, focus sapphire `#74c7ec`, overlay `#6c7086`. Every color is themeable, 8 presets ship, `⌥+t` previews them live, and saving the config re-themes the running session without restarting a single pane.
+A terminal-native, daemon-free multiplexer for people who live in concurrent CLI agents. An infinite 2D grid of strips where panes never shrink.
 
-```sh
-cargo install --path crates/strimux   # or: cargo build --release && make install
-strimux                                # one strip, one quarter-width pane
-strimux run "htop"                     # same layout; htop in the first pane
-```
+[Website](https://hongnoul.github.io/gwae/) · [Install](#install) · [Quick Start](#quick-start) · [Keyboard Shortcuts](#keyboard-shortcuts) · [FAQ](#faq) · [Docs](docs/)
+
+</div>
 
 ---
 
-## Status
+## Features
 
-**M0 renderer shipped, M1/M2 substantially landed, pre-1.0.**
+**Panes never shrink**
+Fixed-width columns (`1/4` by default, `1/3 → 1/2 → 1/4` on `⌥+r`). A row that outgrows the screen scrolls past the viewport edge — it doesn't cram. Strips stack infinitely downward.
 
-What works today and is interactively dogfoodable:
+**Quantized scroll**
+The viewport rests only on column boundaries, so the same grid paints pixel-identically in every scroll state. No slivers, no wobble — verified end-to-end at hostile widths like 342 columns.
 
-- Single-process, multi-pane PTY renderer: spawns real PTYs, composes every pane into one 2D cell buffer, diffs and paints with synchronized-update markers. Full 300×80 repaint ~0.05 ms.
-- Pure layout core (`strimux-layout`) with quantized scrolling, fixed-width columns, niri-style dynamic strips and cross-strip pane moves. Covered by `proptest` invariants and render-frame tests.
-- Emulator facade (`strimux-term`) behind `TermGrid`, unit-tested; E2E tests drive the real binary through a live PTY (minimap status, smart-jump, natural pane close, 342-col wobble test).
-- Agent dashboard minimap (OSC 133 + quiet-heuristic fallback), smart-jump, skeleton chrome with inset content, kitty-like block cursor, mouse capture, Kitty graphics forwarding, wide-glyph / SGR-attribute fixes.
+**Agent dashboard**
+Panes speak standard [OSC 133](https://gitlab.freedesktop.org/terminal-wg/specifications/-/blob/master/docs/OSC-133.md) — zero instrumentation. Hold `⌥` for a minimap tinted by status (working / wants attention / done / failed) and press `⌥+g` to smart-jump to the pane that needs you.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/LAYOUT-SPEC.md`](docs/LAYOUT-SPEC.md) (normative), and [`docs/ROADMAP.md`](docs/ROADMAP.md).
+**Single process, no daemon**
+No socket, no attach/detach. Crashing one pane's emulator can't take the TUI down. Persistence is each harness's own `--resume`.
 
-> You're 61 commits ahead of `origin/main` (scaffold era). The README on `origin` still says "Scaffold / M0". This draft corrects it.
+**Kitty graphics passthrough**
+`kitten icat` and agent screenshots render inside their pane — APC sequences forwarded verbatim and clipped to the pane rect.
 
----
+**Mouse that helps, and stays out of the way**
+Click to focus, drag to copy. Full-screen apps that ask for mouse reporting (vim, agent TUIs) get every event forwarded in their own coordinates, so the wheel behaves natively inside them. strimux claims no wheel of its own.
+
+**Guided onboarding**
+`strimux init` walks theme, layout, chrome, and agent setup with a live mockup under every question. Catppuccin Mocha by default, 8 theme presets, `⌥+t` previews them live on the running session.
+
+**Cross-platform**
+Any terminal on macOS, Linux, and Windows (ConPTY). 256-color minimum; truecolor, synchronized updates, kitty keyboard protocol, and SGR mouse are auto-detected and gracefully degraded.
 
 ## Install
 
-**From source (recommended while pre-1.0):**
+### Shell script (recommended)
 
-```sh
-# installs to wherever cargo puts binaries (usually ~/.cargo/bin)
-cargo install --path crates/strimux
-
-# or, build then drop into the first writable bin on your PATH
-cargo build --release        # -> target/release/strimux
-make install                 # picks ~/.cargo/bin, /opt/homebrew/bin, ~/.local/bin, etc.
-# override: PREFIX=~/bin make install
+```bash
+# macOS & Linux
+curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash
 ```
 
-**Packaging scaffolding** lives in `packaging/` (Homebrew `strimux.rb`, AUR `PKGBUILD`, Nix `flake.nix`, Windows notes). Prebuilt binaries / taps land in M4.
+Downloads the latest prebuilt binary for your platform to `~/.local/bin` (override with `STRIMUX_INSTALL_DIR`), verifying the checksum.
 
-**Requirements:** 256-color + cursor addressing minimum. Wants truecolor, synchronized updates (`ESC[?2026h`), kitty keyboard protocol, and SGR mouse — all auto-detected, all gracefully degraded. Rust 1.85+.
+On Windows, grab `strimux-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/hongnoul/gwae/releases/latest) and put `strimux.exe` on your `PATH`.
 
----
+### Prebuilt binaries
+
+Every release ships static binaries with SHA-256 checksums for:
+
+| Platform | Asset |
+|---|---|
+| macOS (Apple Silicon) | `strimux-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `strimux-x86_64-apple-darwin.tar.gz` |
+| Linux (x86_64, musl static) | `strimux-x86_64-unknown-linux-musl.tar.gz` |
+| Linux (aarch64, musl static) | `strimux-aarch64-unknown-linux-musl.tar.gz` |
+| Windows (x86_64) | `strimux-x86_64-pc-windows-msvc.zip` |
+
+### From source
+
+Rust 1.85+:
+
+```bash
+cargo install --git https://github.com/hongnoul/gwae strimux
+
+# or from a checkout
+git clone https://github.com/hongnoul/gwae && cd gwae
+cargo install --path crates/strimux     # -> ~/.cargo/bin/strimux
+# or: make install                      # first writable bin dir on PATH
+```
+
+Packaging scaffolding for Homebrew, AUR, and Nix lives in [`packaging/`](packaging/).
 
 ## Quick start
 
 ```sh
-strimux                     # default: one strip, one 1/4-width pane + placeholder boxes
-strimux run "claude"        # command runs in column 0 (deterministic), rest are shells ($SHELL)
+strimux                     # one strip, one 1/4-width pane + placeholder boxes
+strimux run "claude"        # command runs in column 0, rest are shells ($SHELL)
 strimux new -- htop         # (subcommand form) new column in a fresh session
-strimux init                # guided setup: theme, layout, chrome, btm (safe to re-run)
+strimux init                # guided setup: theme, layout, chrome (safe to re-run)
 strimux setup               # optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty)
 strimux doctor              # diagnostics: config + theme validity, layout smoke
 ```
 
-The default layout is **one strip, one quarter-width column**. Skeleton placeholders tile the empty right side so the 4-column container always reads (each shows a big `strip.cell` address). Set `startup_panes` to open more panes immediately. New columns appear to the **right of the focused pane**, not at the strip end.
+The default layout is one strip, one quarter-width column. Skeleton placeholders tile the empty right side so the 4-column container always reads. New columns appear to the right of the focused pane, not at the strip end. `⌥+;` spawns your agent in a new column and focuses it.
 
-Content width is decoupled from column width via `content_width`. Default `0` follows the column (lines wrap); set e.g. `240` to give panes a wider logical grid and pan inside the pane with `⌥+←/→`.
+## Why strimux?
 
----
+I run a lot of coding agents in parallel, and every multiplexer I tried divides a fixed screen: more agents means smaller panes, until nothing is readable. niri solved this on the desktop with scrolling tiling — columns keep their size and the viewport moves instead. strimux brings that model into the terminal you already use.
 
-## Keybindings
+tmux divides a fixed screen; strimux scrolls an infinite one. Séance and tairi have the niri model but need a GUI or compositor; strimux runs over SSH, in any terminal, on all three platforms. See [`docs/COMPARISON.md`](docs/COMPARISON.md).
 
-Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt elsewhere. It works when the terminal delivers Option as Meta/Alt, plus a fallback that decodes macOS's Unicode glyphs (`…` for `⌥+;`, `œ` for `⌥+q`, `ÓÔÒ` for `⌥+Shift+hjkl`) with no "Option as Alt" toggle.
+| Project | Layout | In a terminal? | Detach? | Platforms |
+|---|---|---|---|---|
+| tmux | plane tiling | Yes | Yes (server) | macOS/Linux/*BSD |
+| Zellij | plane tiling + floating | Yes | Yes | macOS/Linux/Windows |
+| Séance | niri strip (GUI) | No | socket | Linux (GTK) |
+| tairi | niri strip (GUI) | No | workspaces | macOS |
+| **strimux** | **2D niri strip grid** | **Yes** | **No (`--resume`)** | **macOS/Windows/Linux** |
+
+**No-shrink** — agents stay readable. **Niri feel** — `⌥+hjkl` / `⌥+Shift+hjkl`, dynamic strips, quantized stops, minimal follow-focus. **No daemon** — if you need SSH persistence that outlives the process, keep tmux; strimux delegates to `claude --resume` / `jcode --resume`.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md): single process, no client-server; layout core, pane tasks, composer, renderer
+- [Layout spec](docs/LAYOUT-SPEC.md): the normative quantized-scroll / strip-grid spec
+- [Configuration](docs/CONFIG.md): every key, generated from code
+- [Comparison](docs/COMPARISON.md): tmux, Zellij, Séance, tairi
+- [Latency](docs/LATENCY.md): input-latency tuning, macOS + terminal + strimux together
+- [Roadmap](docs/ROADMAP.md)
+
+## Keyboard Shortcuts
+
+Every action is an `⌥` chord. `⌥` is the Option key on macOS, Alt elsewhere. It works when the terminal delivers Option as Meta/Alt, plus a fallback that decodes macOS's Unicode glyphs (`…` for `⌥+;`, `œ` for `⌥+q`, `ÓÔÒ` for `⌥+Shift+hjkl`) with no "Option as Alt" toggle.
 
 | `⌥` chord | Action |
 |---|---|
@@ -107,180 +154,87 @@ Every action is an **`⌥` chord**. `⌥` is the **Option key on macOS**, Alt el
 
 All other keys pass through to the focused pane. Closing a pane by `exit` / process death behaves identically to `kill-pane`.
 
-### Adding a keybinding
-
-Bindings live in **one place**: `crates/strimux/src/binds.rs`. Each entry declares its trigger, the `Cmd` it must produce, a short cheat-sheet label, and a **mandatory one-line cowsay hint** — the `hint` field is not optional, so a binding and its natural-language explanation are bijective by construction and the cow can never fall behind the dispatcher. The cheat-sheet HUD, the cowsay hints and this table all render from that registry.
-
-The dispatcher in `tui::handle_key` remains the authority; the registry only *claims* what it does. Tests enforce the agreement, so a new or re-bound key fails the build until every surface is consistent:
-
-- `advertised_bindings_match_the_dispatcher` — replays each entry (Meta path plus the macOS glyph fallback) through the real `handle_key` and requires the declared effect.
-- `hints_are_bijective_with_bindings` — one non-empty, unique hint per binding, each leading with its own key label.
-- `every_binding_is_documented_in_the_readme` — the table above must list it.
-
----
+Bindings live in one place, `crates/strimux/src/binds.rs`, and tests enforce that the dispatcher, the cheat-sheet HUD, the cowsay hints, and this table all agree — a new or re-bound key fails the build until every surface is consistent.
 
 ## Agent awareness
 
 ### OSC 133 status
 
-If a pane's shell emits [OSC 133](https://gitlab.freedesktop.org/terminal-wg/specifications/-/blob/master/docs/OSC-133.md) (`A` prompt → `C` running → `D;n` done/failed), strimux tracks per-pane status natively:
+If a pane's shell emits OSC 133 (`A` prompt → `C` running → `D;n` done/failed), strimux tracks per-pane status natively:
 
 - `»` **Working** (blue) — command running
 - `!` **Wants attention** (amber) — idle with output / prompt waiting
 - `✓` **Done** (green) — exited 0
 - `✗` **Failed** (red) — non-zero exit
 
-Panes without shell integration fall back to a **quiet heuristic**: a pane silent for a few seconds flips to `!` so the dashboard still triages it.
+Panes without shell integration fall back to a quiet heuristic: a pane silent for a few seconds flips to `!` so the dashboard still triages it.
 
-### Minimap — an agent dashboard
+### Minimap
 
-No bottom status row. Hold `⌥`/Alt to see status (centered, no pane shrinkage):
-
-- **Centered minimap** — one row per strip, one tile per pane (width ∝ column share), tinted by status, focused tile in `focus_color`, `❯` on focused strip, digit `⌥+1..9` per tile, summary `5 »2 !1 ✓1 ✗1`.
-- **Centered HUD** — ` » 1.3 needs you — ⌥+g` + cheat-sheet, shown once at startup, toggled any time with `⌥+/`, and dismissed on the first key press. While the HUD is visible the minimap is hidden beneath it.
-
-The minimap/HUD appears whenever there is more than one pane (or strip).
+No bottom status row. Hold `⌥`/Alt to see status (centered, no pane shrinkage): one row per strip, one tile per pane (width ∝ column share), tinted by status, focused tile accented, digit `⌥+1..9` per tile, summary like `5 »2 !1 ✓1 ✗1`. A HUD line names the pane that needs you: ` » 1.3 needs you — ⌥+g`.
 
 | `minimap.mode` | Behavior |
 |---|---|
-| `off` *(default)* | No persistent chrome. `⌥` reveals the centered HUD + minimap. |
+| `off` *(default)* | No persistent chrome. `⌥` reveals the centered HUD + minimap |
 | `overlay` | Legacy bottom-right overlay — `max_width`/`max_rows` apply |
 | `edge_ticks` | Single-cell ticks on the outer frame, no box |
 
-Kill-switch `minimap.show = false` still respected.
-
 ### Smart-jump
 
-`⌥+g` jumps to the pane that needs you most — **failed beats wants-attention beats done**, nearest in layout order first, crossing strips and following with the scroll. Does nothing when every other pane is happily working. Proven E2E: jump lands on the attention shell, typing there succeeds and flips `✗` on the command that emitted `D;2`.
-
----
-
-## Appearance
-
-- **Skeleton** (always on, no key): 1-cell frame around every column box at full strip height, with content inset 1 cell so the frame never covers what a program draws. The focused box's frame is the accent color. Placeholder boxes tile the empty right side and can show block-font `strip.cell` addresses (`cell_labels`) and keybinding hints (`[cowsay]`).
-- **Focus**: accent hairline (never shifts layout) + kitty-like inverse block cursor at the focused pane's vt100 cursor.
-- **Palette**: Catppuccin Mocha by default — base `#1e1e2e`, overlay `#6c7086`, accent `#74c7ec` (sapphire, distinct from red `Failed`). Pick a preset with `theme = "nord"` (also `catppuccin-latte`, `tokyo-night`, `gruvbox`, `rose-pine`, `dracula`, `terminal` which inherits the host's ANSI 0-15), or override any key in `[theme]` (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`). Minimap tiles at 60% muted accents, summary at full. Legacy `background`/`focus_color`/`skeleton_color` still work as aliases for `theme.base`/`accent`/`overlay`. All colors as `256-index`, `#rrggbb`, or `"default"`.
-- **Pane geometry**: window-anchored column boundaries + quantized stops mean the same four `1/4` columns paint identically at every scroll stop even at hostile widths like 342 cols (verified E2E).
-
----
+`⌥+g` jumps to the pane that needs you most — failed beats wants-attention beats done, nearest in layout order first, crossing strips and following with the scroll. Does nothing when every other pane is happily working.
 
 ## Configuration
 
-The first time `⌥+;` (or the first pane) opens the agent gateway, strimux runs
-a short guided setup. It opens with a one-second animated title card (the
-wordmark wipes in, painted in the palette you are about to be asked about; any
-key skips it, and it only greets you on a genuine first run), then after
-picking your harness you get one question per screen: theme (with live color
-swatches), panes at launch, column width, scroll style, logical pane width,
-cell labels, keybinding hints, and finally an offer to install
-[`btm`](https://github.com/ClementTsang/bottom), the system monitor that makes
-a good neighbour to an agent pane.
+`strimux init` runs a short guided setup on first launch (theme with live swatches, panes at launch, column width, scroll style, labels — each question drawn over a live mockup of the grid). Re-run it any time; defaults become whatever your config currently says.
 
-`↑↓` or `j`/`k` picks an option, `→`/`l`/`⏎` moves to the next question,
-`←`/`h`/`⌫` goes back to the previous one, a digit selects without Enter, `s`
-skips a question and `esc` takes the defaults for the rest. The flow ends on a
-summary screen listing every setting as it now stands and the file it landed
-in. Only two keys act there: `⏎` leaves, `⌫` goes back to fix an answer.
-Everything else is inert, so the one screen reporting what was written to disk
-cannot be dismissed by a stray keypress.
-
-Two things are deliberately *not* questions. Input latency
-(`input_poll_ms`) has one right answer, so it is applied silently before the
-first question is drawn, and anything only you can change (kitty or macOS
-settings) is reported once on the summary rather than interrupting the flow.
-Installing `btm` needs Homebrew on macOS, so a yes installs that too rather
-than asking about a package manager you may never have heard of; it is skipped
-entirely if you already have `btm`, and `STRIMUX_NO_INSTALL=1` turns the offer
-off for unattended runs.
-
-Every question that changes what the screen looks like is drawn *with* a live
-mockup of the grid underneath it: the real palette, the real column widths,
-repainted on every keypress. Picking `two-thirds` shows you a two-thirds
-column, and picking a theme shows you that theme, so the choice is a picture
-rather than a word you have to already know. The mockup reflects the answers
-you have already given, shrinks on a short terminal, and is dropped entirely
-before it would ever push the question itself off the screen.
-
-Setup runs once. `strimux init` re-runs it any time (defaults become whatever
-your config currently says, so accepting every default changes nothing),
-`strimux init --print` shows every question without asking, and
-`strimux init --print-splash` dumps every frame of the title card. The card is
-plain SGR over full repaints, so it animates correctly whether it runs on a
-bare terminal or inside a strimux pane.
-
-File: `$XDG_CONFIG_HOME/strimux/strimux.toml` (or `~/.config/strimux/strimux.toml`). TOML, all keys optional. See [`docs/CONFIG.md`](docs/CONFIG.md) (generated from code).
+File: `$XDG_CONFIG_HOME/strimux/strimux.toml` (or `~/.config/strimux/strimux.toml`). TOML, all keys optional. Full reference in [`docs/CONFIG.md`](docs/CONFIG.md).
 
 ```toml
 default_column_width = "quarter"  # or "half", "two-thirds", "full", or 80 (cells)
-scroll_margin = 2
-center_focus = false
-content_width = 0
-default_agent = "claude"          # first pane + ; spawn this
+content_width = 0                 # >0 gives panes a wider logical grid, panned with ⌥+←/→
+default_agent = "claude"          # first pane + ⌥+; spawn this
 startup_panes = 1
-theme = "catppuccin-mocha"        # palette preset (see Appearance)
-# [theme]
-# preset = "nord"
-# accent = "#ff0000"              # override any key on top of the preset
-# overlay = "#665c54"
-# legacy aliases (override theme when set):
-# background = "#1e1e2e"          # -> theme.base
-# focus_color = "#74c7ec"         # -> theme.accent
-# skeleton_color = "#6c7086"      # -> theme.overlay
+theme = "catppuccin-mocha"        # or nord, tokyo-night, gruvbox, rose-pine, dracula, ...
 cell_labels = false
 
 [minimap]
-show = true
-mode = "off"                       # off | overlay | edge_ticks  (reserved / reserved_quasimode parse as off)
-max_width = 32                     # overlay + centered Alt minimap
-max_rows = 6                       # overlay + centered Alt minimap
-show_counts = true
+mode = "off"                      # off | overlay | edge_ticks
 ```
 
-Key reference (defaults in parentheses):
+## FAQ
 
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `default_column_width` | width | `quarter` | Preset `quarter`/`third`/`half`/`two_thirds`/`three_quarters`/`full` or `{ cells = N }` |
-| `scroll_margin` | int | `2` | Reserved under quantization (kept for future continuous mode) |
-| `center_focus` | bool | `false` | Center focused column at nearest quantized stop |
-| `content_width` | int | `0` | Logical pane width; `0` = follow column width (wrap). `>0` = horizontal overflow panned with `⌥+←/→` |
-| `default_agent` | string | *(unset)* | Agent for the first pane and `;`. Unset means you get the selector, which saves your pick |
-| `agents` | array | `[]` | Extra commands to offer in the selector |
-| `startup_panes` | int | `1` | Quarter-width panes at launch; the remainder shows as placeholder boxes |
-| `theme` | string/table | `catppuccin-mocha` | Palette preset or `[theme]` table with `preset` + per-key overrides; see Appearance / `docs/CONFIG.md` |
-| `background` | color | theme `base` | Legacy alias for `theme.base` |
-| `focus_color` | color | theme `accent` | Legacy alias for `theme.accent` |
-| `skeleton` | bool | `false` | Draw 1-cell inset column frames. Hand-edit only; setup does not ask |
-| `skeleton_color` | color | theme `overlay` | Legacy alias for `theme.overlay` |
-| `cell_labels` | bool | `false` | Block-font `strip.pane` addresses in placeholder boxes |
-| `onboarded` | bool | *(unset)* | Written by setup so it is offered once; delete to be offered again |
-| `minimap.show` | bool | `true` | Master kill-switch |
-| `minimap.mode` | enum | `off` | Chrome presentation (`off`=only centered Alt HUD/minimap, `overlay`=corner, `edge_ticks`=frame ticks; legacy `reserved`/`reserved_quasimode` parse as `off`) |
-| `minimap.max_width` | int | `32` | Width of `overlay` and centered Alt minimap |
-| `minimap.max_rows` | int | `6` | Rows of `overlay` and centered Alt minimap |
-| `minimap.show_counts` | bool | `true` | Summary tallies |
+### How does it compare to tmux?
 
----
+tmux is a fixed-screen tiler with a client-server daemon. strimux is a scrolling tiler with no daemon: columns keep their width and the row scrolls, so ten agents are as readable as two. If you need detach/attach that outlives the process, keep tmux; strimux delegates persistence to each harness's own `--resume`.
 
-## Why strimux
+### What coding agents does it work with?
 
-tmux divides a fixed screen; strimux scrolls an infinite one. Séance/tairi need a GUI or compositor; strimux runs in the terminal you already use. See [`docs/COMPARISON.md`](docs/COMPARISON.md).
+All of them. strimux hosts ordinary PTYs, so any agent that runs in a terminal works out of the box: Claude Code, Jcode, Codex, OpenCode, Gemini CLI, Aider, and anything else you can launch from a command line. Status tracking uses standard OSC 133 with a quiet-heuristic fallback, so no agent needs instrumentation.
 
-| Project | Layout | In a terminal? | Detach? | Platforms |
-|---|---|---|---|---|
-| tmux | plane tiling | Yes | Yes (server) | macOS/Linux/*BSD |
-| Zellij | plane tiling + floating | Yes | Yes | macOS/Linux/Windows |
-| Séance | niri strip (GUI) | No | socket | Linux (GTK) |
-| tairi | niri strip (GUI) | No | workspaces | macOS |
-| **strimux** | **2D niri strip grid** | **Yes** | **No (`--resume`)** | **macOS/Windows/Linux** |
+### Does it need a specific terminal?
 
-**No-shrink** — agents stay readable. **Niri feel** — `⌥+hjkl` / `⌥+Shift+hjkl`, dynamic strips, quantized stops, minimal follow-focus. **No daemon** — if you need SSH persistence that outlives the process, keep tmux; strimux delegates to `claude --resume` / `jcode --resume`.
+No. Minimum is 256-color plus cursor addressing. Truecolor, synchronized updates (`ESC[?2026h`), kitty keyboard protocol, and SGR mouse are auto-detected and gracefully degraded. It runs over SSH.
 
----
+### Can I detach and reattach?
 
-## Architecture
+No, deliberately. There is no daemon and no socket. Your agents already persist themselves (`claude --resume`, `jcode --resume`); a shell that must survive the terminal belongs in tmux, which you can happily run inside a strimux pane.
 
-Single process, no client-server (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)):
+### What's not planned?
+
+No free 2D canvas (structured strips only), no floating panes, no plugin system, no overview zoom (post-1.0). See [Non-goals](docs/ROADMAP.md).
+
+## Development
+
+```sh
+cargo build --release
+cargo test --workspace          # layout proptests + unit tests + live-PTY E2E
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all
+```
+
+CI runs fmt, clippy (`-D warnings`), check, and the full test suite on macOS and Linux, plus a Windows build gate, on every push and PR. Nightly PTY integration tests run the real binary through a live PTY. Tags matching `v*` build binaries for all five targets, checksum them, and publish a GitHub Release.
+
+Architecture:
 
 ```
 strimux (one process)
@@ -295,41 +249,18 @@ strimux (one process)
 | Crate | Role |
 |---|---|
 | `strimux` | bin — raw mode, PTY hosting, composer, render, input, minimap, OSC 133, Kitty APC forwarding, mouse |
-| `strimux-layout` | pure 2D grid + verbs + quantized scroll + minimap model. `std` + `serde` only. `proptest` invariants |
-| `strimux-term` | `TermGrid` emulator facade + damage tracking (isolates the emulator-crate choice) |
+| `strimux-layout` | pure 2D grid + verbs + quantized scroll + minimap model. `proptest` invariants |
+| `strimux-term` | `TermGrid` emulator facade + damage tracking |
 | `strimux-testkit` | fake PTYs + scripted terminals + snapshot harness |
 
-`scroll_x` only rests on column-boundary stops (or `max_scroll`); follow-focus picks the nearest stop that fully reveals the focused column. See [`docs/LAYOUT-SPEC.md`](docs/LAYOUT-SPEC.md) for the normative spec.
+Layout invariants live as `proptest` properties in `crates/strimux-layout/tests/invariants.rs` (quantized-stop, tiling, shape-identity, focus-never-clipped, page-stop, cross-strip move).
 
----
+## Contributing
 
-## Non-goals
-
-Read before filing a feature request:
-
-- **No daemon / detach / attach.** Your agents already `--resume`.
-- No free 2D canvas — we are a structured grid of strips.
-- No floating panes, no mouse-driven chrome beyond scroll/click-to-focus/drag-to-copy, no plugin system, no overview zoom (post-1.0).
-
-The hot-module-reload scaffold briefly lived in-tree to develop strimux inside strimux; it was removed — the shipped binary never depended on it and it drifted from the real painter.
-
----
-
-## Development
-
-```sh
-cargo build --release
-cargo test --workspace          # layout proptests + unit tests + live-PTY E2E
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all
-make check                      # clippy
-make test                       # cargo test --workspace
-```
-
-Layout invariants live as `proptest` properties in `crates/strimux-layout/tests/invariants.rs` (quantized-stop, tiling, shape-identity, focus-never-clipped, page-stop, cross-strip move). E2E PTY tests live in `scripts/e2e_*.py` and under `crates/strimux/src/tui.rs`.
-
----
+- Open an [issue](https://github.com/hongnoul/gwae/issues) or [pull request](https://github.com/hongnoul/gwae/pulls)
+- Read the [contributing guide](.github/CONTRIBUTING.md) and [docs/](docs/)
+- Changes to keybindings must update `binds.rs` and this README together — the tests will hold you to it
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+strimux is open source under the [MIT license](LICENSE).

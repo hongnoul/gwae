@@ -1,10 +1,17 @@
 # Changelog
 
 All notable changes to this project will be documented in this file (keep-a-
-changelog, updated per PR). strimux is pre-1.0; the format is based on
+changelog, updated per PR). The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-08-25
+
+First stable release. strimux ships as one static binary for macOS, Linux,
+and Windows with the scrolling strip grid, quantized viewport, OSC 133 agent
+dashboard, smart-jump, guided onboarding, Kitty graphics passthrough, theme
+presets, and live-PTY E2E coverage. MIT licensed.
 
 ### Added
 - **`⌥+↑` / `⌥+↓` read back through a pane's scrollback.** With the wheel no
