@@ -86,6 +86,7 @@ fn paint(config_body: &str, cols: u16, rows: u16) -> String {
     let mut child = pair.slave.spawn_command(cmd).expect("spawn strimux");
     drop(pair.slave);
 
+    let mut writer = pair.master.take_writer().expect("writer");
     let mut reader = pair.master.try_clone_reader().expect("reader");
     let (tx, rx) = channel::<Vec<u8>>();
     std::thread::spawn(move || {
@@ -104,9 +105,21 @@ fn paint(config_body: &str, cols: u16, rows: u16) -> String {
 
     let mut out = Vec::new();
     let mut idle = 0;
+    let mut hud_dismissed = false;
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
-        if frame_count(&out) >= 1 && idle >= 4 {
+        // The startup HUD is drawn centered over the grid and the cells
+        // under it are never emitted, so whatever hint it covers depends on
+        // the platform's key-label widths. Dismiss it (⌥+/ toggles it) once
+        // the first frame is up, so every assertion sees the full grid.
+        if !hud_dismissed && frame_count(&out) >= 1 {
+            use std::io::Write;
+            let _ = writer.write_all(b"\x1b/");
+            let _ = writer.flush();
+            hud_dismissed = true;
+            idle = 0;
+        }
+        if hud_dismissed && frame_count(&out) >= 2 && idle >= 4 {
             break;
         }
         match rx.recv_timeout(Duration::from_millis(200)) {
