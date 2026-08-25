@@ -12,6 +12,10 @@ use std::path::PathBuf;
 use strimux_layout::Width;
 use strimux_term::CColor;
 
+fn default_input_poll_ms() -> u64 {
+    2
+}
+
 /// The resolved view of the config file, with defaults filled in.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -57,6 +61,13 @@ pub struct Config {
     pub mouse: bool,
     /// Rows of pane scrollback moved per wheel notch.
     pub scroll_lines: u16,
+    /// Milliseconds to wait in `event::poll` before checking PTY output and
+    /// repainting. Lower values reduce perceived typing and backspace latency
+    /// at the cost of more frequent wakeups. Default is 2ms (from 10ms) for
+    /// low latency with modest CPU cost. Valid range 1..50. Use 1 for minimum
+    /// possible input latency (backspace/delete will feel instant).
+    #[serde(default = "default_input_poll_ms")]
+    pub input_poll_ms: u64,
 }
 
 impl Default for Config {
@@ -76,6 +87,7 @@ impl Default for Config {
             minimap: Minimap::default(),
             mouse: true,
             scroll_lines: 3,
+            input_poll_ms: default_input_poll_ms(),
         }
     }
 }
@@ -144,7 +156,7 @@ pub struct Minimap {
     pub show_counts: bool,
     /// Milliseconds to flash a centered HUD when a background pane transitions
     /// to attention while the quasimode row is hidden and Alt is not held.
-    /// `0` disables the HUD entirely (default).
+    /// `0` disables the HUD entirely.
     pub hud_on_attention_ms: u16,
 }
 

@@ -21,9 +21,11 @@ scroll_lines = 3
 
 [minimap]
 show = true
+mode = "reserved_quasimode"
 max_width = 32
 max_rows = 6
 show_counts = true
+hud_on_attention_ms = 2500
 ```
 
 ## Keys
@@ -43,9 +45,11 @@ show_counts = true
 | `mouse` | bool | `true` | Capture the mouse so the wheel scrolls *inside* the pane under the cursor (its own scrollback) instead of reaching the host terminal, where it walks the host's scrollback and the shell's previous/next prompt history. A pane running a full-screen app that asked for mouse reporting gets the event forwarded verbatim, translated into its own grid coordinates; one on the alternate screen without mouse reporting (e.g. `less`) gets arrow keys. Typing snaps a scrolled-back pane to the live bottom. Set to `false` to hand the wheel back to the host terminal. |
 | `scroll_lines` | integer | `3` | Rows of pane scrollback moved per wheel notch. |
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit (the same digit `⌥+1..9` jumps to). Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
-| `minimap.max_width` | integer | `32` | Maximum width (in cells) of the minimap block; it shrinks to fit narrower terminals. |
-| `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown; extra strips are cut off. |
-| `minimap.show_counts` | bool | `true` | Draw the one-line summary above the map: total pane count plus per-status tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts are skipped). |
+| `minimap.mode` | string | `"reserved_quasimode"` | Presentation: `overlay` (legacy corner), `reserved` (1-row chrome), `reserved_quasimode` (hold ⌥/Alt to reveal or when attention Idle/Failed), `edge_ticks` (frame ticks), `off` (no chrome). In quasimode the 1-row chrome is still reserved so geometry never churns (no SIGWINCH) — it just stays blank at rest. |
+| `minimap.max_width` | integer | `32` | Maximum width (in cells) of the minimap block; it shrinks to fit narrower terminals. Only used for `overlay`. |
+| `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown; extra strips are cut off. Only used for `overlay`. |
+| `minimap.show_counts` | bool | `true` | Draw the one-line summary above the map (overlay) or on the right of the reserved row: total pane count plus per-status tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts skipped). |
+| `minimap.hud_on_attention_ms` | integer | `2500` | Milliseconds to flash a centered HUD box (` » 1.3 needs you — ⌥+g`) when attention (Idle/Failed) arises while `reserved_quasimode` is hidden and Alt is not held. `0` disables. |
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.

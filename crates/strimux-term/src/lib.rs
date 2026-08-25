@@ -646,7 +646,9 @@ mod tests {
         // Non-graphics APC: swallowed.
         assert!(e.extract(b"\x1b_Xsomething\x1b\\").is_empty());
         // Graphics query (a=q): dropped, the host reply cannot be routed back.
-        assert!(e.extract(b"\x1b_Ga=q,i=1,f=24,s=1,v=1;AAAA\x1b\\").is_empty());
+        assert!(e
+            .extract(b"\x1b_Ga=q,i=1,f=24,s=1,v=1;AAAA\x1b\\")
+            .is_empty());
         // State machine returns to ground: a following display APC still passes.
         let seq = b"\x1b_Gi=7,a=T;AAAA\x1b\\";
         assert_eq!(e.extract(seq), seq.to_vec());
