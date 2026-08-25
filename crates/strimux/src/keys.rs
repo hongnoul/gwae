@@ -48,6 +48,11 @@ pub fn chord(key: &str) -> String {
     format!("{}+{}", mod_key(), key)
 }
 
+/// A shifted chord, e.g. `⌥+⇧+q` on macOS or `Alt+Shift+q` elsewhere.
+pub fn shift_chord(key: &str) -> String {
+    format!("{}+{}+{}", mod_key(), shift_key(), key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -88,7 +88,7 @@ impl Bind {
     pub fn label(&self) -> String {
         match self.trigger {
             Trigger::Chord(c) => keys::chord(&c.to_string()),
-            Trigger::ShiftChord(c) => format!("{}+{}+{}", keys::mod_key(), keys::shift_key(), c),
+            Trigger::ShiftChord(c) => keys::shift_chord(&c.to_string()),
             // The two Enter rows are spelled by the platform module so they
             // read `↵` on macOS and `Enter` elsewhere, like every other label.
             Trigger::Prose("↵") => keys::enter_key().to_string(),
@@ -282,10 +282,10 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::ShiftChord('q'),
-        hint: "quits strimux and every pane",
+        hint: "force-quits after a confirmation",
         glyph: None,
         group: Group::Panes,
-        desc: "quit strimux",
+        desc: "force quit",
         effect: Effect::Quit,
     },
     Bind {

@@ -1486,6 +1486,95 @@ fn draw_theme_picker(out: &mut [Cell], cols: u16, rows: u16, sel: usize, pal: &P
     text(oy + 2, help, pal.text, false);
 }
 
+/// Centered disclaimer for the force-quit chord (`⌥+Shift+q`).
+///
+/// Quitting kills every pane and everything running in them, which is the one
+/// irreversible thing strimux can do, so the chord opens this overlay instead
+/// of exiting outright: it names the cost (how many panes die) and requires a
+/// second, deliberate keystroke.
+fn draw_quit_confirm(out: &mut [Cell], cols: u16, rows: u16, panes: usize, pal: &Palette) {
+    let title = format!(
+        " force quit strimux? {} pane{} will be killed ",
+        panes,
+        if panes == 1 { "" } else { "s" }
+    );
+    let warn = " running commands are terminated immediately ";
+    let help = format!(
+        " {} again or ⏎ quits   esc cancels ",
+        crate::keys::shift_chord("q")
+    );
+    let bw = [title.as_str(), warn, help.as_str()]
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 2;
+    let bh = 5usize;
+    if (cols as usize) < bw + 2 || (rows as usize) < bh + 2 {
+        return;
+    }
+    let ox = ((cols as usize) - bw) / 2;
+    let oy = ((rows as usize) - bh) / 2;
+    for y in 0..bh {
+        for x in 0..bw {
+            if let Some(c) = out.get_mut((oy + y) * cols as usize + ox + x) {
+                *c = Cell {
+                    ch: ' ',
+                    style: strimux_term::Style {
+                        fg: pal.text,
+                        bg: pal.surface,
+                        ..Default::default()
+                    },
+                    width: 1,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+    // The border uses the failed tint: this is the destructive overlay, and it
+    // must not be mistaken at a glance for the theme picker.
+    let mut edge = |x: usize, y: usize, ch: char| {
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            c.ch = ch;
+            c.style.fg = pal.failed;
+            c.style.bg = pal.surface;
+            c.width = 1;
+        }
+    };
+    for x in 0..bw {
+        edge(ox + x, oy, '─');
+        edge(ox + x, oy + bh - 1, '─');
+    }
+    for y in 0..bh {
+        edge(ox, oy + y, '│');
+        edge(ox + bw - 1, oy + y, '│');
+    }
+    edge(ox, oy, '╭');
+    edge(ox + bw - 1, oy, '╮');
+    edge(ox, oy + bh - 1, '╰');
+    edge(ox + bw - 1, oy + bh - 1, '╯');
+
+    let mut text = |row: usize, s: &str, fg: CColor, bold: bool| {
+        let chars: Vec<char> = s.chars().collect();
+        let tx = ox + 1 + (bw - 2).saturating_sub(chars.len()) / 2;
+        for (i, ch) in chars.iter().enumerate() {
+            if tx + i >= ox + bw - 1 {
+                break;
+            }
+            if let Some(c) = out.get_mut(row * cols as usize + tx + i) {
+                c.ch = *ch;
+                c.style.fg = fg;
+                c.style.bg = pal.surface;
+                c.style.bold = bold;
+                c.width = 1;
+            }
+        }
+    };
+    text(oy + 1, &title, pal.failed, true);
+    text(oy + 2, warn, pal.text, false);
+    text(oy + 3, &help, pal.text, false);
+}
+
 /// Draw a one-line toast along the bottom of the screen.
 ///
 /// Used to report config reloads. It is a single row so it never covers a
@@ -2476,6 +2565,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // selection previews live, so the whole screen is the preview and the
     // picker itself only needs to show the name.
     let mut theme_pick: Option<usize> = None;
+    // Force-quit confirmation (⌥+Shift+q): true while the centered disclaimer
+    // is up. Quitting kills every pane's process, so the chord arms this
+    // overlay and a second deliberate keystroke commits.
+    let mut quit_confirm = false;
 
     'main: loop {
         while let Ok(msg) = rx.try_recv() {
@@ -2685,6 +2778,21 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                             dirty = true;
                         }
                     }
+                    // While the force-quit disclaimer is up it owns the
+                    // keyboard: nothing may reach a pane, because the very
+                    // next keystroke may destroy every pane. Only the same
+                    // chord again (or Enter) commits; anything else cancels,
+                    // so a stray key can never quit by accident.
+                    if quit_confirm {
+                        let confirmed = matches!(handle_key(&ke), Some(Cmd::Quit))
+                            || matches!(ke.code, KeyCode::Enter);
+                        if confirmed {
+                            break 'main;
+                        }
+                        quit_confirm = false;
+                        dirty = true;
+                        continue;
+                    }
                     // While the theme picker is open it owns the keyboard:
                     // arrows/hjkl step through presets, Enter keeps the
                     // choice, Escape restores what was there before. Without
@@ -2740,7 +2848,13 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                     }
                     if let Some(cmd) = handle_key(&ke) {
                         match cmd {
-                            Cmd::Quit => break 'main,
+                            // Arm the disclaimer rather than exiting: the
+                            // second press (handled above) is the one that
+                            // actually kills every pane.
+                            Cmd::Quit => {
+                                quit_confirm = true;
+                                dirty = true;
+                            }
                             Cmd::ToggleHud => {
                                 hud_active = !hud_was_active;
                                 dirty = true;
@@ -3023,6 +3137,11 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             if let Some(note) = &reload_note {
                 let ok = !note.starts_with("config error") && !note.starts_with("unknown theme");
                 draw_toast(&mut frame, cols, rows, note, &pal, ok);
+            }
+            // Topmost: the destructive confirmation must never be obscured by
+            // chrome that happens to be showing when the chord is pressed.
+            if quit_confirm {
+                draw_quit_confirm(&mut frame, cols, rows, layout_pane_count(&layout), &pal);
             }
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
@@ -4643,6 +4762,79 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn force_quit_chord_arms_a_centered_disclaimer() {
+        // The chord itself must still decode as Quit (the run loop turns that
+        // into "arm the overlay"), and the overlay must actually paint a
+        // centered, framed box that names the cost in the user's own key
+        // vocabulary. A quit that exits without this box is the bug.
+        let ev = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert_eq!(handle_key(&ev), Some(Cmd::Quit));
+
+        let cols: u16 = 80;
+        let rows: u16 = 24;
+        let mut out = vec![Cell::default(); cols as usize * rows as usize];
+        let pal = Palette::default();
+        draw_quit_confirm(&mut out, cols, rows, 4, &pal);
+        let lines: Vec<String> = (0..rows)
+            .map(|y| {
+                (0..cols)
+                    .map(|x| out[y as usize * cols as usize + x as usize].ch)
+                    .collect()
+            })
+            .collect();
+        assert!(
+            lines.iter().any(|s| s.contains("force quit strimux?")),
+            "disclaimer names the action, got {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|s| s.contains("4 panes will be killed")),
+            "disclaimer names the cost, got {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|s| s.contains(&crate::keys::shift_chord("q"))),
+            "disclaimer says how to confirm, got {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|s| s.contains("esc cancels")),
+            "disclaimer says how to back out, got {lines:?}"
+        );
+        // Framed and centered: corners exist, and the painted rows sit around
+        // the middle of the screen rather than at an edge.
+        let painted: Vec<usize> = (0..rows as usize)
+            .filter(|y| {
+                (0..cols as usize).any(|x| out[y * cols as usize + x].style.bg != CColor::Default)
+            })
+            .collect();
+        assert!(
+            out.iter().any(|c| c.ch == '╭') && out.iter().any(|c| c.ch == '╯'),
+            "disclaimer is a framed box"
+        );
+        let mid = rows as usize / 2;
+        assert!(
+            painted.first().is_some_and(|f| *f < mid) && painted.last().is_some_and(|l| *l > mid),
+            "disclaimer straddles the screen center, painted {painted:?}"
+        );
+        // Singular/plural, because "1 panes" reads like a bug in a warning.
+        let mut one = vec![Cell::default(); cols as usize * rows as usize];
+        draw_quit_confirm(&mut one, cols, rows, 1, &pal);
+        let text: String = one.iter().map(|c| c.ch).collect();
+        assert!(
+            text.contains("1 pane will be killed"),
+            "singular pane count"
+        );
+        // Too small to render honestly: paint nothing rather than a clipped
+        // warning the user cannot read.
+        let mut tiny = vec![Cell::default(); 10 * 4];
+        draw_quit_confirm(&mut tiny, 10, 4, 3, &pal);
+        assert!(
+            tiny.iter().all(|c| c.style.bg == CColor::Default),
+            "no partial disclaimer may be painted"
+        );
     }
 
     #[test]
