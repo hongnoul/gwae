@@ -9,9 +9,12 @@ mod binds;
 mod cli;
 mod config;
 mod cowsay;
+mod install;
 mod keys;
 mod latency;
+mod onboard;
 mod select;
+mod splash;
 mod theme;
 mod tui;
 
@@ -60,6 +63,20 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
                 Err(code)
             }
         }
+        Command::Init {
+            print,
+            print_splash,
+        } => {
+            if print_splash {
+                let cols = crossterm::terminal::size().map(|(c, _)| c).unwrap_or(80);
+                print!("{}", splash::render_all(&cfg.palette(), cols));
+            } else if print {
+                print!("{}", onboard::render_all());
+            } else {
+                onboard::run(&cfg_path_for_agent(), cfg.input_poll_ms);
+            }
+            Ok(())
+        }
         Command::Setup => {
             println!("strimux setup: no per-terminal bindings installed yet (M4).");
             println!(
@@ -82,6 +99,7 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
                 None => println!("  theme: {} [ok]", cfg.theme_name()),
             }
             println!("  agent: {}", agent_status(&cfg));
+            println!("  onboarding: {}", onboarding_status(&path));
             println!(
                 "  latency: {}",
                 latency::summary(&latency::audit(cfg.input_poll_ms))
@@ -136,6 +154,16 @@ fn agent_status(cfg: &Config) -> String {
         agent::Plan::NoneInstalled { .. } => {
             "none installed; ⌥+; opens a shell and says so".to_string()
         }
+    }
+}
+
+/// Whether this config has been through `strimux init`, for `doctor`.
+fn onboarding_status(path: &std::path::Path) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    if onboard::already_onboarded(&text) {
+        "done [ok]".to_string()
+    } else {
+        "not run; `strimux init` configures theme, layout, chrome, latency".to_string()
     }
 }
 

@@ -396,10 +396,57 @@ pub fn cowsay_question() -> Question {
     }
 }
 
+/// The key of the one question that is not a config setting.
+///
+/// Answering `true` installs [`crate::install::TOOL`] on the machine. It is
+/// filtered out of the config write ([`apply_answers`]) rather than being a
+/// separate flow, so it gets the same screen, the same keys and the same
+/// summary line as everything else.
+pub const INSTALL_KEY: &str = "install.btm";
+
+/// The `btm` question. Default *yes*: it is the one companion tool strimux
+/// actively recommends, and the pane next to an agent is exactly where a
+/// system monitor earns its place.
+pub fn install_question() -> Question {
+    Question {
+        key: INSTALL_KEY,
+        prompt: "Install btm, the system monitor",
+        help: "A live CPU/memory/network pane to sit next to your agent. \
+               strimux installs whatever this needs.",
+        options: vec![
+            Opt {
+                label: "yes",
+                value: "true",
+                blurb: "install it now (default)",
+            },
+            Opt {
+                label: "no",
+                value: "false",
+                blurb: "leave this machine alone",
+            },
+        ],
+        default: 0,
+        swatch: false,
+        keep_existing: false,
+    }
+}
+
 /// Every question of the flow, in order.
+///
+/// The `btm` offer comes last and only when it would do something: asking
+/// someone who already has it would be setup pretending not to know.
 pub fn all_questions() -> Vec<Question> {
+    all_questions_for(crate::install::Facts::probe())
+}
+
+/// [`all_questions`] against a described machine, so tests never depend on
+/// what happens to be installed on the one running them.
+pub fn all_questions_for(f: crate::install::Facts) -> Vec<Question> {
     let mut qs = questions();
     qs.push(cowsay_question());
+    if crate::install::worth_asking(f) {
+        qs.push(install_question());
+    }
     qs
 }
 
@@ -579,8 +626,15 @@ pub fn render_question(q: &Question, idx: usize, total: usize, cursor: usize) ->
 }
 
 /// The whole flow as text, for `strimux init --print` and for docs.
+///
+/// Every question, including the `btm` offer that a machine which already has
+/// it would not be shown: this is documentation of the flow, not a prediction
+/// of one run of it.
 pub fn render_all() -> String {
-    let qs = all_questions();
+    let qs = all_questions_for(crate::install::Facts {
+        installed: false,
+        ..crate::install::Facts::probe()
+    });
     let n = qs.len();
     let mut s = String::new();
     for (i, q) in qs.iter().enumerate() {
@@ -592,17 +646,33 @@ pub fn render_all() -> String {
 
 /// The closing screen: every setting as it now stands, where it lives, and
 /// anything about the machine that only the user can fix. Pure.
+///
+/// `install` is the result of the `btm` step, reported on its own question's
+/// line: what actually happened on the machine, not merely what was answered,
+/// because "yes" and "installed" are not the same claim.
 pub fn render_summary(
     qs: &[Question],
     answers: &[(String, String)],
     cfg_path: &Path,
     manual: Option<String>,
+    install: Option<&crate::install::Outcome>,
 ) -> String {
     let mut s = format!("{BOLD}strimux is configured.{RESET}\r\n\r\n");
     for q in qs {
-        let (mark, shown) = match answers.iter().find(|(k, _)| k == q.key) {
-            Some((_, v)) => (GREEN, q.label_for(v).to_string()),
-            None => (DIM, "kept as it was".to_string()),
+        let (mark, shown) = match (q.key, install) {
+            // The install line reports the machine, not the answer.
+            (INSTALL_KEY, Some(o)) => (
+                match o {
+                    crate::install::Outcome::Installed => GREEN,
+                    crate::install::Outcome::Declined => DIM,
+                    crate::install::Outcome::Failed(_) => YELLOW,
+                },
+                o.line(),
+            ),
+            _ => match answers.iter().find(|(k, _)| k == q.key) {
+                Some((_, v)) => (GREEN, q.label_for(v).to_string()),
+                None => (DIM, "kept as it was".to_string()),
+            },
         };
         // At least one space, so the longest prompt does not butt straight
         // into its value.
@@ -640,6 +710,11 @@ pub fn apply_answers(text: &str, answers: &[(String, String)]) -> String {
         text.to_string()
     };
     for (k, v) in answers {
+        // Not a config setting: it is an action taken on the machine, and
+        // writing it would invent a key the parser knows nothing about.
+        if k == INSTALL_KEY {
+            continue;
+        }
         out = match k.strip_prefix("cowsay.") {
             Some(sub) => set_table_scalar_text(&out, "cowsay", sub, v),
             None => crate::agent::set_scalar_text(&out, k, v),
@@ -804,7 +879,19 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
     let mut drained = false;
     loop {
         if at == total {
-            draw(&summary_screen(&qs, &chosen, cfg_path, &manual));
+            // The one answer that changes the *machine* rather than a file,
+            // done on the way to the summary so its real result (not merely
+            // the answer) is what the screen reports. Backing up and changing
+            // the answer re-runs it, which is why the outcome is computed here
+            // rather than remembered from the first pass.
+            let install = run_install(&qs, &chosen);
+            draw(&summary_screen(
+                &qs,
+                &chosen,
+                cfg_path,
+                &manual,
+                install.as_ref(),
+            ));
             if !drained {
                 // Drop keys typed *during* the flow so a stray Enter cannot
                 // dismiss the summary before it has been read.
@@ -875,6 +962,30 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
     out
 }
 
+/// Carry out the `btm` answer, if it was asked and said yes.
+///
+/// The screen is repainted first because this blocks for as long as a package
+/// manager takes: a flow that went silent for a minute with no explanation
+/// would read as a hang, and the one thing worse than a slow install is a slow
+/// install nobody was told about.
+fn run_install(qs: &[Question], chosen: &[Option<Answer>]) -> Option<crate::install::Outcome> {
+    let i = qs.iter().position(|q| q.key == INSTALL_KEY)?;
+    match chosen.get(i) {
+        Some(Some(Answer::Set(v))) if v == "true" => {
+            let plan = crate::install::plan(crate::install::Facts::probe());
+            draw(&format!(
+                "{BOLD}Installing {}\u{2026}{RESET}\r\n\r\n{DIM}This can take a minute; \
+                 strimux is handling everything it needs.{RESET}\r\n",
+                crate::install::TOOL
+            ));
+            Some(crate::install::run(&plan))
+        }
+        // Skipped or answered no: both mean "we left the machine alone".
+        Some(Some(Answer::Set(_))) => Some(crate::install::Outcome::Declined),
+        _ => None,
+    }
+}
+
 /// Take the default for every question from `from` on that is still unanswered.
 fn fill_defaults(qs: &[Question], chosen: &mut [Option<Answer>], from: usize) {
     for (j, c) in chosen.iter_mut().enumerate().skip(from) {
@@ -906,6 +1017,7 @@ fn summary_screen(
     chosen: &[Option<Answer>],
     cfg_path: &Path,
     manual: &Option<String>,
+    install: Option<&crate::install::Outcome>,
 ) -> String {
     let shown = answered(qs, chosen);
     let mut answers = shown.clone();
@@ -916,6 +1028,7 @@ fn summary_screen(
         if err.is_some() { &[] } else { &shown },
         cfg_path,
         manual.clone(),
+        install,
     );
     if let Some(e) = &err {
         screen.push_str(&format!(
@@ -944,8 +1057,16 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
+    /// The whole flow on a machine that does not have `btm`, so the offer is
+    /// present. Describing the machine keeps these tests independent of
+    /// whatever is installed on the one running them.
     fn all() -> Vec<Question> {
-        all_questions()
+        all_questions_for(crate::install::Facts {
+            installed: false,
+            brew: true,
+            cargo: true,
+            macos: true,
+        })
     }
 
     #[test]
@@ -989,6 +1110,69 @@ mod tests {
         assert_eq!(cfg.cowsay.enabled, d.cowsay.enabled);
         assert_eq!(cfg.palette(), d.palette());
         assert_eq!(cfg.default_column_width, d.default_column_width);
+    }
+
+    #[test]
+    fn the_btm_offer_defaults_to_yes_and_is_skipped_when_it_is_already_there() {
+        let missing = crate::install::Facts {
+            installed: false,
+            brew: true,
+            cargo: true,
+            macos: true,
+        };
+        let qs = all_questions_for(missing);
+        let q = qs.last().expect("questions");
+        assert_eq!(q.key, INSTALL_KEY, "the offer comes last");
+        assert_eq!(q.default_value(), "true", "btm is recommended, so yes");
+        // Already installed: the question would have only one honest answer,
+        // so it is not asked at all.
+        let have = crate::install::Facts {
+            installed: true,
+            ..missing
+        };
+        assert!(
+            !all_questions_for(have).iter().any(|q| q.key == INSTALL_KEY),
+            "offered an install to someone who already has it"
+        );
+    }
+
+    #[test]
+    fn the_install_answer_never_reaches_the_config_file() {
+        // It is an action on the machine, not a setting: writing it would
+        // invent a key the parser knows nothing about.
+        let text = apply_answers(
+            "",
+            &[
+                (INSTALL_KEY.into(), "true".into()),
+                ("theme".into(), "\"nord\"".into()),
+            ],
+        );
+        assert!(!text.contains("install"), "leaked into the config: {text}");
+        assert!(text.contains("theme = \"nord\""), "{text}");
+        let cfg: Config = toml::from_str(&text).expect("still parses");
+        assert_eq!(cfg.palette(), Palette::NORD);
+    }
+
+    #[test]
+    fn the_summary_reports_what_the_install_did_not_what_was_answered() {
+        // "yes" and "installed" are different claims: a failed install that
+        // showed up as a tick would send the user looking for a binary that
+        // is not there.
+        let qs = all();
+        let answers = vec![(INSTALL_KEY.to_string(), "true".to_string())];
+        let path = Path::new("/tmp/strimux.toml");
+        let failed = crate::install::Outcome::Failed("brew exploded".into());
+        let out = render_summary(&qs, &answers, path, None, Some(&failed));
+        assert!(out.contains("not installed"), "{out}");
+        assert!(out.contains("brew exploded"), "{out}");
+        let ok = crate::install::Outcome::Installed;
+        let out = render_summary(&qs, &answers, path, None, Some(&ok));
+        assert!(out.contains("installed"), "{out}");
+        assert!(!out.contains("not installed"), "{out}");
+        // Declining says so rather than going silent.
+        let no = crate::install::Outcome::Declined;
+        let out = render_summary(&qs, &answers, path, None, Some(&no));
+        assert!(out.contains("skipped"), "{out}");
     }
 
     #[test]
@@ -1190,7 +1374,7 @@ mod tests {
         // End to end for the property that makes the flow safe to offer at
         // every gateway visit: same parsed config in, same parsed config out.
         let before = "# hand written\nstartup_panes = 3\ndefault_agent = \"claude\"\n\n[theme]\npreset = \"nord\"\n";
-        let qs = with_existing(all_questions(), before);
+        let qs = with_existing(all(), before);
         let answers: Vec<(String, String)> = qs
             .iter()
             .filter_map(|q| match q.enter() {
@@ -1314,7 +1498,7 @@ mod tests {
             ("startup_panes".to_string(), "2".to_string()),
         ];
         let path = Path::new("/tmp/strimux.toml");
-        let out = render_summary(&qs, &answers, path, Some("do the thing\n".into()));
+        let out = render_summary(&qs, &answers, path, Some("do the thing\n".into()), None);
         assert!(out.contains("nord"), "answered value missing: {out}");
         assert!(out.contains("Panes on screen at launch"), "{out}");
         assert!(out.contains("/tmp/strimux.toml"), "{out}");
