@@ -35,9 +35,16 @@ pub struct Config {
     /// Color of the empty (uncovered) background behind the panes. Accepts a
     /// 256-color index (`236`), a hex RGB (`"#1e1e2e"`), or `"default"`.
     pub background: Background,
-    /// Color of the 1-cell accent frame drawn around the focused pane. Accepts
-    /// a 256-color index (`36`), a hex RGB (`"#7aa2f7"`), or `"default"`.
+    /// Color of the 1-cell accent frame drawn around the focused box. Accepts
+    /// a 256-color index (`196`), a hex RGB (`"#ff0000"`), or `"default"`.
     pub focus_color: Background,
+    /// Draw the skeleton: a 1-cell frame around every column box (full strip
+    /// height), so the layout's structure is always visible. The focused box's
+    /// frame uses `focus_color` instead of `skeleton_color`.
+    pub skeleton: bool,
+    /// Color of the skeleton frames around unfocused boxes. Accepts the same
+    /// forms as `background`. Default: white.
+    pub skeleton_color: Background,
     /// The minimap: a small bottom-right grid showing each strip (row) and its
     /// panes (columns), with the focused strip and column highlighted.
     pub minimap: Minimap,
@@ -53,7 +60,9 @@ impl Default for Config {
             default_agent: "jcode".to_string(),
             startup_panes: 4,
             background: Background::default(),
-            focus_color: Background(CColor::Rgb(0x7a, 0xa2, 0xf7)),
+            focus_color: Background(CColor::Rgb(0xff, 0x00, 0x00)),
+            skeleton: true,
+            skeleton_color: Background(CColor::Rgb(0xff, 0xff, 0xff)),
             minimap: Minimap::default(),
         }
     }
@@ -195,10 +204,9 @@ mod tests {
         let cfg = parse("");
         assert_eq!(cfg.startup_panes, 4);
         assert_eq!(cfg.background, Background::default());
-        assert_eq!(
-            cfg.focus_color,
-            Background(CColor::Rgb(0x7a, 0xa2, 0xf7))
-        );
+        assert_eq!(cfg.focus_color, Background(CColor::Rgb(0xff, 0, 0)));
+        assert!(cfg.skeleton, "skeleton frames on by default");
+        assert_eq!(cfg.skeleton_color, Background(CColor::Rgb(0xff, 0xff, 0xff)));
     }
 
     #[test]
@@ -209,6 +217,14 @@ mod tests {
         assert_eq!(cfg.focus_color, Background(CColor::Rgb(0xff, 0, 0)));
         let cfg = parse("focus_color = \"default\"");
         assert_eq!(cfg.focus_color, Background::default());
+    }
+
+    #[test]
+    fn skeleton_parses() {
+        let cfg = parse("skeleton = false");
+        assert!(!cfg.skeleton);
+        let cfg = parse("skeleton_color = \"#333333\"");
+        assert_eq!(cfg.skeleton_color, Background(CColor::Rgb(0x33, 0x33, 0x33)));
     }
 
     #[test]

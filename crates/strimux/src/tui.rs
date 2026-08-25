@@ -310,6 +310,7 @@ fn render_frame(
     content_width: u16,
     background: CColor,
     focus_color: CColor,
+    skeleton: Option<CColor>,
     mm: &crate::config::Minimap,
 ) {
     out.clear();
@@ -379,6 +380,77 @@ fn render_frame(
                 }
                 out[idx] = cell;
             }
+        }
+    }
+    // Skeleton: a 1-cell frame around every column box (full strip height) so
+    // the container structure always reads, plus placeholder boxes tiling any
+    // empty right side at the default quarter width. The focused column's box
+    // is framed in the focus accent instead of the skeleton color. Frames are
+    // overlays (background tint on edge cells): they never shift or resize
+    // pane content, matching the focus-frame model.
+    if let Some(sk) = skeleton {
+        let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
+        let ranges = layout
+            .column_x_ranges(layout.focus.row, cols)
+            .unwrap_or_default();
+        let total = ranges.last().map(|r| r.1 as i32).unwrap_or(0);
+        let max_scroll = (total - cols as i32).max(0);
+        let scroll = layout
+            .focused_row()
+            .map(|r| r.scroll_x)
+            .unwrap_or(0)
+            .clamp(0, max_scroll);
+        let mut edge = 0u16;
+        for (ci, (s, e)) in ranges.iter().enumerate() {
+            let sx = *s as i32 - scroll;
+            let ex = *e as i32 - scroll;
+            if ex <= 0 || sx >= cols as i32 {
+                continue;
+            }
+            let left = sx.max(0) as u16;
+            let right = (ex.min(cols as i32)) as u16;
+            if right <= left {
+                continue;
+            }
+            let color = if ci == layout.focus.column {
+                focus_color
+            } else {
+                sk
+            };
+            draw_focus_frame(
+                out,
+                cols,
+                Rect {
+                    x: left,
+                    y: 0,
+                    w: right - left,
+                    h: strip_h,
+                },
+                color,
+            );
+            edge = edge.max(right);
+        }
+        // Empty right side: placeholder boxes at the default quarter width, so
+        // the skeleton always shows the full four-column container even before
+        // panes exist to fill it.
+        let quarter = (cols / 4).max(1);
+        while edge < cols {
+            let w = quarter.min(cols - edge);
+            if w < 2 {
+                break;
+            }
+            draw_focus_frame(
+                out,
+                cols,
+                Rect {
+                    x: edge,
+                    y: 0,
+                    w,
+                    h: strip_h,
+                },
+                sk,
+            );
+            edge += w;
         }
     }
     // Overlay a 1-cell accent frame around the focused pane so it reads as
@@ -1048,6 +1120,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 cfg.content_width,
                 cfg.background.color(),
                 cfg.focus_color.color(),
+                cfg.skeleton.then(|| cfg.skeleton_color.color()),
                 &cfg.minimap,
             );
             buf.clear();
@@ -1333,6 +1406,85 @@ mod tests {
         draw_focus_frame(&mut out, 1, Rect { x: 0, y: 0, w: 1, h: 1 }, CColor::Idx(1));
         assert_eq!(out[0].style.bg, CColor::Idx(1));
     }
+
+    #[test]
+    fn skeleton_frames_four_boxes_with_red_focus() {
+        // The default 4-quarter layout with the skeleton on: every column box
+        // gets a full-height white frame and the focused box's frame is the
+        // focus color (red by default).
+        let layout = Layout::default(); // 4 quarter columns, focus col 0
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let cols: u16 = 80;
+        let rows: u16 = 10;
+        let white = CColor::Rgb(0xff, 0xff, 0xff);
+        let red = CColor::Rgb(0xff, 0, 0);
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            CColor::Default,
+            red,
+            Some(white),
+            &crate::config::Minimap::default(),
+        );
+        let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
+        assert_eq!(ranges.len(), 4);
+        let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
+        for (ci, (s, e)) in ranges.iter().enumerate() {
+            let want = if ci == 0 { red } else { white };
+            let (s, e) = (*s as u16, *e as u16 - 1);
+            // Corners of the box frame.
+            assert_eq!(bg(s, 0), want, "top-left of box {ci}");
+            assert_eq!(bg(e, 0), want, "top-right of box {ci}");
+            assert_eq!(bg(s, rows - 1), want, "bottom-left of box {ci}");
+            assert_eq!(bg(e, rows - 1), want, "bottom-right of box {ci}");
+            // Vertical edges run the full strip height.
+            assert_eq!(bg(s, rows / 2), want, "left edge of box {ci}");
+            assert_eq!(bg(e, rows / 2), want, "right edge of box {ci}");
+        }
+        // Box interiors are not tinted by the skeleton.
+        let (s0, e0) = ranges[0];
+        let mid = ((s0 + e0) / 2) as u16;
+        assert_eq!(bg(mid, rows / 2), CColor::Default, "interior untouched");
+        // The rightmost frame reaches the exact screen edge: full bleed.
+        assert_eq!(bg(cols - 1, 0), white);
+    }
+
+    #[test]
+    fn skeleton_fills_empty_right_side_with_placeholder_boxes() {
+        // With fewer than 4 columns, the skeleton still shows the container:
+        // placeholder quarter-width boxes tile the empty right side.
+        let layout = Layout::new(2); // 2 quarter columns, right half empty
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let cols: u16 = 80;
+        let rows: u16 = 10;
+        let white = CColor::Rgb(0xff, 0xff, 0xff);
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            CColor::Default,
+            CColor::Rgb(0xff, 0, 0),
+            Some(white),
+            &crate::config::Minimap::default(),
+        );
+        let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
+        // Placeholder boxes cover [40,60) and [60,80): white frames all the
+        // way to the last screen column.
+        assert_eq!(bg(40, 0), white, "placeholder box 3 left edge");
+        assert_eq!(bg(59, 0), white, "placeholder box 3 right edge");
+        assert_eq!(bg(60, 0), white, "placeholder box 4 left edge");
+        assert_eq!(bg(cols - 1, 0), white, "skeleton reaches screen edge");
+        assert_eq!(bg(cols - 1, rows - 1), white, "bottom-right corner");
+    }
 }
 
 #[test]
@@ -1366,21 +1518,21 @@ fn content_scroll_reveals_overflow_e2e() {
 
     // At scroll 0 the viewport shows content columns 0..79 (digits 1,2,...,0).
     panes.get_mut(&pid).unwrap().h_scroll = 0;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, &crate::config::Minimap::default());
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, None, &crate::config::Minimap::default());
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
     assert_eq!(out[9].ch, '0'); // content col 9  -> screen x=9
     assert_eq!(out[77].ch, '8'); // content col 77 -> screen x=77
 
     // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
     panes.get_mut(&pid).unwrap().h_scroll = 60;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, &crate::config::Minimap::default());
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, None, &crate::config::Minimap::default());
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
     assert_eq!(out[1].ch, '2'); // content col 61 -> screen x=1
     assert_eq!(out[77].ch, '8'); // content col 137 -> screen x=77
 
     // Past the 240-col content the window reveals blanks.
     panes.get_mut(&pid).unwrap().h_scroll = 200;
-    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, &crate::config::Minimap::default());
+    render_frame(&mut out, &layout, &mut panes, 80, 10, 240, CColor::Default, CColor::Default, None, &crate::config::Minimap::default());
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
     assert_eq!(out[39].ch, '0'); // content col 239 -> screen x=39
     assert_eq!(out[45].ch, ' '); // past content end -> blank
@@ -1461,6 +1613,7 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
         0,
         CColor::Default,
         CColor::Default,
+        None,
         &crate::config::Minimap::default(),
     );
     // The top row shows each pane's letter across its exact range: the
