@@ -327,6 +327,7 @@ fn render_frame(
     background: CColor,
     focus_color: CColor,
     skeleton: Option<CColor>,
+    labels: bool,
     mm: &crate::config::Minimap,
 ) {
     out.clear();
@@ -434,17 +435,24 @@ fn render_frame(
             } else {
                 sk
             };
-            draw_focus_frame(
-                out,
-                cols,
-                Rect {
-                    x: left,
-                    y: 0,
-                    w: right - left,
-                    h: strip_h,
-                },
-                color,
-            );
+            let boxr = Rect {
+                x: left,
+                y: 0,
+                w: right - left,
+                h: strip_h,
+            };
+            draw_focus_frame(out, cols, boxr, color);
+            // tmux-style `strip.cell` address, inline in the box's top frame
+            // row so every live box is addressable without a separate chrome
+            // line. Columns are 1-based to match the minimap and the CLI.
+            if labels {
+                draw_box_label(
+                    out,
+                    cols,
+                    boxr,
+                    &format!(" {}.{} ", layout.focus.row + 1, ci + 1),
+                );
+            }
             edge = edge.max(right);
         }
         // Empty right side: placeholder boxes at the default quarter width, so
@@ -476,7 +484,10 @@ fn render_frame(
                 }
             }
             draw_focus_frame(out, cols, boxr, sk);
-            let label = format!("{},{}", layout.focus.row + 1, pcol + 1);
+            let label = format!("{}.{}", layout.focus.row + 1, pcol + 1);
+            if labels {
+                draw_box_label(out, cols, boxr, &format!(" {label} "));
+            }
             let inner = Rect {
                 x: boxr.x + 1,
                 y: boxr.y + 1,
@@ -553,7 +564,7 @@ fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
 }
 
 /// 3x5 block-font glyphs for the characters a cell identifier can contain
-/// (digits and the `,` separator). Each glyph is 5 rows of 3 bits, MSB left.
+/// (digits and the `,`/`.` separators). Each glyph is 5 rows of 3 bits, MSB left.
 fn big_glyph(ch: char) -> Option<[u8; 5]> {
     Some(match ch {
         '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
@@ -567,6 +578,7 @@ fn big_glyph(ch: char) -> Option<[u8; 5]> {
         '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
         '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
         ',' => [0b000, 0b000, 0b000, 0b010, 0b100],
+        '.' => [0b000, 0b000, 0b000, 0b000, 0b010],
         _ => return None,
     })
 }
@@ -601,6 +613,37 @@ fn draw_big_label(out: &mut [Cell], cols: u16, rect: Rect, label: &str, color: C
                 }
             }
         }
+    }
+}
+
+/// Paint `label` inline in the top frame row of `rect`, centered horizontally.
+/// The text is drawn as foreground glyphs over the frame color already painted
+/// there, so the address reads as part of the border (like a tmux pane title)
+/// and never covers pane content, which is inset below the frame. Skipped when
+/// the box is too narrow to hold the label inside its corners.
+fn draw_box_label(out: &mut [Cell], cols: u16, rect: Rect, label: &str) {
+    let chars: Vec<char> = label.chars().collect();
+    let lw = chars.len() as u16;
+    // Keep the box's corner cells intact so the frame still reads as a box.
+    if rect.w < lw + 2 {
+        return;
+    }
+    let x0 = rect.x + (rect.w - lw) / 2;
+    let row = rect.y as usize * cols as usize;
+    for (i, ch) in chars.into_iter().enumerate() {
+        let x = x0 as usize + i;
+        if x >= cols as usize {
+            break;
+        }
+        let Some(c) = out.get_mut(row + x) else { break };
+        // Inherit the frame's background; only the glyph is new.
+        let bg = c.style.bg;
+        *c = Cell::default();
+        c.ch = ch;
+        c.width = 1;
+        c.style.bg = bg;
+        c.style.fg = CColor::Idx(232);
+        c.style.bold = true;
     }
 }
 
@@ -1230,6 +1273,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 cfg.background.color(),
                 cfg.focus_color.color(),
                 cfg.skeleton.then(|| cfg.skeleton_color.color()),
+                cfg.cell_labels,
                 &cfg.minimap,
             );
             buf.clear();
@@ -1595,6 +1639,7 @@ mod tests {
             CColor::Default,
             red,
             Some(white),
+            true,
             &crate::config::Minimap::default(),
         );
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
@@ -1618,6 +1663,64 @@ mod tests {
         assert_eq!(bg(mid, rows / 2), CColor::Default, "interior untouched");
         // The rightmost frame reaches the exact screen edge: full bleed.
         assert_eq!(bg(cols - 1, 0), white);
+    }
+
+    #[test]
+    fn cell_labels_render_inline_in_the_top_frame_row() {
+        // Every skeleton box carries its tmux-style `strip.cell` address in
+        // the middle of its top frame row, keeping the frame background.
+        let layout = Layout::default(); // 4 quarter columns on strip 1
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let cols: u16 = 80;
+        let rows: u16 = 10;
+        let white = CColor::Rgb(0xff, 0xff, 0xff);
+        let red = CColor::Rgb(0xff, 0, 0);
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            CColor::Default,
+            red,
+            Some(white),
+            true,
+            &crate::config::Minimap::default(),
+        );
+        let top: String = (0..cols)
+            .map(|x| out[x as usize].ch)
+            .collect::<String>();
+        for ci in 1..=4 {
+            assert!(
+                top.contains(&format!("1.{ci}")),
+                "top frame row {top:?} must address box 1.{ci}"
+            );
+        }
+        // The label keeps the frame color behind it (focused box is red).
+        let (s0, e0) = layout.column_x_ranges(layout.focus.row, cols).unwrap()[0];
+        let mid = ((s0 + e0) / 2) as usize;
+        assert_eq!(out[mid].style.bg, red, "label sits on the frame");
+        // Turning labels off leaves the frame row free of glyphs.
+        let mut plain = Vec::new();
+        render_frame(
+            &mut plain,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            CColor::Default,
+            red,
+            Some(white),
+            false,
+            &crate::config::Minimap::default(),
+        );
+        assert!(
+            (0..cols).all(|x| plain[x as usize].ch == ' '),
+            "no labels when disabled"
+        );
     }
 
     #[test]
@@ -1673,6 +1776,7 @@ mod tests {
             CColor::Default,
             CColor::Rgb(0xff, 0, 0),
             Some(white),
+            true,
             &crate::config::Minimap::default(),
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
@@ -1707,6 +1811,7 @@ mod tests {
             dim,
             CColor::Rgb(0xff, 0, 0),
             Some(CColor::Rgb(0xff, 0xff, 0xff)),
+            true,
             &crate::config::Minimap::default(),
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
@@ -1797,6 +1902,7 @@ fn content_scroll_reveals_overflow_e2e() {
         CColor::Default,
         CColor::Default,
         None,
+        true,
         &crate::config::Minimap::default(),
     );
     assert_eq!(out[0].ch, '1'); // content col 0 -> screen x=0 (full-bleed)
@@ -1815,6 +1921,7 @@ fn content_scroll_reveals_overflow_e2e() {
         CColor::Default,
         CColor::Default,
         None,
+        true,
         &crate::config::Minimap::default(),
     );
     assert_eq!(out[0].ch, '1'); // content col 60 -> screen x=0
@@ -1833,6 +1940,7 @@ fn content_scroll_reveals_overflow_e2e() {
         CColor::Default,
         CColor::Default,
         None,
+        true,
         &crate::config::Minimap::default(),
     );
     assert_eq!(out[0].ch, '1'); // content col 200 -> screen x=0
@@ -1916,6 +2024,7 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
         CColor::Default,
         CColor::Default,
         None,
+        true,
         &crate::config::Minimap::default(),
     );
     // The top row shows each pane's letter across its exact range: the
