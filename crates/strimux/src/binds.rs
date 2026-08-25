@@ -105,7 +105,7 @@ pub const BINDS: &[Bind] = &[
     // -- navigation ------------------------------------------------------
     Bind {
         trigger: Trigger::Chord('h'),
-        hint: "moves focus",
+        hint: "moves focus left a column",
         glyph: Some('\u{2d9}'),
         group: Group::Navigate,
         desc: "focus left",
@@ -209,7 +209,7 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Prose("click"),
-        hint: "clicking a pane focuses it",
+        hint: "focuses the pane you click",
         glyph: None,
         group: Group::Navigate,
         desc: "focus pane",
@@ -217,7 +217,7 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Prose("wheel"),
-        hint: "the wheel scrolls this pane's history",
+        hint: "scrolls this pane's history",
         glyph: None,
         group: Group::Navigate,
         desc: "scrollback",
@@ -274,7 +274,7 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('q'),
-        hint: "also kills the focused pane",
+        hint: "kills the focused pane too",
         glyph: Some('\u{153}'),
         group: Group::Panes,
         desc: "kill pane",
@@ -306,7 +306,7 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Prose("↵"),
-        hint: "Enter opens a column here too",
+        hint: "opens a column here as well",
         glyph: None,
         group: Group::Panes,
         desc: "new column",
