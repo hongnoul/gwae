@@ -1492,6 +1492,41 @@ fn draw_center_minimap(
     }
 }
 
+/// Composite a chrome overlay onto the frame with `alpha` opacity.
+///
+/// Terminals have no alpha channel, so translucency is done the only way it
+/// can be: paint the panel normally into a scratch copy, then mix every cell
+/// the panel touched with the cell that was underneath it. Doing it here,
+/// generically, means the HUD, the centered minimap and the pickers all get
+/// opacity without any of their draw functions knowing the feature exists.
+///
+/// `alpha >= 1.0` is the default and short-circuits to a plain draw, so the
+/// opaque path costs nothing (no frame clone, no blending).
+fn with_opacity(
+    frame: &mut [Cell],
+    alpha: f32,
+    pal: &Palette,
+    draw: impl FnOnce(&mut [Cell]),
+) {
+    if alpha >= 1.0 {
+        draw(frame);
+        return;
+    }
+    let under = frame.to_vec();
+    draw(frame);
+    let fallback = crate::theme::to_rgb(pal.base, (0, 0, 0));
+    for (c, u) in frame.iter_mut().zip(under.iter()) {
+        if c == u {
+            continue;
+        }
+        // Both the panel's fill and its text fade toward what the pane below
+        // was showing, so a translucent HUD reads as a wash rather than as a
+        // solid box with ghostly letters floating on it.
+        c.style.bg = crate::theme::blend(c.style.bg, u.style.bg, alpha, fallback);
+        c.style.fg = crate::theme::blend(c.style.fg, u.style.bg, alpha, fallback);
+    }
+}
+
 /// Center HUD: shown at startup and when attention arrives (Idle/Failed).
 /// Persists until the next key press. Always shows a very concise
 /// cheat-sheet of every keybind; when a pane needs you the top line is a
@@ -3458,14 +3493,21 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                 cfg.cell_labels,
                 selection.as_ref(),
             );
+            let alpha = cfg.hud_opacity;
             if show_hud {
-                draw_center_hud(&mut frame, cols, rows, &layout, &pal);
+                with_opacity(&mut frame, alpha, &pal, |f| {
+                    draw_center_hud(f, cols, rows, &layout, &pal)
+                });
             }
             if show_center_minimap && !show_hud {
-                draw_center_minimap(&mut frame, cols, rows, &layout, &cfg.minimap, &pal);
+                with_opacity(&mut frame, alpha, &pal, |f| {
+                    draw_center_minimap(f, cols, rows, &layout, &cfg.minimap, &pal)
+                });
             }
             if let Some(sel) = theme_pick {
-                draw_theme_picker(&mut frame, cols, rows, sel, &pal);
+                with_opacity(&mut frame, alpha, &pal, |f| {
+                    draw_theme_picker(f, cols, rows, sel, &pal)
+                });
             }
             // Echo the number as it is typed. Without this, a multi-digit
             // jump is invisible until it commits and `⌥+1 2` is
@@ -5619,6 +5661,50 @@ mod tests {
         j.push(2, late);
         assert_eq!(j.take_if_expired(t + JumpAccum::TIMEOUT), None);
         assert_eq!(j.take_if_expired(late + JumpAccum::TIMEOUT), Some(11));
+    }
+
+    #[test]
+    fn hud_opacity_blends_the_panel_into_the_pane_beneath_it() {
+        // hud_opacity < 1 must mix the panel with whatever was underneath,
+        // and opacity 1 (the default) must leave the panel untouched.
+        let (cols, rows) = (80u16, 24u16);
+        let layout = Layout::new(1);
+        let pal = pal_accent(CColor::Idx(196));
+        let under = Cell {
+            ch: 'x',
+            style: strimux_term::Style {
+                fg: CColor::Rgb(0, 0, 0),
+                bg: CColor::Rgb(0, 0, 0),
+                ..Default::default()
+            },
+            width: 1,
+            ..Default::default()
+        };
+        let mut solid = vec![under; (cols as usize) * (rows as usize)];
+        with_opacity(&mut solid, 1.0, &pal, |f| {
+            draw_center_hud(f, cols, rows, &layout, &pal)
+        });
+        let mut ghost = vec![under; (cols as usize) * (rows as usize)];
+        with_opacity(&mut ghost, 0.5, &pal, |f| {
+            draw_center_hud(f, cols, rows, &layout, &pal)
+        });
+
+        // Untouched cells stay untouched at any opacity.
+        assert_eq!(ghost[0], under, "cells outside the panel are not blended");
+
+        // Somewhere the panel painted its surface; at 50% over black that is
+        // exactly half the surface color.
+        let half = crate::theme::blend(pal.surface, CColor::Rgb(0, 0, 0), 0.5, (0, 0, 0));
+        let blended = ghost
+            .iter()
+            .zip(solid.iter())
+            .any(|(g, s)| s.style.bg == pal.surface && g.style.bg == half);
+        assert!(blended, "panel background is mixed halfway toward the pane");
+        // And nothing in the translucent frame kept the raw opaque surface.
+        assert!(
+            !ghost.iter().any(|c| c.style.bg == pal.surface),
+            "no cell keeps the fully opaque surface at 50% opacity"
+        );
     }
 
     #[test]
