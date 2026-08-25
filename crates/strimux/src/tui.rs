@@ -208,14 +208,20 @@ struct PaneView {
 }
 
 /// Compute visible pane views for the focused row.
+///
+/// With `inset` (skeleton mode) every pane's rect is shrunk by 1 cell on all
+/// sides of its column box so content sits *inside* the frame instead of
+/// being overlaid by it: nothing a program draws is ever covered.
 fn focused_pane_views(
     layout: &Layout,
     cols: u16,
     rows: u16,
     content_width: u16,
     panes: &HashMap<PaneId, PtyPane>,
+    inset: bool,
 ) -> Vec<PaneView> {
     let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
+    let b: i32 = if inset { 1 } else { 0 }; // border thickness
     let ranges = layout
         .column_x_ranges(layout.focus.row, cols)
         .unwrap_or_default();
@@ -233,8 +239,14 @@ fn focused_pane_views(
         .clamp(0, max_scroll);
     let mut out = Vec::new();
     for (ci, (s, e)) in ranges.into_iter().enumerate() {
-        let sx = s as i32 - scroll;
-        let ex = e as i32 - scroll;
+        // Content spans the column box minus the frame ring.
+        let cs = s as i32 + b;
+        let ce = e as i32 - b;
+        if ce <= cs {
+            continue; // column too narrow to hold any content inside a frame
+        }
+        let sx = cs - scroll;
+        let ex = ce - scroll;
         if ex <= 0 || sx >= cols as i32 {
             continue;
         }
@@ -247,18 +259,22 @@ fn focused_pane_views(
         let Some(col) = layout.focused_row().and_then(|r| r.columns.get(ci)) else {
             continue;
         };
-        let full_w = (e - s) as u16;
-        // Panes are full-bleed (no border), so the emulator matches the visible
-        // pane exactly: the full column width unless an explicit content_width
+        let full_w = (ce - cs) as u16;
+        // The emulator matches the pane's content area exactly (the column
+        // width minus any frame inset) unless an explicit content_width
         // extends the logical width for horizontal scrolling.
         let grid_cols = full_w.max(content_width);
         let col_x0 = (left as i32 - sx).max(0) as u16; // grid col at `left`
         let p = col.panes.len().max(1);
         let gap = 1u16;
-        let pane_h = ((strip_h as i32 - (p as i32 - 1) * gap as i32) / p as i32).max(1) as u16;
+        // Vertical content area: the strip minus the top/bottom frame rows.
+        let inner_top = b as u16;
+        let inner_h = ((strip_h as i32) - 2 * b).max(1) as u16;
+        let inner_bottom = inner_top + inner_h;
+        let pane_h = ((inner_h as i32 - (p as i32 - 1) * gap as i32) / p as i32).max(1) as u16;
         for (pi, pid) in col.panes.iter().enumerate() {
-            let y = (pi as u16) * (pane_h + gap);
-            let h = pane_h.min(strip_h.saturating_sub(y));
+            let y = inner_top + (pi as u16) * (pane_h + gap);
+            let h = pane_h.min(inner_bottom.saturating_sub(y));
             if h == 0 {
                 continue;
             }
@@ -327,7 +343,7 @@ fn render_frame(
 
     let focused = focused_pane(layout);
     let mut focus_rect: Option<Rect> = None;
-    for v in focused_pane_views(layout, cols, rows, content_width, panes) {
+    for v in focused_pane_views(layout, cols, rows, content_width, panes, skeleton.is_some()) {
         let Some(pane) = panes.get_mut(&v.pid) else {
             continue;
         };
@@ -335,9 +351,10 @@ fn render_frame(
         if is_focus {
             focus_rect = Some(v.rect);
         }
-        // Panes are full-bleed: content spans the whole rect (no border inset),
-        // so the emulator size matches the visible size exactly. Focus is shown
-        // as an overlay, never by shifting or resizing the pane.
+        // The emulator size matches the visible content rect exactly. Without
+        // the skeleton, panes are full-bleed (content spans the whole column);
+        // with it, rects are inset 1 cell inside the frame so nothing a
+        // program draws is ever covered.
         pane.grid.resize(GridSize {
             cols: v.grid_cols,
             rows: v.grid_rows,
@@ -385,9 +402,9 @@ fn render_frame(
     // Skeleton: a 1-cell frame around every column box (full strip height) so
     // the container structure always reads, plus placeholder boxes tiling any
     // empty right side at the default quarter width. The focused column's box
-    // is framed in the focus accent instead of the skeleton color. Frames are
-    // overlays (background tint on edge cells): they never shift or resize
-    // pane content, matching the focus-frame model.
+    // is framed in the focus accent instead of the skeleton color. Pane rects
+    // are inset inside the frames (see focused_pane_views), so the frames
+    // occupy the 1-cell ring around each content area and never cover it.
     if let Some(sk) = skeleton {
         let strip_h = rows.saturating_sub(CHROME_ROWS).max(1);
         let ranges = layout
@@ -453,12 +470,31 @@ fn render_frame(
             edge += w;
         }
     }
-    // Overlay a 1-cell accent frame around the focused pane so it reads as
-    // "active" even over panes that paint their own background. The frame is
-    // an overlay onto already-rendered cells: it never shifts or resizes the
-    // pane, and it always wins over whatever the pane drew at the edge.
-    if let Some(rect) = focus_rect {
-        draw_focus_frame(out, cols, rect, focus_color);
+    // Without the skeleton, focus is a 1-cell accent frame overlaid on the
+    // focused pane's edge cells (the historical full-bleed look). With the
+    // skeleton, the focused *column's* frame is already the accent color and
+    // content is inset, so the overlay would only cover content: for a
+    // stacked column, frame the focused pane's own rect ring instead, drawn
+    // in the gap/frame cells around it.
+    match (skeleton, focus_rect) {
+        (None, Some(rect)) => draw_focus_frame(out, cols, rect, focus_color),
+        (Some(_), Some(rect)) => {
+            let stacked = layout
+                .focused_row()
+                .and_then(|r| r.columns.get(layout.focus.column))
+                .map(|c| c.panes.len() > 1)
+                .unwrap_or(false);
+            if stacked {
+                // Grow the rect by 1 so the ring lands on the frame/gap cells
+                // around the pane, not on its content.
+                let x = rect.x.saturating_sub(1);
+                let y = rect.y.saturating_sub(1);
+                let w = (rect.w + 2).min(cols.saturating_sub(x));
+                let h = (rect.h + 2).min(rows.saturating_sub(y));
+                draw_focus_frame(out, cols, Rect { x, y, w, h }, focus_color);
+            }
+        }
+        _ => {}
     }
     // Overlay the minimap last so chrome always wins over pane content.
     draw_minimap(out, cols, rows, layout, mm, focus_color);
@@ -1068,7 +1104,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         }
 
         // Resize grids & PTYs to match current geometry.
-        for v in focused_pane_views(&layout, cols, rows, cfg.content_width, &panes) {
+        for v in focused_pane_views(
+            &layout,
+            cols,
+            rows,
+            cfg.content_width,
+            &panes,
+            cfg.skeleton,
+        ) {
             let pid = v.pid;
             if let Some(p) = panes.get_mut(&pid) {
                 if p.grid.size()
@@ -1311,7 +1354,7 @@ mod tests {
         }
         let panes = HashMap::new();
         for cols in [342u16, 341, 343, 80, 81] {
-            let views = focused_pane_views(&layout, cols, 40, 0, &panes);
+            let views = focused_pane_views(&layout, cols, 40, 0, &panes, false);
             assert_eq!(views.len(), 4, "all four panes visible at cols={cols}");
             // Panes tile the full width: start at 0, no gaps, end at the edge.
             assert_eq!(views[0].rect.x, 0);
@@ -1452,6 +1495,39 @@ mod tests {
         assert_eq!(bg(mid, rows / 2), CColor::Default, "interior untouched");
         // The rightmost frame reaches the exact screen edge: full bleed.
         assert_eq!(bg(cols - 1, 0), white);
+    }
+
+    #[test]
+    fn skeleton_insets_pane_content_inside_the_frame() {
+        // With the skeleton on, pane rects sit strictly inside the column
+        // frame ring: content starts at (s+1, 1) and ends at (e-1, strip_h-1),
+        // so the frame never covers a cell a program can draw to.
+        let layout = Layout::default();
+        let panes = HashMap::new();
+        let cols: u16 = 80;
+        let rows: u16 = 10;
+        let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
+        let views = focused_pane_views(&layout, cols, rows, 0, &panes, true);
+        assert_eq!(views.len(), 4);
+        for (v, (s, e)) in views.iter().zip(&ranges) {
+            assert_eq!(v.rect.x, *s as u16 + 1, "content starts inside frame");
+            assert_eq!(
+                v.rect.x + v.rect.w,
+                *e as u16 - 1,
+                "content ends inside frame"
+            );
+            assert_eq!(v.rect.y, 1, "content below the top frame row");
+            assert_eq!(v.rect.y + v.rect.h, rows - 1, "content above bottom row");
+            // Emulator geometry matches the inset rect exactly.
+            assert_eq!(v.grid_cols, v.rect.w);
+            assert_eq!(v.grid_rows, v.rect.h);
+        }
+        // Full-bleed mode is unchanged: rects span the whole column and strip.
+        let full = focused_pane_views(&layout, cols, rows, 0, &panes, false);
+        assert_eq!(full[0].rect.x, 0);
+        assert_eq!(full[0].rect.y, 0);
+        let last = full.last().unwrap();
+        assert_eq!(last.rect.x + last.rect.w, cols);
     }
 
     #[test]
