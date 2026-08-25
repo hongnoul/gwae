@@ -123,6 +123,24 @@ def main():
     tallies_ok = any(re.search(r"!1.*✓1|✓1.*!1", line) for line in right)
     check("summary tallies split 1 attention / 1 done", tallies_ok, repr(right))
 
+    # Smart-jump (prefix `g`): focus must leave the Done pane and land on the
+    # shell pane that wants attention. Proof is behavioral: the next keystrokes
+    # must reach the shell (the Done pane only runs `sleep`, it answers
+    # nothing). Have the shell emit OSC 133 D;2 -> its tile must flip to
+    # Failed (✗) and the tally must show ✗1.
+    os.write(fd, b"\x02g")  # Ctrl-b, g = smart-jump
+    time.sleep(0.3)
+    os.write(fd, b'printf "\\033]133;C\\007"; printf "\\033]133;D;2\\007"\r')
+    raw2 = drain(fd, 2.0)
+    screen2 = render(raw + raw2)
+    right2 = [line[COLS - 34:] for line in screen2[-8:]]
+    blob2 = "\n".join(right2)
+    check("smart-jump + typed command flips the shell tile to failed (✗)",
+          "✗" in blob2, repr(blob2))
+    tally2 = any(re.search(r"2\s+✓1\s+✗1", line) for line in right2)
+    check("summary tallies 1 done / 1 failed after the failure", tally2,
+          repr(right2))
+
     os.kill(pid, signal.SIGKILL)
     os.waitpid(pid, 0)
     sys.exit(0 if ok else 1)
