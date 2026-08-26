@@ -89,7 +89,7 @@ Every release ships static binaries with SHA-256 checksums for:
 Rust 1.85+:
 
 ```bash
-cargo install --git https://github.com/hongnoul/gwae gwae
+cargo install gwae                   # from crates.io
 
 # or from a checkout
 git clone https://github.com/hongnoul/gwae && cd gwae

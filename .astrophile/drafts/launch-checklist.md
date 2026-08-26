@@ -17,14 +17,16 @@ Sequenced: each step feeds the next. Snapshot before and after every step
 ## Phase 1: permanent surfaces (week 1, before launch spikes)
 - [x] Homebrew tap live and tested 2026-08-25: repo hongnoul/homebrew-tap created,
       `brew install hongnoul/tap/gwae` installs 1.0.0, `brew test` (runs `gwae doctor`) passes
-- [ ] AUR package publish — BLOCKED: SSH key not authorized on aur.archlinux.org
-      (add ~/.ssh key at aur.archlinux.org -> My Account, then run hwatu's
-      scripts/aur-publish.sh pattern against packaging/aur/PKGBUILD)
-- [ ] crates.io publish — BLOCKED: no cargo credentials on this machine
-      (`cargo login`, then `cargo publish -p gwae-layout` first; the gwae binary
-      crate needs gwae-term + gwae-testkit published too, or path-dep rework.
-      gwae-layout dry-run passes; keywords/categories added)
-- [ ] niri Discussions thread (drafts/niri-discussion.md) — post it yourself, their community
+- [x] crates.io published 2026-08-25: gwae, gwae-layout, gwae-term, gwae-testkit all
+      at 1.0.0 (cargo search confirms). Token `gwae-publish` (publish-new+publish-update)
+      saved via cargo login.
+- [x] niri Discussions thread posted 2026-08-25:
+      https://github.com/niri-wm/niri/discussions/4473 (Show and tell). ANSWER EVERY REPLY.
+- [ ] AUR package publish — STILL BLOCKED: needs the AUR account password for
+      hongnoul (account exists, maintains hwatu). New SSH key generated at
+      ~/.ssh/id_ed25519.pub; log in at aur.archlinux.org -> My Account -> paste key,
+      then run the hwatu aur-publish.sh pattern against packaging/aur/PKGBUILD
+      (gwae-bin). Username is prefilled on the open Safari tab.
 
 ## GATE: do not launch until Roadmap M2 exit
 Daily dogfood of Claude Code + Jcode inside gwae; Alt+a / Alt+g / Alt+f live.
