@@ -5,31 +5,31 @@
 
   <!-- strip-grid motif: fixed-width columns running past the right edge -->
   <g fill="none" stroke="#111111" stroke-width="2" opacity="0.14">
-    <rect x="428" y="486" width="150" height="96"/>
-    <rect x="590" y="486" width="150" height="96"/>
-    <rect x="752" y="486" width="150" height="96"/>
-    <rect x="914" y="486" width="150" height="96"/>
-    <rect x="1076" y="486" width="150" height="96"/>
+    <rect x="404" y="496" width="140" height="72"/>
+    <rect x="558" y="496" width="140" height="72"/>
+    <rect x="712" y="496" width="140" height="72"/>
+    <rect x="866" y="496" width="140" height="72"/>
+    <rect x="1020" y="496" width="140" height="72"/>
   </g>
   <g fill="#111111" opacity="0.5">
-    <circle cx="443" cy="501" r="5"/>
-    <circle cx="605" cy="501" r="5"/>
-    <circle cx="767" cy="501" r="5"/>
+    <circle cx="418" cy="511" r="5"/>
+    <circle cx="572" cy="511" r="5"/>
+    <circle cx="726" cy="511" r="5"/>
   </g>
 
-  <image href="gwae.svg" xlink:href="gwae.svg" x="86" y="150" width="282" height="282" preserveAspectRatio="xMidYMid meet"/>
+  <image href="gwae.svg" xlink:href="gwae.svg" x="70" y="174" width="270" height="270" preserveAspectRatio="xMidYMid meet"/>
 
   <g font-family="'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace" fill="#111111">
-    <text x="424" y="176" font-size="92" font-weight="800" letter-spacing="-5">gwae</text>
-    <text x="428" y="240" font-size="27" font-weight="600">niri's scrolling tiling for your CLI agents</text>
-    <text x="428" y="278" font-size="27" font-weight="600">in any terminal</text>
+    <text x="400" y="180" font-size="92" font-weight="800" letter-spacing="-5">gwae</text>
+    <text x="404" y="236" font-size="22" font-weight="600">niri's scrolling tiling for your CLI agents</text>
+    <text x="404" y="270" font-size="22" font-weight="600">in any terminal</text>
 
-    <line x1="428" y1="322" x2="1128" y2="322" stroke="#111111" stroke-width="2"/>
+    <line x1="404" y1="314" x2="1112" y2="314" stroke="#111111" stroke-width="2"/>
 
-    <text x="428" y="382" font-size="30" font-weight="700">panes never shrink</text>
-    <text x="428" y="428" font-size="30" font-weight="700">no daemon, one process</text>
-    <text x="428" y="474" font-size="30" font-weight="700">macOS · Linux · Windows</text>
+    <text x="404" y="374" font-size="26" font-weight="700">panes never shrink</text>
+    <text x="404" y="420" font-size="26" font-weight="700">no daemon, one process</text>
+    <text x="404" y="466" font-size="26" font-weight="700">macOS · Linux · Windows</text>
 
-    <text x="428" y="612" font-size="22" font-weight="500">github.com/hongnoul/gwae</text>
+    <text x="404" y="600" font-size="22" font-weight="500">github.com/hongnoul/gwae</text>
   </g>
 </svg>
