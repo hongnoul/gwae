@@ -18,6 +18,7 @@
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// A running gwae whose single pane is a plain `sh`, so the tests can type
@@ -27,6 +28,10 @@ struct Session {
     _master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     dir: std::path::PathBuf,
+    /// Everything gwae has written to its PTY. The signal tests read the tail
+    /// to prove the terminal was actually handed back (alt screen left, cursor
+    /// shown) rather than merely assuming the handler ran.
+    output: Arc<Mutex<Vec<u8>>>,
 }
 
 impl Session {
@@ -62,12 +67,15 @@ impl Session {
 
         let writer = pair.master.take_writer().expect("writer");
         let mut reader = pair.master.try_clone_reader().expect("reader");
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&output);
         std::thread::spawn(move || {
             let mut b = [0u8; 8192];
             while let Ok(n) = reader.read(&mut b) {
                 if n == 0 {
                     break;
                 }
+                sink.lock().expect("lock").extend_from_slice(&b[..n]);
             }
         });
 
@@ -79,6 +87,7 @@ impl Session {
             _master: pair.master,
             writer,
             dir,
+            output,
         }
     }
 
@@ -96,6 +105,16 @@ impl Session {
         std::thread::sleep(Duration::from_millis(600));
         self.writer.write_all(b"\r").expect("write confirm");
         self.writer.flush().expect("flush");
+    }
+
+    /// Send a signal straight to the gwae process, bypassing every key-driven
+    /// teardown path.
+    fn signal(&mut self, sig: libc::c_int) {
+        let pid = self.child.process_id().expect("gwae pid");
+        // Safety: `kill(2)` on a pid we just spawned and still own.
+        unsafe {
+            libc::kill(pid as libc::pid_t, sig);
+        }
     }
 }
 
@@ -229,5 +248,135 @@ fn closing_the_last_pane_kills_its_detached_work() {
     assert!(
         gone_within(MARKER, Duration::from_secs(10)),
         "closing the pane left its detached job running"
+    );
+}
+
+/// The case the graceful paths never covered: gwae is *killed*, not quit.
+///
+/// `kill gwae` (SIGTERM) is what a supervisor, a script, or an impatient user
+/// sends. Before the signal handler existed, this bypassed every teardown
+/// path: gwae vanished, the PTY masters closed, well-behaved children got a
+/// hangup and died, and anything detached kept running with no window left to
+/// find it in. The promise is the same whichever way gwae leaves.
+#[test]
+fn sigterm_kills_detached_work() {
+    const MARKER: &str = "sleep 24605";
+    let _reap = Reaper(MARKER);
+
+    let mut s = Session::start();
+    s.type_line(&format!("nohup {MARKER} >/dev/null 2>&1 &"));
+    wait_until_running(MARKER);
+
+    s.signal(libc::SIGTERM);
+
+    assert!(
+        gone_within(MARKER, Duration::from_secs(10)),
+        "a detached job survived SIGTERM to gwae; being killed must tear down \
+         the panes exactly like quitting does"
+    );
+}
+
+/// Closing the host terminal window sends SIGHUP. It is the most common
+/// abnormal exit there is, and it must not strand a pane's work.
+#[test]
+fn sighup_kills_detached_work() {
+    const MARKER: &str = "sleep 24606";
+    let _reap = Reaper(MARKER);
+
+    let mut s = Session::start();
+    s.type_line(&format!("nohup {MARKER} >/dev/null 2>&1 &"));
+    wait_until_running(MARKER);
+
+    s.signal(libc::SIGHUP);
+
+    assert!(
+        gone_within(MARKER, Duration::from_secs(10)),
+        "a detached job survived SIGHUP; closing the terminal window must not \
+         leave background processes behind"
+    );
+}
+
+/// A pane's *ordinary* foreground work (no `nohup`) must die too. This is the
+/// common case, and asserting it separately keeps the signal path honest if
+/// the group-kill is ever removed in favour of the tree walk alone.
+#[test]
+fn sigterm_kills_ordinary_pane_work() {
+    const MARKER: &str = "sleep 24607";
+    let _reap = Reaper(MARKER);
+
+    let mut s = Session::start();
+    s.type_line(&format!("{MARKER} &"));
+    wait_until_running(MARKER);
+
+    s.signal(libc::SIGTERM);
+
+    assert!(
+        gone_within(MARKER, Duration::from_secs(10)),
+        "an ordinary background job in a pane survived SIGTERM to gwae"
+    );
+}
+
+/// Being killed must also hand the terminal back usable.
+///
+/// A mux that dies in the alternate screen with the cursor hidden leaves the
+/// user staring at a black rectangle they have to `reset` out of, so the
+/// signal path writes the restore sequences before re-raising.
+#[test]
+fn signal_death_restores_the_terminal() {
+    let mut s = Session::start();
+    s.output.lock().expect("lock").clear();
+    s.signal(libc::SIGTERM);
+    std::thread::sleep(Duration::from_secs(1));
+    let tail = String::from_utf8_lossy(&s.output.lock().expect("lock")).into_owned();
+    assert!(
+        tail.contains("\x1b[?1049l"),
+        "dying by signal must leave the alternate screen; got {tail:?}"
+    );
+    assert!(
+        tail.contains("\x1b[?25h"),
+        "dying by signal must show the cursor again; got {tail:?}"
+    );
+}
+
+/// The exit status must still say "killed by SIGTERM", not a synthetic code:
+/// shells and supervisors branch on `128+signo`, and swallowing the signal
+/// would make gwae look like it exited cleanly when it was actually killed.
+///
+/// `waitpid` directly rather than `Child::wait`: `portable_pty` flattens every
+/// signal death into exit code 1, discarding exactly the fact under test. The
+/// spawned gwae is a direct child of this process, so the raw wait status is
+/// available as long as nothing has reaped it first.
+#[test]
+fn signal_death_preserves_the_exit_status() {
+    let mut s = Session::start();
+    let pid = s.child.process_id().expect("gwae pid") as libc::pid_t;
+    s.signal(libc::SIGTERM);
+
+    let mut status: libc::c_int = 0;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut reaped = false;
+    while Instant::now() < deadline {
+        // Safety: `waitpid` on a direct child, WNOHANG so the test can bound
+        // its own wait rather than blocking forever on a wedged process.
+        let r = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if r == pid {
+            reaped = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        reaped,
+        "gwae did not exit within 10s of SIGTERM; teardown must never wedge \
+         a process that was told to die"
+    );
+    // WIFSIGNALED/WTERMSIG, open-coded: the libc crate does not export the
+    // macros. Low 7 bits are the terminating signal; 0 means a normal exit.
+    let termsig = status & 0x7f;
+    assert_eq!(
+        termsig,
+        libc::SIGTERM,
+        "gwae must die of the signal it was sent (raw wait status {status:#x}); \
+         supervisors read 128+signo, so exiting normally here would lie"
     );
 }

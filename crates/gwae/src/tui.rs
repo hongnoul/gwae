@@ -288,7 +288,7 @@ fn agent_gateway_cmd() -> String {
 /// parents: killing a parent first can leave a grandchild reparented to init
 /// and unreachable by the time we get to it.
 #[cfg(unix)]
-fn descendants(root: u32) -> Vec<u32> {
+pub(crate) fn descendants(root: u32) -> Vec<u32> {
     let Ok(out) = std::process::Command::new("ps")
         .args(["-Ao", "pid=,ppid="])
         .output()
@@ -346,7 +346,20 @@ fn kill_pane_tree(child: &mut Box<dyn PtyChild + Send + Sync>) {
         // Collect descendants *before* killing the root: once the root is
         // gone its children are reparented to init and the link that
         // identifies them as ours is lost.
-        let kids = child.process_id().map(descendants).unwrap_or_default();
+        let root = child.process_id();
+        let kids = root.map(descendants).unwrap_or_default();
+        if let Some(p) = root {
+            // The pane's own jobs live in its process group (it is a session
+            // leader on a PTY). Signal the group first: that reaches jobs the
+            // `ps` snapshot could miss because they were reparented between
+            // the walk and the kill.
+            unsafe {
+                libc::kill(-(p as libc::pid_t), libc::SIGKILL);
+            }
+            // This pane is being torn down deliberately, so the exit-time
+            // reaper must not try again on a pid the OS may have recycled.
+            crate::reap::unregister(p);
+        }
         let _ = child.kill();
         for pid in kids {
             // Safety: `kill(2)` with a pid we just read from `ps`. A pid that
@@ -396,6 +409,11 @@ fn spawn_pane(
     cb.env("TERM", "xterm-256color");
     let child = slave.spawn_command(cb).map_err(|e| format!("spawn: {e}"))?;
     drop(slave);
+    // Register before anything else can fail: from here on, however gwae
+    // dies (signal, panic, early return), this pane and its jobs are killed.
+    if let Some(p) = child.process_id() {
+        crate::reap::register(p);
+    }
 
     let mut reader = master
         .try_clone_reader()
@@ -2673,6 +2691,12 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // color keys. Every chrome color painted below reads from this palette.
     let mut pal = cfg.palette();
     let mut stdout = io::stdout();
+    // Arm signal handlers + panic hook before the first pane exists, and hold
+    // a drop guard so every early return below still reaps. Quitting gwae is
+    // documented as killing everything in the panes; this makes that true for
+    // the abnormal exits too, not just ⌥+Shift+q.
+    crate::reap::install();
+    let _reap_guard = crate::reap::Guard;
     enable_raw_mode().map_err(|e| {
         eprintln!("raw mode: {e}");
         1
@@ -3585,6 +3609,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     for p in panes.values_mut() {
         kill_pane_tree(&mut p.child);
     }
+    // Anything registered but no longer in `panes` (a pane dropped from the
+    // map without going through `kill_pane_tree`) is caught here, so the
+    // process leaves nothing behind.
+    crate::reap::reap_all();
     if kitty_keyboard {
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);
     }

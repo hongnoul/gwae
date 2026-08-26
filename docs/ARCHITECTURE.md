@@ -49,9 +49,47 @@ the viewport is panned, and app inside is unaffected.
 ## Crash / persistence (deliberately thin)
 
 When the process exits, panes and their processes end; gwae persists **no
-session state** (ADR-015). Resume is the harness's job (`claude --resume`,
+session state** (ADR-015). "Panes and their processes end" is a hard guarantee,
+not a hope, and it holds for *every* way gwae can exit. See
+[Process teardown](#process-teardown). Resume is the harness's job (`claude --resume`,
 `jcode --resume`). A panic in one pane's emulator must not take the TUI down
 (one task per pane, supervisor pattern).
+
+## Process teardown
+
+A multiplexer that leaks background processes is worse than useless: the work
+keeps burning CPU with no window left to find it in. So every exit path funnels
+into one reaper (`crates/gwae/src/reap.rs`), and every pane's root pid is
+registered the moment it is spawned.
+
+| How gwae leaves | What runs |
+| --- | --- |
+| `⌥+⇧+q` (force quit), last pane closed, `⌥+q` | `kill_pane_tree` per pane, then a final `reap_all` sweep |
+| `SIGTERM`, `SIGHUP`, `SIGINT`, `SIGQUIT` | signal handler wakes the reaper thread, waits (≤2s), then re-raises so the parent sees `128+signo` |
+| panic (unwind or abort) | panic hook reaps, then defers to the previous hook |
+| early `return` out of `run_tui` | `reap::Guard` drop guard |
+| `SIGKILL` | uncatchable; the PTY hangup takes well-behaved children only |
+
+Three kills are used per pane, because each catches processes the others miss:
+
+1. **`killpg` on the pane's group** — the pane's shell and its foreground job.
+2. **`kill` on the root pid** — the shell itself.
+3. **A `ps` tree walk, deepest-first** — everything that left the group on
+   purpose (`nohup cmd &`, `setsid`), *and* everything an interactive shell put
+   in its own group via job control. This is the case a group kill alone
+   silently misses, which is why the signal path cannot live in the handler.
+
+Signal handlers may not allocate, lock, or fork, so the handler does only
+signal-safe work (atomic stores, `write(2)`) and hands the deep sweep to a
+thread parked on a pipe since startup. The handler waits on that thread with a
+2s bound: a mux that refuses to die when told to is worse than one that leaks.
+
+The handler also restores the terminal by hand (leave alt screen, show cursor,
+pop kitty flags, mouse off, autowrap on) because `crossterm` is not
+signal-safe, and dying in the alt screen strands the user in a black rectangle.
+
+`crates/gwae/tests/teardown_e2e.rs` drives a real gwae over a real PTY and
+asserts against the actual process table for each of these paths.
 
 ## Terminal requirements
 

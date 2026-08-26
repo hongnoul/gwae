@@ -14,6 +14,7 @@ mod keys;
 mod latency;
 mod onboard;
 mod preview;
+mod reap;
 mod select;
 mod splash;
 mod theme;
