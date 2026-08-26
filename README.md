@@ -191,6 +191,7 @@ gwae is general, but it pairs best with service layers that share the same visio
 - [Configuration](docs/CONFIG.md): every key, generated from code
 - [Comparison](docs/COMPARISON.md): tmux, Zellij, Séance, tairi
 - [Latency](docs/LATENCY.md): input-latency tuning, macOS + terminal + gwae together
+- [macOS focus](docs/MACOS-FOCUS.md): keystrokes dropped until you click, after a Space switch
 - [Roadmap](docs/ROADMAP.md)
 
 ## Keyboard Shortcuts
@@ -267,7 +268,7 @@ content_width = 0                 # >0 gives panes a wider logical grid, panned 
 default_agent = "claude"          # first pane + ⌥+; spawn this
 startup_panes = 1
 theme = "catppuccin-mocha"        # or nord, tokyo-night, gruvbox, rose-pine, dracula, ...
-cell_labels = false
+cell_labels = true
 
 [minimap]
 mode = "off"                      # off | overlay | edge_ticks
