@@ -282,6 +282,86 @@ fn agent_gateway_cmd() -> String {
     format!("\"{exe}\" agent")
 }
 
+/// Every descendant of `root`, deepest first, as reported by `ps`.
+///
+/// Returned deepest-first so a caller can signal children before their
+/// parents: killing a parent first can leave a grandchild reparented to init
+/// and unreachable by the time we get to it.
+#[cfg(unix)]
+fn descendants(root: u32) -> Vec<u32> {
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-Ao", "pid=,ppid="])
+        .output()
+    else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        if let (Some(Ok(pid)), Some(Ok(ppid))) = (
+            it.next().map(str::parse::<u32>),
+            it.next().map(str::parse::<u32>),
+        ) {
+            children.entry(ppid).or_default().push(pid);
+        }
+    }
+    // Breadth-first from the root, then reverse: parents are discovered
+    // before their children, so reversing yields deepest-first.
+    let mut order = Vec::new();
+    let mut queue = vec![root];
+    while let Some(p) = queue.pop() {
+        for &c in children.get(&p).into_iter().flatten() {
+            // `ps` is a snapshot of a tree that cannot contain cycles, but
+            // guard anyway: a PID that somehow repeats must not spin here.
+            if c != root && !order.contains(&c) {
+                order.push(c);
+                queue.push(c);
+            }
+        }
+    }
+    order.reverse();
+    order
+}
+
+/// Terminate a pane and everything it left running.
+///
+/// `Child::kill` signals only the process gwae spawned. That is enough for
+/// the common cases (the shell's own foreground and background jobs die with
+/// it, because they share its process group and get the hangup), but it is
+/// *not* enough for a job that deliberately escaped: `nohup cmd &`, a daemon
+/// that called `setsid`, or anything else sitting in its own process group.
+/// Those survived a force-quit and kept running invisibly after the window
+/// they belonged to was gone, which is exactly the "I quit gwae, why is this
+/// still running" case. Quitting is documented as terminating everything in
+/// the panes, so walk the real process tree and signal each descendant too.
+///
+/// SIGKILL, not SIGTERM: this path is only ever reached from an explicit,
+/// already-confirmed teardown (force quit, or closing a pane), where the
+/// user has said to stop things now and a process that ignores SIGTERM
+/// would otherwise leak exactly as before.
+fn kill_pane_tree(child: &mut Box<dyn PtyChild + Send + Sync>) {
+    #[cfg(unix)]
+    {
+        // Collect descendants *before* killing the root: once the root is
+        // gone its children are reparented to init and the link that
+        // identifies them as ours is lost.
+        let kids = child.process_id().map(descendants).unwrap_or_default();
+        let _ = child.kill();
+        for pid in kids {
+            // Safety: `kill(2)` with a pid we just read from `ps`. A pid that
+            // has already exited returns ESRCH, which is ignored.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+}
+
 /// Spawn a PTY running `cmd` at the given grid size, wiring a reader thread.
 fn spawn_pane(
     id: PaneId,
@@ -2475,7 +2555,7 @@ fn sync_panes(
         if wanted.contains(pid) {
             true
         } else {
-            let _ = pane.child.kill();
+            kill_pane_tree(&mut pane.child);
             false
         }
     });
@@ -3503,7 +3583,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
 
     // Teardown: kill all panes, leave raw mode & alternate screen.
     for p in panes.values_mut() {
-        let _ = p.child.kill();
+        kill_pane_tree(&mut p.child);
     }
     if kitty_keyboard {
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);
@@ -6377,7 +6457,7 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
         "pane D's content runs up to its frame"
     );
     for p in panes.values_mut() {
-        let _ = p.child.kill();
+        kill_pane_tree(&mut p.child);
     }
 }
 
@@ -6504,6 +6584,6 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
         "expected several scroll stops, got {stops:?}"
     );
     for p in panes.values_mut() {
-        let _ = p.child.kill();
+        kill_pane_tree(&mut p.child);
     }
 }

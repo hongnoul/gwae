@@ -30,6 +30,9 @@ crossterm = "0.28"
 # --- Width oracle: detect host/emulator disagreement on glyph width. ---
 unicode-width = "0.2"
 
+# --- Unix signals: kill a pane's whole descendant tree on teardown. ---
+libc = "0.2"
+
 # --- Config ---
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
