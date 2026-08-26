@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "gwae: a terminal-native, daemon-free multiplexer for CLI agents (niri strip in any terminal)"
+keywords = ["terminal", "multiplexer", "tiling", "cli-agents", "tui"]
+categories = ["command-line-utilities"]
 default-run = "gwae"
 
 [[bin]]

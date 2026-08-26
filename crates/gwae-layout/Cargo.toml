@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "gwae pure layout core: the infinite 2D grid of strips (no-I/O)"
+keywords = ["terminal", "multiplexer", "tiling", "niri", "layout"]
+categories = ["command-line-interface"]
 
 [lib]
 name = "gwae_layout"
