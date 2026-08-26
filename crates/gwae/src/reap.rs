@@ -89,29 +89,25 @@ pub fn register(pid: u32) {
 }
 
 /// Stop tracking `pid` (its pane was torn down through the normal path).
+///
+/// Unix only, like every caller: the registry exists to feed `kill(2)`, and
+/// Windows has no signal path to feed. Defining it there anyway would be dead
+/// code, which `-D warnings` rightly rejects.
+#[cfg(unix)]
 pub fn unregister(pid: u32) {
-    #[cfg(unix)]
-    {
-        for slot in PIDS.iter() {
-            let _ = slot.compare_exchange(pid as usize, 0, Ordering::SeqCst, Ordering::SeqCst);
-        }
+    for slot in PIDS.iter() {
+        let _ = slot.compare_exchange(pid as usize, 0, Ordering::SeqCst, Ordering::SeqCst);
     }
-    #[cfg(not(unix))]
-    let _ = pid;
 }
 
 /// Currently registered pids, for tests and for the normal teardown sweep.
+#[cfg(unix)]
 pub fn tracked() -> Vec<u32> {
-    #[cfg(unix)]
-    {
-        PIDS.iter()
-            .map(|s| s.load(Ordering::SeqCst))
-            .filter(|&p| p != 0)
-            .map(|p| p as u32)
-            .collect()
-    }
-    #[cfg(not(unix))]
-    Vec::new()
+    PIDS.iter()
+        .map(|s| s.load(Ordering::SeqCst))
+        .filter(|&p| p != 0)
+        .map(|p| p as u32)
+        .collect()
 }
 
 /// SIGKILL every registered pane root, its process group, and its descendants.
