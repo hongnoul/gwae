@@ -212,7 +212,8 @@ static WAKE_WRITE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::
 
 /// Minimal terminal restore usable from a handler: leave the alternate screen,
 /// pop the Kitty keyboard flags, re-enable autowrap, show the cursor, disable
-/// mouse reporting. `write(2)` is async-signal-safe; `crossterm` is not.
+/// mouse reporting and bracketed paste. `write(2)` is async-signal-safe;
+/// `crossterm` is not.
 ///
 /// Raw mode itself is restored by the shell (it resets termios when it takes
 /// the terminal back after a fatal signal); the escape sequences here are the
@@ -220,8 +221,11 @@ static WAKE_WRITE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::
 /// in a black alternate screen with no cursor.
 #[cfg(unix)]
 unsafe fn restore_terminal_signal_safe() {
+    // `\x1b[?2004l` is bracketed paste: leaving it on means the user's shell
+    // receives `ESC[200~` wrappers it never asked for, which it then echoes as
+    // literal text on the next paste.
     const RESTORE: &[u8] =
-        b"\x1b[<u\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?7h\x1b[?1049l\x1b[?25h";
+        b"\x1b[<u\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?7h\x1b[?1049l\x1b[?25h";
     let mut off = 0usize;
     while off < RESTORE.len() {
         let n = libc::write(

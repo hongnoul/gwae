@@ -153,6 +153,19 @@ impl Vt100Grid {
         self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None
     }
 
+    /// True when the child enabled bracketed paste (`DECSET 2004`).
+    ///
+    /// A child that asked for it wants pasted text delimited by
+    /// `ESC[200~`/`ESC[201~` so it can tell a paste from typing: shells use it
+    /// to keep a multi-line paste on one editing line instead of running each
+    /// line, and agent harnesses use it to buffer a long prompt rather than
+    /// submitting the first line. gwae strips the host's markers when it
+    /// decodes a paste, so it has to re-emit them here or the child sees N
+    /// separate Enters.
+    pub fn wants_bracketed_paste(&self) -> bool {
+        self.parser.screen().bracketed_paste()
+    }
+
     /// The number of scrollback rows currently scrolled into view.
     pub fn scrollback_offset(&self) -> usize {
         self.scrollback_offset
