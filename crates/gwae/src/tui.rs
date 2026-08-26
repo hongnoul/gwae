@@ -1602,7 +1602,14 @@ fn draw_dir_picker(out: &mut [Cell], cols: u16, rows: u16, pick: &DirPicker, pal
     let shown = pick.shown();
     let rows_shown = shown.len().clamp(1, 10);
     let title = format!(" spawn dir: {}_ ", pick.query);
-    let help = " ↑/↓ pick   ⏎ session   s save to config   esc cancel ";
+    // The save key is the *chord*, not a bare `s`: every printable key types
+    // into the filter, so advertising `s` would tell the user to type a
+    // letter that filters instead of saving.
+    let help = format!(
+        " ↑/↓ pick   ⏎ session   {} save to config   esc cancel ",
+        crate::keys::chord("s")
+    );
+    let help = help.as_str();
     let widest = shown
         .iter()
         .take(rows_shown)
