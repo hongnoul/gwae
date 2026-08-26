@@ -11,11 +11,9 @@
 
 
 
-**A terminal-native, daemon-free multiplexer for people who live in concurrent CLI agents.**
+**most tactile terminal-native multiplexer for agent orchestration**
 
 infinite scrolling tiling, for your CLI agents, in any terminal (Windows, MacOS)
-
-An infinite 2D grid of strips where panes never shrink.
 
 [Website](https://hongnoul.github.io/gwae/) · [Install](#install) · [Quick Start](#quick-start) · [Keyboard Shortcuts](#keyboard-shortcuts) · [FAQ](#faq) · [Docs](docs/)
 
