@@ -35,11 +35,10 @@ say "downloading ${artifact} (latest release)..."
 final_url=$(curl -fsSL -o "$tmp/pkg.tar.gz" -w '%{url_effective}' "$url") \
   || die "download failed: $url"
 
-# Recover the tag from the resolved asset URL for the install message. The
-# redirect may land on release-assets.githubusercontent.com, so fall back
-# gracefully when no tag segment is present.
-tag=$(printf '%s\n' "$final_url" | grep -o '/releases/download/[^/]*/' | cut -d/ -f4 || true)
-[ -n "$tag" ] || tag="latest"
+# The tag is reported after install by running the binary itself (see below):
+# the redirect usually lands on release-assets.githubusercontent.com, which
+# carries no tag segment, so parsing $final_url printed a useless "latest".
+: "${final_url:=}"
 
 # --- checksum -----------------------------------------------------------------
 sha_tool="shasum -a 256"
@@ -49,6 +48,11 @@ if curl -fsSL "https://github.com/${REPO}/releases/latest/download/${artifact}.t
   expected=$(awk '{print $1}' "$tmp/pkg.sha256")
   actual=$($sha_tool "$tmp/pkg.tar.gz" | awk '{print $1}')
   [ "$expected" = "$actual" ] || die "checksum verification failed"
+  say "checksum verified"
+else
+  # Never fail the install over a missing .sha256, but never pretend either:
+  # a silent skip is indistinguishable from a verified download.
+  say "warning: could not fetch ${artifact}.tar.gz.sha256; skipping verification"
 fi
 
 # --- install ------------------------------------------------------------------
@@ -56,7 +60,11 @@ tar xzf "$tmp/pkg.tar.gz" -C "$tmp"
 mkdir -p "$INSTALL_DIR"
 install -m755 "$tmp/gwae" "$INSTALL_DIR/gwae"
 
-say "installed gwae ${tag} to ${INSTALL_DIR}/gwae"
+# Report the version by asking the installed binary, which also proves it
+# executes on this machine before the user ever runs it.
+version=$("$INSTALL_DIR/gwae" --version 2>/dev/null) \
+  || die "installed binary at ${INSTALL_DIR}/gwae does not run on this machine"
+say "installed ${version} to ${INSTALL_DIR}/gwae"
 
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
