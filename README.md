@@ -19,7 +19,7 @@ An infinite 2D grid of strips where panes never shrink.
 
 <img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
 
-Demo use case - learning solid state chemistry ([btm](https://github.com/ClementTsang/bottom) for flex and tiling/paint showcase; setup is not ideal for actual study)
+Demo use case - learning solid state chemistry ([btm](https://github.com/ClementTsang/bottom) for tiling/paint showcase; setup is not ideal for actual study)
 
 **NOT SPED UP: You could be much faster with practice!**
 
