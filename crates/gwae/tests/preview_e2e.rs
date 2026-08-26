@@ -176,12 +176,22 @@ impl Session {
         self.wait_for(&format!("question {n}"), |s| s.contains(tag));
     }
 
-    /// Everything painted since the last screen-clear: one full repaint, which
-    /// is what a user is actually looking at.
+    /// The last screen that was painted *in full*.
+    ///
+    /// Each repaint starts with a clear, so the text between the final two
+    /// clears is a frame known to have been written end to end. Reading from
+    /// the last clear instead would usually catch the newest frame mid-write
+    /// and see a truncated screen: harmless when the flow only painted on
+    /// input, but the banner now animates continuously, so there is *always*
+    /// a frame in flight and the truncation stopped being occasional.
     fn screen(&self) -> String {
-        match self.buf.rfind("\x1b[2J") {
-            Some(i) => self.buf[i..].to_string(),
-            None => self.buf.clone(),
+        let clears: Vec<usize> = self.buf.match_indices("\x1b[2J").map(|(i, _)| i).collect();
+        match clears.len() {
+            // Nothing painted yet, or a single frame still arriving: all we
+            // have is all we can report.
+            0 => self.buf.clone(),
+            1 => self.buf[clears[0]..].to_string(),
+            n => self.buf[clears[n - 2]..clears[n - 1]].to_string(),
         }
     }
 
@@ -207,8 +217,19 @@ impl Session {
         while Instant::now() < deadline {
             if self.raw[before..].windows(4).any(|w| w == b"\x1b[2J") {
                 // Let the rest of the frame arrive.
-                while let Ok(b) = self.rx.recv_timeout(Duration::from_millis(120)) {
-                    self.absorb(&b);
+                //
+                // Bounded, not "read until quiet": the flow animates its
+                // banner while it waits for a key, repainting every ~28 ms
+                // forever, so output never *goes* quiet and an unbounded
+                // drain here would hang the test run indefinitely rather
+                // than fail it. One tick's worth of grace is enough for the
+                // remainder of a frame that has already started.
+                let settle = Instant::now() + Duration::from_millis(400);
+                while Instant::now() < settle {
+                    match self.rx.recv_timeout(Duration::from_millis(120)) {
+                        Ok(b) => self.absorb(&b),
+                        Err(_) => break,
+                    }
                 }
                 return;
             }
