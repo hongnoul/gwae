@@ -26,11 +26,30 @@ Sequenced: each step feeds the next. Snapshot before and after every step
       x86_64 + aarch64, provides/conflicts gwae, checksums verified against
       release assets). https://aur.archlinux.org/packages/gwae-bin
 
-## GATE: do not launch until Roadmap M2 exit
-Daily dogfood of Claude Code + Jcode inside gwae; Alt+a / Alt+g / Alt+f live.
-(hwatu's rule: launch gate first, publicity second. It worked: 78 stars.)
+## Phase 1b: pre-launch surfaces closed 2026-08-26
+- [x] `docs/agents.md` written. llms.txt and this checklist both linked it and it
+      was a 404: every AI crawler that ingested llms.txt hit a dead link, and the
+      single highest-leverage GEO surface (harness AGENTS.md/CLAUDE.md context)
+      had nothing to paste. Now live, with a README "For coding agents" section.
+- [x] Social preview card (docs/assets/social-card.png, 1200x630). Every HN,
+      Reddit, X, and Discord unfurl was bare before this. STILL MANUAL: upload it
+      at Settings > Social preview (no REST API for this field).
+- [x] Discussions enabled (support surface + crawlable long-tail Q&A).
+- [x] ROADMAP de-staled: M0/M1/M2/M4 were all unchecked while v1.0.1 shipped
+      them. A visitor read "make-or-break milestone: not started".
+
+## GATE: Roadmap M2 exit — MET (v1.0.0)
+Alt+; agent spawn, OSC 133 minimap, Alt+g smart-jump, Alt+f full-width all live
+and dogfooded daily. (hwatu's rule: launch gate first, publicity second. It
+worked: 78 stars.) Remaining pre-launch judgement call is only your own
+confidence in a first-run experience under a 500-visitor spike.
 
 ## Phase 2: launch (pick ONE channel per day, answer every comment for 3h)
+Order matters: HN first (highest ceiling, and the Reddit/lobste.rs posts can
+cite the HN thread), then one Reddit sub per day. Never two channels in one day:
+you cannot answer comments in two places, and unanswered threads convert ~0.
+
+- [ ] Upload the social preview card BEFORE any post (unfurls are permanent)
 - [ ] `astrophile snapshot` immediately before HN
 - [ ] Show HN (drafts/show-hn.md) — Tue-Thu, 14:00-16:00 UTC
 - [ ] lobste.rs (needs an invite; tag rust, unix)
