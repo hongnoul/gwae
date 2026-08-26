@@ -15,10 +15,16 @@ Sequenced: each step feeds the next. Snapshot before and after every step
 - [x] Baseline snapshot #1 taken (1 star, 2026-08-25)
 
 ## Phase 1: permanent surfaces (week 1, before launch spikes)
-- [ ] Homebrew tap live and tested (`brew install hongnoul/tap/gwae`)
-- [ ] AUR package published (packaging/PKGBUILD)
-- [ ] crates.io publish (`gwae`, `gwae-layout`) — code search + registry discovery
-- [ ] niri Discussions thread (respectful: "bringing your layout to plain terminals")
+- [x] Homebrew tap live and tested 2026-08-25: repo hongnoul/homebrew-tap created,
+      `brew install hongnoul/tap/gwae` installs 1.0.0, `brew test` (runs `gwae doctor`) passes
+- [ ] AUR package publish — BLOCKED: SSH key not authorized on aur.archlinux.org
+      (add ~/.ssh key at aur.archlinux.org -> My Account, then run hwatu's
+      scripts/aur-publish.sh pattern against packaging/aur/PKGBUILD)
+- [ ] crates.io publish — BLOCKED: no cargo credentials on this machine
+      (`cargo login`, then `cargo publish -p gwae-layout` first; the gwae binary
+      crate needs gwae-term + gwae-testkit published too, or path-dep rework.
+      gwae-layout dry-run passes; keywords/categories added)
+- [ ] niri Discussions thread (drafts/niri-discussion.md) — post it yourself, their community
 
 ## GATE: do not launch until Roadmap M2 exit
 Daily dogfood of Claude Code + Jcode inside gwae; Alt+a / Alt+g / Alt+f live.

@@ -66,6 +66,12 @@ Downloads the latest prebuilt binary for your platform to `~/.local/bin` (overri
 
 On Windows, grab `gwae-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/hongnoul/gwae/releases/latest) and put `gwae.exe` on your `PATH`.
 
+### Homebrew (macOS)
+
+```bash
+brew install hongnoul/tap/gwae
+```
+
 ### Prebuilt binaries
 
 Every release ships static binaries with SHA-256 checksums for:
