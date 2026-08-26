@@ -228,7 +228,7 @@ Every action is an `⌥` chord. `⌥` is the Option key on macOS, Alt elsewhere.
 | `⌥+1` … `⌥+9` | Jump to column N in focused strip. Keep `⌥` down and keep typing to address columns past 9 (`⌥` + `1` `2` → column 12); the number commits when `⌥` is released, or after ~500ms on terminals that don't report the release |
 | `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
 | `⌥+t` (`†` on macOS) | **Theme picker** — step presets with `←`/`→`, live-previewed on the real UI; `⏎` keeps, `esc` restores |
-| `⌥+d` (`∂` on macOS) | **Spawn-directory picker** — choose the directory new panes start in. Type to filter (repos under `~/git` & friends are found automatically), `↑/↓` to move, `⏎` uses it for this session, `⌥+s` saves it as `agent_dir`, `esc` cancels |
+| `⌥+d` (`∂` on macOS) | **Spawn-directory picker** — choose the directory new panes start in. Your projects are found automatically (by `.git`/`.hg`/`.jj` marker, so any layout works) along with your `zoxide` history. Type to filter, `↑/↓` to move, `⏎` uses it for this session, `⌥+s` saves it as `agent_dir`, `esc` cancels |
 | `⌥+/` or `⌥+?` (`÷` / `¿` on macOS) | **Toggle the cheat-sheet HUD** — same overlay shown at startup; any other key dismisses it |
 | `⌥+Shift+q` | Force-quit gwae — opens a centered confirmation overlay; press `⌥+Shift+q` again (or `⏎`) to kill every pane, any other key cancels |
 | click | Left-click focuses the clicked pane |

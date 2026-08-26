@@ -252,21 +252,28 @@ fn a_missing_agent_dir_still_opens_the_pane_and_says_so() {
 }
 
 #[test]
-fn the_picker_lists_projects_under_the_scanned_roots() {
+fn the_picker_finds_projects_by_marker_whatever_the_layout() {
     let root = temp_root();
-    std::fs::create_dir_all(root.join("git/alpha-proj")).unwrap();
-    std::fs::create_dir_all(root.join("git/beta-proj")).unwrap();
+    // Deliberately *not* under a directory called git/code/src: discovery
+    // must key off the marker, not off a name gwae could have guessed.
+    std::fs::create_dir_all(root.join("wherever/alpha-proj/.git")).unwrap();
+    std::fs::create_dir_all(root.join("Documents/clients/beta-proj/.hg")).unwrap();
+    std::fs::create_dir_all(root.join("wherever/plain-dir")).unwrap();
     let mut s = Session::start(&root, "", "sleep 60", &root, &[]);
     let _ = s.drain();
     s.send(OPT_D);
     let out = s.drain();
     assert!(
         out.contains("alpha-proj") && out.contains("beta-proj"),
-        "⌥+d should discover repos under ~/git with no config; got:\n{out}"
+        "⌥+d should discover projects by marker, whatever the layout; got:\n{out}"
     );
     assert!(
         out.contains("spawn dir"),
         "and the panel should name itself; got:\n{out}"
+    );
+    assert!(
+        !out.contains("plain-dir"),
+        "a directory with no project marker is not a candidate; got:\n{out}"
     );
     s.kill();
 }
@@ -274,7 +281,7 @@ fn the_picker_lists_projects_under_the_scanned_roots() {
 #[test]
 fn picking_a_directory_moves_the_next_pane_there() {
     let root = temp_root();
-    std::fs::create_dir_all(root.join("git/picked-proj")).unwrap();
+    std::fs::create_dir_all(root.join("some/where/picked-proj/.git")).unwrap();
     let mut s = Session::start(&root, "", "sleep 60", &root, &[]);
     let _ = s.drain();
     s.send(OPT_D);
@@ -307,7 +314,7 @@ fn picking_a_directory_moves_the_next_pane_there() {
 #[test]
 fn saving_from_the_picker_writes_agent_dir_to_the_config() {
     let root = temp_root();
-    std::fs::create_dir_all(root.join("git/saved-proj")).unwrap();
+    std::fs::create_dir_all(root.join("some/where/saved-proj/.git")).unwrap();
     let cfg = root.join("gwae/gwae.toml");
     let mut s = Session::start(
         &root,
@@ -348,7 +355,7 @@ fn saving_from_the_picker_writes_agent_dir_to_the_config() {
 #[test]
 fn escape_cancels_the_picker_without_changing_anything() {
     let root = temp_root();
-    std::fs::create_dir_all(root.join("git/other-proj")).unwrap();
+    std::fs::create_dir_all(root.join("some/where/other-proj/.git")).unwrap();
     let start = root.join("start-marker");
     std::fs::create_dir_all(&start).unwrap();
     let mut s = Session::start(&root, "", "sleep 60", &start, &[]);

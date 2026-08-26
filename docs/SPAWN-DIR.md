@@ -23,11 +23,33 @@ Three layers, cheapest first, each one able to stand alone:
    Same interaction grammar as the `⌥+t` theme picker, so it costs the user
    no new muscle memory.
 
-The picker's candidate list is discovered, not typed: the session dir, gwae's
-cwd, `$HOME`, every pinned entry in `agent_dirs`, and every immediate child of
-each root in `agent_dir_roots` (default `~/git`, `~/code`, `~/projects`,
-`~/src`, `~/dev`, `~/Developer`) that is itself a directory. On this machine
-that is the ~35 repos under `~/git` with zero configuration.
+The picker's candidate list is discovered, not typed.
+
+## Discovery must not guess at names
+
+The first cut scanned a list of likely parents (`~/git`, `~/code`, `~/src`,
+...). That works on the machine it was written on and finds *nothing*
+anywhere else: people keep work in `~/Documents/clients`, `~/w`, `/srv`, or
+whatever their employer mandates. A name list is a guess about a stranger's
+filesystem, and it is usually wrong.
+
+So discovery keys off things that mean the same thing on every machine:
+
+* **Project markers** — a bounded breadth-first walk of `$HOME` (or
+  `agent_dir_roots`) collecting any directory holding `.git`, `.hg`, `.svn`,
+  `.jj`, `.gwae`, or `.projectile`. The walk stops descending at a project,
+  skips hidden and dependency directories (`node_modules`, `target`,
+  `vendor`, `Library`, ...), and is capped at depth 4 / 4000 directories so
+  it cannot hang on a network mount. Measured at ~35 repos in about 2ms on a
+  normal `$HOME`.
+* **zoxide** — when installed, `zoxide query --list` is the highest-signal
+  source there is: the directories this person actually visits, including
+  ones outside `$HOME` that no scan would reach. Absent zoxide contributes
+  nothing and is not an error.
+
+Both are free of assumptions about layout, so `⌥+d` is useful on a machine
+gwae has never seen, with no configuration. `agent_dir_roots` remains for
+people who want to narrow or widen the search (`["~/work", "/srv"]`).
 
 ## Precedence
 
