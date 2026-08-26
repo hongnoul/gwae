@@ -13,7 +13,7 @@
 
 **A terminal-native, daemon-free multiplexer for people who live in concurrent CLI agents.**
 
-Invest early in niri's scrolling tiling, for your CLI agents, in any terminal (Windows, MacOS)
+infinite scrolling tiling, for your CLI agents, in any terminal (Windows, MacOS)
 
 An infinite 2D grid of strips where panes never shrink.
 
