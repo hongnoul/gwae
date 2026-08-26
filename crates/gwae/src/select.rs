@@ -307,22 +307,21 @@ fn strip_marker(buf: &mut Vec<u8>, marker: &[u8]) {
 /// `None` and the caller says so out loud.
 pub fn read_clipboard() -> Option<String> {
     #[cfg(target_os = "macos")]
-    {
-        return spawn_paste("pbpaste", &[]);
-    }
+    let helpers: &[(&str, &[&str])] = &[("pbpaste", &[])];
     #[cfg(windows)]
-    {
-        return spawn_paste(
-            "powershell",
-            &["-NoProfile", "-Command", "Get-Clipboard -Raw"],
-        );
-    }
+    let helpers: &[(&str, &[&str])] = &[(
+        "powershell",
+        &["-NoProfile", "-Command", "Get-Clipboard -Raw"],
+    )];
     #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        spawn_paste("wl-paste", &["--no-newline"])
-            .or_else(|| spawn_paste("xclip", &["-o", "-selection", "clipboard"]))
-            .or_else(|| spawn_paste("xsel", &["--clipboard", "--output"]))
-    }
+    let helpers: &[(&str, &[&str])] = &[
+        ("wl-paste", &["--no-newline"]),
+        ("xclip", &["-o", "-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--output"]),
+    ];
+    helpers
+        .iter()
+        .find_map(|(program, args)| spawn_paste(program, args))
 }
 
 /// Run a clipboard-read helper and capture its stdout.
@@ -468,7 +467,10 @@ mod tests {
             1,
             "exactly one end marker, the one we appended: {s:?}"
         );
-        assert!(s.ends_with("\x1b[201~"), "the marker is the last thing sent");
+        assert!(
+            s.ends_with("\x1b[201~"),
+            "the marker is the last thing sent"
+        );
         // The text survives; only the marker is removed.
         assert!(s.contains("saferm -rf /"));
         // A start marker in the payload is stripped too: doubling it lets a

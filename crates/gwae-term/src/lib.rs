@@ -540,6 +540,21 @@ mod tests {
     }
 
     #[test]
+    fn bracketed_paste_mode_is_reported() {
+        // gwae strips the host's paste markers when it decodes an
+        // `Event::Paste`, so it must know whether *this* child wants them put
+        // back. Getting it wrong either runs a multi-line paste line by line
+        // (markers withheld from a shell that asked) or prints `[200~` as
+        // literal text (markers sent to a program that never asked).
+        let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
+        assert!(!g.wants_bracketed_paste(), "off until the child asks");
+        g.feed(b"\x1b[?2004h");
+        assert!(g.wants_bracketed_paste());
+        g.feed(b"\x1b[?2004l");
+        assert!(!g.wants_bracketed_paste(), "and off again when it stops");
+    }
+
+    #[test]
     fn vt100_feed_writes_cells() {
         let mut g = Vt100Grid::new(Size { cols: 20, rows: 5 });
         let dmg = g.feed(b"hello");

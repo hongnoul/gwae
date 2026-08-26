@@ -229,10 +229,13 @@ Every action is an `⌥` chord. `⌥` is the Option key on macOS, Alt elsewhere.
 | `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
 | `⌥+t` (`†` on macOS) | **Theme picker** — step presets with `←`/`→`, live-previewed on the real UI; `⏎` keeps, `esc` restores |
 | `⌥+d` (`∂` on macOS) | **Spawn-directory picker** — choose the directory new panes start in. Your projects are found automatically (by `.git`/`.hg`/`.jj` marker, so any layout works) along with your `zoxide` history. Type to filter, `↑/↓` to move, `⏎` uses it for this session, `⌥+s` saves it as `agent_dir`, `esc` cancels |
+| `⌥+c` (`ç` on macOS) / `⌥+y` | **Copy** — the live drag-selection if there is one, else the whole visible pane. Reports what it took (`copied 38 lines`) |
+| `⌥+v` (`√` on macOS) | **Paste** the system clipboard into the focused pane, bracketed if the child asked for it. Over ~8 lines or 2 KB it asks first: press `⌥+v` again within the toast to confirm |
 | `⌥+/` or `⌥+?` (`÷` / `¿` on macOS) | **Toggle the cheat-sheet HUD** — same overlay shown at startup; any other key dismisses it |
 | `⌥+Shift+q` | Force-quit gwae — opens a centered confirmation overlay; press `⌥+Shift+q` again (or `⏎`) to kill every pane, any other key cancels |
 | click | Left-click focuses the clicked pane |
 | drag | Left-drag inside a pane selects text (inverse highlight) and copies it on release. Panes that grab the mouse (vim, agent TUIs) keep it, so hold `Shift` there to select instead |
+| `⌘+V` / `Ctrl+Shift+V` | Your terminal's own paste works too: gwae enables bracketed paste, takes the payload in one piece, and re-brackets it for the pane. A multi-line paste lands as one block instead of running (or submitting) line by line |
 | wheel | Forwarded as SGR to a pane that asked for mouse reporting (vim, agent TUIs), so it behaves natively there. gwae claims no wheel of its own |
 
 All other keys pass through to the focused pane. Closing a pane by `exit` / process death behaves identically to `kill-pane`.

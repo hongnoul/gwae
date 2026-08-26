@@ -460,19 +460,34 @@ mod tests {
 
     #[test]
     fn cowsay_defaults_do_not_teach_dead_keys() {
-        // Regressions guarded: `⌥+c` ("new pane") was never implemented, and
-        // the hints once told users to "press c"/"press ;" with no modifier at
-        // all, which just types the letter into the focused pane.
+        // Regressions guarded: the hints once advertised `⌥+c` ("new pane"),
+        // which was never implemented, and once told users to "press c"/
+        // "press ;" with no modifier at all, which just types the letter into
+        // the focused pane.
+        //
+        // `⌥+c` is now a real binding (copy), so the check is no longer "this
+        // one chord is forbidden" — it is the general property that made that
+        // bug possible: every hint must name a chord the dispatcher really
+        // handles. `binds.rs` owns that end to end (hints are generated from
+        // `BINDS`, and `advertised_bindings_match_the_dispatcher` feeds every
+        // entry through the real `handle_key`), so what is left to assert here
+        // is that the default list is in fact the generated one and has not
+        // been hand-edited back into a liability.
         let cfg = parse("");
         let m = keys::mod_key();
+        assert_eq!(
+            cfg.cowsay.messages,
+            crate::binds::cowsay_hints(),
+            "default hints must come from the binding table, not a hand-written list"
+        );
         for msg in &cfg.cowsay.messages {
-            assert!(
-                !msg.contains(&format!("{m}+c")),
-                "hint {msg:?} names the nonexistent new-pane binding"
-            );
             assert!(
                 !msg.to_lowercase().starts_with("press "),
                 "hint {msg:?} omits the modifier"
+            );
+            assert!(
+                msg.contains(m) || msg.contains("click"),
+                "hint {msg:?} names no modifier and is not a mouse hint"
             );
         }
     }

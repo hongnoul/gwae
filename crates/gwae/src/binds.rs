@@ -62,6 +62,10 @@ pub enum Effect {
     DirPick,
     /// Toggle the cheat-sheet HUD.
     ToggleHud,
+    /// Copy from the focused pane (`⌥+c`).
+    Copy,
+    /// Paste the clipboard into the focused pane (`⌥+v`).
+    Paste,
     /// Quit gwae.
     Quit,
     /// Scroll the row viewport by this many cells.
@@ -306,6 +310,22 @@ pub const BINDS: &[Bind] = &[
         group: Group::Panes,
         desc: "spawn dir",
         effect: Effect::DirPick,
+    },
+    Bind {
+        trigger: Trigger::Chord('c'),
+        hint: "copies the selection, or this whole pane",
+        glyph: Some('\u{e7}'),
+        group: Group::Panes,
+        desc: "copy",
+        effect: Effect::Copy,
+    },
+    Bind {
+        trigger: Trigger::Chord('v'),
+        hint: "pastes the clipboard into this pane",
+        glyph: Some('\u{221a}'),
+        group: Group::Panes,
+        desc: "paste",
+        effect: Effect::Paste,
     },
     Bind {
         trigger: Trigger::Chord('/'),
