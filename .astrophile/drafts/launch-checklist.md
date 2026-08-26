@@ -38,6 +38,21 @@ Sequenced: each step feeds the next. Snapshot before and after every step
 - [x] ROADMAP de-staled: M0/M1/M2/M4 were all unchecked while v1.0.1 shipped
       them. A visitor read "make-or-break milestone: not started".
 
+## Phase 1c: install channels actually serving v1.0.1 — 2026-08-26
+The 683d81c commit bumped `packaging/` in-repo but nothing downstream: for a day
+every channel served 1.0.0 while the README advertised v1.0.1. Verified by
+querying each registry, not by reading the repo. Fixed and re-verified:
+- [x] Homebrew tap pushed; `brew install hongnoul/tap/gwae` → 1.0.1, `brew test` passes
+- [x] crates.io: gwae, gwae-layout, gwae-term, gwae-testkit all at 1.0.1
+      (gwae itself published from a clean v1.0.1 worktree, NOT the dirty tree)
+- [x] AUR gwae-bin 1.0.1 pushed, .SRCINFO regenerated; cgit confirms 1.0.1
+      (the RPC endpoint lags a few hours, cgit is the source of truth)
+- [x] All 4 SHA256s re-derived from the published tarballs before publishing
+
+RELEASE RULE (this bit twice now): publishing is not `git push` on packaging/.
+After every tag, query the registries themselves — brew/crates.io/AUR cgit —
+and only then say a channel is live.
+
 ## GATE: Roadmap M2 exit — MET (v1.0.0)
 Alt+; agent spawn, OSC 133 minimap, Alt+g smart-jump, Alt+f full-width all live
 and dogfooded daily. (hwatu's rule: launch gate first, publicity second. It
