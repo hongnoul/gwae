@@ -11,4 +11,4 @@ description = "gwae test harness: fake PTYs, scripted terminals, snapshot helper
 name = "gwae_testkit"
 
 [dependencies]
-gwae-term = { path = "../gwae-term" }
+gwae-term = { path = "../gwae-term", version = "1.0.0" }

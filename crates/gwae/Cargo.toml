@@ -20,9 +20,9 @@ serde = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-gwae-layout = { path = "../gwae-layout" }
-gwae-term = { path = "../gwae-term" }
-gwae-testkit = { path = "../gwae-testkit" }
+gwae-layout = { path = "../gwae-layout", version = "1.0.0" }
+gwae-term = { path = "../gwae-term", version = "1.0.0" }
+gwae-testkit = { path = "../gwae-testkit", version = "1.0.0" }
 portable-pty = { workspace = true }
 crossterm = { workspace = true }
 unicode-width = { workspace = true }
