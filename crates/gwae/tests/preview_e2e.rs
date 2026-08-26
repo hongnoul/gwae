@@ -101,6 +101,11 @@ struct Session {
     /// replacement characters and make identical frames compare unequal.
     raw: Vec<u8>,
     buf: String,
+    /// Whether the last `press` saw output stop before its bound. A static
+    /// flow goes quiet, so the final clear starts a finished screen; an
+    /// animating one never does, so the finished screen is the frame before.
+    /// `screen()` reads this rather than assuming either shape.
+    drained: bool,
 }
 
 impl Session {
@@ -144,6 +149,9 @@ impl Session {
             rx,
             raw: Vec::new(),
             buf: String::new(),
+            // Nothing pressed yet; the first `wait_for` reads the whole
+            // buffer, for which this value does not matter.
+            drained: true,
         }
     }
 
@@ -178,20 +186,39 @@ impl Session {
 
     /// The last screen that was painted *in full*.
     ///
-    /// Each repaint starts with a clear, so the text between the final two
-    /// clears is a frame known to have been written end to end. Reading from
-    /// the last clear instead would usually catch the newest frame mid-write
-    /// and see a truncated screen: harmless when the flow only painted on
-    /// input, but the banner now animates continuously, so there is *always*
-    /// a frame in flight and the truncation stopped being occasional.
+    /// Every repaint starts with a clear, so a frame is complete once the
+    /// *next* clear has arrived. Reading from the final clear would therefore
+    /// report whatever has been written of the newest frame so far, which is a
+    /// truncated screen whenever a repaint is still in flight.
+    ///
+    /// Which frame is the newest complete one depends on whether the flow is
+    /// still painting, and both cases are real:
+    ///
+    /// * a **static** flow paints once per keystroke and then stops, so the
+    ///   final clear begins the finished screen the user is looking at;
+    /// * an **animating** flow repaints continuously, so there is always a
+    ///   frame partway through and the finished screen is the one before it.
+    ///
+    /// `drained` records which of the two `press` observed: it drains until
+    /// output stops, and only gives up on the bound when it never does. So the
+    /// distinction is measured rather than assumed, and the harness reports a
+    /// whole screen either way.
     fn screen(&self) -> String {
         let clears: Vec<usize> = self.buf.match_indices("\x1b[2J").map(|(i, _)| i).collect();
         match clears.len() {
-            // Nothing painted yet, or a single frame still arriving: all we
-            // have is all we can report.
+            // Nothing painted yet: all we have is all we can report.
             0 => self.buf.clone(),
-            1 => self.buf[clears[0]..].to_string(),
-            n => self.buf[clears[n - 2]..clears[n - 1]].to_string(),
+            n => {
+                // Quiet: the last clear starts a frame that finished arriving.
+                // Still painting: that frame is partial, so use the one before.
+                let start = if self.drained { n - 1 } else { n.saturating_sub(2) };
+                let end = if self.drained {
+                    self.buf.len()
+                } else {
+                    clears[n - 1]
+                };
+                self.buf[clears[start]..end].to_string()
+            }
         }
     }
 
@@ -218,17 +245,22 @@ impl Session {
             if self.raw[before..].windows(4).any(|w| w == b"\x1b[2J") {
                 // Let the rest of the frame arrive.
                 //
-                // Bounded, not "read until quiet": the flow animates its
-                // banner while it waits for a key, repainting every ~28 ms
-                // forever, so output never *goes* quiet and an unbounded
-                // drain here would hang the test run indefinitely rather
-                // than fail it. One tick's worth of grace is enough for the
-                // remainder of a frame that has already started.
+                // Bounded, not "read until quiet": an animating flow
+                // repaints every ~28 ms forever, so output never *goes*
+                // quiet and an unbounded drain would hang the run rather
+                // than fail it. A static flow does go quiet, and stops early.
+                //
+                // Whether it *does* go quiet is itself the fact `screen()`
+                // needs, so record it rather than guessing.
                 let settle = Instant::now() + Duration::from_millis(400);
+                self.drained = false;
                 while Instant::now() < settle {
                     match self.rx.recv_timeout(Duration::from_millis(120)) {
                         Ok(b) => self.absorb(&b),
-                        Err(_) => break,
+                        Err(_) => {
+                            self.drained = true;
+                            break;
+                        }
                     }
                 }
                 return;
