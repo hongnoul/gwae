@@ -19,7 +19,7 @@ An infinite 2D grid of strips where panes never shrink.
 
 <img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
 
-Demo use case - learning solid state chemistry (btm for flex)
+Demo use case - learning solid state chemistry ([btm](https://github.com/ClementTsang/bottom) for flex)
 
 **NOT SPED UP: You could be much faster with practice!**
 
@@ -174,7 +174,7 @@ gwae is general, but it pairs best with service layers that share the same visio
 | Layer                | Recommendation                                 | Alternatives                                                                              | Why                                                                                                                                                    |
 | -------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Agent harness (TUI)  | **[Jcode](https://github.com/1jehuang/jcode)** | Claude Code, Codex CLI, OpenCode, Gemini CLI, Aider                                       | Extremely lightweight, 18.5k stars.[^13] Own persistence via `--resume`. Disclosure: same author as gwae.                                               |
-| Inference (API)      | **Makora**                                     | OneTriangle, Baseten, CoreWeave, DeepInfra, official Meta, SiliconFlow, official DeepSeek | Best measured price/speed for DeepSeek V4 Flash: 300 tps decode, 0.71s TTFT, $0.13/1M blended, OpenAI-compatible.[^14] OneTriangle is a solid failover (KV-cache-preserving, ~100-300 tps self-measured, no public benchmarks).[^15] |
+| Inference (API)      | **Makora**                                     | [OneTriangle](https://onetriangle.ai), Baseten, CoreWeave, DeepInfra, official Meta, SiliconFlow, official DeepSeek | Best measured price/speed for DeepSeek V4 Flash: 300 tps decode, 0.71s TTFT, $0.13/1M blended, OpenAI-compatible.[^14] [OneTriangle](https://onetriangle.ai) is a solid failover (KV-cache-preserving, ~100-300 tps self-measured, no public benchmarks).[^15] |
 | Knowledge base (MD)  | **Obsidian**                                   | Logseq, Foam, Dendron, plain git repo of markdown                                         | Plain markdown you version-control with git. High-level plan drafts, or just learning new stuff. Agents can read and edit it directly.                 |
 | Editors and monitors | **neovim, btm**, and any other TUI             | helix, kakoune, htop, btop, yazi, lazygit, k9s                                            | Monitor compute overhead, occasionally make direct code and markdown changes at your discretion. The whole open-source TUI ecosystem is the app store. |
 
