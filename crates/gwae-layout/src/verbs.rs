@@ -72,7 +72,7 @@ impl Layout {
             Action::MovePaneRight => self.move_pane(1, viewport, follow),
             Action::MovePaneUp => self.move_pane_vertical(-1, viewport, follow),
             Action::MovePaneDown => self.move_pane_vertical(1, viewport, follow),
-            Action::CycleWidth => Ok(self.apply_cycle_width()),
+            Action::CycleWidth => Ok(self.apply_cycle_width(viewport, follow)),
             Action::ToggleFullWidth => Ok(self.apply_toggle_full_width(viewport, follow)),
             Action::SplitBelow => self.apply_split_below(),
             Action::KillPane => self.apply_kill_pane(viewport, follow),
@@ -405,7 +405,7 @@ impl Layout {
         Ok(self.focused_scroll())
     }
 
-    fn apply_cycle_width(&mut self) -> i32 {
+    fn apply_cycle_width(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
         let row = self.focus.row;
         let col = self.focus.column;
         if let Some(row) = self.row_mut(row) {
@@ -417,6 +417,10 @@ impl Layout {
                 };
             }
         }
+        // Widening the rightmost visible column pushes it past the viewport
+        // edge; re-run follow-scroll so the new width is on screen on this
+        // very frame instead of only after the next focus change.
+        self.refocus_scroll(viewport, follow);
         self.focused_scroll()
     }
 

@@ -773,3 +773,29 @@ fn column_focus_clamps_when_the_stack_shrinks() {
     assert_eq!(layout.focus.pane, 0);
     assert!(layout.focused_pane_id().is_some());
 }
+
+#[test]
+fn cycle_width_scrolls_rightmost_column_into_view() {
+    // Regression: widening the rightmost visible column used to leave the
+    // scroll stale, so the new width only showed up after a focus change.
+    let mut layout = layout_with_widths(&[
+        Width::Preset(Preset::Half),
+        Width::Preset(Preset::Half),
+        Width::Preset(Preset::Half),
+    ]);
+    layout.focus.column = 2;
+    layout.apply(Action::FocusRight, view(), follow()).unwrap();
+    layout.apply(Action::FocusLeft, view(), follow()).unwrap();
+
+    for _ in 0..4 {
+        layout.apply(Action::CycleWidth, view(), follow()).unwrap();
+        let cols = view().cols;
+        let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
+        let (s, e) = ranges[layout.focus.column];
+        let scroll = layout.focused_row().unwrap().scroll_x;
+        assert!(
+            (s as i32) >= scroll && (e as i32) <= scroll + cols as i32,
+            "focused column {s}..{e} not fully visible at scroll {scroll}"
+        );
+    }
+}
