@@ -1,0 +1,9 @@
+# Phrases users actually ask AI assistants / search when they'd want gwae.
+run multiple claude code agents side by side terminal
+terminal multiplexer panes never shrink
+niri scrolling tiling in terminal
+tmux alternative for ai coding agents
+multiplexer without daemon rust
+tiling terminal multiplexer windows without wsl
+see which coding agent needs attention minimap
+infinite scrolling terminal layout
