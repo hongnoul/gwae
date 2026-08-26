@@ -8,9 +8,10 @@ use std::time::{Duration, Instant};
 use crate::theme::Palette;
 use crossterm::cursor;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyEventState, KeyModifiers, KeyboardEnhancementFlags, ModifierKeyCode, MouseButton,
-    MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, KeyboardEnhancementFlags,
+    ModifierKeyCode, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -2048,7 +2049,7 @@ fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, pal: &Palette) {
     lines.push(rule('┴'));
     lines.push(format!(
         "{:^width$}",
-        &format!("prefix: {}+key  or  ^B key", crate::keys::mod_key()),
+        &format!("prefix: {}+key", crate::keys::mod_key()),
         width = table_w
     ));
 
@@ -2772,6 +2773,35 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     Some(Cmd::Input(key_bytes(ev)))
 }
 
+/// Deliver pasted text to a pane, bracketed the way that child expects.
+///
+/// The one paste path: both the host's `Event::Paste` (a ⌘/Ctrl+V typed into
+/// gwae) and the explicit `⌥+v` clipboard read end up here, so the two
+/// entrances cannot diverge in their newline handling or their bracketing.
+///
+/// Writes in chunks with a flush between: a paste can be a whole file, a PTY
+/// buffer is 4-64 KiB, and a single blocking write of the lot would stall the
+/// event loop — freezing every *other* pane's paint until the child drains.
+///
+/// Returns the number of bytes handed to the pane (0 when the payload was
+/// empty or the pane is gone), which the caller reports in a toast.
+fn write_paste(pane: &mut PtyPane, text: &str) -> usize {
+    let bytes = select::paste_bytes(text, pane.grid.wants_bracketed_paste());
+    if bytes.is_empty() {
+        return 0;
+    }
+    // Pasting means you want the prompt: snap a scrolled-back pane to live,
+    // exactly as typing does, or the user pastes into a view of the past.
+    pane.grid.scroll_to_bottom();
+    for chunk in bytes.chunks(select::PASTE_CHUNK) {
+        if pane.writer.write_all(chunk).is_err() {
+            return 0;
+        }
+        let _ = pane.writer.flush();
+    }
+    bytes.len()
+}
+
 /// Kill any pane whose id is no longer in the layout, and spawn missing ones.
 fn sync_panes(
     layout: &mut Layout,
@@ -2962,6 +2992,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     if let Err(e) = execute!(stdout, EnableMouseCapture) {
         tracing::warn!("enable mouse: {e}");
     }
+    // Ask the host to bracket pastes. Without this a ⌘/Ctrl+V arrives as raw
+    // key events, every newline decodes to `KeyCode::Enter`, and a five-line
+    // paste submits five times — running half-typed commands in a shell and
+    // half-written prompts in an agent. With it, crossterm hands us the whole
+    // payload as one `Event::Paste` that `write_paste` re-brackets for the
+    // child. A terminal that ignores the request leaves the old behaviour,
+    // which is why `⌥+v` exists as the explicit route.
+    if let Err(e) = execute!(stdout, EnableBracketedPaste) {
+        tracing::warn!("enable bracketed paste: {e}");
+    }
     // Whether the *host* terminal understands the Kitty graphics protocol.
     // Gates APC passthrough: forwarding graphics sequences to a terminal that
     // does not parse them would print base64 garbage over the frame.
@@ -3036,6 +3076,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             Err(e) => {
                 eprintln!("spawn: {e}");
                 let _ = stdout.write_all(b"\x1b[?7h");
+                let _ = execute!(stdout, DisableBracketedPaste);
                 let _ = execute!(stdout, DisableMouseCapture);
                 let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
                 let _ = disable_raw_mode();
@@ -3798,6 +3839,32 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         }
                     }
                 }
+                Ok(Event::Paste(text)) => {
+                    // The host bracketed a paste for us (⌘/Ctrl+V). Hand the
+                    // whole payload to the focused pane in one delivery
+                    // instead of letting it arrive as N keystrokes, which is
+                    // what used to submit a multi-line paste line by line.
+                    // A finished selection is dismissed the way typing does.
+                    if selection.take_if(|s| !s.dragging).is_some() {
+                        dirty = true;
+                    }
+                    if let Some(pid) = focused_pane(&layout) {
+                        if let Some(p) = panes.get_mut(&pid) {
+                            let lines = text.lines().count();
+                            let bracketed = p.grid.wants_bracketed_paste();
+                            if write_paste(p, &text) > 0 && lines > 1 {
+                                // Say so only when it is the case a user can
+                                // get wrong: a multi-line paste is the one
+                                // that used to run commands on its own.
+                                reload_note = Some(paste_note(&text, bracketed));
+                                reload_note_anchor =
+                                    views.iter().find(|v| v.pid == pid).map(|v| v.rect);
+                                reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                            }
+                            dirty = true;
+                        }
+                    }
+                }
                 Ok(Event::Resize(c, r)) => {
                     cols = c.max(1);
                     rows = r.max(2);
@@ -3975,6 +4042,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // Restore the host's autowrap before handing the terminal back.
     let _ = stdout.write_all(b"\x1b[?7h");
     let _ = stdout.flush();
+    let _ = execute!(stdout, DisableBracketedPaste);
     let _ = execute!(stdout, DisableMouseCapture);
     let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
     let _ = disable_raw_mode();
@@ -4099,6 +4167,23 @@ fn copy_note(text: &str) -> String {
     } else {
         let n = text.chars().count();
         format!("copied {n} char{}", if n == 1 { "" } else { "s" })
+    }
+}
+
+/// The toast shown after a multi-line paste. A one-line paste is silent: it
+/// behaves exactly like typing and needs no narration.
+///
+/// A multi-line paste is the case that used to run each line as its own
+/// command, so gwae says what it delivered. When the child never asked for
+/// bracketed paste (`bracketed` false) those newlines genuinely are Returns —
+/// nothing can prevent that, it is what the program asked for — so the toast
+/// says so rather than letting the user infer safety from silence.
+fn paste_note(text: &str, bracketed: bool) -> String {
+    let lines = text.lines().count();
+    if bracketed {
+        format!("pasted {lines} lines")
+    } else {
+        format!("pasted {lines} lines · no bracket, newlines run")
     }
 }
 
