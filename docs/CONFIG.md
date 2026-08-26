@@ -20,6 +20,9 @@ center_focus = false
 content_width = 0
 default_agent = "claude"           # first pane + ; launch this
 agents = ["my-agent-wrapper"]     # extra names for the selector
+agent_dir = "~/git/gwae"          # directory new panes start in ("" = gwae's cwd)
+agent_dirs = ["~/notes"]          # always offered in the ⌥+d picker
+agent_dir_roots = ["~/git"]       # roots whose subdirs the ⌥+d picker offers
 theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal
 # or per-key overrides on top of a preset:
 # [theme]

@@ -16,6 +16,7 @@ mod onboard;
 mod preview;
 mod reap;
 mod select;
+mod spawndir;
 mod splash;
 mod theme;
 mod tui;
@@ -44,8 +45,9 @@ fn main() {
 }
 
 fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
+    let dir = cli.dir.clone();
     match cli.command.unwrap_or(Command::Run { command: None }) {
-        Command::Run { command } => tui::run_tui(command, cfg),
+        Command::Run { command } => tui::run_tui(command, cfg, dir),
         Command::New { command } => {
             tracing::info!(command = ?command, "new column (PTY spawn lands in M0 spike)");
             Ok(())
@@ -101,6 +103,7 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
                 None => println!("  theme: {} [ok]", cfg.theme_name()),
             }
             println!("  agent: {}", agent_status(&cfg));
+            println!("  spawn dir: {}", spawn_dir_status(&cfg, dir.as_deref()));
             println!("  onboarding: {}", onboarding_status(&path));
             println!(
                 "  latency: {}",
@@ -155,6 +158,27 @@ fn agent_status(cfg: &Config) -> String {
         ),
         agent::Plan::NoneInstalled { .. } => {
             "none installed; ⌥+; opens a shell and says so".to_string()
+        }
+    }
+}
+
+/// Where `⌥+;` will open a pane right now, for `doctor`. Reports the same
+/// decision `run_tui` makes, including the fallback, so a typo'd `agent_dir`
+/// is findable instead of silently ignored.
+fn spawn_dir_status(cfg: &Config, cli_dir: Option<&str>) -> String {
+    let resolved = spawndir::resolve(cli_dir, &cfg.agent_dir);
+    let unset = cfg.agent_dir.trim().is_empty() && cli_dir.is_none();
+    match resolved {
+        Some(p) if unset => format!("{} (gwae's cwd; unset, ⌥+d picks one) [ok]", p.display()),
+        Some(p) if Some(&p) != spawndir::inherited().as_ref() => format!("{} [ok]", p.display()),
+        _ => {
+            let raw = cli_dir
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(&cfg.agent_dir);
+            match spawndir::check(raw) {
+                Ok(p) => format!("{} [ok]", p.display()),
+                Err(e) => format!("INVALID {raw:?}: {e}; panes inherit gwae's cwd"),
+            }
         }
     }
 }

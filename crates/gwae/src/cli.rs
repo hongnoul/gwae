@@ -17,6 +17,11 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+    /// Directory new panes start in, overriding `agent_dir` in the config for
+    /// this session. Accepted before the subcommand so `gwae --dir ~/git`
+    /// works as the shell alias people actually write.
+    #[arg(long, global = true, value_name = "PATH")]
+    pub dir: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]

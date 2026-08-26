@@ -42,6 +42,19 @@ pub struct Config {
     /// default) means "not chosen yet": `;` then runs the agent gateway, which
     /// offers the harnesses found on PATH and writes the choice back here.
     pub default_agent: String,
+    /// The directory new panes (agent and shell) start in. Empty (the
+    /// default) inherits gwae's own working directory, which is whatever
+    /// your terminal opened at. `~` and `$VAR` expand, so
+    /// `agent_dir = "~/git"` works as written. A path that does not exist is
+    /// ignored with a warning rather than breaking pane spawn.
+    pub agent_dir: String,
+    /// Directories always offered in the `⌥+d` spawn-directory picker, on top
+    /// of the ones found by scanning `agent_dir_roots`.
+    pub agent_dirs: Vec<String>,
+    /// Roots whose immediate subdirectories are offered in the `⌥+d` picker.
+    /// Default: `~/git`, `~/code`, `~/projects`, `~/src`, `~/dev`,
+    /// `~/Developer`. Roots that do not exist are skipped silently.
+    pub agent_dir_roots: Vec<String>,
     /// Extra agent commands to offer in the `;` picker, on top of the ones
     /// gwae knows and the ones it finds by scanning `PATH`. Use this to
     /// teach it a harness with a name it cannot guess, or a wrapper script.
@@ -99,6 +112,9 @@ impl Default for Config {
             center_focus: false,
             content_width: 0,
             default_agent: String::new(),
+            agent_dir: String::new(),
+            agent_dirs: Vec::new(),
+            agent_dir_roots: Vec::new(),
             agents: Vec::new(),
             startup_panes: 1,
             // Colors all live in the theme now; the Catppuccin Mocha defaults
@@ -186,11 +202,16 @@ impl Config {
         let Config {
             startup_panes,
             default_agent,
+            agent_dir,
             ..
         } = self.clone();
         *self = Config {
             startup_panes,
             default_agent,
+            // Kept for the same reason as `default_agent`: the running
+            // session may have overridden it via `--dir` or `⌥+d`, and a
+            // theme edit must not yank panes back to the file's value.
+            agent_dir,
             ..new
         };
     }

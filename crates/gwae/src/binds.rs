@@ -58,6 +58,8 @@ pub enum Effect {
     SmartJump,
     /// Open the theme picker.
     ThemePick,
+    /// Open the spawn-directory picker.
+    DirPick,
     /// Toggle the cheat-sheet HUD.
     ToggleHud,
     /// Quit gwae.
@@ -296,6 +298,14 @@ pub const BINDS: &[Bind] = &[
         group: Group::Panes,
         desc: "theme picker",
         effect: Effect::ThemePick,
+    },
+    Bind {
+        trigger: Trigger::Chord('d'),
+        hint: "picks the directory new panes start in",
+        glyph: Some('\u{2202}'),
+        group: Group::Panes,
+        desc: "spawn dir",
+        effect: Effect::DirPick,
     },
     Bind {
         trigger: Trigger::Chord('/'),

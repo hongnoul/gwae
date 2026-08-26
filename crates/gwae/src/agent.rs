@@ -410,6 +410,12 @@ pub fn set_scalar_text(text: &str, key: &str, value: &str) -> String {
     s
 }
 
+/// [`toml_string`] for callers outside this module (the `⌥+d` picker writes
+/// `agent_dir` through the same comment-preserving path).
+pub fn toml_string_pub(s: &str) -> String {
+    toml_string(s)
+}
+
 /// Quote a value as a TOML basic string.
 fn toml_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);

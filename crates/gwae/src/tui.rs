@@ -282,6 +282,21 @@ fn agent_gateway_cmd() -> String {
     format!("\"{exe}\" agent")
 }
 
+/// Persist the picked spawn directory as `agent_dir` in the config file.
+///
+/// Reuses the agent gateway's comment-preserving rewrite, so saving a
+/// directory from the picker cannot reformat a hand-written config or drop
+/// its comments the way a parse/serialize round trip would.
+fn write_agent_dir(path: &std::path::Path, dir: &str) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let out =
+        crate::agent::set_scalar_text(&text, "agent_dir", &crate::agent::toml_string_pub(dir));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, out).map_err(|e| e.to_string())
+}
+
 /// Every descendant of `root`, deepest first, as reported by `ps`.
 ///
 /// Returned deepest-first so a caller can signal children before their
@@ -382,6 +397,7 @@ fn spawn_pane(
     gw: u16,
     gh: u16,
     tx: Sender<PaneMsg>,
+    cwd: Option<&std::path::Path>,
 ) -> Result<PtyPane, String> {
     let pty = native_pty_system();
     let size = PtySize {
@@ -404,6 +420,13 @@ fn spawn_pane(
     let mut cb = CommandBuilder::new(&argv[0]);
     for a in &argv[1..] {
         cb.arg(a);
+    }
+    // The spawn directory (config `agent_dir`, `--dir`, or the `⌥+d`
+    // picker). `None` inherits gwae's own cwd, which is the pre-feature
+    // behavior. Set before spawn only: a pane's cwd is the child's business
+    // afterwards.
+    if let Some(dir) = cwd {
+        cb.cwd(dir);
     }
     cb.env("GWAE_PANE", id.to_string());
     cb.env("TERM", "xterm-256color");
@@ -1538,6 +1561,191 @@ fn draw_center_minimap(
 /// is already the preview: stepping through presets re-themes the live
 /// chrome behind this panel. All it has to answer is "which one am I looking
 /// at, and how do I keep it".
+/// Live state of the `⌥+d` spawn-directory picker.
+///
+/// Mirrors the theme picker's grammar (open, step, ⏎ keep, esc cancel) and
+/// adds a typed filter, because the candidate list is dozens of repos rather
+/// than eight themes. `s` writes the highlighted directory back to the config
+/// file, which is the difference between "this session" and "from now on".
+struct DirPicker {
+    all: Vec<crate::spawndir::Candidate>,
+    query: String,
+    sel: usize,
+}
+
+impl DirPicker {
+    fn shown(&self) -> Vec<crate::spawndir::Candidate> {
+        crate::spawndir::filter(&self.all, &self.query)
+    }
+    fn current(&self) -> Option<crate::spawndir::Candidate> {
+        self.shown().get(self.sel).cloned()
+    }
+    /// Move the highlight, clamped to the filtered list. Wrapping matches the
+    /// theme picker, so a long repo list is reachable from either end.
+    fn step(&mut self, d: i32) {
+        let n = self.shown().len();
+        if n == 0 {
+            self.sel = 0;
+            return;
+        }
+        let i = self.sel as i32 + d;
+        self.sel = i.rem_euclid(n as i32) as usize;
+    }
+}
+
+/// Draw the spawn-directory picker: the filter line, the matching directories
+/// with the selection highlighted, and the key legend.
+///
+/// Unlike the theme picker there is nothing to preview live (a directory does
+/// not repaint the screen), so this panel has to actually show the list.
+fn draw_dir_picker(out: &mut [Cell], cols: u16, rows: u16, pick: &DirPicker, pal: &Palette) {
+    let shown = pick.shown();
+    let rows_shown = shown.len().clamp(1, 10);
+    let title = format!(" spawn dir: {}_ ", pick.query);
+    let help = " ↑/↓ pick   ⏎ session   s save to config   esc cancel ";
+    let widest = shown
+        .iter()
+        .take(rows_shown)
+        .map(|c| c.label.chars().count() + c.origin.chars().count() + 4)
+        .max()
+        .unwrap_or(0);
+    let bw = widest.max(title.chars().count()).max(help.chars().count()) + 2;
+    let bh = rows_shown + 4;
+    if (cols as usize) < bw + 2 || (rows as usize) < bh + 2 {
+        return;
+    }
+    let ox = ((cols as usize) - bw) / 2;
+    let oy = ((rows as usize) - bh) / 2;
+    for y in 0..bh {
+        for x in 0..bw {
+            if let Some(c) = out.get_mut((oy + y) * cols as usize + ox + x) {
+                *c = Cell {
+                    ch: ' ',
+                    style: gwae_term::Style {
+                        fg: pal.text,
+                        bg: pal.surface,
+                        ..Default::default()
+                    },
+                    width: 1,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+    let mut edge = |x: usize, y: usize, ch: char| {
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            c.ch = ch;
+            c.style.fg = pal.accent;
+            c.style.bg = pal.surface;
+            c.width = 1;
+        }
+    };
+    for x in 0..bw {
+        edge(ox + x, oy, '─');
+        edge(ox + x, oy + bh - 1, '─');
+    }
+    for y in 0..bh {
+        edge(ox, oy + y, '│');
+        edge(ox + bw - 1, oy + y, '│');
+    }
+    edge(ox, oy, '╭');
+    edge(ox + bw - 1, oy, '╮');
+    edge(ox, oy + bh - 1, '╰');
+    edge(ox + bw - 1, oy + bh - 1, '╯');
+
+    // A free function rather than a closure: the selection highlight below
+    // also needs `&mut out`, and a capturing closure would hold the borrow
+    // for the whole body.
+    #[allow(clippy::too_many_arguments)]
+    fn text(
+        out: &mut [Cell],
+        cols: u16,
+        limit: usize,
+        row: usize,
+        col: usize,
+        s: &str,
+        fg: CColor,
+        bg: CColor,
+        bold: bool,
+    ) {
+        for (i, ch) in s.chars().enumerate() {
+            if col + i >= limit {
+                break;
+            }
+            if let Some(c) = out.get_mut(row * cols as usize + col + i) {
+                c.ch = ch;
+                c.style.fg = fg;
+                c.style.bg = bg;
+                c.style.bold = bold;
+                c.width = 1;
+            }
+        }
+    }
+    let lim = ox + bw - 1;
+    text(
+        out,
+        cols,
+        lim,
+        oy + 1,
+        ox + 1,
+        &title,
+        pal.accent,
+        pal.surface,
+        true,
+    );
+    if shown.is_empty() {
+        text(
+            out,
+            cols,
+            lim,
+            oy + 2,
+            ox + 2,
+            "no match",
+            pal.overlay,
+            pal.surface,
+            false,
+        );
+    }
+    // Scroll the window so the selection is always on screen, even when the
+    // filter leaves more matches than the panel can hold.
+    let first = pick.sel.saturating_sub(rows_shown.saturating_sub(1));
+    for (i, c) in shown.iter().skip(first).take(rows_shown).enumerate() {
+        let y = oy + 2 + i;
+        let selected = first + i == pick.sel;
+        let (fg, bg) = if selected {
+            (pal.base, pal.accent)
+        } else {
+            (pal.text, pal.surface)
+        };
+        if selected {
+            for x in 1..bw - 1 {
+                if let Some(cell) = out.get_mut(y * cols as usize + ox + x) {
+                    cell.ch = ' ';
+                    cell.style.bg = bg;
+                    cell.style.fg = fg;
+                    cell.width = 1;
+                }
+            }
+        }
+        text(out, cols, lim, y, ox + 2, &c.label, fg, bg, selected);
+        let ow = c.origin.chars().count();
+        let at = ox + bw - 2 - ow.min(bw.saturating_sub(4));
+        let ofg = if selected { fg } else { pal.overlay };
+        text(out, cols, lim, y, at, c.origin, ofg, bg, false);
+    }
+    text(
+        out,
+        cols,
+        lim,
+        oy + bh - 2,
+        ox + 1,
+        help,
+        pal.overlay,
+        pal.surface,
+        false,
+    );
+}
+
 fn draw_theme_picker(out: &mut [Cell], cols: u16, rows: u16, sel: usize, pal: &Palette) {
     let names = Palette::NAMES;
     let Some(name) = names.get(sel) else {
@@ -2227,6 +2435,9 @@ enum Cmd {
     /// Open the theme picker (`⌥+t`), or step through it while it is open.
     /// `0` opens, `-1`/`+1` move the selection.
     ThemePick(i32),
+    /// Open the spawn-directory picker (`⌥+d`): choose the directory new
+    /// panes start in, for this session or written back to the config.
+    DirPick,
     /// Toggle the centered cheat-sheet HUD (`⌥+/`), the same overlay shown
     /// once at startup. Any other key still dismisses it.
     ToggleHud,
@@ -2417,6 +2628,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{a9}') => return Some(Cmd::SmartJump),              // © (Option+g)
             Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
             Char('\u{2020}') => return Some(Cmd::ThemePick(0)),         // † (Option+t)
+            Char('\u{2202}') => return Some(Cmd::DirPick),              // ∂ (Option+d)
             Char('\u{f7}') => return Some(Cmd::ToggleHud),              // ÷ (Option+/)
             _ => {}
         }
@@ -2488,6 +2700,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             }
             'g' => return Some(Cmd::SmartJump),
             't' => return Some(Cmd::ThemePick(0)),
+            'd' => return Some(Cmd::DirPick),
             '/' | '?' => return Some(Cmd::ToggleHud),
             _ if c.is_ascii_digit() => {
                 return Some(Cmd::JumpDigit(c.to_digit(10).unwrap_or(1)));
@@ -2559,6 +2772,7 @@ fn sync_panes(
     tx: &Sender<PaneMsg>,
     _first_id: PaneId,
     agent_panes: &HashSet<PaneId>,
+    cwd: Option<&std::path::Path>,
 ) -> Result<(), String> {
     let mut wanted: Vec<PaneId> = Vec::new();
     for row in &layout.rows {
@@ -2594,7 +2808,7 @@ fn sync_panes(
         } else {
             String::new()
         };
-        let pane = spawn_pane(pid, &cmd, 80, 24, tx.clone())?;
+        let pane = spawn_pane(pid, &cmd, 80, 24, tx.clone(), cwd)?;
         panes.insert(pid, pane);
         tracing::debug!(pid, "spawned pane");
     }
@@ -2682,7 +2896,7 @@ fn first_line(s: &str) -> &str {
 }
 
 /// Run the interactive TUI.
-pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
+pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) -> Result<(), i32> {
     use std::io;
     // Config and palette are re-resolved whenever the config file changes on
     // disk (see the reload check in the render loop), so both are mutable.
@@ -2757,6 +2971,26 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     if std::env::var_os("GWAE_DEBUG_SIZE").is_some() {
         eprintln!("[gwae] initial terminal size -> {cols} cols x {rows} rows");
     }
+    // Where every pane in this session starts. `--dir` beats `agent_dir`
+    // beats gwae's inherited cwd; `⌥+d` rebinds it live for panes spawned
+    // from then on (existing panes keep whatever they were born with, since
+    // a process's cwd is not ours to change).
+    let mut spawn_dir: Option<std::path::PathBuf> =
+        crate::spawndir::resolve(cli_dir.as_deref(), &cfg.agent_dir);
+    // A configured directory that does not exist is a typo worth surfacing:
+    // the panes silently opening in `~` is exactly the confusion this
+    // feature exists to remove.
+    let bad_dir: Option<String> = {
+        let raw = cli_dir
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(cfg.agent_dir.as_str());
+        let fell_back = spawn_dir == crate::spawndir::inherited();
+        match (fell_back, raw.trim().is_empty()) {
+            (true, false) => crate::spawndir::check(raw).err(),
+            _ => None,
+        }
+    };
     let mut layout = Layout::new(cfg.startup_panes.max(1));
     let (tx, rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
@@ -2788,7 +3022,7 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         } else {
             String::new()
         };
-        match spawn_pane(*pid, &cmd, gw, gh, tx.clone()) {
+        match spawn_pane(*pid, &cmd, gw, gh, tx.clone(), spawn_dir.as_deref()) {
             Ok(p) => {
                 panes.insert(*pid, p);
             }
@@ -2838,8 +3072,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // Drives the adaptive input poll below: tight while in use, relaxed once
     // the whole screen has gone quiet.
     let mut last_activity = Instant::now();
-    let mut reload_note: Option<String> = None;
-    let mut reload_note_until: Option<Instant> = None;
+    // A bad `agent_dir` announces itself on the first frame; the panes have
+    // already opened in the inherited cwd by then, so this explains what the
+    // user is looking at rather than blocking anything.
+    let mut reload_note: Option<String> =
+        bad_dir.map(|e| format!("agent_dir: {e}; panes opened in gwae's cwd"));
+    let mut reload_note_until: Option<Instant> = reload_note
+        .as_ref()
+        .map(|_| Instant::now() + NOTE_LINGER * 2);
     // Where the note is drawn: `None` = bottom-left of the screen,
     // `Some(rect)` = bottom-left of that pane (drag-copy notes).
     let mut reload_note_anchor: Option<Rect> = None;
@@ -2847,6 +3087,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     // selection previews live, so the whole screen is the preview and the
     // picker itself only needs to show the name.
     let mut theme_pick: Option<usize> = None;
+    // Spawn-directory picker (⌥+d): the candidate list, the typed filter, and
+    // the highlighted row. Built when the picker opens rather than at startup
+    // so a repo cloned mid-session shows up without a restart.
+    let mut dir_pick: Option<DirPicker> = None;
     // Force-quit confirmation (⌥+Shift+q): true while the centered disclaimer
     // is up. Quitting kills every pane's process, so the chord arms this
     // overlay and a second deliberate keystroke commits.
@@ -2923,7 +3167,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         };
                         let _ = layout.apply(Action::ClosePane(pid), v, f);
                         agent_panes.remove(&pid);
-                        if let Err(e) = sync_panes(&mut layout, &mut panes, &tx, 0, &agent_panes) {
+                        if let Err(e) = sync_panes(
+                            &mut layout,
+                            &mut panes,
+                            &tx,
+                            0,
+                            &agent_panes,
+                            spawn_dir.as_deref(),
+                        ) {
                             tracing::error!("sync panes: {e}");
                         }
                     } else {
@@ -3096,6 +3347,79 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                         dirty = true;
                         continue;
                     }
+                    // While the directory picker is open it owns the
+                    // keyboard: every printable key types into the filter, so
+                    // nothing may reach a pane. Arrows move, ⏎ takes it for
+                    // the session, `⌥+s` writes it to the config file, esc
+                    // cancels. Bare `s` cannot save, because `s` is a filter
+                    // character like any other.
+                    if let Some(pick) = dir_pick.as_mut() {
+                        let alt = ke.modifiers.contains(KeyModifiers::ALT);
+                        let mut chosen: Option<(std::path::PathBuf, bool)> = None;
+                        let mut close = false;
+                        match ke.code {
+                            KeyCode::Up => pick.step(-1),
+                            KeyCode::Down => pick.step(1),
+                            KeyCode::Esc => close = true,
+                            KeyCode::Backspace => {
+                                pick.query.pop();
+                                pick.sel = 0;
+                            }
+                            KeyCode::Enter => {
+                                if let Some(c) = pick.current() {
+                                    chosen = Some((c.path, false));
+                                }
+                                close = true;
+                            }
+                            KeyCode::Char('s') if alt => {
+                                if let Some(c) = pick.current() {
+                                    chosen = Some((c.path, true));
+                                }
+                                close = true;
+                            }
+                            // ß is what macOS sends for ⌥+s when Option is not
+                            // mapped to Meta, the same fallback the rest of
+                            // the chords carry.
+                            KeyCode::Char('\u{df}') => {
+                                if let Some(c) = pick.current() {
+                                    chosen = Some((c.path, true));
+                                }
+                                close = true;
+                            }
+                            KeyCode::Char(c)
+                                if !alt && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                pick.query.push(c);
+                                pick.sel = 0;
+                            }
+                            _ => {}
+                        }
+                        if close {
+                            dir_pick = None;
+                        }
+                        if let Some((path, save)) = chosen {
+                            spawn_dir = Some(path.clone());
+                            let shown = crate::spawndir::tilde(&path);
+                            reload_note_anchor = None;
+                            reload_note = Some(if save {
+                                match write_agent_dir(&cfg_path, &shown) {
+                                    Ok(()) => format!("spawn dir: {shown} (saved to config)"),
+                                    Err(e) => format!(
+                                        "spawn dir: {shown} (this session; save error: {e})"
+                                    ),
+                                }
+                            } else {
+                                format!("spawn dir: {shown} — new panes start here")
+                            });
+                            reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                            // A config write bumps the mtime; adopt it now so
+                            // the reload watcher does not report our own save
+                            // back to us as an external edit.
+                            cfg_mtime = Config::mtime(&cfg_path);
+                        }
+                        dirty = true;
+                        continue;
+                    }
                     // While the theme picker is open it owns the keyboard:
                     // arrows/hjkl step through presets, Enter keeps the
                     // choice, Escape restores what was there before. Without
@@ -3183,6 +3507,23 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                 hud_active = !hud_was_active;
                                 dirty = true;
                             }
+                            Cmd::DirPick => {
+                                // Rebuilt on every open: repos are cloned and
+                                // deleted while gwae runs, and the scan is a
+                                // handful of readdirs.
+                                let all = crate::spawndir::candidates(
+                                    spawn_dir.as_deref(),
+                                    &cfg.agent_dir,
+                                    &cfg.agent_dirs,
+                                    &cfg.agent_dir_roots,
+                                );
+                                dir_pick = Some(DirPicker {
+                                    all,
+                                    query: String::new(),
+                                    sel: 0,
+                                });
+                                dirty = true;
+                            }
                             Cmd::ThemePick(_) => {
                                 // Open on the currently configured theme when
                                 // it is a known preset, so stepping starts
@@ -3253,9 +3594,14 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
                                         agent_panes.insert(pid);
                                     }
                                 }
-                                if let Err(e) =
-                                    sync_panes(&mut layout, &mut panes, &tx, 0, &agent_panes)
-                                {
+                                if let Err(e) = sync_panes(
+                                    &mut layout,
+                                    &mut panes,
+                                    &tx,
+                                    0,
+                                    &agent_panes,
+                                    spawn_dir.as_deref(),
+                                ) {
                                     tracing::error!("sync panes: {e}");
                                 }
                                 dirty = true;
@@ -3564,6 +3910,9 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
             if let Some(sel) = theme_pick {
                 draw_theme_picker(&mut frame, cols, rows, sel, &pal);
+            }
+            if let Some(pick) = &dir_pick {
+                draw_dir_picker(&mut frame, cols, rows, pick, &pal);
             }
             // Echo the number as it is typed. Without this, a multi-digit
             // jump is invisible until it commits and `⌥+1 2` is
@@ -4499,7 +4848,7 @@ mod tests {
             .unwrap();
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let (tx, _rx) = channel::<PaneMsg>();
-        let mut pane = spawn_pane(pid, "sleep 30", 80, 24, tx).expect("spawn pane");
+        let mut pane = spawn_pane(pid, "sleep 30", 80, 24, tx, None).expect("spawn pane");
         pane.grid.feed(b"hello world\r\nsecond line");
         panes.insert(pid, pane);
         let (cols, rows) = (80u16, 24u16);
@@ -5758,6 +6107,7 @@ mod tests {
                 Effect::Act(a) => Cmd::Act(a),
                 Effect::SmartJump => Cmd::SmartJump,
                 Effect::ThemePick => Cmd::ThemePick(0),
+                Effect::DirPick => Cmd::DirPick,
                 Effect::ToggleHud => Cmd::ToggleHud,
                 Effect::Quit => Cmd::Quit,
                 Effect::Scroll(n) => Cmd::Scroll(n),
@@ -6289,7 +6639,7 @@ fn content_scroll_reveals_overflow_e2e() {
     }
     let (tx, rx) = channel::<PaneMsg>();
     let cmd = "sh -c \"for i in $(seq 1 240); do printf '%s' $((i % 10)); done; echo\"";
-    let pane = spawn_pane(pid, cmd, 240, 10, tx.clone()).expect("spawn pane");
+    let pane = spawn_pane(pid, cmd, 240, 10, tx.clone(), None).expect("spawn pane");
     let mut pane = pane;
     // Feed PTY output until the 240-cell digit line has landed.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -6416,7 +6766,7 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
             "sh -c \"for i in $(seq 1 {w}); do printf '%s' {}; done; echo\"",
             fills[i]
         );
-        let pane = spawn_pane(*pid, &cmd, w, rows, tx.clone()).expect("spawn pane");
+        let pane = spawn_pane(*pid, &cmd, w, rows, tx.clone(), None).expect("spawn pane");
         panes.insert(*pid, pane);
     }
     // Feed PTY output until every pane's first row is fully painted.
@@ -6548,7 +6898,7 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
     let (tx, _rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     for pid in &pids {
-        let pane = spawn_pane(*pid, "sleep 30", 80, rows, tx.clone()).expect("spawn pane");
+        let pane = spawn_pane(*pid, "sleep 30", 80, rows, tx.clone(), None).expect("spawn pane");
         panes.insert(*pid, pane);
     }
 
