@@ -2535,6 +2535,46 @@ fn refresh_size(cols: &mut u16, rows: &mut u16) -> bool {
 /// `stat` never shows up next to the render loop's own work.
 const CONFIG_POLL: Duration = Duration::from_millis(400);
 
+/// How often the safety-net size re-measure runs.
+///
+/// `refresh_size` is a *backstop* for resizes crossterm never delivers as an
+/// `Event::Resize`; the event path already handles every resize the host does
+/// report, and it stays instant. Running the backstop on every loop iteration
+/// meant a `TIOCGWINSZ` — which on macOS opens and closes `/dev/tty` — at the
+/// input poll rate (500/s at the default `input_poll_ms = 2`). That syscall
+/// storm was the bulk of gwae's idle CPU: a completely idle mux sat at ~3.5%
+/// of a core forever, which on a laptop is a warm chassis and a spinning fan
+/// for no work at all. A quarter second is far below human resize perception
+/// for the rare dropped-event case, and costs 4 stats/s instead of 500.
+const SIZE_POLL: Duration = Duration::from_millis(250);
+
+/// How long the whole screen must be quiet before the input poll relaxes.
+const IDLE_AFTER: Duration = Duration::from_millis(750);
+
+/// The relaxed poll interval used once idle (~33 wakeups/s).
+const IDLE_POLL_MS: u64 = 30;
+
+/// How long to block in `event::poll` this iteration.
+///
+/// `event::poll` returns *immediately* when a key arrives, so a longer
+/// timeout never costs keystroke latency; all it delays is the loop's own
+/// periodic work. So: run at the configured (tight) rate while anything is
+/// happening, and back off once every pane and the keyboard have been silent
+/// for `IDLE_AFTER`. At the default 2 ms the idle mux woke 500x a second
+/// forever to find nothing, which on a laptop is a warm chassis for a screen
+/// that is not changing. The relaxed ceiling still repaints within one frame
+/// at 30 fps, and the very first byte of output or keystroke snaps the rate
+/// back to tight.
+fn input_poll_interval(configured_ms: u64, since_activity: Duration) -> Duration {
+    let base = configured_ms.clamp(1, 50);
+    let ms = if since_activity < IDLE_AFTER {
+        base
+    } else {
+        base.max(IDLE_POLL_MS)
+    };
+    Duration::from_millis(ms)
+}
+
 /// How long the reload note stays on screen.
 const NOTE_LINGER: Duration = Duration::from_millis(2500);
 
@@ -2689,6 +2729,11 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
     let cfg_path = Config::default_path();
     let mut cfg_mtime = Config::mtime(&cfg_path);
     let mut reload_check = Instant::now();
+    let mut size_check = Instant::now();
+    // Last time *anything* happened (a keystroke or a byte from any pane).
+    // Drives the adaptive input poll below: tight while in use, relaxed once
+    // the whole screen has gone quiet.
+    let mut last_activity = Instant::now();
     let mut reload_note: Option<String> = None;
     let mut reload_note_until: Option<Instant> = None;
     // Where the note is drawn: `None` = bottom-left of the screen,
@@ -2707,6 +2752,10 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
 
     'main: loop {
         while let Ok(msg) = rx.try_recv() {
+            // Any pane traffic (output or an exit) is activity: keep the
+            // input poll tight so a burst of output is drained and drawn at
+            // full rate rather than at the idle backoff.
+            last_activity = Instant::now();
             match msg {
                 PaneMsg::Output(pid, bytes) => {
                     if let Some(p) = panes.get_mut(&pid) {
@@ -2786,9 +2835,12 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
         // Keep the frame sized to the live terminal, even when a resize event
         // is dropped or coalesced. Re-measuring here guarantees the panes stay
         // full-bleed to the actual right margin.
-        if refresh_size(&mut cols, &mut rows) {
-            layout.clamp_scrolls(Viewport::new(cols));
-            dirty = true;
+        if size_check.elapsed() >= SIZE_POLL {
+            size_check = Instant::now();
+            if refresh_size(&mut cols, &mut rows) {
+                layout.clamp_scrolls(Viewport::new(cols));
+                dirty = true;
+            }
         }
 
         // Activity heuristic for panes that never speak OSC 133 (plain
@@ -2865,7 +2917,11 @@ pub fn run_tui(command: Option<String>, cfg: Config) -> Result<(), i32> {
             }
         }
 
-        if event::poll(Duration::from_millis(cfg.input_poll_ms.clamp(1, 50))).unwrap_or(false) {
+        // Tight while in use, relaxed once the screen has gone quiet: see
+        // `input_poll_interval`.
+        let poll_for = input_poll_interval(cfg.input_poll_ms, last_activity.elapsed());
+        if event::poll(poll_for).unwrap_or(false) {
+            last_activity = Instant::now();
             match event::read() {
                 Ok(Event::Key(ke))
                     if matches!(ke.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
@@ -3735,6 +3791,62 @@ mod tests {
         assert_eq!(
             handle_key(&KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)),
             Some(Cmd::ScrollPane(-1))
+        );
+    }
+
+    /// Typing must never be slowed down by the idle backoff: while anything
+    /// is happening the loop polls at exactly the configured rate.
+    #[test]
+    fn a_busy_session_polls_at_the_configured_rate() {
+        for ms in [1u64, 2, 8, 50] {
+            assert_eq!(
+                input_poll_interval(ms, Duration::from_millis(0)),
+                Duration::from_millis(ms),
+                "fresh activity at {ms}ms"
+            );
+            // Still tight just before the idle threshold.
+            assert_eq!(
+                input_poll_interval(ms, IDLE_AFTER - Duration::from_millis(1)),
+                Duration::from_millis(ms)
+            );
+        }
+    }
+
+    /// The bug this guards: at the default 2 ms the loop woke 500x a second
+    /// forever, burning ~3% of a core on a mux nobody was touching. Once the
+    /// screen is quiet the wakeups must drop by more than an order of
+    /// magnitude.
+    #[test]
+    fn an_idle_session_backs_off_to_far_fewer_wakeups() {
+        let idle = input_poll_interval(2, IDLE_AFTER);
+        assert_eq!(idle, Duration::from_millis(IDLE_POLL_MS));
+        let busy = input_poll_interval(2, Duration::from_millis(0));
+        assert!(
+            idle.as_micros() >= busy.as_micros() * 10,
+            "idle backoff {idle:?} must be >=10x the busy interval {busy:?}"
+        );
+        // Still fast enough to repaint within one frame at 30 fps.
+        assert!(idle <= Duration::from_millis(33), "{idle:?} too sluggish");
+    }
+
+    /// A user who deliberately configured a *slower* poll than the idle
+    /// backoff keeps their setting: the backoff is a floor, never a ceiling,
+    /// so it can only ever reduce wakeups.
+    #[test]
+    fn the_backoff_never_polls_more_often_than_configured() {
+        let cfg = 50;
+        assert_eq!(
+            input_poll_interval(cfg, Duration::from_secs(60)),
+            Duration::from_millis(cfg)
+        );
+        // Out-of-range config values are still clamped the way they were.
+        assert_eq!(
+            input_poll_interval(0, Duration::from_millis(0)),
+            Duration::from_millis(1)
+        );
+        assert_eq!(
+            input_poll_interval(9999, Duration::from_millis(0)),
+            Duration::from_millis(50)
         );
     }
 
