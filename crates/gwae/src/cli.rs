@@ -1,6 +1,7 @@
 //! Command-line interface for the `gwae` binary.
 //!
-//! Single binary, subcommands: `run` (default), `new`, `agent`, `init`, `tune`, `setup`, `doctor`.
+//! Single binary, subcommands: `run` (default), `new`, `agent`, `init`, `tune`,
+//! `setup`, `upgrade`, `doctor`.
 //! There is deliberately no `server`/`ctl`/`ls`/`kill-server`: gwae is
 //! daemon-free (ADR-003 reversed, ADR-011).
 
@@ -66,6 +67,22 @@ pub enum Command {
     },
     /// Install optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty).
     Setup,
+    /// Move this gwae to the latest release, using the same route it was
+    /// installed by (installer script, Homebrew, cargo), or print the command
+    /// for the package manager that owns it (Nix, AUR, distro).
+    ///
+    /// Never runs anything without printing it first, and never touches a
+    /// binary another package manager owns.
+    #[command(alias = "update")]
+    Upgrade {
+        /// Report the version, the detected install source, and the command
+        /// that would run, then stop.
+        #[arg(long)]
+        check: bool,
+        /// Skip the confirmation prompt (for scripts and dotfile bootstraps).
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Print diagnostics about the current terminal and $mod decoding.
     Doctor,
 }

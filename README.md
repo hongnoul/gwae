@@ -99,6 +99,23 @@ cargo install --path crates/gwae     # -> ~/.cargo/bin/gwae
 
 Packaging scaffolding for Homebrew, AUR, and Nix lives in [`packaging/`](packaging/).
 
+### Staying up to date
+
+```bash
+gwae upgrade         # or: gwae upgrade --check
+```
+
+gwae upgrades **the way it was installed, or not at all**. It detects the route
+(installer receipt first, then the binary's path), prints the exact command
+before running anything, and refuses to overwrite a binary that Homebrew, Nix,
+or your distro's package manager owns — it prints their command instead.
+
+A once-a-day background check shows a one-line notice when a release exists.
+The request is an unauthenticated `HEAD` of the `releases/latest` redirect: it
+sends nothing about you or your machine. Turn it off with `check = false` under
+`[update]`, or `GWAE_NO_UPDATE_CHECK=1`. `gwae doctor` shows the detected route.
+Full details in [`docs/UPDATES.md`](docs/UPDATES.md).
+
 ## Quick start
 
 ```sh
@@ -107,7 +124,8 @@ gwae run "claude"        # command runs in column 0, rest are shells ($SHELL)
 gwae new -- htop         # (subcommand form) new column in a fresh session
 gwae init                # guided setup: theme, layout, chrome (safe to re-run)
 gwae setup               # optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty)
-gwae doctor              # diagnostics: config + theme validity, layout smoke
+gwae upgrade             # move to the latest release the same way you installed
+gwae doctor              # diagnostics: config + theme validity, update route, layout smoke
 ```
 
 The default layout is one strip, one quarter-width column. Skeleton placeholders tile the empty right side so the 4-column container always reads. New columns appear to the right of the focused pane, not at the strip end. `⌥+;` spawns your agent in a new column and focuses it.

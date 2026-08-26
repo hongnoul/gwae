@@ -91,6 +91,21 @@ signal-safe, and dying in the alt screen strands the user in a black rectangle.
 `crates/gwae/tests/teardown_e2e.rs` drives a real gwae over a real PTY and
 asserts against the actual process table for each of these paths.
 
+## Staying current
+
+gwae updates itself **the way it was installed, or not at all** (ADR-016).
+`crates/gwae/src/update.rs` detects the install source (config, then the
+installer's receipt, then the binary's path), maps it to a route, and runs only
+the routes gwae owns (`install.sh`, `brew`, `cargo`). Nix store paths, distro
+packages, and checkouts get their package manager's command printed instead:
+overwriting a file another package manager tracks leaves that manager
+describing a machine that no longer exists.
+
+The daily check is a bare `HEAD` of the `releases/latest` redirect (not
+`api.github.com`, whose 60/hr per-IP limit is shared across a NAT), carries
+nothing about the user, and only ever produces a one-line notice. Full
+reasoning: [`UPDATES.md`](UPDATES.md).
+
 ## Terminal requirements
 
 Minimum 256-color + standard cursor addressing; wants truecolor, synchronized

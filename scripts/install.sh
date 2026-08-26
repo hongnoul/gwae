@@ -66,6 +66,26 @@ version=$("$INSTALL_DIR/gwae" --version 2>/dev/null) \
   || die "installed binary at ${INSTALL_DIR}/gwae does not run on this machine"
 say "installed ${version} to ${INSTALL_DIR}/gwae"
 
+# --- receipt -------------------------------------------------------------------
+# Record *how* gwae got here, so `gwae upgrade` knows the route instead of
+# guessing it from the install path. The path is genuinely ambiguous:
+# ~/.local/bin is also where people drop hand-built binaries, and
+# /usr/local/bin belongs to Homebrew on Intel macOS and to a distro package
+# manager on Linux. Guessing wrong there means telling someone to run a
+# command that would fight their package manager.
+#
+# State, not config: this is machine-written bookkeeping and `gwae` treats a
+# missing or stale receipt as "detect from the path", so deleting it is safe.
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gwae"
+if mkdir -p "$state_dir" 2>/dev/null; then
+  cat > "$state_dir/install.toml" <<EOF
+# Written by gwae's install.sh; read by \`gwae upgrade\`. Safe to delete.
+source = "install.sh"
+dir = "${INSTALL_DIR}"
+version = "${version##* }"
+EOF
+fi
+
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *)
@@ -75,3 +95,4 @@ case ":$PATH:" in
 esac
 
 say "run 'gwae' to start, or 'gwae init' for the guided setup."
+say "later: 'gwae upgrade' moves you to the next release the same way."

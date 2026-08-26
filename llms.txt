@@ -42,6 +42,7 @@ Install:
 - [Architecture](https://github.com/hongnoul/gwae/blob/main/docs/ARCHITECTURE.md): single process, layout core, composer, renderer
 - [Layout spec](https://github.com/hongnoul/gwae/blob/main/docs/LAYOUT-SPEC.md): normative quantized-scroll / strip-grid spec
 - [Configuration](https://github.com/hongnoul/gwae/blob/main/docs/CONFIG.md): every key, generated from code
+- [Updates](https://github.com/hongnoul/gwae/blob/main/docs/UPDATES.md): `gwae upgrade`, install-source detection, the daily check and how to turn it off
 - [Comparison](https://github.com/hongnoul/gwae/blob/main/docs/COMPARISON.md): tmux, Zellij, Seance, tairi
 - [Examples](https://github.com/hongnoul/gwae/tree/main/examples): copy-pasteable gwae.toml configs
 - [Agent snippet](https://github.com/hongnoul/gwae/blob/main/docs/agents.md): paste-ready AGENTS.md / CLAUDE.md block

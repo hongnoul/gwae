@@ -36,6 +36,16 @@ Kill the biggest risk first: prove the render path.
 Themes/truecolor, VHS gifs, docs, Homebrew tap + AUR + nix + winget, prebuilt
 binaries, `gwae setup`. **Exit**: v1.0.1 installable in one command (install.sh, Homebrew tap, AUR, crates.io; winget pending).
 
+### Staying current — DONE (`gwae upgrade`, ADR-016)
+
+The half of distribution that launch skipped: getting the *next* release onto
+the machines that already have gwae. `gwae upgrade` detects how a binary was
+installed (installer receipt, then path), runs the routes gwae owns
+(install.sh / brew / cargo) and only prints the command for the ones another
+package manager owns (nix, AUR, distro, checkout). A once-a-day background
+check surfaces a one-line notice naming the exact command. Spec:
+[`UPDATES.md`](UPDATES.md).
+
 ## M5 - Post-launch differentiation (ongoing)
 Overview zoom, per-command pane rules, deeper PTY-compliant agent integration,
 community presets.

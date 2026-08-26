@@ -20,6 +20,7 @@ mod spawndir;
 mod splash;
 mod theme;
 mod tui;
+mod update;
 
 use clap::Parser;
 use cli::{Cli, Command};
@@ -81,6 +82,12 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
             }
             Ok(())
         }
+        Command::Upgrade { check, yes } => {
+            match update::run_upgrade(cfg.update.source(), check, yes) {
+                0 => Ok(()),
+                code => Err(code),
+            }
+        }
         Command::Setup => {
             println!("gwae setup: no per-terminal bindings installed yet (M4).");
             println!(
@@ -103,6 +110,7 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
                 None => println!("  theme: {} [ok]", cfg.theme_name()),
             }
             println!("  agent: {}", agent_status(&cfg));
+            println!("  updates: {}", update_status(&cfg));
             println!("  spawn dir: {}", spawn_dir_status(&cfg, dir.as_deref()));
             println!("  onboarding: {}", onboarding_status(&path));
             println!(
@@ -181,6 +189,22 @@ fn spawn_dir_status(cfg: &Config, cli_dir: Option<&str>) -> String {
             }
         }
     }
+}
+
+/// How this gwae would upgrade, for `doctor`.
+///
+/// Worth a line even when everything is fine: "how do I update this" is the
+/// question every user of a curl-to-bash install asks eventually, and the
+/// honest answer depends on facts (install path, receipt) only the binary
+/// itself can see.
+fn update_status(cfg: &Config) -> String {
+    if let Some(bad) = cfg.update.bad_source() {
+        return format!(
+            "INVALID update.source {bad:?}, so it is ignored; valid: {}",
+            update::Source::NAMES.join(", ")
+        );
+    }
+    update::doctor_line(cfg.update.source(), cfg.update.check)
 }
 
 /// Whether this config has been through `gwae init`, for `doctor`.

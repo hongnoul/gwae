@@ -104,6 +104,9 @@ pub struct Config {
     /// possible input latency (backspace/delete will feel instant).
     #[serde(default = "default_input_poll_ms")]
     pub input_poll_ms: u64,
+    /// Staying current: whether gwae checks for new releases, and how it is
+    /// allowed to upgrade itself. See `docs/UPDATES.md`.
+    pub update: Update,
 }
 
 impl Default for Config {
@@ -130,6 +133,7 @@ impl Default for Config {
             cowsay: Cowsay::default(),
             cell_labels: true,
             input_poll_ms: default_input_poll_ms(),
+            update: Update::default(),
         }
     }
 }
@@ -309,6 +313,79 @@ impl<'de> Deserialize<'de> for MinimapMode {
             }
         }
         deserializer.deserialize_any(V)
+    }
+}
+
+/// How gwae keeps itself current (see `crate::update`, ADR-016).
+///
+/// The defaults are "tell me, never act": a once-a-day check that only ever
+/// results in a one-line notice, and an upgrade that happens when the user
+/// runs `gwae upgrade` and not before. Nothing in this table can cause
+/// software to be installed on the machine on its own.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Update {
+    /// Check GitHub for a newer release at startup, at most once a day, and
+    /// show a one-line notice if there is one. The request is an
+    /// unauthenticated HEAD of the `releases/latest` redirect: it sends
+    /// nothing about you or your machine, not even the installed version.
+    /// `GWAE_NO_UPDATE_CHECK=1` turns it off without editing this file.
+    pub check: bool,
+    /// How this gwae was installed, when the automatic detection is wrong or
+    /// cannot tell. One of `install.sh`, `brew`, `cargo`, `cargo-git`,
+    /// `source`, `nix`, `system`, `windows`. Empty (the default) means
+    /// "detect it", which uses the installer's receipt when there is one and
+    /// the binary's path otherwise. `gwae doctor` prints what it decided and
+    /// whether it was a fact or a guess.
+    pub source: String,
+}
+
+impl Default for Update {
+    fn default() -> Self {
+        Update {
+            check: true,
+            source: String::new(),
+        }
+    }
+}
+
+impl Update {
+    /// The configured source, parsed. `None` means "detect", including when
+    /// the user wrote something unrecognized, which `gwae doctor` reports
+    /// rather than letting it silently pin the wrong route.
+    pub fn source(&self) -> Option<crate::update::Source> {
+        if self.source.trim().is_empty() {
+            return None;
+        }
+        match crate::update::Source::parse(&self.source) {
+            Some(s) => Some(s),
+            None => {
+                tracing::warn!(
+                    "unknown update.source {:?}; detecting instead. Valid: {}",
+                    self.source,
+                    crate::update::Source::NAMES.join(", ")
+                );
+                None
+            }
+        }
+    }
+
+    /// Whether `update.source` was written but not understood, for `doctor`.
+    pub fn bad_source(&self) -> Option<&str> {
+        let s = self.source.trim();
+        if s.is_empty() || crate::update::Source::parse(s).is_some() {
+            return None;
+        }
+        Some(s)
+    }
+
+    /// The install source actually in effect: the configured one, or what
+    /// detection makes of this machine.
+    ///
+    /// Resolved once at startup rather than at notice time so the background
+    /// check does not have to re-probe the filesystem to phrase its one line.
+    pub fn source_detected(&self) -> crate::update::Source {
+        crate::update::detect(&crate::update::probe(self.source()))
     }
 }
 

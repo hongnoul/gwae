@@ -47,7 +47,31 @@ cell_labels = true           # false leaves empty boxes a bare skeleton
 [cowsay]
 enabled = true               # false silences the hint cow in empty boxes
 # messages = ["your own message", "another one"]
+
+[update]
+check = true                 # daily "a new gwae is out" notice; false = silent
+source = ""                  # "" detects; or pin: install.sh, brew, cargo,
+                             # cargo-git, source, nix, system, windows
 ```
+
+## Staying up to date (`[update]`)
+
+gwae upgrades **the way it was installed, or not at all**: `gwae upgrade` runs
+the installer / `brew upgrade` / `cargo install` for routes it owns, and only
+*prints* the command for routes another package manager owns (Nix, AUR, a
+distro package, a checkout you built yourself).
+
+`check = true` asks GitHub once a day whether a newer release exists and shows a
+one-line notice naming the exact command for your machine. The request is an
+unauthenticated `HEAD` of the `releases/latest` redirect and carries nothing
+about you, your machine, or your version. `GWAE_NO_UPDATE_CHECK=1` turns it off
+from the environment, which beats this key.
+
+`source` is only needed when detection is wrong or cannot tell — `~/.local/bin`
+and `/usr/local/bin` are genuinely ambiguous. `gwae doctor` prints what it
+decided and whether that came from your config, the installer's receipt, or the
+binary's path. An unrecognized value is reported by `doctor` and ignored.
+Full reasoning: [`UPDATES.md`](UPDATES.md).
 
 ## What `gwae init` asks, and what it does not
 
@@ -116,6 +140,7 @@ gwae doctor:
   config file: parses [ok]
   theme: nord [ok]
   agent: claude [ok]
+  updates: brew (detected from path) · checks daily · latest is 1.0.1 · `gwae upgrade` -> brew upgrade gwae [ok]
   layout smoke: columns 4 -> 5 on default row [ok]
 ```
 

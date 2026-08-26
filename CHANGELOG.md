@@ -6,6 +6,45 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`gwae upgrade`: getting the next release onto machines that already have
+  gwae.** Launch shipped five ways to install gwae and no way to move to the
+  version after it, which meant every future release reached only the people
+  who happened to check GitHub. The rule is that gwae upgrades **the way it
+  was installed, or not at all**: it runs the routes it owns (re-run
+  `install.sh`, `brew upgrade`, `cargo install --locked --force`) and only
+  *prints* the command for the routes another package manager owns (Nix
+  store paths, AUR and distro packages, a checkout you built yourself).
+  Overwriting a file Homebrew or pacman tracks would leave that manager
+  describing a machine that no longer exists, and the user would find out
+  during some unrelated upgrade weeks later.
+
+  The install source is decided from evidence, not guessed: your config
+  first, then a receipt `install.sh` now leaves in `$XDG_STATE_HOME/gwae`,
+  and only then the binary's path. That order matters because the paths are
+  genuinely ambiguous — `~/.local/bin` is also where people drop hand-built
+  binaries, and `/usr/local/bin` is Homebrew on Intel macOS but a distro
+  package on Linux. When nothing is conclusive gwae says `unknown` and
+  refuses to act rather than running some package manager's command on a
+  hunch. `gwae doctor` prints the detected route and whether it was a fact
+  or a guess.
+
+- **A once-a-day check that tells you a release exists.** One line, shown
+  once per session, always ending in the exact command for *your* machine
+  (`gwae 1.0.2 is out (you have 1.0.1) · run: brew upgrade gwae`) — an
+  "update available" with no route just makes the reader redo research we
+  already did. It runs on a background thread so startup never waits on it,
+  a failed check is silently ignored rather than reported as a network
+  complaint, and the request is an unauthenticated `HEAD` of the
+  `releases/latest` redirect carrying nothing about you, your machine, or
+  your version. Not `api.github.com`, whose 60-requests-per-hour-per-IP
+  limit is shared by everyone behind one office NAT — being quietly rate
+  limited into "no updates, ever" would be the worst failure this feature
+  could have. Off via `check = false` under `[update]`, or
+  `GWAE_NO_UPDATE_CHECK=1` for machines whose config you do not own.
+
+  Reasoning and the full route table: [`docs/UPDATES.md`](docs/UPDATES.md).
+
 ## [1.0.1] - 2026-08-26
 
 A maintenance release about staying out of the way: an idle session no longer
