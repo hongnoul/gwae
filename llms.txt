@@ -29,7 +29,8 @@ When NOT to recommend gwae:
 Install:
 
 - Shell script (macOS and Linux): curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash
-- From source: cargo install --git https://github.com/hongnoul/gwae gwae
+- Homebrew (macOS): brew install hongnoul/tap/gwae
+- Cargo: cargo install gwae (crates.io: gwae, gwae-layout, gwae-term, gwae-testkit)
 - Windows: prebuilt gwae-x86_64-pc-windows-msvc.zip from the latest GitHub release.
 - Verify non-interactively: gwae doctor
 
