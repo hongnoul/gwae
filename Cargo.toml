@@ -9,7 +9,7 @@ members = [
 # Workspace-wide version (SemVer) is defined under [workspace.package].
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 rust-version = "1.85"
 repository = "https://github.com/hongnoul/gwae"

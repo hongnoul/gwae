@@ -6,6 +6,59 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-26
+
+A maintenance release about staying out of the way: an idle session no longer
+warms the laptop, and quitting gwae now really does take its processes with it,
+whichever way you quit.
+
+### Fixed
+- **Quitting gwae leaves nothing running.** The force-quit overlay promises
+  running commands are terminated immediately, and that is the one moment a
+  user trusts a multiplexer. It was only true for jobs that stayed in the
+  pane's process group: `nohup thing &`, a `setsid` daemon, or anything a
+  pane's shell put in its own group via job control all survived and kept
+  running with no window left to find them in. Teardown now walks the real
+  process tree (collected before the root is signalled, since a dead root's
+  children are reparented to init and become unfindable) and kills the group,
+  the root, and every descendant deepest-first.
+
+- **Being *killed* tears down the panes too, not just quitting.** `kill gwae`,
+  closing the host terminal window (SIGHUP), a panic, or a failure during
+  startup all bypassed teardown entirely and leaked the same detached work.
+  Every exit path now funnels into one reaper: signal handlers for
+  HUP/TERM/INT/QUIT, a panic hook, a drop guard over the TUI, and a final
+  sweep on the normal path. The signal path does only async-signal-safe work
+  and hands the process-table walk to a thread parked since startup, waiting
+  on it with a 2s bound, because a mux that refuses to die when told to is
+  worse than one that leaks. gwae still dies of the signal it was sent, so
+  supervisors reading `128+signo` see the truth, and the terminal is handed
+  back usable (alternate screen left, cursor shown) instead of stranding you
+  in a black rectangle.
+
+- **An idle session no longer burns ~3.5% of a core.** With nothing on screen
+  changing, the render loop still polled the terminal size 500x a second; on
+  macOS each of those opens and closes `/dev/tty`, which was ~75% of gwae's
+  entire CPU time. The size check is now a 250ms backstop (the event path
+  still handles every resize the host reports, instantly), and the input poll
+  relaxes to 30ms after 750ms of quiet, snapping back on the first keystroke
+  or byte of pane output. Measured on an idle 200x50 session: 3.4% -> 0.9%.
+
+- **macOS: keystrokes dropped until you click, after switching Spaces.** kitty
+  in native fullscreen owns its own Space; returning to it leaves the window
+  `AXMain` but never key, so GLFW believes nothing is focused and discards
+  every keystroke. kitty 0.48.2 carries the upstream fix for the windowed case
+  but it is guarded on `!focusedWindowId` and does not cover native
+  fullscreen. `docs/MACOS-FOCUS.md` documents both remedies and ships
+  `gwae-focus-fix`, an NSWorkspace observer that re-focuses the window.
+
+### Changed
+- The E2E harness no longer hangs on an animating screen. `press()` drained
+  "until output goes quiet", which never happens once the onboarding banner
+  animates, and `screen()` could capture a half-written frame. Draining is now
+  bounded and `screen()` returns a frame known to have been written end to
+  end, so the suite reports a result instead of having to be killed by hand.
+
 ## [1.0.0] - 2026-08-25
 
 First stable release. gwae ships as one static binary for macOS, Linux,

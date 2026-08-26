@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "gwae"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "clap",
  "crossterm",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "gwae-layout"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "proptest",
  "serde",
@@ -286,14 +286,14 @@ dependencies = [
 
 [[package]]
 name = "gwae-term"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "vt100",
 ]
 
 [[package]]
 name = "gwae-testkit"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "gwae-term",
 ]
