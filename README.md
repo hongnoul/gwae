@@ -9,9 +9,11 @@
 [![CI](https://github.com/hongnoul/gwae/actions/workflows/ci.yml/badge.svg)](https://github.com/hongnoul/gwae/actions/workflows/ci.yml)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square)](https://github.com/hongnoul/gwae/releases)
 
-**niri's scrolling tiling, for your CLI agents, in any terminal (Windows, MacOS)**
 
-A terminal-native, daemon-free multiplexer for people who live in concurrent CLI agents.
+
+**A terminal-native, daemon-free multiplexer for people who live in concurrent CLI agents.**
+
+Invest early in niri's scrolling tiling, for your CLI agents, in any terminal (Windows, MacOS)
 
 An infinite 2D grid of strips where panes never shrink.
 
