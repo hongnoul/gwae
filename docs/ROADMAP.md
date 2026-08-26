@@ -2,35 +2,39 @@
 
 Milestones are demo-driven: each ends in something you can show as a gif.
 
-## M0 - Skeleton and spike (1-2 weeks)
+## M0 - Skeleton and spike — DONE (shipped in v1.0.0)
 Kill the biggest risk first: prove the render path.
 - [x] Cargo workspace scaffold, CI green on macOS + Linux
-- [ ] Spike: one process, two PTY panes, custom cell-buffer renderer
-- [ ] Horizontal scroll with full repaints, measure frame time at 300x80
-- [ ] Prototype the emulator crate behind `TermGrid`; decide ADR-004
+- [x] Spike: one process, two PTY panes, custom cell-buffer renderer
+- [x] Horizontal scroll with full repaints, measure frame time at 300x80
+- [x] Prototype the emulator crate behind `TermGrid`; decide ADR-004
 - **Exit**: vim usable in a cropped pane while scrolling; repaint < 4ms
 
-## M1 - The 2D strip grid (2-3 weeks)
-- [ ] Layout core (done in scaffold: rows/columns/panes + verbs + scroll)
-- [ ] First row as a niri strip: new-column, split, focus+follow, cycle-width, consume/expel
-- [ ] Infinite rows; status bar with a 2D minimap
-- [ ] `$mod` = `⌥+hjkl` (Option key on macOS, Alt elsewhere) focus / `⌥+Shift+hjkl` move
+## M1 - The 2D strip grid — DONE (shipped in v1.0.0)
+- [x] Layout core (done in scaffold: rows/columns/panes + verbs + scroll)
+- [x] First row as a niri strip: new-column, split, focus+follow, cycle-width, consume/expel
+- [x] Infinite rows; status bar with a 2D minimap
+- [x] `$mod` = `⌥+hjkl` (Option key on macOS, Alt elsewhere) focus / `⌥+Shift+hjkl` move
 - **Exit**: dogfood one daily agent session in a row
 
-## M2 - Agent-first ergonomics (3-4 weeks) <- make-or-break
-- [ ] Agent launcher + `⌥+a` / `;` default-harness spawn
-- [ ] **OSC 133 status**: minimap dots + status tick
-- [ ] **Smart-jump** `⌥+g`; fuzzy text summon (**key TBD** — `⌥+f` is toggle-full-width)
-- [ ] Pane headers with resume hints; TOML config; layout property tests
-- **Exit**: dogfood daily Claude Code + Jcode sessions
+## M2 - Agent-first ergonomics — DONE (shipped in v1.0.0) <- was make-or-break
+- [x] Agent launcher + `⌥+a` / `;` default-harness spawn
+- [x] **OSC 133 status**: minimap dots + status tick
+- [x] **Smart-jump** `⌥+g`
+- [ ] Fuzzy text summon (**key TBD** — `⌥+f` is toggle-full-width) — deferred to M5
+- [x] Pane headers with resume hints; TOML config; layout property tests
+- **Exit**: dogfood daily Claude Code + Jcode sessions — ongoing, this is the launch gate
 
-## M3 - Comfortable daily driver (3-4 weeks)
-Copy mode, scrollback search, bracketed paste/focus/bell passthrough, scroll
-animation, Windows ConPTY verification.
+## M3 - Comfortable daily driver (in progress)
+- [x] Scrollback (`⌥+↑/↓`), drag-select copy, kitty graphics passthrough
+- [ ] Scrollback search
+- [ ] `⌥+y` yank (pane/turn, text or image) — spec below
+- [ ] Scroll animation
+- [ ] Windows ConPTY runtime verification (builds today, unverified at runtime)
 
-## M4 - Polish and launch (2-3 weeks)
+## M4 - Polish and launch — DONE (v1.0.0/v1.0.1)
 Themes/truecolor, VHS gifs, docs, Homebrew tap + AUR + nix + winget, prebuilt
-binaries, `gwae setup`. **Exit**: v0.1.0 installable in one command.
+binaries, `gwae setup`. **Exit**: v1.0.1 installable in one command (install.sh, Homebrew tap, AUR, crates.io; winget pending).
 
 ## M5 - Post-launch differentiation (ongoing)
 Overview zoom, per-command pane rules, deeper PTY-compliant agent integration,
