@@ -211,7 +211,11 @@ impl Session {
             n => {
                 // Quiet: the last clear starts a frame that finished arriving.
                 // Still painting: that frame is partial, so use the one before.
-                let start = if self.drained { n - 1 } else { n.saturating_sub(2) };
+                let start = if self.drained {
+                    n - 1
+                } else {
+                    n.saturating_sub(2)
+                };
                 let end = if self.drained {
                     self.buf.len()
                 } else {
