@@ -21,7 +21,7 @@ An infinite 2D grid of strips where panes never shrink.
 
 Demo use case - learning solid state chemistry ([btm](https://github.com/ClementTsang/bottom) for tiling/paint showcase; setup is not ideal for actual study)
 
-**NOT SPED UP: You could be much faster with practice!**
+**NOT SPED UP: You could be much faster than demo**
 
 </div>
 
