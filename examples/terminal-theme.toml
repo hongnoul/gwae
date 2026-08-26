@@ -1,0 +1,7 @@
+# Inherit the host terminal's ANSI 0-15 palette instead of a preset,
+# with one accent override. Colors accept a 256-color index (235),
+# hex RGB ("#1e1e2e"), or "default".
+
+[theme]
+preset = "terminal"      # alias: "ansi"
+accent = "#74c7ec"       # focused-pane frame color

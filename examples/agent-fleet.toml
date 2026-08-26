@@ -1,0 +1,19 @@
+# gwae config for a fleet of CLI agents.
+# Four quarter-width columns at launch, minimap on, agent gateway
+# defaulting to Claude Code. `⌥+;` opens a new agent column.
+
+startup_panes = 4
+default_column_width = "quarter"
+default_agent = "claude"
+agents = ["claude", "jcode", "codex"]   # names offered by the agent selector
+theme = "catppuccin-mocha"
+scroll_margin = 2
+input_poll_ms = 1                        # recommended; setup applies this silently
+
+[minimap]
+show = true
+mode = "overlay"     # bottom-right corner minimap, tinted by OSC 133 agent status
+                     # (other values: "off" = hold ⌥ to reveal, "edge_ticks" = frame ticks)
+max_width = 32
+max_rows = 6
+show_counts = true

@@ -1,0 +1,7 @@
+# Fewer, wider agents: half-width columns and a centered focus.
+# `⌥+r` still cycles 1/3 -> 1/2 -> 1/4 per column at runtime.
+
+startup_panes = 2
+default_column_width = "half"
+center_focus = true
+theme = "gruvbox"

@@ -1,0 +1,5 @@
+# The smallest useful gwae config.
+# Everything not set here falls back to the documented defaults.
+
+theme = "tokyo-night"
+default_agent = "claude"
