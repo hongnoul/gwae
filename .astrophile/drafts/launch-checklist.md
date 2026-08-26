@@ -22,11 +22,9 @@ Sequenced: each step feeds the next. Snapshot before and after every step
       saved via cargo login.
 - [x] niri Discussions thread posted 2026-08-25:
       https://github.com/niri-wm/niri/discussions/4473 (Show and tell). ANSWER EVERY REPLY.
-- [ ] AUR package publish — STILL BLOCKED: needs the AUR account password for
-      hongnoul (account exists, maintains hwatu). New SSH key generated at
-      ~/.ssh/id_ed25519.pub; log in at aur.archlinux.org -> My Account -> paste key,
-      then run the hwatu aur-publish.sh pattern against packaging/aur/PKGBUILD
-      (gwae-bin). Username is prefilled on the open Safari tab.
+- [x] AUR published 2026-08-25: gwae-bin 1.0.0 live (per-arch sources for
+      x86_64 + aarch64, provides/conflicts gwae, checksums verified against
+      release assets). https://aur.archlinux.org/packages/gwae-bin
 
 ## GATE: do not launch until Roadmap M2 exit
 Daily dogfood of Claude Code + Jcode inside gwae; Alt+a / Alt+g / Alt+f live.
