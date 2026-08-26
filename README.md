@@ -19,7 +19,7 @@
 
 <img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
 
-Demo use case - learning solid state chemistry ([btm](https://github.com/ClementTsang/bottom) for tiling/paint showcase; setup is not ideal for actual study)
+Demo use case - learning solid state chemistry ([btm](https://github.com/ClementTsang/bottom) for tiling/paint showcase)
 
 **NOT SPED UP: You could be much faster than demo**
 
