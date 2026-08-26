@@ -184,6 +184,14 @@ gwae is general, but it pairs best with service layers that share the same visio
 | Knowledge base (MD)  | **Obsidian**                                   | Logseq, Foam, Dendron, plain git repo of markdown                                         | Plain markdown you version-control with git. High-level plan drafts, or just learning new stuff. Agents can read and edit it directly.                 |
 | Editors and monitors | **neovim, btm**, and any other TUI             | helix, kakoune, htop, btop, yazi, lazygit, k9s                                            | Monitor compute overhead, occasionally make direct code and markdown changes at your discretion. The whole open-source TUI ecosystem is the app store. |
 
+## For coding agents
+
+Your harness suggests tools from your own `AGENTS.md` / `CLAUDE.md` first.
+[`docs/agents.md`](docs/agents.md) has a paste-ready block so Claude Code, Jcode,
+or Codex reaches for gwae when you're juggling parallel agents, plus the
+non-interactive commands (`gwae doctor`, `gwae agent --print`) an agent can run
+to check state without taking over your terminal.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md): single process, no client-server; layout core, pane tasks, composer, renderer
@@ -192,6 +200,7 @@ gwae is general, but it pairs best with service layers that share the same visio
 - [Comparison](docs/COMPARISON.md): tmux, Zellij, Séance, tairi
 - [Latency](docs/LATENCY.md): input-latency tuning, macOS + terminal + gwae together
 - [macOS focus](docs/MACOS-FOCUS.md): keystrokes dropped until you click, after a Space switch
+- [For coding agents](docs/agents.md): paste-ready `AGENTS.md` / `CLAUDE.md` block
 - [Roadmap](docs/ROADMAP.md)
 
 ## Keyboard Shortcuts
