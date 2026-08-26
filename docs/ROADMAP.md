@@ -40,52 +40,19 @@ binaries, `gwae setup`. **Exit**: v1.0.1 installable in one command (install.sh,
 Overview zoom, per-command pane rules, deeper PTY-compliant agent integration,
 community presets.
 
-### Yank: `⌥+y` pane/turn capture to clipboard (planned, M3/M5)
+### Yank: pane/turn capture to clipboard — superseded by `⌥+c`/`⌥+v`
 
-Drag-select already copies an arbitrary rectangle (`select.rs`). The gap is the
-two scopes a user actually asks for by name: *this whole pane* and *this one
-turn* — and copying either as an **image**, not just text.
+This landed as a copy/paste *pair* on the keys every platform already uses,
+not as a lone `⌥+y`. `⌥+y` survives as an alias so the muscle memory this
+entry assumed still works. Shipped: bracketed paste correctness, `⌥+v`
+(with a large-paste confirmation), and `⌥+c` at selection or visible-pane
+scope. Still open: turn scope (needs OSC 133 prompt *positions*, not just
+status), whole-scrollback scope (needs a row-range accessor in `gwae-term`),
+and the image variants.
 
-**Binding.** One chord, `⌥+y`, not four. It copies **text immediately** using a
-context-chosen scope, then leaves a short-lived overlay that can amend the
-choice. Scope precedence:
+See [docs/COPY-PASTE.md](COPY-PASTE.md) for the design, what shipped, and
+the remaining enabling work in dependency order.
 
-1. live drag-selection in the focused pane → the selection;
-2. else pane has OSC 133 marks → the current turn;
-3. else → the full pane, top of scrollback to last line.
-
-The toast reports what happened and advertises the rest, e.g.
-`copied turn · 38 lines    p pane  s sel  ⇧ image`. Within `NOTE_LINGER`,
-`p`/`t`/`s` re-yank at that scope and Shift makes it a PNG; anything else or the
-timeout commits. Amending is safe because the clipboard is a scratch register —
-unlike `⌥+q`, there is nothing to undo. `⌥+y y` repeats the last yank. Panes
-without shell integration degrade loudly: `copied pane · no shell marks`.
-
-**Enabling work, in dependency order.**
-
-1. *Scrollback text API* in `gwae-term`: `TermGrid` exposes only the visible
-   screen plus `scrollback_offset`, so "top of session" is currently
-   unreachable. Needs a row-range accessor over the vt100 scrollback.
-2. *Prompt marks*: `tui.rs` keeps OSC 133 **status** (`saw_osc133`) but not
-   positions. Store per-pane `PromptMark { abs_row, exit }`, fixed up as rows
-   scroll out, to delimit a turn.
-3. *Image encoder* (`shot.rs`): cells → RGBA via the `theme.rs` palette and an
-   embedded mono font, out as PNG, so a shot looks like the pane.
-4. *Image clipboard*: macOS `osascript` «class PNGf», Wayland `wl-copy -t
-   image/png`, X11 `xclip -t image/png`, Windows `Set-Clipboard -Path`. No OSC
-   52 equivalent exists, so over SSH write a file and toast the path.
-
-**Phasing.** P1 `⌥+y` with pane+selection text only (needs 1). P2 turn scope
-(needs 2) — one agent turn is the natural unit to paste elsewhere. P3 the image
-variants (needs 3-4), behind an `image_clipboard` config key.
-
-**Invariant to preserve.** `binds.rs` is the single source of truth and its test
-feeds every entry through the real `handle_key`. A menu's second keystroke is
-not expressible in today's `Effect`, so this needs `Effect::Menu(&[MenuItem])`
-plus a test that presses `⌥+y` then each item key and asserts the resulting
-`Cmd::Yank { scope, payload }`. Without that, the cheat-sheet and cowsay hints
-could drift from the dispatcher — the exact failure that module exists to
-prevent.
 
 ## M6 - Stability to 1.0
 Layout spec frozen, fuzz the emulator, 1.0 after 6 months of dogfooding and no

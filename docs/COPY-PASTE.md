@@ -143,13 +143,50 @@ exists, so over SSH write a file and toast the path.
 
 ## Sequencing
 
-| Phase | Ships | Depends on | Why here |
+| Phase | Ships | Depends on | Status |
 |---|---|---|---|
-| P0 | bracketed paste in/out, chunking, sanitizing | — | Correctness bug; silently corrupts agent prompts today |
-| P1 | `⌥+v` with the large-paste confirm | P0 | Makes paste a gwae verb, not a host accident |
-| P2 | `⌥+c` selection + pane scope | P0, scrollback API | Keyboard copy without a mouse |
-| P3 | turn scope, `⌥+y` alias, `Effect::Menu` | P2, prompt marks | The scope agents make people want |
-| P4 | image copy | P3, encoder | Nice-to-have, gated by config |
+| P0 | bracketed paste in/out, chunking, sanitizing | — | **done** |
+| P1 | `⌥+v` with the large-paste confirm | P0 | **done** |
+| P2 | `⌥+c` selection + pane scope | P0 | **done** (visible pane; scrollback below) |
+| P3 | turn scope, `⌥+y` alias, `Effect::Menu` | P2, prompt marks | alias done; turn scope open |
+| P4 | image copy | P3, encoder | open |
+
+### What P0-P2 actually shipped
+
+* `select.rs` owns the encoding: `paste_bytes(text, bracketed)` normalizes
+  newlines to `\r`, strips embedded `ESC[200~`/`ESC[201~`, and brackets only
+  when the *child* asked. `read_clipboard()` mirrors `copy_to_clipboard`.
+* `gwae-term` exposes `wants_bracketed_paste()` over vt100's DECSET 2004.
+* `tui.rs` enables bracketed paste at startup and disables it in all three
+  teardown paths; `reap.rs` adds `\x1b[?2004l` to the signal-safe restore.
+  `write_paste` is the single delivery path, chunked at 4 KiB.
+* `⌥+c` / `⌥+y` copy, `⌥+v` pastes, both on the Meta and the macOS glyph
+  route (`ç`, `√`). `binds.rs` carries them, so the cheat-sheet, the cowsay
+  hints, and the README table are generated and cross-checked as usual.
+
+### What is still open
+
+* **Scrollback scope.** `⌥+c` with no selection copies the *visible* pane.
+  "Top of session" still needs the row-range accessor over vt100's
+  scrollback described below; until then the toast is honest about taking
+  what is on screen.
+* **Turn scope**, which needs prompt marks (item 2 below). This is the one
+  that earns the feature for agent work, and it is the natural next step.
+* **Image copy**, unchanged from P4.
+
+## Remaining enabling work
+
+1. *Scrollback text API* in `gwae-term`: `TermGrid` exposes only the visible
+   screen plus `scrollback_offset`, so "top of session" is unreachable.
+   Needs a row-range accessor over the vt100 scrollback.
+2. *Prompt marks*: `tui.rs` keeps OSC 133 **status** (`saw_osc133`) but not
+   positions. Store per-pane `PromptMark { abs_row, exit }`, fixed up as rows
+   scroll out, to delimit a turn.
+3. *`Effect::Menu`*: the second keystroke of an amendable toast is not
+   expressible in today's `Effect`, and `binds.rs` is load-bearing. Add
+   `Effect::Menu(&[MenuItem])` plus a test that presses `⌥+c` then each item
+   key and asserts the resulting `Cmd::Copy { scope }`.
+4. *Image encoder* (`shot.rs`) and *image clipboard*, as in P4 above.
 
 ## Invariants
 
