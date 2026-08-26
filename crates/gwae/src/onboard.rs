@@ -249,6 +249,26 @@ pub fn questions() -> Vec<Question> {
             swatch: false,
             keep_existing: false,
         },
+        Question {
+            key: "cell_labels",
+            prompt: "Address labels in empty boxes",
+            help: "The big `strip.pane` identifier drawn in placeholder boxes.",
+            options: vec![
+                Opt {
+                    label: "on",
+                    value: "true",
+                    blurb: "show which cell each empty box is (default)",
+                },
+                Opt {
+                    label: "off",
+                    value: "false",
+                    blurb: "empty boxes stay bare",
+                },
+            ],
+            default: 0,
+            swatch: false,
+            keep_existing: false,
+        },
     ]
 }
 
@@ -295,6 +315,32 @@ fn toml_eq(option_value: &str, current: &toml::Value) -> bool {
     }
 }
 
+/// The cowsay question, asked separately because it writes into a `[cowsay]`
+/// table rather than a top-level key.
+pub fn cowsay_question() -> Question {
+    Question {
+        key: "cowsay.enabled",
+        prompt: "Keybinding hints in empty boxes",
+        help:
+            "A cow reciting one real binding per empty box: the cheat-sheet you read by accident.",
+        options: vec![
+            Opt {
+                label: "on",
+                value: "true",
+                blurb: "learn the bindings while the grid is still empty (default)",
+            },
+            Opt {
+                label: "off",
+                value: "false",
+                blurb: "empty boxes stay quiet",
+            },
+        ],
+        default: 0,
+        swatch: false,
+        keep_existing: false,
+    }
+}
+
 /// The key of the one question that is not a config setting.
 ///
 /// Answering `true` installs [`crate::install::TOOL`] on the machine. It is
@@ -315,7 +361,9 @@ pub fn all_questions() -> Vec<Question> {
 /// what happens to be installed on the one running them.
 pub fn all_questions_for(f: crate::install::Facts) -> Vec<Question> {
     let _ = f;
-    questions()
+    let mut qs = questions();
+    qs.push(cowsay_question());
+    qs
 }
 
 /// One keystroke, already decoded from whatever the terminal sent.

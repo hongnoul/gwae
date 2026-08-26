@@ -39,10 +39,10 @@ max_width = 32
 max_rows = 6
 show_counts = true
 
-cell_labels = false          # true brings back the big `strip.pane` labels
+cell_labels = true           # false leaves empty boxes a bare skeleton
 
 [cowsay]
-enabled = false              # true draws the hint cow in empty boxes
+enabled = true               # false silences the hint cow in empty boxes
 # messages = ["your own message", "another one"]
 ```
 
@@ -53,8 +53,7 @@ on, `←`/`h`/`⌫` goes back, a digit selects without Enter, `s` skips a questi
 and `esc` takes the defaults for the rest. It ends on a summary screen listing
 every setting and the file it landed in, where only `⏎` (leave) and `⌫` (back
 to the last question) do anything. It asks about `theme`,
-`startup_panes`, `default_column_width`, `center_focus`, `content_width`,
-`cell_labels` and `cowsay.enabled`, then offers to install `btm`.
+`default_column_width`, `center_focus`, `cell_labels` and `cowsay.enabled`.
 
 Everything else here is hand-edit only, deliberately:
 
@@ -163,8 +162,8 @@ and a config file that is not being applied at all points at the syntax error:
 | `minimap.max_width` | integer | `32` | Maximum width of the minimap. Used for `overlay` and the centered minimap while holding `⌥`/Alt. |
 | `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown. Used for `overlay` and the centered minimap while holding `⌥`/Alt. |
 | `minimap.show_counts` | bool | `true` | Summary tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts skipped), above the map. |
-| `cowsay.enabled` | bool | `false` | Draw a small cowsay under the block-font identifier in empty placeholder boxes, so an empty grid documents itself. Off by default: empty boxes ship as a bare skeleton. The cow is skipped when the box is too small for it to fit whole (under 23 cells wide, or too short for label + art), so the identifier is never crowded out. |
-| `cell_labels` | bool | `false` | Draw the big block-font `strip.pane` identifier in empty placeholder boxes. Off by default; set `true` to bring the address labels back. |
+| `cowsay.enabled` | bool | `true` | Draw a small cowsay under the block-font identifier in empty placeholder boxes, so an empty grid documents itself. On by default: an empty grid documents itself; set `false` for a bare skeleton. The cow is skipped when the box is too small for it to fit whole (under 23 cells wide, or too short for label + art), so the identifier is never crowded out. |
+| `cell_labels` | bool | `true` | Draw the big block-font `strip.pane` identifier in empty placeholder boxes. On by default; set `false` for a bare skeleton. |
 | `cowsay.messages` | array of strings | keybinding hints (OS-aware: `⌥+g` on macOS, `Alt+g` elsewhere) | The pool each empty box draws its line from. Which box says what is chosen by hashing the cell's position, never randomly, so a given box always says the same thing and idle gwae does not repaint. An empty list disables the cow just like `enabled = false`. |
 
 Generated from the config structs' doc comments; keep this file in sync when the

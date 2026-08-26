@@ -233,13 +233,13 @@ fn the_pinned_hint_follows_the_layout() {
 }
 
 #[test]
-fn default_config_keeps_the_grid_bare() {
-    // The shipped default is a bare skeleton: `cowsay.enabled` is false, so
-    // no cow appears without opting in.
+fn default_config_shows_the_cow() {
+    // The shipped default has `cowsay.enabled = true`, so an empty grid
+    // teaches a real binding without anyone editing a config file.
     let painted = paint(NO_CHROME, 120, 30);
     assert!(
-        !painted.contains("^__^"),
-        "default config painted a cow; it is opt-in"
+        painted.contains("^__^"),
+        "default config painted no cow; it ships on"
     );
 }
 

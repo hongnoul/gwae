@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">gwae, niri's scrolling tiling for CLI agents in any terminal</title>
+  <desc id="desc">The official gwae mark beside a concise product description, over a strip-grid motif where panes never shrink.</desc>
+  <rect width="1200" height="630" fill="#ffffff"/>
+
+  <!-- strip-grid motif: fixed-width columns running past the right edge -->
+  <g fill="none" stroke="#111111" stroke-width="2" opacity="0.14">
+    <rect x="428" y="486" width="150" height="96"/>
+    <rect x="590" y="486" width="150" height="96"/>
+    <rect x="752" y="486" width="150" height="96"/>
+    <rect x="914" y="486" width="150" height="96"/>
+    <rect x="1076" y="486" width="150" height="96"/>
+  </g>
+  <g fill="#111111" opacity="0.5">
+    <circle cx="443" cy="501" r="5"/>
+    <circle cx="605" cy="501" r="5"/>
+    <circle cx="767" cy="501" r="5"/>
+  </g>
+
+  <image href="gwae.svg" xlink:href="gwae.svg" x="86" y="150" width="282" height="282" preserveAspectRatio="xMidYMid meet"/>
+
+  <g font-family="'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace" fill="#111111">
+    <text x="424" y="176" font-size="92" font-weight="800" letter-spacing="-5">gwae</text>
+    <text x="428" y="240" font-size="27" font-weight="600">niri's scrolling tiling for your CLI agents</text>
+    <text x="428" y="278" font-size="27" font-weight="600">in any terminal</text>
+
+    <line x1="428" y1="322" x2="1128" y2="322" stroke="#111111" stroke-width="2"/>
+
+    <text x="428" y="382" font-size="30" font-weight="700">panes never shrink</text>
+    <text x="428" y="428" font-size="30" font-weight="700">no daemon, one process</text>
+    <text x="428" y="474" font-size="30" font-weight="700">macOS · Linux · Windows</text>
+
+    <text x="428" y="612" font-size="22" font-weight="500">github.com/hongnoul/gwae</text>
+  </g>
+</svg>

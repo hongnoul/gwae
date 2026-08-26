@@ -79,8 +79,8 @@ pub struct Config {
     /// identifier.
     pub cowsay: Cowsay,
     /// Draw the big `strip.pane` identifier in empty placeholder boxes.
-    /// Default `false`: empty boxes stay a bare skeleton. Set to `true` to
-    /// bring the address labels back.
+    /// Default `true`: an empty box says which cell it is. Set to `false` for
+    /// a bare skeleton.
     pub cell_labels: bool,
     /// Milliseconds to wait in `event::poll` before checking PTY output and
     /// repainting. Lower values reduce perceived typing and backspace latency
@@ -110,7 +110,7 @@ impl Default for Config {
             skeleton_color: None,
             minimap: Minimap::default(),
             cowsay: Cowsay::default(),
-            cell_labels: false,
+            cell_labels: true,
             input_poll_ms: default_input_poll_ms(),
         }
     }
@@ -301,8 +301,8 @@ impl<'de> Deserialize<'de> for MinimapMode {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Cowsay {
-    /// Draw the cow at all. Off by default; the hint list below is still
-    /// populated so `enabled = true` alone restores the cheat-sheet.
+    /// Draw the cow at all. On by default: the hints are the cheat-sheet you
+    /// read by accident. Set `enabled = false` for quiet empty boxes.
     pub enabled: bool,
     /// The pool of messages. Each empty box picks one by position. An empty
     /// list disables the cow just like `enabled = false`.
@@ -317,7 +317,7 @@ impl Default for Cowsay {
         // teaches a key that does nothing or a glyph the user's keyboard
         // doesn't have.
         Cowsay {
-            enabled: false,
+            enabled: true,
             messages: crate::binds::cowsay_hints(),
         }
     }
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn cowsay_defaults_to_keybinding_hints() {
         let cfg = parse("");
-        assert!(!cfg.cowsay.enabled, "cow off by default");
+        assert!(cfg.cowsay.enabled, "cow on by default");
         assert!(
             !cfg.cowsay.messages.is_empty(),
             "default messages must exist or the cow never draws"
