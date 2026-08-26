@@ -13,7 +13,7 @@
 
 **most tactile terminal-native multiplexer for agent orchestration**
 
-infinite scrolling tiling, for your CLI agents, in any terminal (Windows, MacOS)
+**infinite scrolling tiling over parallel CLI agents, OS-agnostic (Windows, MacOS, Linux)**
 
 [Website](https://hongnoul.github.io/gwae/) · [Install](#install) · [Quick Start](#quick-start) · [Keyboard Shortcuts](#keyboard-shortcuts) · [FAQ](#faq) · [Docs](docs/)
 
