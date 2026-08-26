@@ -90,6 +90,32 @@ fn capture(
     rows: u16,
     done: impl Fn(&str) -> bool,
 ) -> String {
+    capture_inner(sb, args, cols, rows, done, false)
+}
+
+/// Same, but dismiss gwae's startup cheat-sheet HUD (⌥+/) as soon as the host
+/// has painted anything. The HUD is drawn *centered over* the grid and the
+/// cells beneath it are never emitted, so a card animating in a pane under it
+/// can be invisible on the outer terminal. Every in-pane assertion wants the
+/// pane itself, not the overlay.
+fn capture_no_hud(
+    sb: &Sandbox,
+    args: &[&str],
+    cols: u16,
+    rows: u16,
+    done: impl Fn(&str) -> bool,
+) -> String {
+    capture_inner(sb, args, cols, rows, done, true)
+}
+
+fn capture_inner(
+    sb: &Sandbox,
+    args: &[&str],
+    cols: u16,
+    rows: u16,
+    done: impl Fn(&str) -> bool,
+    dismiss_hud: bool,
+) -> String {
     let pty = native_pty_system();
     let pair = pty
         .openpty(PtySize {
@@ -108,6 +134,7 @@ fn capture(
     let mut child = pair.slave.spawn_command(cmd).expect("spawn gwae");
     drop(pair.slave);
 
+    let mut writer = pair.master.take_writer().expect("writer");
     let mut reader = pair.master.try_clone_reader().expect("reader");
     let (tx, rx) = channel::<Vec<u8>>();
     std::thread::spawn(move || {
@@ -125,8 +152,14 @@ fn capture(
     });
 
     let mut out = Vec::new();
+    let mut hud_dismissed = !dismiss_hud;
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
+        if !hud_dismissed && !out.is_empty() {
+            let _ = writer.write_all(b"\x1b/");
+            let _ = writer.flush();
+            hud_dismissed = true;
+        }
         if done(&String::from_utf8_lossy(&out)) {
             break;
         }
@@ -253,7 +286,7 @@ fn the_card_renders_inside_a_gwae_pane() {
     // enough (see `narrow_panes_fall_back_to_the_plain_word`).
     let sb = Sandbox::new("[minimap]\nshow = false\nmode = \"off\"\n");
     let inner = format!("{} init", env!("CARGO_BIN_EXE_gwae"));
-    let out = capture(&sb, &["run", &inner], 200, 50, |s| {
+    let out = capture_no_hud(&sb, &["run", &inner], 200, 50, |s| {
         let p = strip_ansi(s);
         p.matches(INK).count() > 40 && p.contains("catppuccin-mocha")
     });
@@ -284,7 +317,7 @@ fn narrow_panes_fall_back_to_the_plain_word() {
     // is genuinely too narrow for it.
     let sb = Sandbox::new("[minimap]\nshow = false\nmode = \"off\"\n");
     let inner = format!("{} init", env!("CARGO_BIN_EXE_gwae"));
-    let out = capture(&sb, &["run", &inner], 48, 30, |s| {
+    let out = capture_no_hud(&sb, &["run", &inner], 48, 30, |s| {
         strip_ansi(s).contains("catppuccin-mocha")
     });
     let plain = strip_ansi(&out);
