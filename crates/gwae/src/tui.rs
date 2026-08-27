@@ -1189,11 +1189,39 @@ fn render_frame(
             // The right frame sits *on* the shared boundary with the next
             // column (clamped to the last on-screen cell), so two adjacent
             // boxes contribute to the same rule instead of two.
-            let right = (ex.min(cols as i32 - 1)) as u16;
-            if right <= left {
+            let right_init = (ex.min(cols as i32 - 1)) as u16;
+            if right_init <= left {
                 continue;
             }
             let placeholder = ci >= live;
+            // Keep frames consistent with pane cull/peek: a clipped non-focused
+            // column narrower than MIN is culled unless it is the immediate
+            // neighbour of focus where it becomes a 3-cell peek.
+            let right = if placeholder {
+                right_init
+            } else {
+                let box_full = (ex - sx) as u32;
+                let box_raw = (right_init as i32 - left as i32 + 1) as u32;
+                let clipped = box_raw < box_full;
+                let content_raw = box_raw.saturating_sub(1);
+                let is_focused_col = ci == layout.focus.column;
+                if clipped && !is_focused_col && content_raw < MIN_VISIBLE_PANE_WIDTH as u32 {
+                    let is_neighbor =
+                        ci == layout.focus.column.saturating_add(1)
+                            || (layout.focus.column > 0 && ci + 1 == layout.focus.column);
+                    if is_neighbor {
+                        let peek_box = PEEK_SLIVER_WIDTH as u32 + 1;
+                        left.saturating_add(peek_box as u16 - 1).min(cols.saturating_sub(1))
+                    } else {
+                        continue;
+                    }
+                } else {
+                    right_init
+                }
+            };
+            if right <= left {
+                continue;
+            }
             let (color, prio) = if ci == layout.focus.column && (!focused_col_split || placeholder)
             {
                 (focus_color, P_FOCUS_COL)
