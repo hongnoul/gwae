@@ -188,3 +188,27 @@ curl -sL https://hongnoul.github.io/gwae/ | grep -o 'twitter:card" content="[a-z
 Still worth doing before a launch post: run the URL through X's Card Validator
 and Facebook's Sharing Debugger to warm their caches, since both cache
 aggressively and a stale pre-launch miss can persist.
+
+---
+
+## Correction: the demo GIF re-encode is not frame-identical
+
+Commit `9290703`'s message says "Same 30 s footage, same frames." The second
+half is wrong and the record should not stand uncorrected.
+
+Measured with `gifsicle --info`:
+
+| | frames | delay | total |
+|---|---|---|---|
+| before | 360 | 0.08s / 0.09s | 30.00s |
+| after | 295 | 0.10s | 30.00s |
+
+The re-encode passed `fps=10` to ffmpeg, resampling 12.5 fps to 10 fps. Total
+playback duration is genuinely unchanged at 30.00s and no content was trimmed,
+but 65 frames were dropped, so motion is slightly less smooth. That is the
+actual trade, and it was worth stating plainly rather than implying the frames
+survived untouched.
+
+Also verified on the committed asset: 900x582, 2,100,048 bytes (2.00 MB),
+`loop forever` preserved (a dropped Netscape loop block would leave the hero
+image frozen on its last frame after one play).
