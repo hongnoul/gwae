@@ -879,7 +879,18 @@ fn focused_pane_views_with_chrome(
         // Never peek for the focused column itself.
         let is_focused_col = ci == focused;
         let full_w = (ce - cs) as u16;
-        let (wv, peek_col) = if !is_focused_col && raw_wv < full_w && raw_wv < MIN_VISIBLE_PANE_WIDTH {
+        // Unclamped logical width for overflow detection: rightmost columns
+        // extend past the viewport and ce is already clamped, so raw==full
+        // would hide the squish. Compare against the true column width.
+        let full_unclamped = (e - cs).max(0) as u16;
+        // Only treat as squish if the column would normally be at least MIN
+        // wide; tiny viewports where even a fully visible pane is <10 must not
+        // be demoted to a peek.
+        let (wv, peek_col) = if !is_focused_col
+            && full_unclamped >= MIN_VISIBLE_PANE_WIDTH
+            && raw_wv < full_unclamped
+            && raw_wv < MIN_VISIBLE_PANE_WIDTH
+        {
             if is_neighbor {
                 // Clamp to peek width and ensure it still fits on screen.
                 let peek = PEEK_SLIVER_WIDTH.min(raw_wv.max(1));
