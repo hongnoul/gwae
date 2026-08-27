@@ -212,3 +212,20 @@ survived untouched.
 Also verified on the committed asset: 900x582, 2,100,048 bytes (2.00 MB),
 `loop forever` preserved (a dropped Netscape loop block would leave the hero
 image frozen on its last frame after one play).
+
+## Correction: the GIF caption named a pane that is not there
+
+The caption said "Two agents, a system monitor, and an editor." Sampling
+frames at t=2s, t=12s, and t=22s shows a jcode agent, `btm`, a second jcode
+agent working through a chemistry prompt, and empty placeholder boxes. No
+editor. Caption now says what is actually on screen.
+
+Legibility after the lossy re-encode was re-checked at t=22s, the densest
+text frame in the clip (a full agent response in a quarter-width column). The
+prose is readable, which is the property the encode was chosen to protect.
+
+Re-verified on the deployed page after the fact, to rule out having polled a
+stale cache: three cache-busted fetches plus the bare shared URL all return
+`summary_large_image`, `origin/main` is at `73e5ca3`, and `og:image` sits at
+byte 896 of a 15,695-byte document, comfortably inside the first 8 KB that
+crawlers with read limits will fetch.
