@@ -419,3 +419,78 @@ fn reload_does_nothing_unless_it_is_enabled() {
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The layout itself must survive, not just one pane.
+///
+/// Every other test here uses a single pane, which would pass even if the
+/// handover dropped the tree entirely and started fresh with one pane. This
+/// one builds a real grid first, so "the session survived" means the
+/// *arrangement* survived too, and each pane still owns its own live child.
+#[test]
+fn a_multi_pane_layout_survives_a_reload() {
+    const A: &str = "sleep 24806";
+    const B: &str = "sleep 24807";
+    let _ra = Reaper(A);
+    let _rb = Reaper(B);
+
+    let mut s = Session::start("sh -i");
+    let gwae_pid = s.pid();
+    // Mark pane 1, then open a second column and mark that one. Two distinct
+    // markers means the test can tell "both panes survived" from "one pane
+    // survived and the other was silently recreated".
+    //
+    // `nohup ... &` rather than a plain `&` in both panes, and that detail is
+    // the whole test. A plain background job dies with its shell when the PTY
+    // hangs up, so it disappears on SIGTERM whether or not the reaper knows
+    // about that pane — which makes the leak check pass even when adoption
+    // drops a pane entirely (confirmed by sabotage). A nohup'd job survives
+    // the hangup, so it is only reaped if that pane's pid was genuinely
+    // re-registered after the reload.
+    s.type_line(&format!("nohup {A} >/dev/null 2>&1 &"));
+    wait_until_running(A);
+    // ⌥+Enter: new column, which spawns a shell in it.
+    s.writer.write_all(b"\x1b\r").expect("new column");
+    s.writer.flush().expect("flush");
+    std::thread::sleep(Duration::from_secs(3));
+    s.type_line(&format!("nohup {B} >/dev/null 2>&1 &"));
+    wait_until_running(B);
+
+    s.trigger_reload();
+    std::thread::sleep(Duration::from_secs(6));
+
+    assert!(
+        alive(gwae_pid),
+        "the session must survive with the same pid"
+    );
+    assert!(
+        any_running(A) && any_running(B),
+        "both panes' children must survive: A={} B={}",
+        any_running(A),
+        any_running(B)
+    );
+
+    // And the grid must still be a grid. Two columns paint two vertical
+    // dividers' worth of chrome; a layout that reset to a single pane would
+    // not.
+    let screen = s.screen();
+    assert!(
+        screen.contains('│'),
+        "the reloaded screen should still be drawing pane chrome"
+    );
+
+    // The decisive check: teardown still reaches *both* panes' detached work
+    // after the reload, so a multi-pane session cannot leak on exit.
+    s.signal(libc::SIGTERM);
+    // Both waits are given their own full budget, and the results are
+    // collected before asserting. Writing this as `gone_within(A) &&
+    // gone_within(B)` short-circuits: when A is merely slow (six of these
+    // tests reload real binaries in parallel), B is never polled at all and
+    // the failure blames the wrong pane. Observed once as exactly that.
+    let a_gone = gone_within(A, Duration::from_secs(15));
+    let b_gone = gone_within(B, Duration::from_secs(15));
+    assert!(
+        a_gone && b_gone,
+        "every adopted pane must be re-registered with the reaper, not just \
+         the first: pane A reaped={a_gone}, pane B reaped={b_gone}"
+    );
+}
