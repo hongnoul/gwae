@@ -187,9 +187,32 @@ and a config file that is not being applied at all points at the syntax error:
 | `input_poll_ms` | integer | `2` | Set to `1` **silently by `gwae init`**, before the first question: it has exactly one right answer, so it is not worth a question. Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. gwae sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. `1` is the recommended value; run `gwae tune` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit (the same digit `⌥+1..9` jumps to). Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
 | `minimap.mode` | string | `"off"` | Chrome presentation: `off` (no persistent row; `⌥`/Alt reveals centered HUD + minimap), `overlay` (bottom-right corner), `edge_ticks` (frame ticks). Legacy `reserved` / `reserved_quasimode` parse as `off` (no bottom row). |
-| `minimap.max_width` | integer | `32` | Maximum width of the minimap. Used for `overlay` and the centered minimap while holding `⌥`/Alt. |
-| `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown. Used for `overlay` and the centered minimap while holding `⌥`/Alt. |
+| `minimap.max_width` | integer | `32` | Width of the minimap. A hard *cap* for the corner `overlay`, whose whole point is a small footprint over live panes. For the centered panel revealed by `⌥`/Alt it is a **floor**: that panel spends its cells on pane names, so it asks for ~12 per column and takes the larger of the two, capped at ⅔ of the screen. Raising this widens the panel; lowering it will not squeeze names out of a screen with room for them. |
+| `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown. Used for `overlay` and the centered minimap while holding `⌥`/Alt. Strips past the cut are counted on the panel (`⋯ +3 strips`) rather than silently dropped. |
 | `minimap.show_counts` | bool | `true` | Summary tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts skipped), above the map. |
+
+### The centered dashboard (hold `⌥`/Alt)
+
+The corner `overlay` answers "where am I". The centered panel answers the
+questions you actually hold the modifier to ask, and carries more per tile:
+
+* **Which one is it.** Each tile shows the pane's own window title (OSC 0/2),
+  shortened - a shell's `user@host: ~/git/gwae` becomes `gwae`, and an agent
+  harness's title is already short. Tiles read `»2 claude`, not `2`.
+* **Where should I look.** The pane `⌥+g` would jump to is marked `▸`, and a
+  pane that wants attention carries how long it has been silent (`3m`, `50m`).
+* **What is on screen.** A rule under a strip marks the columns currently in
+  the viewport - the one thing an infinite strip cannot show by itself.
+* **Where will this number land.** Typing `⌥+1 0` lights column 10 and dims
+  the others while the digits are still in flight.
+* Strips share one scale, so a 2-column strip reads shorter than a 6-column
+  one, and a strip with a real name gets a gutter label.
+* **Clicking a tile focuses that pane.** The session dims behind the panel.
+
+Tiles degrade gracefully as they narrow: the status glyph and the column digit
+always survive, the title is dropped before the age (a name cut to two letters
+says nothing; how long a pane has waited is the news). With a single pane there
+is nothing to triage, so the hold shows the key hints alone.
 | `cowsay.enabled` | bool | `true` | Draw a small cowsay under the block-font identifier in empty placeholder boxes, so an empty grid documents itself. On by default: an empty grid documents itself; set `false` for a bare skeleton. The cow is skipped when the box is too small for it to fit whole (under 23 cells wide, or too short for label + art), so the identifier is never crowded out. |
 | `cell_labels` | bool | `true` | Draw the big block-font `strip.pane` identifier in empty placeholder boxes. On by default; set `false` for a bare skeleton. |
 | `cowsay.messages` | array of strings | keybinding hints (OS-aware: `⌥+g` on macOS, `Alt+g` elsewhere) | The pool each empty box draws its line from. Which box says what is chosen by hashing the cell's position, never randomly, so a given box always says the same thing and idle gwae does not repaint. An empty list disables the cow just like `enabled = false`. |

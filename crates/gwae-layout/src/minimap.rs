@@ -34,6 +34,20 @@ pub struct Minimap {
     pub cells: Vec<MinimapCell>,
 }
 
+/// How strips of differing length are fitted to the map's width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scale {
+    /// Every strip is stretched to the full map width. Right for the corner
+    /// overlay, whose job is to show *where you are* in a few cells.
+    #[default]
+    Stretch,
+    /// Strips share one scale, so a two-column strip draws a third as wide as
+    /// a six-column one. Right for the centered dashboard, where the strips
+    /// are meant to be compared with each other and a stretched short strip
+    /// reads as a long one.
+    Proportional,
+}
+
 /// Distribute `budget` cells among weights `ws` proportionally (largest
 /// remainder), so each column keeps ≥ the width share implied by its size.
 fn allocate(ws: &[u16], _total: u64, budget: u16) -> Vec<u16> {
@@ -83,8 +97,27 @@ fn split(w: u16, p: usize) -> Vec<u16> {
 }
 
 pub fn build(layout: &Layout, map_w: u16, viewport_cols: u16) -> Minimap {
+    build_scaled(layout, map_w, viewport_cols, Scale::Stretch)
+}
+
+/// [`build`], with control over how strips of different lengths are fitted.
+pub fn build_scaled(layout: &Layout, map_w: u16, viewport_cols: u16, scale: Scale) -> Minimap {
     let mut cells = Vec::new();
     let height = layout.rows.len().max(1) as u16;
+    // Proportional mode measures every strip against the longest one, so the
+    // widest strip still fills the map and the rest keep their real share.
+    let widest: u64 = layout
+        .rows
+        .iter()
+        .map(|r| {
+            r.columns
+                .iter()
+                .map(|c| c.width.cells(viewport_cols) as u64)
+                .sum::<u64>()
+        })
+        .max()
+        .unwrap_or(0)
+        .max(1);
     for (i, row) in layout.rows.iter().enumerate() {
         let y = i as u16;
         let focus_row = layout.focus.row == row.id;
@@ -94,7 +127,13 @@ pub fn build(layout: &Layout, map_w: u16, viewport_cols: u16) -> Minimap {
             .map(|c| c.width.cells(viewport_cols))
             .collect();
         let total: u64 = width_cells.iter().map(|w| *w as u64).sum();
-        let alloc = allocate(&width_cells, total, map_w);
+        // A short strip gets the fraction of the map its real width earns.
+        // Rounded up so a strip never vanishes, and never past the map edge.
+        let budget = match scale {
+            Scale::Stretch => map_w,
+            Scale::Proportional => (((total * map_w as u64).div_ceil(widest)) as u16).min(map_w),
+        };
+        let alloc = allocate(&width_cells, total, budget);
         let mut x = 0u16;
         for (ci, w) in alloc.iter().enumerate() {
             if *w == 0 {
@@ -225,5 +264,54 @@ mod tests {
         l.panes.get_mut(&first).unwrap().status = PaneStatus::Done;
         let m = build(&l, 10, 80);
         assert_eq!(m.cells[0].status, PaneStatus::Done);
+    }
+
+    #[test]
+    fn proportional_scaling_keeps_short_strips_short() {
+        // Strip 1: four quarter columns. Strip 2: one. Stretched, both fill
+        // the map and the short strip reads as long as the full one, which is
+        // exactly the wrong thing to tell someone comparing strips.
+        let mut l = Layout::new(4);
+        let r2 = l.new_row("second".to_string());
+        let p = l.alloc_pane();
+        l.add_column(r2, Width::Preset(crate::Preset::Quarter), vec![p]);
+
+        let row_w =
+            |m: &Minimap, y: u16| -> u16 { m.cells.iter().filter(|c| c.y == y).map(|c| c.w).sum() };
+        let stretched = build(&l, 40, 80);
+        assert_eq!(row_w(&stretched, 0), 40);
+        assert_eq!(row_w(&stretched, 1), 40, "stretch fills every row");
+
+        let prop = build_scaled(&l, 40, 80, Scale::Proportional);
+        // The longest strip still fills the map; a strip a quarter its length
+        // draws a quarter as wide.
+        assert_eq!(row_w(&prop, 0), 40, "the widest strip sets the scale");
+        assert_eq!(row_w(&prop, 1), 10, "one of four columns -> a quarter");
+        // Tiles still start at the left edge and tile without gaps.
+        assert_eq!(prop.cells.iter().find(|c| c.y == 1).unwrap().x, 0);
+        // The reported map width is the budget, not the widest row drawn, so
+        // the caller's box geometry is unchanged.
+        assert_eq!(prop.width, 40);
+    }
+
+    #[test]
+    fn proportional_never_drops_a_strip_or_overflows_the_map() {
+        // A strip far shorter than the longest still gets at least one cell,
+        // and no strip may exceed the map width at any budget.
+        let mut l = Layout::new(12);
+        let r2 = l.new_row("tiny".to_string());
+        let p = l.alloc_pane();
+        l.add_column(r2, Width::Cells(1), vec![p]);
+        for map_w in [4u16, 7, 16, 40, 120] {
+            let m = build_scaled(&l, map_w, 80, Scale::Proportional);
+            for y in 0..m.height {
+                let w: u16 = m.cells.iter().filter(|c| c.y == y).map(|c| c.w).sum();
+                assert!(w <= map_w, "row {y} overflows at map_w={map_w}: {w}");
+            }
+            assert!(
+                m.cells.iter().any(|c| c.y == 1),
+                "the short strip must not vanish at map_w={map_w}"
+            );
+        }
     }
 }

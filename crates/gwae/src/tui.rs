@@ -1484,57 +1484,81 @@ fn contrast_fg(bg: CColor, pal: &Palette) -> CColor {
 
 /// Render one minimap tile's `w` cells of text.
 ///
-/// Everything is optional except the address, and it degrades in a fixed
-/// order as the tile narrows: age goes first, then the title, then the status
-/// glyph, then the jump marker. The result is always exactly `w` characters,
-/// so the caller can paint it cell-for-cell.
+/// Screen order is fixed - status glyph, address, jump marker, title, age -
+/// and the pieces are fitted in priority order as the tile narrows.
+///
+/// Everything that identifies the tile is packed at its *left* edge, and the
+/// spare cells fall at the right. Tiles abut with no separator, so a
+/// right-aligned glyph would collide with the next tile's address (`»2 clau…»3`
+/// reads as one run); leading with `»2` gives every tile the same unmistakable
+/// signature, which is also where the eye goes when scanning a column of them.
+///
+/// The glyph and address always survive, since they are what makes a tile
+/// triageable and addressable. The *title* is dropped before the age: a name
+/// cut to one or two characters says nothing, while the age (which only
+/// appears on a pane that wants attention at all) is exactly the news you held
+/// ⌥ to get. The result is always exactly `w` characters, so the caller can
+/// paint it cell-for-cell.
 fn tile_text(w: u16, addr: &str, target: bool, title: &str, age: &str, glyph: char) -> String {
     let w = w as usize;
     if w == 0 {
         return String::new();
     }
+    if w == 1 {
+        // One cell: status beats address. Which pane is *waiting* is worth
+        // more than which key jumps to it, and the tile's position in the
+        // row still gives the column away.
+        return glyph.to_string();
+    }
     // The address is the tile's identity; a stacked sub-pane passes "·".
-    let addr: String = if addr.chars().count() <= w {
+    let addr: String = if addr.chars().count() < w {
         addr.to_string()
     } else {
-        // Two-digit columns on a one-cell tile: say "there is more here"
+        // A two-digit column on a two-cell tile: say "there is more here"
         // rather than lying about which column this is.
         "+".to_string()
     };
     let alen = addr.chars().count();
-    if w == alen {
-        return addr;
+    if w <= alen + 1 {
+        return format!("{glyph}{addr}");
     }
-    if w == alen + 1 {
-        return format!("{addr}{glyph}");
+    // One cell after the address separates it from the name, and doubles as
+    // the smart-jump marker when this is the pane `⌥+g` would take you to.
+    let sep = if target { '\u{25b8}' } else { ' ' }; // ▸
+    let mut rest = w - alen - 1 /* glyph */ - 1 /* sep */;
+    let age: String = if !age.is_empty() && age.chars().count() <= rest {
+        rest -= age.chars().count();
+        // One cell stays blank between the name and the age, or `deploy` and
+        // `50m` run together into `deploy50m` and neither is readable.
+        rest = rest.saturating_sub(1);
+        age.to_string()
+    } else {
+        String::new()
+    };
+    // A name cut below three characters is noise, so those cells stay blank.
+    const MIN_TITLE: usize = 3;
+    let mut mid = String::new();
+    if rest >= MIN_TITLE && !title.is_empty() {
+        let n = title.chars().count();
+        mid = if n <= rest {
+            title.to_string()
+        } else {
+            // Mark the cut so a truncated name never reads as the whole name.
+            title
+                .chars()
+                .take(rest - 1)
+                .chain(std::iter::once('\u{2026}')) // …
+                .collect()
+        };
     }
-    let marker = if target { '\u{25b8}' } else { ' ' }; // ▸
-                                                        // Right side: age (attention only) then the status glyph.
-    let right_full = format!("{age}{glyph}");
-    let left_min = format!("{addr}{marker}");
-    let mut right = right_full.clone();
-    if left_min.chars().count() + right.chars().count() > w {
-        right = glyph.to_string();
-    }
-    let rlen = right.chars().count();
-    let room = w.saturating_sub(left_min.chars().count() + rlen);
-    // The title takes whatever is left, with a trailing space kept clear so
-    // it never collides with the age/glyph on its right.
-    let title_room = room.saturating_sub(1);
-    let mut mid: String = title.chars().take(title_room).collect();
-    if mid.chars().count() < title.chars().count() && title_room >= 2 {
-        // Mark the cut so a truncated name never reads as the whole name.
-        mid = title
-            .chars()
-            .take(title_room - 1)
-            .chain(std::iter::once('\u{2026}')) // …
-            .collect();
-    }
-    let mut s = left_min;
+    let mut s = String::new();
+    s.push(glyph);
+    s.push_str(&addr);
+    s.push(sep);
     s.push_str(&mid);
-    let pad = w.saturating_sub(s.chars().count() + rlen);
+    let pad = w.saturating_sub(s.chars().count() + age.chars().count());
     s.extend(std::iter::repeat_n(' ', pad));
-    s.push_str(&right);
+    s.push_str(&age);
     // Belt and braces: the caller paints `w` cells, so never return more.
     s.chars().take(w).collect()
 }
@@ -1669,8 +1693,23 @@ fn plan_center_minimap(
     };
     // Frame + gutter + separating space, before the map gets its budget.
     let chrome_w = 2 + gutter_w + u16::from(gutter_w > 0);
-    let width = mm.max_width.min(cols.saturating_sub(chrome_w + 4).max(1));
-    let map = minimap::build(layout, width, cols);
+    // `minimap.max_width` caps the *corner overlay*, where 32 cells is a
+    // deliberately small footprint over live panes. The centered panel is a
+    // different thing at a different moment: it owns the screen for as long
+    // as ⌥ is held and spends its cells on pane names, so it asks for enough
+    // to seat one per tile and treats the configured number as a floor it may
+    // exceed. Raising `max_width` still widens it; lowering it will not
+    // squeeze names out of a panel that has room for them. Never more than
+    // two-thirds of the screen, so the session stays visible around it.
+    let want = (WIDTH_PER_TILE * layout_widest_strip(layout) as u16).max(mm.max_width);
+    let room = cols.saturating_sub(chrome_w + 4).max(1);
+    let width = want
+        .min(room)
+        .min((cols * 2 / 3).max(mm.max_width.min(room)));
+    // Proportional, not stretched: on the centered panel the strips are read
+    // against each other, and stretching a two-column strip to the width of a
+    // six-column one makes the short strip look long.
+    let map = minimap::build_scaled(layout, width, cols, minimap::Scale::Proportional);
     let shown_rows = mm.max_rows.min(map.height).min(rows.saturating_sub(6));
     if !single && (shown_rows == 0 || map.width == 0) {
         return None;
@@ -1763,6 +1802,25 @@ fn hud_hint() -> String {
         "{n}1-9 col · {n}g attention · {n}hjkl move · {n}/ keys",
         n = crate::keys::mod_key()
     )
+}
+
+/// Cells the centered dashboard would like per column, so a tile can seat an
+/// address, the `⌥+g` marker, a name worth reading, an age and a status
+/// glyph. A target, not a guarantee: narrow terminals get less and
+/// [`tile_text`] degrades accordingly.
+const WIDTH_PER_TILE: u16 = 12;
+
+/// The most columns any single strip has. Sizing the map by this (rather than
+/// by the focused strip) keeps the panel from resizing under the user's eyes
+/// as focus moves between strips of different lengths.
+fn layout_widest_strip(layout: &Layout) -> usize {
+    layout
+        .rows
+        .iter()
+        .map(|r| r.columns.len())
+        .max()
+        .unwrap_or(1)
+        .max(1)
 }
 
 /// Which pane a click at `(x, y)` lands on, given a drawn dashboard. `None`
@@ -1950,7 +2008,11 @@ fn paint_center_minimap(
         let text = tile_text(tile.w, &addr, target, &title, &age, glyph);
         for (dx, ch) in text.chars().enumerate() {
             let x = map_ox + tile.x as usize + dx;
-            put(out, x as u16, gy as u16, ch, fg, bgc, dx == 0);
+            // Bold the leading `glyph + address` signature: it is what the
+            // eye lands on when scanning a row of abutting tiles, and it is
+            // what the `⌥+<n>` keys act on.
+            let sig = dx <= addr.chars().count();
+            put(out, x as u16, gy as u16, ch, fg, bgc, sig);
         }
     }
     // Viewport ruler: which columns of each strip are actually on screen.
@@ -7531,7 +7593,6 @@ mod tests {
         );
     }
 
-
     /// A wide grid whose columns overflow the viewport, so the dashboard has
     /// something to say about titles, ages, jumps and the visible span.
     /// Returns the layout and its pane ids in column order.
@@ -7575,29 +7636,54 @@ mod tests {
 
     #[test]
     fn tile_text_degrades_in_a_fixed_order_as_the_tile_narrows() {
-        // Widest: address, jump marker, title, age and glyph all fit.
+        // Widest: glyph, address, jump marker, title and age all fit.
         let wide = tile_text(16, "2", true, "jcode", "4m", '!');
         assert_eq!(wide.chars().count(), 16, "always exactly the tile width");
-        assert!(wide.starts_with("2\u{25b8}jcode"), "got {wide:?}");
-        assert!(wide.ends_with("4m!"), "age then glyph, got {wide:?}");
+        assert!(wide.starts_with("!2\u{25b8}jcode"), "got {wide:?}");
+        assert!(wide.ends_with("4m"), "age closes the tile, got {wide:?}");
         // No jump marker when this is not the smart-jump target.
         let plain = tile_text(16, "2", false, "jcode", "4m", '!');
-        assert!(plain.starts_with("2 jcode"), "got {plain:?}");
-        // Narrow enough to lose the age, but not the glyph.
+        assert!(plain.starts_with("!2 jcode"), "got {plain:?}");
+        // Narrower: the name is cut, but marked, and the age survives - a
+        // waiting pane's age is the news, a two-letter name is not.
+        let cut = tile_text(11, "2", false, "jcode-main", "4m", '!');
+        assert_eq!(cut.chars().count(), 11);
+        assert!(cut.ends_with("4m"), "age kept, got {cut:?}");
+        assert!(cut.starts_with("!2"), "glyph and address kept, got {cut:?}");
+        assert!(cut.contains('\u{2026}'), "the cut is marked, got {cut:?}");
+        // Narrower still: the title goes entirely rather than shrinking to
+        // noise, and the glyph/address/age triple still reads.
         let mid = tile_text(6, "2", false, "jcode", "4m", '!');
         assert_eq!(mid.chars().count(), 6);
-        assert!(mid.ends_with('!'), "glyph outlives the age, got {mid:?}");
-        assert!(!mid.contains("4m"), "age dropped first, got {mid:?}");
-        // A truncated title says so rather than lying about the name.
-        assert!(mid.contains('\u{2026}'), "cut marked, got {mid:?}");
-        // Two cells: address + glyph. One cell: the address alone.
-        assert_eq!(tile_text(2, "2", true, "jcode", "4m", '!'), "2!");
-        assert_eq!(tile_text(1, "2", true, "jcode", "4m", '!'), "2");
+        assert_eq!(mid, "!2  4m", "glyph, address, gap, age");
+        assert!(!mid.contains('j'), "no one-letter names, got {mid:?}");
+        // Narrow enough that even the age cannot fit: the glyph is last out.
+        let tight = tile_text(4, "2", false, "jcode", "4m", '!');
+        assert_eq!(tight.chars().count(), 4);
+        assert!(
+            tight.starts_with("!2"),
+            "glyph outlives everything: {tight:?}"
+        );
+        assert!(!tight.contains("4m"), "age dropped when it cannot fit");
+        // Two cells: glyph + address. One cell: the status alone, since a
+        // waiting pane matters more than which key jumps to it.
+        assert_eq!(tile_text(2, "2", true, "jcode", "4m", '!'), "!2");
+        assert_eq!(tile_text(1, "2", true, "jcode", "4m", '!'), "!");
         // Two-digit columns fit when there is room and degrade to `+` when
         // there is not: a `1 0` chord addresses column 10, so the map must
         // not silently claim it is column 1.
-        assert!(tile_text(4, "10", false, "", "", '\u{bb}').starts_with("10"));
-        assert_eq!(tile_text(1, "10", false, "", "", '\u{bb}'), "+");
+        assert!(tile_text(4, "10", false, "", "", '\u{bb}').starts_with("\u{bb}10"));
+        assert_eq!(tile_text(2, "10", false, "", "", '\u{bb}'), "\u{bb}+");
+        // Whatever the width, the tile is exactly that many cells.
+        for w in 1..=24u16 {
+            for (t, a) in [("", ""), ("jcode", "4m"), ("a-very-long-name", "59s")] {
+                assert_eq!(
+                    tile_text(w, "12", true, t, a, '\u{bb}').chars().count(),
+                    w as usize,
+                    "width {w} with {t:?}/{a:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -7633,7 +7719,9 @@ mod tests {
         let light = Palette::CATPPUCCIN_LATTE;
         let dark = Palette::CATPPUCCIN_MOCHA;
         let luma = |c: CColor| match c {
-            CColor::Rgb(r, g, b) => (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0,
+            CColor::Rgb(r, g, b) => {
+                (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0
+            }
             _ => panic!("expected rgb"),
         };
         // Ink on a light tile is dark, and on a dark tile is light: the old
@@ -7654,7 +7742,9 @@ mod tests {
             titles: [(ids[0], "jcode".to_string()), (ids[2], "cargo".to_string())]
                 .into_iter()
                 .collect(),
-            quiet: [(ids[2], Duration::from_secs(4 * 60))].into_iter().collect(),
+            quiet: [(ids[2], Duration::from_secs(4 * 60))]
+                .into_iter()
+                .collect(),
             jump_target: smart_jump_target(&layout),
             pending_jump: None,
         };
@@ -7665,7 +7755,10 @@ mod tests {
             text.contains("jcode"),
             "the pane's own title identifies it, got:\n{text}"
         );
-        assert!(text.contains("cargo"), "every titled pane is named:\n{text}");
+        assert!(
+            text.contains("cargo"),
+            "every titled pane is named:\n{text}"
+        );
         assert!(
             text.contains('\u{25b8}'),
             "the smart-jump target is marked, got:\n{text}"
@@ -7676,7 +7769,9 @@ mod tests {
         );
         // A running pane is not aged: only attention has a clock on it.
         let quiet_running = HudFacts {
-            quiet: [(ids[0], Duration::from_secs(9 * 60))].into_iter().collect(),
+            quiet: [(ids[0], Duration::from_secs(9 * 60))]
+                .into_iter()
+                .collect(),
             ..HudFacts::default()
         };
         let out2 = paint_dashboard(&layout, &quiet_running, 100, 24);

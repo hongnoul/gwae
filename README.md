@@ -275,13 +275,34 @@ Panes without shell integration fall back to a quiet heuristic: a pane silent fo
 
 ### Minimap
 
-No bottom status row. Hold `⌥`/Alt to see status (centered, no pane shrinkage): one row per strip, one tile per pane (width ∝ column share), tinted by status, focused tile accented, digit `⌥+1..9` per tile, summary like `5 »2 !1 ✓1 ✗1`. A HUD line names the pane that needs you: ` » 1.3 needs you — ⌥+g`.
+No bottom status row. Hold `⌥`/Alt for a centered dashboard (no pane shrinkage): one row per strip, one tile per pane, width ∝ column share. Each tile leads with its status glyph and the digit `⌥+1..9` jumps to, then the pane's **own window title**, so you read `»2 claude` rather than `2`:
+
+```
+╭────────────────────────────────────────────────────────────────╮
+│1 main  »1 jcode    »2 claude   !3 cargo… 3m»4      ✗5▸depl… 50m│
+│        ────────────────────────────────────                    │
+│2 build »1 vim      »2                                          │
+│                                             9 »6 !1 ✓1 ✗1      │
+│         ⌥1-9 col · ⌥g attention · ⌥hjkl move · ⌥/ keys         │
+╰────────────────────────────────────────────────────────────────╯
+```
+
+* `▸` marks the pane `⌥+g` would take you to, so the jump is never blind.
+* A pane that wants attention carries how long it has waited (`3m`, `50m`).
+* The rule under a strip is the part of it **currently on screen** — the one thing an infinite strip cannot show you by itself.
+* Typing `⌥+1 0` lights column 10 and dims the rest as you type it.
+* Strips are drawn to one scale, so a 2-column strip reads shorter than a 6-column one, and named strips get a gutter label.
+* **Click a tile to focus that pane.** The screen behind dims while the panel is up.
+
+With a single pane there is nothing to triage, so the hold shows the key hints alone.
 
 | `minimap.mode` | Behavior |
 |---|---|
 | `off` *(default)* | No persistent chrome. `⌥` reveals the centered HUD + minimap |
 | `overlay` | Legacy bottom-right overlay — `max_width`/`max_rows` apply |
 | `edge_ticks` | Single-cell ticks on the outer frame, no box |
+
+`max_width` caps the corner `overlay`; for the centered panel it is a *floor* — raising it widens the panel, lowering it will not squeeze pane names out of a screen with room for them (capped at ⅔ of the width).
 
 ### Smart-jump
 
