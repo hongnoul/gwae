@@ -4146,9 +4146,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             agent_panes.insert(*pid);
         }
     }
-    // Panes that were agent panes before a reload stay agent panes, so a
-    // later respawn re-resolves the harness instead of dropping the user into
-    // a bare shell.
+    // Panes that were agent panes before a reload stay marked as such.
+    //
+    // Narrower than it sounds, and worth stating precisely: a pane whose
+    // process exits is *closed*, not respawned (see the `PaneMsg::Exited`
+    // arm, which also drops the pane from this set), so this does not
+    // resurrect a dead harness. What it preserves is the marking itself, so
+    // the set stays consistent with the layout it describes across a reload
+    // rather than silently emptying.
     agent_panes.extend(reloaded_agents.iter().copied());
     // An adopted pane's grid starts empty (contents are not carried across a
     // reload), so ask each child to redraw. Without this the screen stays

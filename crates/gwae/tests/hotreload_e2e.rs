@@ -107,6 +107,9 @@ impl Session {
         cmd.env("GWAE_NO_INSTALL", "1");
         cmd.env("SHELL", "/bin/sh");
         cmd.env("GWAE_DEV_RELOAD", "1");
+        // The ⌥+d project scan walks $HOME; point it at the temp tree so a
+        // test never depends on (or crawls) the developer's real home.
+        cmd.env("HOME", &dir);
         cmd.arg("run");
         cmd.arg(pane_cmd);
         let child = pair.slave.spawn_command(cmd).expect("spawn gwae");
@@ -493,4 +496,154 @@ fn a_multi_pane_layout_survives_a_reload() {
         "every adopted pane must be re-registered with the reaper, not just \
          the first: pane A reaped={a_gone}, pane B reaped={b_gone}"
     );
+}
+
+/// A `⌥+d` spawn-directory choice must outlive a reload.
+///
+/// The two features meet here: the picker's choice lives only in the running
+/// process, so without carrying it in the handover a reload would silently
+/// revert every future pane to the config's directory. Silent is the problem
+/// — the panes would still open, just in the wrong tree, which is exactly the
+/// papercut `⌥+d` exists to remove.
+#[test]
+fn a_picked_spawn_directory_survives_a_reload() {
+    let mut s = Session::start("sh -i");
+    // A project the picker can discover by marker, under a parent name gwae
+    // could not have guessed.
+    std::fs::create_dir_all(s.dir.join("wherever/picked-proj/.git")).expect("project");
+
+    // ⌥+d, filter to it, ⏎ to take it for this session.
+    s.writer.write_all(b"\x1bd").expect("open picker");
+    s.writer.flush().expect("flush");
+    std::thread::sleep(Duration::from_secs(2));
+    s.writer.write_all(b"picked").expect("filter");
+    s.writer.flush().expect("flush");
+    std::thread::sleep(Duration::from_millis(1500));
+    s.writer.write_all(b"\r").expect("choose");
+    s.writer.flush().expect("flush");
+    std::thread::sleep(Duration::from_secs(2));
+
+    s.trigger_reload();
+    std::thread::sleep(Duration::from_secs(6));
+
+    // A pane opened *after* the reload must still land in the picked
+    // directory. Asserted via the pane's own `pwd`, not the screen: a narrow
+    // column wraps a long path across cells and would make the check about
+    // rendering rather than about where the process actually is.
+    s.writer.write_all(b"\x1b\r").expect("new column");
+    s.writer.flush().expect("flush");
+    std::thread::sleep(Duration::from_secs(3));
+    let probe = s.dir.join("after-reload-cwd");
+    s.type_line(&format!("pwd > {}", probe.display()));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut got = String::new();
+    while Instant::now() < deadline {
+        if let Ok(t) = std::fs::read_to_string(&probe) {
+            if !t.trim().is_empty() {
+                got = t.trim().to_string();
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        got.ends_with("picked-proj"),
+        "a pane spawned after the reload should still start in the picked \
+         directory; got {got:?}"
+    );
+}
+
+/// An `⌥+;` agent pane must come through a reload as the *same live harness*.
+///
+/// This is the case the whole feature is for: the reason restarting hurts is
+/// that it kills agents mid-task. `default_agent` points at `cat` here, which
+/// is a stand-in with the two properties that matter — it is long-lived and
+/// it is identifiable in the process table.
+///
+/// Note what this does *not* claim. `is_agent` is carried in the handover,
+/// but a pane whose process exits is closed rather than respawned, so the
+/// flag never resurrects a dead harness. The guarantee is that the running
+/// one is never interrupted.
+#[test]
+fn an_agent_pane_survives_a_reload_as_the_same_process() {
+    let mut s = Session::start("sh -i");
+    std::fs::write(
+        s.dir.join("gwae/gwae.toml"),
+        "default_agent = \"/bin/cat\"\n",
+    )
+    .expect("config with an identifiable agent");
+
+    // ⌥+; opens a column running the agent gateway, which execs the
+    // configured harness.
+    s.writer.write_all(b"\x1b;").expect("spawn agent");
+    s.writer.flush().expect("flush");
+    std::thread::sleep(Duration::from_secs(4));
+
+    let before = agent_children(s.pid());
+    assert_eq!(
+        before.len(),
+        1,
+        "precondition: ⌥+; should have started exactly one agent; got {:?}. \
+         children were: {:?}",
+        before,
+        all_children(s.pid())
+    );
+
+    s.trigger_reload();
+    std::thread::sleep(Duration::from_secs(6));
+
+    let after = agent_children(s.pid());
+    assert_eq!(
+        after, before,
+        "the agent must be the same process after the reload: killing and \
+         restarting it would lose exactly the work this feature exists to keep"
+    );
+
+    // Same pid is necessary but not sufficient on its own: a pane *dropped*
+    // during adoption leaves its harness running as an orphan, which looks
+    // identical in the process table while gwae is alive. Ownership is
+    // covered by `a_multi_pane_layout_survives_a_reload`, which drives
+    // teardown against nohup'd work in each pane; what this test adds is the
+    // agent-specific path — that `⌥+;` panes come through as the same live
+    // harness rather than being restarted.
+    //
+    // (The harness process is a poor teardown probe in its own right: `cat`
+    // reads its PTY, so it dies of EOF when gwae exits whether or not the
+    // reaper knew about it. That version of this check passed even with
+    // adoption disabled entirely.)
+}
+
+/// Every child of `parent`, for diagnosing a failed precondition.
+fn all_children(parent: u32) -> Vec<String> {
+    let out = std::process::Command::new("ps")
+        .args(["-Ao", "pid=,ppid=,command="])
+        .output()
+        .expect("ps");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.split_whitespace().nth(1) == Some(&parent.to_string()))
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+/// pids of `cat` children of `parent`, i.e. the stand-in agent harnesses.
+fn agent_children(parent: u32) -> Vec<String> {
+    let out = std::process::Command::new("ps")
+        .args(["-Ao", "pid=,ppid=,command="])
+        .output()
+        .expect("ps");
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut pids: Vec<String> = text
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            let pid = f.next()?;
+            let ppid = f.next()?;
+            let cmd = f.next()?;
+            (ppid == parent.to_string() && cmd.ends_with("cat")).then(|| pid.to_string())
+        })
+        .collect();
+    pids.sort();
+    pids
 }

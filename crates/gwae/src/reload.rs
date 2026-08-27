@@ -86,8 +86,11 @@ pub struct PaneHandover {
     /// shape without resizing the child (which would reflow its output).
     pub cols: u16,
     pub rows: u16,
-    /// Whether this pane runs the agent gateway, so `⌥+;` panes stay agent
-    /// panes when they are later respawned.
+    /// Whether this pane was created by `⌥+;`.
+    ///
+    /// Carried so the reloaded image's agent-pane set still describes the
+    /// same panes. It does not resurrect anything: a pane whose process dies
+    /// is closed rather than respawned.
     pub is_agent: bool,
 }
 
@@ -323,6 +326,20 @@ pub fn exec_into(
 mod tests {
     use super::*;
 
+    /// Serializes the tests that touch process-wide environment variables.
+    ///
+    /// `HANDOVER_VAR` and `ENABLE_VAR` are global state, and cargo runs tests
+    /// in threads of one process, so two of these racing produce failures
+    /// that look like real bugs and vanish when run alone. (They did exactly
+    /// that: green in isolation, red in the full workspace run.)
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Take [`ENV_LOCK`], ignoring poisoning: a panic in one env test must not
+    /// cascade into unrelated failures in the others.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn sample() -> Handover {
         Handover {
             layout: gwae_layout::Layout::default(),
@@ -341,6 +358,7 @@ mod tests {
 
     #[test]
     fn handover_round_trips_through_the_file() {
+        let _env = env_guard();
         let h = sample();
         let path = h.write().expect("write");
         std::env::set_var(HANDOVER_VAR, &path);
@@ -356,6 +374,7 @@ mod tests {
 
     #[test]
     fn a_corrupt_handover_starts_fresh_instead_of_dying() {
+        let _env = env_guard();
         // Losing a session is bad; refusing to start is worse. A damaged
         // handover must degrade to a normal launch.
         let path =
@@ -368,6 +387,7 @@ mod tests {
 
     #[test]
     fn a_missing_handover_file_starts_fresh() {
+        let _env = env_guard();
         std::env::set_var(
             HANDOVER_VAR,
             std::env::temp_dir().join("gwae-reload-nope.json"),
@@ -378,6 +398,7 @@ mod tests {
 
     #[test]
     fn reload_is_off_unless_asked_for() {
+        let _env = env_guard();
         std::env::remove_var(ENABLE_VAR);
         assert!(!enabled());
         std::env::set_var(ENABLE_VAR, "0");
