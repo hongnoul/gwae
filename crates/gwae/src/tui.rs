@@ -113,11 +113,118 @@ fn logical_char(ev: &KeyEvent) -> Option<char> {
 /// flicker, short enough that a finished agent surfaces quickly.
 const QUIET_AFTER: Duration = Duration::from_secs(4);
 
+/// How a pane's PTY is owned.
+///
+/// A pane gwae spawned itself owns a `portable_pty` master. A pane *adopted*
+/// across a hot reload owns only a raw file descriptor: the master survived
+/// the `execve`, but `portable_pty`'s `UnixMasterPty` is a private type that
+/// cannot be rebuilt from a fd, so there is nothing to reconstruct.
+///
+/// That turns out not to matter. gwae asks a master for exactly two things,
+/// resize and a writer, and both are plain `ioctl`/`write` on the fd. This
+/// enum is the whole cost of supporting adopted panes.
+pub enum PaneIo {
+    /// Spawned by this image of gwae.
+    Owned(Box<dyn MasterPty + Send>),
+    /// Inherited from the previous image across a hot reload.
+    #[cfg(unix)]
+    Inherited(std::os::fd::RawFd),
+}
+
+impl PaneIo {
+    /// Tell the kernel the pane's new logical size, so the child re-lays out.
+    pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+        match self {
+            PaneIo::Owned(m) => m
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|e| e.to_string()),
+            #[cfg(unix)]
+            PaneIo::Inherited(fd) => {
+                let ws = libc::winsize {
+                    ws_row: rows,
+                    ws_col: cols,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                };
+                // Safety: TIOCSWINSZ on a PTY master fd this process owns.
+                let rc = unsafe { libc::ioctl(*fd, libc::TIOCSWINSZ, &ws) };
+                if rc == -1 {
+                    Err(std::io::Error::last_os_error().to_string())
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    /// The raw fd, when there is one. Used to hand the pane to the next image
+    /// of gwae during a reload.
+    #[cfg(unix)]
+    pub fn raw_fd(&self) -> Option<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+        match self {
+            PaneIo::Owned(m) => m.as_raw_fd().map(|f| f.as_raw_fd()),
+            PaneIo::Inherited(fd) => Some(*fd),
+        }
+    }
+}
+
+/// A pane's child process, which after a reload is a pid we inherited rather
+/// than a `Child` we can `wait` on.
+///
+/// The distinction matters for teardown: `kill_pane_tree` signals a process
+/// *group* and walks `ps` output, both of which need only a pid. Reaping an
+/// adopted pane is therefore identical to reaping a spawned one, which is the
+/// property that keeps the no-leaked-processes guarantee true across reloads.
+pub enum PaneProc {
+    /// Spawned by this image; we are its parent and can reap it.
+    Owned(Box<dyn PtyChild + Send + Sync>),
+    /// Inherited across a reload. Same pid, same process group, but this
+    /// image never called `fork`, so there is no `Child` to wait on. (The pid
+    /// is still ours: `execve` preserves the process, so the children were
+    /// never reparented.)
+    Adopted(Option<u32>),
+}
+
+impl PaneProc {
+    pub fn process_id(&self) -> Option<u32> {
+        match self {
+            PaneProc::Owned(c) => c.process_id(),
+            PaneProc::Adopted(pid) => *pid,
+        }
+    }
+
+    /// Best-effort direct kill, complementing the group signal and tree walk
+    /// in [`kill_pane_tree`].
+    pub fn kill(&mut self) {
+        match self {
+            PaneProc::Owned(c) => {
+                let _ = c.kill();
+            }
+            #[cfg(unix)]
+            PaneProc::Adopted(Some(pid)) => {
+                // Safety: `kill(2)` on a pid we are the parent of; ESRCH when
+                // it has already exited, which is ignored.
+                unsafe {
+                    libc::kill(*pid as libc::pid_t, libc::SIGKILL);
+                }
+            }
+            #[allow(unreachable_patterns)]
+            _ => {}
+        }
+    }
+}
+
 /// A PTY-backed pane: its emulator grid plus the I/O handles.
 pub struct PtyPane {
-    pub master: Box<dyn MasterPty + Send>,
+    pub master: PaneIo,
     pub writer: Box<dyn Write + Send>,
-    pub child: Box<dyn PtyChild + Send + Sync>,
+    pub child: PaneProc,
     pub grid: Vt100Grid,
     pub alive: bool,
     pub h_scroll: i32,
@@ -356,7 +463,7 @@ pub(crate) fn descendants(root: u32) -> Vec<u32> {
 /// already-confirmed teardown (force quit, or closing a pane), where the
 /// user has said to stop things now and a process that ignores SIGTERM
 /// would otherwise leak exactly as before.
-fn kill_pane_tree(child: &mut Box<dyn PtyChild + Send + Sync>) {
+fn kill_pane_tree(child: &mut PaneProc) {
     #[cfg(unix)]
     {
         // Collect descendants *before* killing the root: once the root is
@@ -376,7 +483,7 @@ fn kill_pane_tree(child: &mut Box<dyn PtyChild + Send + Sync>) {
             // reaper must not try again on a pid the OS may have recycled.
             crate::reap::unregister(p);
         }
-        let _ = child.kill();
+        child.kill();
         for pid in kids {
             // Safety: `kill(2)` with a pid we just read from `ps`. A pid that
             // has already exited returns ESRCH, which is ignored.
@@ -465,9 +572,9 @@ fn spawn_pane(
     master.resize(size).map_err(|e| format!("resize: {e}"))?;
 
     Ok(PtyPane {
-        master,
+        master: PaneIo::Owned(master),
         writer,
-        child,
+        child: PaneProc::Owned(child),
         grid: Vt100Grid::new(GridSize { cols: gw, rows: gh }),
         alive: true,
         h_scroll: 0,
@@ -499,6 +606,172 @@ pub fn shell_split(cmd: &str) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+/// Rebuild a pane around a PTY master fd inherited from the previous image of
+/// gwae across a hot reload.
+///
+/// The child is untouched: it was never signalled, never reparented, and does
+/// not know a reload happened. All that is rebuilt here is gwae's own side —
+/// a reader thread, a writer, and an empty grid of the right shape.
+///
+/// The grid starts blank because the previous image's grid contents were not
+/// carried across (they are large, and versioning them across two builds that
+/// are by definition different code is a bad trade). The pane repaints as
+/// soon as its child writes anything; [`nudge_repaint`] asks it to do so
+/// immediately.
+#[cfg(unix)]
+fn adopt_pane(
+    id: PaneId,
+    fd: std::os::fd::RawFd,
+    pid: Option<u32>,
+    cols: u16,
+    rows: u16,
+    tx: Sender<PaneMsg>,
+) -> Result<PtyPane, String> {
+    use std::os::fd::FromRawFd;
+
+    // Re-register with the reaper first. Signal handlers do *not* survive
+    // execve, so until `reap::install()` runs and these pids are back in the
+    // registry, a SIGTERM would leave every pane's background jobs running.
+    // This ordering is the whole reason adoption is not just "make a struct".
+    if let Some(p) = pid {
+        crate::reap::register(p);
+    }
+
+    // Two independent handles on the same PTY: one for the blocking reader
+    // thread, one for writes from the main loop. `dup` rather than sharing,
+    // so closing one does not hang up the other.
+    // Safety: `fd` was inherited across execve and named in the handover; it
+    // is a live PTY master this process owns.
+    let read_fd = unsafe { libc::dup(fd) };
+    if read_fd == -1 {
+        return Err(format!("dup pane fd: {}", std::io::Error::last_os_error()));
+    }
+    // Safety: `read_fd` is a fresh descriptor owned solely by this File.
+    let reader_file = unsafe { std::fs::File::from_raw_fd(read_fd) };
+    let write_fd = unsafe { libc::dup(fd) };
+    if write_fd == -1 {
+        return Err(format!("dup pane fd: {}", std::io::Error::last_os_error()));
+    }
+    // Safety: as above, a fresh descriptor with a single owner.
+    let writer_file = unsafe { std::fs::File::from_raw_fd(write_fd) };
+
+    let tid = id;
+    let mut reader = reader_file;
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => {
+                    let _ = tx.send(PaneMsg::Exited(tid));
+                    break;
+                }
+                Ok(n) => {
+                    if tx.send(PaneMsg::Output(tid, buf[..n].to_vec())).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(PtyPane {
+        master: PaneIo::Inherited(fd),
+        writer: Box::new(writer_file),
+        child: PaneProc::Adopted(pid),
+        grid: Vt100Grid::new(GridSize { cols, rows }),
+        alive: true,
+        h_scroll: 0,
+        last_output: Instant::now(),
+        saw_osc133: false,
+        apc: KittyApcExtractor::new(),
+    })
+}
+
+/// Ask every adopted pane's child to repaint, so a reloaded screen is not
+/// blank until the user types.
+///
+/// `Ctrl-L` is the closest thing to a universal "redraw" a terminal program
+/// understands: shells redraw their prompt, and full-screen apps (vim, agent
+/// TUIs) repaint their whole surface. Sending it costs nothing when the child
+/// ignores it.
+fn nudge_repaint(panes: &mut HashMap<PaneId, PtyPane>) {
+    for p in panes.values_mut() {
+        let _ = p.writer.write_all(b"\x0c");
+        let _ = p.writer.flush();
+    }
+}
+
+/// Collect the state the next image of gwae needs, then replace this process
+/// with it. Returns only on failure, in which case this image carries on.
+#[cfg(unix)]
+fn perform_reload(
+    layout: &Layout,
+    panes: &HashMap<PaneId, PtyPane>,
+    agent_panes: &HashSet<PaneId>,
+    spawn_dir: Option<&std::path::Path>,
+) -> Result<std::convert::Infallible, String> {
+    let exe = crate::reload::own_path()?;
+    let mut handover_panes = Vec::new();
+    for (pid, pane) in panes {
+        let Some(fd) = pane.master.raw_fd() else {
+            return Err(format!("pane {pid} has no fd to hand over"));
+        };
+        let (cols, rows) = {
+            let sz = pane.grid.size();
+            (sz.cols, sz.rows)
+        };
+        handover_panes.push(crate::reload::PaneHandover {
+            id: *pid,
+            fd,
+            pid: pane.child.process_id(),
+            cols,
+            rows,
+            is_agent: agent_panes.contains(pid),
+        });
+    }
+    // Stable order so the new image rebuilds panes deterministically.
+    handover_panes.sort_by_key(|p| p.id);
+    let handover = crate::reload::Handover {
+        layout: layout.clone(),
+        panes: handover_panes,
+        spawn_dir: spawn_dir.map(|p| p.to_path_buf()),
+        from: exe.clone(),
+    };
+    crate::reload::exec_into(&exe, &handover)
+}
+
+/// Hand the terminal back to the host: leave the alt screen, drop raw mode,
+/// and undo every mode gwae turned on.
+///
+/// Shared by the normal exit path and by hot reload. Terminal modes are
+/// kernel tty state, so they survive an `execve`: a reload that skipped this
+/// would leave the new image in raw mode on an alt screen it never entered,
+/// which looks exactly like a hung terminal.
+fn restore_terminal(stdout: &mut std::io::Stdout, kitty_keyboard: bool) {
+    if kitty_keyboard {
+        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
+    }
+    let _ = stdout.write_all(b"\x1b[?7h");
+    let _ = stdout.flush();
+    let _ = execute!(stdout, DisableBracketedPaste);
+    let _ = execute!(stdout, DisableMouseCapture);
+    let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
+    let _ = disable_raw_mode();
+}
+
+/// Re-acquire the terminal after [`restore_terminal`], for the one case where
+/// a reload was attempted and the `execve` failed: this image is still alive
+/// and still owns every pane, so it has to take the screen back rather than
+/// exit and take the panes with it.
+fn re_enter_terminal(stdout: &mut std::io::Stdout) -> Result<(), String> {
+    enable_raw_mode().map_err(|e| format!("raw mode: {e}"))?;
+    execute!(stdout, EnterAlternateScreen, cursor::Hide).map_err(|e| format!("alt screen: {e}"))?;
+    let _ = stdout.write_all(b"\x1b[?7l");
+    let _ = stdout.flush();
+    let _ = execute!(stdout, EnableMouseCapture);
+    Ok(())
 }
 
 /// One visible pane on screen: where to draw it and which grid slice to show.
@@ -3583,6 +3856,15 @@ fn refresh_size(cols: &mut u16, rows: &mut u16) -> bool {
 /// `stat` never shows up next to the render loop's own work.
 const CONFIG_POLL: Duration = Duration::from_millis(400);
 
+/// How long the binary's mtime must hold still before a hot reload fires.
+///
+/// A link is not atomic: the new image is truncated and written over some
+/// milliseconds, so a poll can catch a fresh mtime on a file that is not yet
+/// a valid executable. Requiring quiet costs one extra poll and turns "exec a
+/// half-written binary" (which kills the session and every pane with it) into
+/// "reload a moment later".
+const BINARY_SETTLE: Duration = Duration::from_millis(300);
+
 /// How often the safety-net size re-measure runs.
 ///
 /// `refresh_size` is a *backstop* for resizes crossterm never delivers as an
@@ -3737,7 +4019,21 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             _ => None,
         }
     };
-    let mut layout = Layout::new(cfg.startup_panes.max(1));
+    // A hot reload hands the previous image's session over in a temp file
+    // (see `crate::reload`). Taken before the default layout is built so the
+    // adopted tree replaces it rather than racing it.
+    let handover = crate::reload::Handover::take();
+    let mut layout = match &handover {
+        Some(h) => h.layout.clone(),
+        None => Layout::new(cfg.startup_panes.max(1)),
+    };
+    // A ⌥+d choice made before the reload must not be forgotten by the new
+    // image, so the handover's value wins over re-resolving the config.
+    if let Some(h) = &handover {
+        if h.spawn_dir.is_some() {
+            spawn_dir = h.spawn_dir.clone();
+        }
+    }
     // Ask (at most once a day, on a background thread) whether a newer gwae
     // exists. Started here so the request overlaps pane spawn instead of
     // adding to startup; the answer lands in a slot the main loop reads, and
@@ -3763,7 +4059,41 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut pane_ids: Vec<PaneId> = layout.panes.keys().copied().collect();
     pane_ids.sort_unstable();
     let mut first_is_agent = false;
+    // Reload path: the panes already exist as live PTYs inherited across the
+    // execve, so they are adopted rather than spawned. Their children never
+    // learn that gwae's code was replaced underneath them.
+    #[cfg(unix)]
+    let reloaded_agents: HashSet<PaneId> = match &handover {
+        Some(h) => {
+            for hp in &h.panes {
+                match adopt_pane(hp.id, hp.fd, hp.pid, hp.cols, hp.rows, tx.clone()) {
+                    Ok(p) => {
+                        panes.insert(hp.id, p);
+                    }
+                    // One unusable fd must not cost the whole session: the
+                    // pane is dropped from the layout and the rest carry on.
+                    Err(e) => {
+                        tracing::error!("adopt pane {}: {e}", hp.id);
+                    }
+                }
+            }
+            h.panes
+                .iter()
+                .filter(|p| p.is_agent)
+                .map(|p| p.id)
+                .collect()
+        }
+        None => HashSet::new(),
+    };
+    #[cfg(not(unix))]
+    let reloaded_agents: HashSet<PaneId> = HashSet::new();
+    let reloading = handover.is_some();
     for (i, pid) in pane_ids.iter().enumerate() {
+        // Already adopted above; spawning would start a second child on a
+        // pane that already has a live one.
+        if reloading {
+            break;
+        }
         let cmd = if i == 0 {
             if initial.trim().is_empty() {
                 first_is_agent = true;
@@ -3816,6 +4146,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             agent_panes.insert(*pid);
         }
     }
+    // Panes that were agent panes before a reload stay agent panes, so a
+    // later respawn re-resolves the harness instead of dropping the user into
+    // a bare shell.
+    agent_panes.extend(reloaded_agents.iter().copied());
+    // An adopted pane's grid starts empty (contents are not carried across a
+    // reload), so ask each child to redraw. Without this the screen stays
+    // blank until the user types, which reads as a crash.
+    if reloading {
+        nudge_repaint(&mut panes);
+    }
     // The title currently shown on the host terminal; we only write when it
     // changes so we don't spam the host with identical OSC sequences.
     let mut last_title: String = String::new();
@@ -3824,6 +4164,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let cfg_path = Config::default_path();
     let mut cfg_mtime = Config::mtime(&cfg_path);
     let mut reload_check = Instant::now();
+    // Hot reload (dev): watch our own binary and swap into the new build
+    // in place, keeping every pane. See `crate::reload`.
+    let hot_reload = crate::reload::enabled();
+    let exe_path = crate::reload::own_path().ok();
+    let mut exe_mtime = exe_path.as_deref().and_then(crate::reload::binary_mtime);
+    // A rebuild is not atomic: the linker truncates and writes, so the file
+    // can be seen mid-write with a fresh mtime and a broken image. Waiting
+    // for the mtime to stop moving costs one poll interval and avoids
+    // exec'ing a half-written binary.
+    let mut exe_changed_at: Option<Instant> = None;
     let mut size_check = Instant::now();
     // Last time *anything* happened (a keystroke or a byte from any pane).
     // Drives the adaptive input poll below: tight while in use, relaxed once
@@ -4028,6 +4378,52 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 reload_note_until = Some(Instant::now() + NOTE_LINGER);
             }
         }
+        // Hot reload: the binary on disk changed, so replace this process
+        // with the new build and carry every pane across (see
+        // `crate::reload`). Dev-gated: the failure mode of a subtly wrong
+        // reload is orphaned agent processes, not a bad frame.
+        #[cfg(unix)]
+        if hot_reload {
+            if let Some(exe) = exe_path.as_deref() {
+                let now = crate::reload::binary_mtime(exe);
+                if now != exe_mtime {
+                    // Changed: note when, and wait for it to settle.
+                    exe_mtime = now;
+                    exe_changed_at = Some(Instant::now());
+                } else if exe_changed_at
+                    .map(|t| t.elapsed() >= BINARY_SETTLE)
+                    .unwrap_or(false)
+                {
+                    exe_changed_at = None;
+                    // Leave the terminal exactly as a normal exit would: the
+                    // tty is kernel state and survives the exec, so a new
+                    // image would otherwise inherit raw mode and the alt
+                    // screen and paint into a screen it never entered.
+                    tracing::info!("hot reload: binary changed, execing new image");
+                    restore_terminal(&mut stdout, kitty_keyboard);
+                    match perform_reload(&layout, &panes, &agent_panes, spawn_dir.as_deref()) {
+                        // `Ok` is uninhabited: the process is gone.
+                        Ok(never) => match never {},
+                        Err(e) => {
+                            // The exec failed, so this image is still running
+                            // and still owns every pane. Put the screen back
+                            // and carry on rather than dying with them.
+                            tracing::error!("hot reload failed: {e}");
+                            if let Err(e) = re_enter_terminal(&mut stdout) {
+                                tracing::error!("restore after failed reload: {e}");
+                                break 'main;
+                            }
+                            last.clear();
+                            reload_note_anchor = None;
+                            reload_note = Some(format!("hot reload failed: {}", first_line(&e)));
+                            reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                            dirty = true;
+                        }
+                    }
+                }
+            }
+        }
+
         // The background update check, if it found something. Taken (not
         // read) so the notice is shown exactly once per session, and only
         // when the screen is not already saying something else: an upgrade
@@ -4739,12 +5135,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         cols: v.grid_cols,
                         rows: v.grid_rows,
                     });
-                    let _ = p.master.resize(PtySize {
-                        rows: v.grid_rows,
-                        cols: v.grid_cols,
-                        pixel_width: 0,
-                        pixel_height: 0,
-                    });
+                    let _ = p.master.resize(v.grid_cols, v.grid_rows);
                     dirty = true;
                 }
             }
@@ -4907,16 +5298,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // map without going through `kill_pane_tree`) is caught here, so the
     // process leaves nothing behind.
     crate::reap::reap_all();
-    if kitty_keyboard {
-        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
-    }
-    // Restore the host's autowrap before handing the terminal back.
-    let _ = stdout.write_all(b"\x1b[?7h");
-    let _ = stdout.flush();
-    let _ = execute!(stdout, DisableBracketedPaste);
-    let _ = execute!(stdout, DisableMouseCapture);
-    let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
-    let _ = disable_raw_mode();
+    restore_terminal(&mut stdout, kitty_keyboard);
     Ok(())
 }
 
@@ -8180,7 +8562,7 @@ fn content_scroll_reveals_overflow_e2e() {
     assert_eq!(at(&out, 39), '0'); // content col 239
     assert_eq!(at(&out, 45), ' '); // past content end -> blank
 
-    let _ = panes.get_mut(&pid).unwrap().child.kill();
+    panes.get_mut(&pid).unwrap().child.kill();
 }
 
 /// End-to-end acceptance for the quarter-pane overflow fix: four real PTY

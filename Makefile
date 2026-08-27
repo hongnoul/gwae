@@ -34,6 +34,9 @@ install: build $(if $(KEEP_CONFIG),,reset-config)
 	fi; \
 	mkdir -p "$$dir"; \
 	install -m755 $(BIN) "$$dir/gwae"; \
+	if command -v codesign >/dev/null 2>&1; then \
+		codesign -f -s - "$$dir/gwae" >/dev/null 2>&1 || true; \
+	fi; \
 	echo "installed gwae -> $$dir/gwae"
 
 ## Install without clearing preferences.

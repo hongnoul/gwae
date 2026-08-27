@@ -15,6 +15,7 @@ mod latency;
 mod onboard;
 mod preview;
 mod reap;
+mod reload;
 mod select;
 mod spawndir;
 mod splash;

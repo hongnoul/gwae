@@ -269,6 +269,7 @@ dependencies = [
  "libc",
  "portable-pty",
  "serde",
+ "serde_json",
  "toml",
  "tracing",
  "tracing-subscriber",

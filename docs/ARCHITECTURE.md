@@ -46,6 +46,51 @@ height. This is the size reported to the PTY (`TIOCSWINSZ`), so full-screen apps
 lay out at logical size. The viewport crops, never resizes: a column wider than
 the viewport is panned, and app inside is unaffected.
 
+## Hot reload (dev): new code, same panes
+
+`GWAE_DEV_RELOAD=1` lets a running gwae replace its own binary in place when
+that binary changes on disk, keeping every pane alive. It is how the dev loop
+avoids the thing gwae is worst at: restarting costs you every agent in the
+grid.
+
+This is deliberately **not** a daemon. A dev-only daemon would mean the dev
+build and the shipped build are different programs, so bugs hide in whichever
+path is not being run that day. Instead the process hands its PTYs to a new
+image of *itself*:
+
+```
+serialize layout + fds + pids ──┐
+clear FD_CLOEXEC on each master │
+restore the terminal            │
+execve(own path) ───────────────┴──> adopt fds, re-arm reap, repaint
+```
+
+The pid does not change, the children are never signalled, and the shell in
+each pane does not learn anything happened. See `crates/gwae/src/reload.rs`.
+
+Three facts this rests on were measured, not assumed:
+
+* PTY master fds survive `execve` (with `FD_CLOEXEC` cleared) and still read,
+  write, and take `TIOCSWINSZ` afterwards.
+* `Layout` already round-trips through serde, so the pane tree needs no
+  second representation.
+* **Signal handlers do NOT survive `execve`.** They reset to `SIG_DFL`. A
+  reloaded gwae that fails to re-arm [the reaper](#process-teardown) looks
+  perfectly healthy and then leaks every pane's detached jobs on the next
+  `SIGHUP`. `tests/hotreload_e2e.rs` fails if that regresses.
+
+### The macOS code-signature trap
+
+Overwriting a Mach-O binary in place invalidates its signature, and the kernel
+then **SIGKILLs the process mid-`execve`** instead of returning an error. The
+old image is already gone, so the session dies silently; the only evidence is
+in the kernel log (`AMFI: ... has no CMS blob?`). Two defences:
+
+* `reload::is_loadable` runs the candidate binary in a throwaway child first,
+  so a bad image is refused while this process is still alive to refuse it.
+* `make install` and `scripts/hot.sh` install atomically (write, `codesign
+  -f -s -`, `rename`) rather than writing over the running file.
+
 ## Crash / persistence (deliberately thin)
 
 When the process exits, panes and their processes end; gwae persists **no
