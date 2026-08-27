@@ -141,3 +141,44 @@ On a clean machine per platform, one command installs a working `gwae` and
 
 And a tagged release updates all of tap, crates.io, and scoop with no human
 step other than pushing the tag.
+
+---
+
+## Validation log: social card / og:image (2026-08-26)
+
+Markup and asset verified locally; **the fix is not live yet**.
+
+Verified:
+- All 12 og/twitter tags parse via `html.parser`, no duplicate keys, no missing
+  required key, `twitter:card == summary_large_image` exactly once.
+- Document is well-formed (no unclosed or mismatched tags).
+- Card is 1200x630, ratio 1.905 (inside X's 1.91:1 tolerance), 56.4 KB
+  (under X's 5 MB and Facebook's 8 MB caps, above the 200x200 minimum).
+- PNG is colortype 6 (RGBA) but **every pixel has alpha 255**, and there is no
+  `tRNS` chunk. Transparent cards are a common cause of cards rendering black
+  in X/Slack; this one is safe.
+- Card renders correctly on visual inspection (wordmark, tagline, three
+  claims, repo URL).
+- `og:image` and `twitter:image` are absolute URLs (crawlers reject relative),
+  serve HTTP 200 as `image/png`, and the served bytes are SHA-256 identical to
+  the local file.
+- `og:url` and `canonical` both resolve 200.
+- Every `assets/` path referenced by `index.html` exists in the repo.
+
+**Blocked on a push.** GitHub Pages for this repo is `build_type: legacy`
+serving from `main:/docs`, so the page only updates when `main` is pushed.
+The live site still serves `twitter:card=summary` and no `og:image`:
+
+```
+curl -sL https://hongnoul.github.io/gwae/ | grep -o '<meta[^>]*og:[^>]*>'
+```
+
+`main` is 14 commits ahead of `origin/main`, and those include unrelated
+in-flight work (hot reload). Pushing to publish the card would also publish
+that. Decide deliberately: either push all of it, or cherry-pick the
+`docs/index.html` change onto a branch off `origin/main` and merge that alone.
+
+Re-run the curl above after pushing; it is the only check that confirms the
+card is actually live. Then run the URL through X's Card Validator and
+Facebook's Sharing Debugger to warm their caches before any launch post,
+since both cache aggressively and a pre-launch miss can persist.
