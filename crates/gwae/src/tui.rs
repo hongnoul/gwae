@@ -65,6 +65,11 @@ fn mouse_role(kind: MouseEventKind, modifiers: KeyModifiers, child_wants_mouse: 
     }
 }
 
+/// Peek-sliver rendering: a neighbour clipped to fewer than this many
+/// visible columns is not drawn as truncated text.
+const MIN_VISIBLE_PANE_WIDTH: u16 = 10;
+const PEEK_SLIVER_WIDTH: u16 = 3;
+
 fn chrome_rows(_cfg: &Config) -> u16 {
     // Bottom status row has been removed; chrome is always 0.
     0
@@ -775,6 +780,7 @@ fn re_enter_terminal(stdout: &mut std::io::Stdout) -> Result<(), String> {
 }
 
 /// One visible pane on screen: where to draw it and which grid slice to show.
+#[derive(Debug)]
 struct PaneView {
     pid: PaneId,
     col: usize,     // index of the owning column in the focused strip
@@ -783,6 +789,7 @@ struct PaneView {
     h_scroll: i32,  // pane content scroll in cells
     grid_cols: u16, // full logical content width of the grid
     grid_rows: u16, // vertical size of the grid
+    peek: bool,     // squished neighbour shown as a 3-cell faded hint
 }
 
 /// Compute visible pane views for the focused row.
@@ -853,14 +860,36 @@ fn focused_pane_views_with_chrome(
         }
         let left = sx.max(0) as u16;
         let right = (ex.min(cols as i32)) as u16;
-        let wv = right.saturating_sub(left); // visible width
-        if wv == 0 {
+        let raw_wv = right.saturating_sub(left); // visible width
+        if raw_wv == 0 {
             continue;
         }
         let Some(col) = layout.focused_row().and_then(|r| r.columns.get(ci)) else {
             continue;
         };
+        // Peek sliver: a neighbour clipped to fewer than MIN_VISIBLE columns
+        // is not drawn as truncated text. Far neighbours are culled entirely;
+        // the immediate neighbour of the focused column is kept as a 3-cell
+        // faded hint so the user sees "something is off-screen" without
+        // reading cut words. Only applies when the pane is actually clipped
+        // (wv < full_w); small viewports where even a fully visible pane is
+        // narrower than MIN must not be demoted to a peek.
+        let focused = layout.focus.column;
+        let is_neighbor = ci == focused.saturating_add(1) || (focused > 0 && ci + 1 == focused);
+        // Never peek for the focused column itself.
+        let is_focused_col = ci == focused;
         let full_w = (ce - cs) as u16;
+        let (wv, peek_col) = if !is_focused_col && raw_wv < full_w && raw_wv < MIN_VISIBLE_PANE_WIDTH {
+            if is_neighbor {
+                // Clamp to peek width and ensure it still fits on screen.
+                let peek = PEEK_SLIVER_WIDTH.min(raw_wv.max(1));
+                (peek, true)
+            } else {
+                continue; // far clipped neighbour: cull
+            }
+        } else {
+            (raw_wv, false)
+        };
         // The emulator matches the pane's content area exactly (the column
         // width minus any frame inset) unless an explicit content_width
         // extends the logical width for horizontal scrolling.
@@ -903,6 +932,7 @@ fn focused_pane_views_with_chrome(
                 h_scroll,
                 grid_cols,
                 grid_rows: h,
+                peek: peek_col,
             });
         }
     }
@@ -1008,8 +1038,10 @@ fn render_frame(
             let (cur_row, cur_col) = pane.grid.cursor_position();
             let hide = pane.grid.hide_cursor();
             // When scrolled back from live, the cursor is off-screen history:
-            // don't paint a stale block.
-            let live = pane.grid.scrollback_offset() == 0;
+            // don't paint a stale block. Never paint the cursor on a peek
+            // sliver: it would float at the very edge and suggest that tiny
+            // remnant is the focused pane.
+            let live = pane.grid.scrollback_offset() == 0 && !v.peek;
             if live {
                 // Only paint when row is inside the visible rect and col inside the window.
                 let in_window = cur_col >= g_start && cur_col < g_end;
@@ -1055,11 +1087,36 @@ fn render_frame(
                 // affordance a terminal's own selection uses. Inversion (not a
                 // fixed background) keeps every glyph readable whatever colors
                 // the program inside the pane is using.
-                if selection
-                    .map(|s| s.contains(v.pid, gi, gy))
-                    .unwrap_or(false)
+                // Never highlight selection on a peek sliver: it is a hint,
+                // not a target, and inverting a 3-cell remnant hides the hint.
+                if !v.peek
+                    && selection
+                        .map(|s| s.contains(v.pid, gi, gy))
+                        .unwrap_or(false)
                 {
                     cell.style.inverse = !cell.style.inverse;
+                }
+                // Dim the whole sliver to the skeleton palette so it reads as
+                // "something off-screen" rather than broken text.
+                if v.peek {
+                    cell.style.fg = pal.overlay;
+                    cell.style.bg = background;
+                    cell.style.bold = false;
+                    cell.style.underline = false;
+                }
+                // Mark the cut edge so a 3-cell hint never reads as real text.
+                let is_edge = v.peek && gx + 1 == v.rect.w;
+                if is_edge {
+                    cell = Cell {
+                        ch: '›',
+                        style: gwae_term::Style {
+                            fg: pal.overlay,
+                            bg: background,
+                            ..Default::default()
+                        },
+                        width: 1,
+                        ..Default::default()
+                    };
                 }
                 out[idx] = cell;
             }
@@ -4949,12 +5006,36 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     // first, clamping the point to that pane's rect, and only
                     // fall back to "whatever pane is under the cursor" when no
                     // drag is in flight.
-                    let mut handled = false;
                     let hit = selection
                         .filter(|s| s.dragging)
                         .and_then(|s| clamped_pane_point(&views, s.pane, me.column, me.row))
                         .or_else(|| pane_at(&views, me.column, me.row));
-                    if let Some((pid, gx, gy)) = hit {
+                    let mut handled = false;
+                    // Peek slivers are hints, not interactive text: a click
+                    // should focus the neighbour (like clicking a tab edge),
+                    // never start a selection or forward mouse to the child.
+                    let hit_is_peek = hit
+                        .and_then(|(pid, _, _)| {
+                            views.iter().find(|v| v.pid == pid).map(|v| v.peek)
+                        })
+                        .unwrap_or(false);
+                    if hit_is_peek {
+                        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                            if let Some((pid, _, _)) = hit {
+                                if focused_pane(&layout) != Some(pid) {
+                                    let v = Viewport::new(cols);
+                                    let f = FollowScroll {
+                                        margin: cfg.scroll_margin,
+                                        center: cfg.center_focus,
+                                    };
+                                    let _ = layout.apply(Action::FocusPane(pid), v, f);
+                                    dirty = true;
+                                }
+                            }
+                        }
+                        // Never start a drag, never forward to child.
+                        handled = true;
+                    } else if let Some((pid, gx, gy)) = hit {
                         let child_wants_mouse = panes
                             .get(&pid)
                             .map(|p| p.grid.wants_mouse())
@@ -6397,6 +6478,66 @@ mod tests {
                 cols,
                 "rightmost pane must end exactly at the screen edge at cols={cols}"
             );
+        }
+    }
+
+    #[test]
+    fn peek_sliver_replaces_squished_neighbour_with_a_faded_hint() {
+        use gwae_layout::{Preset, Viewport, Width};
+        // Force a sliver by placing scroll between stops: immediate neighbour
+        // clipped to < MIN must become a 3-cell peek, far ones culled.
+        // Layout: 5 quarters at 120 => each 30, total 150, max 30.
+        // Focus at col 2 (middle). Set scroll to 55 so col 1 (neighbour) shows
+        // only 5 cells at the left edge => peek, col 0 far => culled.
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        for _ in 0..5 {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
+        }
+        layout.focus.column = 2;
+        // Widen focused to Half to grow the strip (30->60).
+        let vp = Viewport::new(120);
+        let _ = layout.apply(gwae_layout::Action::CycleWidth, vp, FollowScroll::default());
+        let _ = layout.apply(gwae_layout::Action::CycleWidth, vp, FollowScroll::default());
+        // Manually place scroll between stops to create a 5-cell sliver
+        // at the left edge for the neighbour.
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.scroll_x = 55;
+        }
+        let panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let views = focused_pane_views(&layout, 120, 30, 0, &panes, true);
+        let focused_pid = layout.focused_pane_id().unwrap();
+        let fv = views.iter().find(|v| v.pid == focused_pid).unwrap();
+        assert!(!fv.peek, "focused pane must not be a peek");
+        let mut saw_peek = false;
+        for v in &views {
+            if v.peek {
+                saw_peek = true;
+                assert_eq!(v.rect.w, PEEK_SLIVER_WIDTH, "peek is exactly 3 cols");
+                assert_ne!(v.pid, focused_pid);
+            } else if v.pid != focused_pid {
+                // Culled far panes are simply not in views; visible non-peeks >= MIN.
+                assert!(
+                    v.rect.w >= MIN_VISIBLE_PANE_WIDTH || v.rect.w == 0,
+                    "non-peek neighbour narrow: {}",
+                    v.rect.w
+                );
+            }
+        }
+        assert!(saw_peek, "expected at least one peek sliver at off-stop scroll");
+        // Small viewport where even a fully visible pane is narrow must not peek.
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.scroll_x = 0;
+        }
+        let views_narrow = focused_pane_views(&layout, 30, 30, 0, &panes, true);
+        for v in &views_narrow {
+            if v.peek {
+                panic!("narrow viewport incorrectly produced a peek: {:?}", v);
+            }
         }
     }
 
