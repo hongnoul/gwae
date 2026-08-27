@@ -146,7 +146,7 @@ step other than pushing the tag.
 
 ## Validation log: social card / og:image (2026-08-26)
 
-Markup and asset verified locally; **the fix is not live yet**.
+Markup and asset verified locally, then published and confirmed on the live site.
 
 Verified:
 - All 12 og/twitter tags parse via `html.parser`, no duplicate keys, no missing
@@ -165,20 +165,26 @@ Verified:
 - `og:url` and `canonical` both resolve 200.
 - Every `assets/` path referenced by `index.html` exists in the repo.
 
-**Blocked on a push.** GitHub Pages for this repo is `build_type: legacy`
-serving from `main:/docs`, so the page only updates when `main` is pushed.
-The live site still serves `twitter:card=summary` and no `og:image`:
+**Published and verified live** (commit `73e5ca3`, cherry-picked onto
+`origin/main` alone so the unrelated in-flight hot-reload work stayed unpushed).
+
+GitHub Pages here is `build_type: legacy` serving from `main:/docs`, so the page
+only updates on push to `main`. After pushing, the deploy took ~45 s. Confirmed
+against the deployed page, not the local file:
+
+- All 12 og/twitter tags present, no duplicates, `twitter:card` is
+  `summary_large_image`.
+- `og:image` serves HTTP 200 `image/png`, and the live bytes are SHA-256
+  identical to `docs/assets/social-card.png`.
+- Tags are served to `Twitterbot/1.0`, `facebookexternalhit/1.1`, and
+  `Slackbot-LinkExpanding 1.0`.
+
+Re-verify any time with:
 
 ```
-curl -sL https://hongnoul.github.io/gwae/ | grep -o '<meta[^>]*og:[^>]*>'
+curl -sL https://hongnoul.github.io/gwae/ | grep -o 'twitter:card" content="[a-z_]*"'
 ```
 
-`main` is 14 commits ahead of `origin/main`, and those include unrelated
-in-flight work (hot reload). Pushing to publish the card would also publish
-that. Decide deliberately: either push all of it, or cherry-pick the
-`docs/index.html` change onto a branch off `origin/main` and merge that alone.
-
-Re-run the curl above after pushing; it is the only check that confirms the
-card is actually live. Then run the URL through X's Card Validator and
-Facebook's Sharing Debugger to warm their caches before any launch post,
-since both cache aggressively and a pre-launch miss can persist.
+Still worth doing before a launch post: run the URL through X's Card Validator
+and Facebook's Sharing Debugger to warm their caches, since both cache
+aggressively and a stale pre-launch miss can persist.
