@@ -14,7 +14,7 @@ Any terminal, macOS / Linux / Windows. One process, no daemon.
 
 <img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
 
-Panes at full width on an infinite strip grid, focus moving between them. Nothing is sped up.
+Two agents, a system monitor, and an editor, each at full width on the strip grid. Nothing is sped up.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash   # macOS & Linux
