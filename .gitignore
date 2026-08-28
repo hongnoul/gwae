@@ -4,3 +4,4 @@
 .DS_Store
 # Local runtime artifacts
 *.log
+bench_out.json

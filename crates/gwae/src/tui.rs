@@ -354,6 +354,17 @@ fn host_supports_kitty_graphics() -> bool {
     prog.contains("kitty") || prog.contains("ghostty") || prog.contains("wezterm")
 }
 
+fn is_ghostty() -> bool {
+    let term = std::env::var("TERM").unwrap_or_default().to_lowercase();
+    if term.contains("ghostty") {
+        return true;
+    }
+    std::env::var("TERM_PROGRAM")
+        .unwrap_or_default()
+        .to_lowercase()
+        .contains("ghostty")
+}
+
 /// Strip control characters that could escape an OSC title sequence and clip
 /// the result to a reasonable window-title length. Prevents a malicious child
 /// title from running state-changing escapes on the host terminal.
@@ -1217,12 +1228,12 @@ fn render_frame(
                 let content_raw = box_raw.saturating_sub(1);
                 let is_focused_col = ci == layout.focus.column;
                 if clipped && !is_focused_col && content_raw < MIN_VISIBLE_PANE_WIDTH as u32 {
-                    let is_neighbor =
-                        ci == layout.focus.column.saturating_add(1)
-                            || (layout.focus.column > 0 && ci + 1 == layout.focus.column);
+                    let is_neighbor = ci == layout.focus.column.saturating_add(1)
+                        || (layout.focus.column > 0 && ci + 1 == layout.focus.column);
                     if is_neighbor {
                         let peek_box = PEEK_SLIVER_WIDTH as u32 + 1;
-                        left.saturating_add(peek_box as u16 - 1).min(cols.saturating_sub(1))
+                        left.saturating_add(peek_box as u16 - 1)
+                            .min(cols.saturating_sub(1))
                     } else {
                         continue;
                     }
@@ -4042,24 +4053,62 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // overshoot is clamped at the margin and repaired on the next frame.
     let _ = stdout.write_all(b"\x1b[?7l");
     let _ = stdout.flush();
-    // Request Kitty keyboard protocol: bare Alt press/release (REPORT_ALL_KEYS)
-    // so the centered Alt HUD/minimap (hold ⌥ to reveal) can see the hold
-    // itself, not just chords. REPORT_ALTERNATE_KEYS is required so
-    // Shift+1 yields '!' (not '1') and shifted letters arrive as their
-    // shifted codepoint with SHIFT cleared; without it shift is lost under
-    // the Kitty protocol. Falls back gracefully if the terminal ignores it.
-    let kitty_keyboard = matches!(
-        execute!(
-            stdout,
-            PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
-            )
+    // Request Kitty keyboard protocol *without* REPORT_ALL_KEYS.
+    //
+    // Ghostty + macOS Hangul (and other CJK IMEs) break when
+    // REPORT_ALL_KEYS_AS_ESCAPE_CODES is active: every key is reported as a
+    // CSI-u escape, so the OS IME composition never commits as normal UTF-8
+    // — Korean appears broken/duplicated inside gwae while it works fine in
+    // plain Ghostty. The bare-Alt HUD previously needed REPORT_ALL to see a
+    // lone Option press, but `chord_alt_until` already covers that via the
+    // repeated-chord fallback (and the bare-modifier path when the terminal
+    // does send it). So request only the disambiguation/alt-shift fixes.
+    //
+    // Ghostty's Hangul IME still flickers even with the reduced flags
+    // (DISAMBIGUATE+ALTERNATE+EVENT_TYPES) — Ghostty switches to CSI-u framing
+    // for *all* input while the protocol is active, which breaks the macOS
+    // IME preedit flush in the same way. So under Ghostty the default is now
+    // to leave the protocol entirely alone; the host already disambiguates
+    // without it. Users who prefer kitty semantics inside Ghostty can force it
+    // with `GWAE_KITTY_KEYBOARD=1`.
+    // Env overrides: GWAE_KITTY_KEYBOARD=0 disables, =1 forces enable.
+    let kitty_env = std::env::var("GWAE_KITTY_KEYBOARD")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase());
+    let kitty_keyboard = match kitty_env.as_deref() {
+        Some("0") | Some("false") | Some("off") | Some("no") => {
+            tracing::info!("kitty keyboard protocol disabled via GWAE_KITTY_KEYBOARD=0");
+            false
+        }
+        Some("1") | Some("true") | Some("on") | Some("yes") => matches!(
+            execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+                )
+            ),
+            Ok(())
         ),
-        Ok(())
-    );
+        _ if is_ghostty() => {
+            tracing::info!(
+                "kitty keyboard protocol skipped under Ghostty for Hangul IME (set GWAE_KITTY_KEYBOARD=1 to force)"
+            );
+            false
+        }
+        _ => matches!(
+            execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+                )
+            ),
+            Ok(())
+        ),
+    };
     if kitty_keyboard {
         tracing::info!("kitty keyboard protocol enabled (bare Alt hover)");
     }
@@ -5054,9 +5103,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     // should focus the neighbour (like clicking a tab edge),
                     // never start a selection or forward mouse to the child.
                     let hit_is_peek = hit
-                        .and_then(|(pid, _, _)| {
-                            views.iter().find(|v| v.pid == pid).map(|v| v.peek)
-                        })
+                        .and_then(|(pid, _, _)| views.iter().find(|v| v.pid == pid).map(|v| v.peek))
                         .unwrap_or(false);
                     if hit_is_peek {
                         if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
@@ -6567,7 +6614,10 @@ mod tests {
                 );
             }
         }
-        assert!(saw_peek, "expected at least one peek sliver at off-stop scroll");
+        assert!(
+            saw_peek,
+            "expected at least one peek sliver at off-stop scroll"
+        );
         // Small viewport where even a fully visible pane is narrow must not peek.
         if let Some(r) = layout.row_mut(layout.focus.row) {
             r.scroll_x = 0;
