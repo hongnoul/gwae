@@ -89,6 +89,12 @@ impl Session {
     }
 
     fn drain(&self) -> String {
+        // `⌥+d` builds the candidate list on demand: marker scan + zoxide
+        // query + dedup. On a cold macOS runner the scan can be slower than
+        // the 600 ms the old drain gave it (3 * 200 ms idle), so the assertion
+        // sampled an empty frame. `drain.rs` uses 30 * 200 ms for the same
+        // reason. Keep this bounded (max 6s) rather than "until quiet", so
+        // the test never hangs.
         let mut out = Vec::new();
         let mut idle = 0;
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
@@ -100,7 +106,13 @@ impl Session {
                 }
                 Err(_) => {
                     idle += 1;
-                    if idle >= 3 {
+                    // Require multiple quiet polls *and* at least one chunk:
+                    // an early empty drain (before the picker has painted)
+                    // must not be mistaken for "done".
+                    if !out.is_empty() && idle >= 3 {
+                        break;
+                    }
+                    if idle >= 15 {
                         break;
                     }
                 }
