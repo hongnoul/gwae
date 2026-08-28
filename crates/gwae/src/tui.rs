@@ -193,13 +193,16 @@ pub enum PaneProc {
     /// image never called `fork`, so there is no `Child` to wait on. (The pid
     /// is still ours: `execve` preserves the process, so the children were
     /// never reparented.)
+    #[cfg(unix)]
     Adopted(Option<u32>),
 }
 
 impl PaneProc {
+    #[allow(dead_code)]
     pub fn process_id(&self) -> Option<u32> {
         match self {
             PaneProc::Owned(c) => c.process_id(),
+            #[cfg(unix)]
             PaneProc::Adopted(pid) => *pid,
         }
     }
@@ -510,7 +513,7 @@ fn kill_pane_tree(child: &mut PaneProc) {
     }
     #[cfg(not(unix))]
     {
-        let _ = child.kill();
+        child.kill();
     }
 }
 
@@ -781,6 +784,7 @@ fn restore_terminal(stdout: &mut std::io::Stdout, kitty_keyboard: bool) {
 /// a reload was attempted and the `execve` failed: this image is still alive
 /// and still owns every pane, so it has to take the screen back rather than
 /// exit and take the panes with it.
+#[cfg(unix)]
 fn re_enter_terminal(stdout: &mut std::io::Stdout) -> Result<(), String> {
     enable_raw_mode().map_err(|e| format!("raw mode: {e}"))?;
     execute!(stdout, EnterAlternateScreen, cursor::Hide).map_err(|e| format!("alt screen: {e}"))?;
@@ -3970,6 +3974,7 @@ const CONFIG_POLL: Duration = Duration::from_millis(400);
 /// a valid executable. Requiring quiet costs one extra poll and turns "exec a
 /// half-written binary" (which kills the session and every pane with it) into
 /// "reload a moment later".
+#[cfg(unix)]
 const BINARY_SETTLE: Duration = Duration::from_millis(300);
 
 /// How often the safety-net size re-measure runs.
@@ -4316,13 +4321,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut reload_check = Instant::now();
     // Hot reload (dev): watch our own binary and swap into the new build
     // in place, keeping every pane. See `crate::reload`.
+    #[cfg(unix)]
     let hot_reload = crate::reload::enabled();
+    #[cfg(unix)]
     let exe_path = crate::reload::own_path().ok();
+    #[cfg(unix)]
     let mut exe_mtime = exe_path.as_deref().and_then(crate::reload::binary_mtime);
     // A rebuild is not atomic: the linker truncates and writes, so the file
     // can be seen mid-write with a fresh mtime and a broken image. Waiting
     // for the mtime to stop moving costs one poll interval and avoids
     // exec'ing a half-written binary.
+    #[cfg(unix)]
     let mut exe_changed_at: Option<Instant> = None;
     let mut size_check = Instant::now();
     // Last time *anything* happened (a keystroke or a byte from any pane).
@@ -5970,6 +5979,55 @@ mod tests {
             KeyEventState::CAPS_LOCK,
         );
         assert_eq!(handle_key(&ev), Some(Cmd::Input(b"A".to_vec())));
+    }
+
+    #[test]
+    fn hangul_syllables_are_forwarded_as_utf8_not_swallowed() {
+        // Regression: Korean IME composition must reach the pane verbatim as UTF-8.
+        // Every Hangul syllable/jamo appears as KeyCode::Char(c) with no modifiers
+        // (or only SHIFT for doubled consonants) and must become Cmd::Input with
+        // the 3-byte UTF-8 encoding, not a gwae chord or None.
+        for ch in [
+            '\u{ac00}', // 가
+            '\u{b098}', // 나
+            '\u{b2e4}', // 다
+            '\u{3142}', // ㅂ (jamo)
+            '\u{3147}', // ㅇ
+            '\u{ce58}', // 치
+        ] {
+            let ev = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+            let mut want = [0u8; 4];
+            assert_eq!(
+                handle_key(&ev),
+                Some(Cmd::Input(ch.encode_utf8(&mut want).as_bytes().to_vec())),
+                "hangul {ch} U+{:04X} should be forwarded as UTF-8",
+                ch as u32
+            );
+            // key_bytes must preserve the same UTF-8 even for Shift+Hangul (doubled
+            // consonant path) and must not misroute through the Alt/shift-chord check.
+            let ev = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::SHIFT);
+            assert_eq!(
+                handle_key(&ev),
+                Some(Cmd::Input(ch.encode_utf8(&mut want).as_bytes().to_vec())),
+                "shifted hangul {ch} should still be UTF-8, not a move-pane chord"
+            );
+        }
+        // Raw key_bytes for a burst (fast typing) joins correctly: the drain loop
+        // idea is that multiple such KeyEvents between polls are all flushed before
+        // the next paint. Exercise the burst at the handler level.
+        let burst = ['\u{ac00}', '\u{b098}', '\u{b2e4}']; // 가나다
+        let mut bytes = Vec::new();
+        for &ch in &burst {
+            let ev = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE);
+            match handle_key(&ev).unwrap() {
+                Cmd::Input(b) => bytes.extend(b),
+                other => panic!("unexpected {other:?} for {ch}"),
+            }
+        }
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            "\u{ac00}\u{b098}\u{b2e4}"
+        );
     }
 
     #[test]

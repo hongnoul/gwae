@@ -65,6 +65,7 @@ use std::path::PathBuf;
 pub const HANDOVER_VAR: &str = "GWAE_RELOAD_HANDOVER";
 
 /// Environment variable that opts a session into hot reload at all.
+#[allow(dead_code)]
 pub const ENABLE_VAR: &str = "GWAE_DEV_RELOAD";
 
 /// One pane, as it must be described to the next image of gwae.
@@ -124,6 +125,7 @@ impl Handover {
     /// the tail wagging the dog. `serde_json` is already in the tree (it is
     /// how `gwae-layout` verifies its own round trip) and the "std + serde
     /// only" rule binds that pure library, not this binary.
+    #[allow(dead_code)]
     pub fn write(&self) -> Result<PathBuf, String> {
         let path = std::env::temp_dir().join(format!("gwae-reload-{}.json", std::process::id()));
         let text = serde_json::to_string(self).map_err(|e| format!("encode handover: {e}"))?;
@@ -162,6 +164,7 @@ impl Handover {
 ///
 /// Off unless explicitly asked for. See the module docs: a wrong reload leaks
 /// processes, so this stays opt-in until the teardown tests have earned it.
+#[allow(dead_code)]
 pub fn enabled() -> bool {
     matches!(
         std::env::var(ENABLE_VAR).as_deref(),
@@ -176,6 +179,7 @@ pub fn enabled() -> bool {
 /// is the one moment we want the opposite, and only for the process that is
 /// about to replace itself.
 #[cfg(unix)]
+#[allow(dead_code)]
 pub fn make_inheritable(fd: i32) -> Result<(), String> {
     use std::io::Error;
     // Safety: `fcntl` with a fd this process owns; failures are reported.
@@ -191,6 +195,7 @@ pub fn make_inheritable(fd: i32) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 pub fn make_inheritable(_fd: i32) -> Result<(), String> {
     Err("hot reload is unix-only".into())
 }
@@ -219,6 +224,7 @@ pub fn make_inheritable(_fd: i32) -> Result<(), String> {
 /// process commits to becoming it. A child that dies costs one `fork`; the
 /// process that skips this check costs the user their whole session.
 #[cfg(unix)]
+#[allow(dead_code)]
 pub fn is_loadable(exe: &std::path::Path) -> Result<(), String> {
     let out = std::process::Command::new(exe)
         .arg("--version")
@@ -249,6 +255,7 @@ pub fn is_loadable(exe: &std::path::Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 pub fn is_loadable(_exe: &std::path::Path) -> Result<(), String> {
     Err("hot reload is unix-only".into())
 }
@@ -257,11 +264,13 @@ pub fn is_loadable(_exe: &std::path::Path) -> Result<(), String> {
 ///
 /// Resolved fresh rather than remembered from argv, because the whole point
 /// is that the file at this path has *changed* since we started.
+#[allow(dead_code)]
 pub fn own_path() -> Result<PathBuf, String> {
     std::env::current_exe().map_err(|e| format!("current_exe: {e}"))
 }
 
 /// The mtime of the running binary, used to notice a rebuild.
+#[allow(dead_code)]
 pub fn binary_mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).ok()?.modified().ok()
 }
@@ -278,6 +287,7 @@ pub fn binary_mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
 /// process state, so they are *not* reset by the exec: a new image that
 /// assumed cooked mode would inherit raw mode and behave bizarrely.
 #[cfg(unix)]
+#[allow(dead_code)]
 pub fn exec_into(
     exe: &std::path::Path,
     handover: &Handover,
@@ -315,6 +325,7 @@ pub fn exec_into(
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 pub fn exec_into(
     _exe: &std::path::Path,
     _handover: &Handover,
