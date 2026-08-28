@@ -4606,210 +4606,449 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         let poll_for = input_poll_interval(cfg.input_poll_ms, last_activity.elapsed());
         if event::poll(poll_for).unwrap_or(false) {
             last_activity = Instant::now();
-            match event::read() {
-                Ok(Event::Key(ke))
-                    if matches!(ke.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
-                {
-                    // The HUD persists until the next key press; ⌥+/ toggles
-                    // it explicitly, so remember whether it was up before we
-                    // dismiss it here.
-                    let hud_was_active = hud_active;
-                    // Typing dismisses a finished selection, the way it does in
-                    // any editor: the highlight is a transient artifact of the
-                    // drag, and leaving it inverted over live pane output would
-                    // read as corruption. A drag still in flight is left alone.
-                    if selection.take_if(|s| !s.dragging).is_some() {
-                        dirty = true;
-                    }
-                    if hud_active {
-                        hud_active = false;
-                        dirty = true;
-                    }
-                    // Bare Alt hold: track before handle_key so chords don't double-count.
-                    let bare_alt = is_alt_modifier(&ke);
-                    if bare_alt {
-                        if !bare_alt_held {
-                            bare_alt_held = true;
+            // Drain coalesced input: Korean (Hangul) composition and fast typing
+            // queue multiple UTF-8 KeyEvents between polls. Processing only one
+            // per frame added a render+poll of latency per syllable. Drain all
+            // pending events without blocking before we render.
+            let mut first = true;
+            'drain: loop {
+                let ev = if first {
+                    first = false;
+                    event::read()
+                } else if event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
+                    event::read()
+                } else {
+                    break 'drain;
+                };
+                match ev {
+                    Ok(Event::Key(ke))
+                        if matches!(ke.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                    {
+                        // The HUD persists until the next key press; ⌥+/ toggles
+                        // it explicitly, so remember whether it was up before we
+                        // dismiss it here.
+                        let hud_was_active = hud_active;
+                        // Typing dismisses a finished selection, the way it does in
+                        // any editor: the highlight is a transient artifact of the
+                        // drag, and leaving it inverted over live pane output would
+                        // read as corruption. A drag still in flight is left alone.
+                        if selection.take_if(|s| !s.dragging).is_some() {
                             dirty = true;
                         }
-                    } else {
-                        // Fallback for terminals that don't send bare Alt press/release
-                        // (no Kitty keyboard protocol): any Alt chord counts as "held"
-                        // for a short window so the centered HUD/minimap still reveals on press-and-hold
-                        // via repeated chords (Option+hjkl etc.) or a single chord.
-                        let alt_chord = ke.modifiers.contains(KeyModifiers::ALT)
-                            || matches!(
-                                ke.code,
-                                KeyCode::Char('\u{2d9}')
-                                    | KeyCode::Char('\u{2206}')
-                                    | KeyCode::Char('\u{2da}')
-                                    | KeyCode::Char('\u{ac}')
-                                    | KeyCode::Char('\u{2026}')
-                                    | KeyCode::Char('\u{153}')
-                                    | KeyCode::Char('\u{a9}')
-                                    | KeyCode::Char('\u{d3}')
-                                    | KeyCode::Char('\u{d4}')
-                                    | KeyCode::Char('\u{f8ff}')
-                                    | KeyCode::Char('\u{d2}')
-                            );
-                        if alt_chord {
-                            // Short window so tapping Option+h for navigation
-                            // doesn't linger 600ms after release. Hold stays
-                            // visible via repeats (each chord refreshes) but
-                            // vanishes ~180ms after the last chord.
-                            chord_alt_until = Some(Instant::now() + Duration::from_millis(180));
+                        if hud_active {
+                            hud_active = false;
                             dirty = true;
                         }
-                    }
-                    // While the force-quit disclaimer is up it owns the
-                    // keyboard: nothing may reach a pane, because the very
-                    // next keystroke may destroy every pane. Only the same
-                    // chord again (or Enter) commits; anything else cancels,
-                    // so a stray key can never quit by accident.
-                    if quit_confirm {
-                        let confirmed = matches!(handle_key(&ke), Some(Cmd::Quit))
-                            || matches!(ke.code, KeyCode::Enter);
-                        if confirmed {
-                            break 'main;
-                        }
-                        quit_confirm = false;
-                        dirty = true;
-                        continue;
-                    }
-                    // While the directory picker is open it owns the
-                    // keyboard: every printable key types into the filter, so
-                    // nothing may reach a pane. Arrows move, ⏎ takes it for
-                    // the session, `⌥+s` writes it to the config file, esc
-                    // cancels. Bare `s` cannot save, because `s` is a filter
-                    // character like any other.
-                    if let Some(pick) = dir_pick.as_mut() {
-                        let alt = ke.modifiers.contains(KeyModifiers::ALT);
-                        let mut chosen: Option<(std::path::PathBuf, bool)> = None;
-                        let mut close = false;
-                        match ke.code {
-                            KeyCode::Up => pick.step(-1),
-                            KeyCode::Down => pick.step(1),
-                            KeyCode::Esc => close = true,
-                            KeyCode::Backspace => {
-                                pick.query.pop();
-                                pick.sel = 0;
+                        // Bare Alt hold: track before handle_key so chords don't double-count.
+                        let bare_alt = is_alt_modifier(&ke);
+                        if bare_alt {
+                            if !bare_alt_held {
+                                bare_alt_held = true;
+                                dirty = true;
                             }
-                            KeyCode::Enter => {
-                                if let Some(c) = pick.current() {
-                                    chosen = Some((c.path, false));
+                        } else {
+                            // Fallback for terminals that don't send bare Alt press/release
+                            // (no Kitty keyboard protocol): any Alt chord counts as "held"
+                            // for a short window so the centered HUD/minimap still reveals on press-and-hold
+                            // via repeated chords (Option+hjkl etc.) or a single chord.
+                            let alt_chord = ke.modifiers.contains(KeyModifiers::ALT)
+                                || matches!(
+                                    ke.code,
+                                    KeyCode::Char('\u{2d9}')
+                                        | KeyCode::Char('\u{2206}')
+                                        | KeyCode::Char('\u{2da}')
+                                        | KeyCode::Char('\u{ac}')
+                                        | KeyCode::Char('\u{2026}')
+                                        | KeyCode::Char('\u{153}')
+                                        | KeyCode::Char('\u{a9}')
+                                        | KeyCode::Char('\u{d3}')
+                                        | KeyCode::Char('\u{d4}')
+                                        | KeyCode::Char('\u{f8ff}')
+                                        | KeyCode::Char('\u{d2}')
+                                );
+                            if alt_chord {
+                                // Short window so tapping Option+h for navigation
+                                // doesn't linger 600ms after release. Hold stays
+                                // visible via repeats (each chord refreshes) but
+                                // vanishes ~180ms after the last chord.
+                                chord_alt_until = Some(Instant::now() + Duration::from_millis(180));
+                                dirty = true;
+                            }
+                        }
+                        // While the force-quit disclaimer is up it owns the
+                        // keyboard: nothing may reach a pane, because the very
+                        // next keystroke may destroy every pane. Only the same
+                        // chord again (or Enter) commits; anything else cancels,
+                        // so a stray key can never quit by accident.
+                        if quit_confirm {
+                            let confirmed = matches!(handle_key(&ke), Some(Cmd::Quit))
+                                || matches!(ke.code, KeyCode::Enter);
+                            if confirmed {
+                                break 'main;
+                            }
+                            quit_confirm = false;
+                            dirty = true;
+                            continue;
+                        }
+                        // While the directory picker is open it owns the
+                        // keyboard: every printable key types into the filter, so
+                        // nothing may reach a pane. Arrows move, ⏎ takes it for
+                        // the session, `⌥+s` writes it to the config file, esc
+                        // cancels. Bare `s` cannot save, because `s` is a filter
+                        // character like any other.
+                        if let Some(pick) = dir_pick.as_mut() {
+                            let alt = ke.modifiers.contains(KeyModifiers::ALT);
+                            let mut chosen: Option<(std::path::PathBuf, bool)> = None;
+                            let mut close = false;
+                            match ke.code {
+                                KeyCode::Up => pick.step(-1),
+                                KeyCode::Down => pick.step(1),
+                                KeyCode::Esc => close = true,
+                                KeyCode::Backspace => {
+                                    pick.query.pop();
+                                    pick.sel = 0;
                                 }
-                                close = true;
-                            }
-                            KeyCode::Char('s') if alt => {
-                                if let Some(c) = pick.current() {
-                                    chosen = Some((c.path, true));
+                                KeyCode::Enter => {
+                                    if let Some(c) = pick.current() {
+                                        chosen = Some((c.path, false));
+                                    }
+                                    close = true;
                                 }
-                                close = true;
-                            }
-                            // ß is what macOS sends for ⌥+s when Option is not
-                            // mapped to Meta, the same fallback the rest of
-                            // the chords carry.
-                            KeyCode::Char('\u{df}') => {
-                                if let Some(c) = pick.current() {
-                                    chosen = Some((c.path, true));
+                                KeyCode::Char('s') if alt => {
+                                    if let Some(c) = pick.current() {
+                                        chosen = Some((c.path, true));
+                                    }
+                                    close = true;
                                 }
-                                close = true;
-                            }
-                            KeyCode::Char(c)
-                                if !alt && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                pick.query.push(c);
-                                pick.sel = 0;
-                            }
-                            _ => {}
-                        }
-                        if close {
-                            dir_pick = None;
-                        }
-                        if let Some((path, save)) = chosen {
-                            spawn_dir = Some(path.clone());
-                            let shown = crate::spawndir::tilde(&path);
-                            reload_note_anchor = None;
-                            reload_note = Some(if save {
-                                match write_agent_dir(&cfg_path, &shown) {
-                                    Ok(()) => format!("spawn dir: {shown} (saved to config)"),
-                                    Err(e) => format!(
-                                        "spawn dir: {shown} (this session; save error: {e})"
-                                    ),
+                                // ß is what macOS sends for ⌥+s when Option is not
+                                // mapped to Meta, the same fallback the rest of
+                                // the chords carry.
+                                KeyCode::Char('\u{df}') => {
+                                    if let Some(c) = pick.current() {
+                                        chosen = Some((c.path, true));
+                                    }
+                                    close = true;
                                 }
-                            } else {
-                                format!("spawn dir: {shown} — new panes start here")
-                            });
-                            reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                            // A config write bumps the mtime; adopt it now so
-                            // the reload watcher does not report our own save
-                            // back to us as an external edit.
-                            cfg_mtime = Config::mtime(&cfg_path);
-                        }
-                        dirty = true;
-                        continue;
-                    }
-                    // While the theme picker is open it owns the keyboard:
-                    // arrows/hjkl step through presets, Enter keeps the
-                    // choice, Escape restores what was there before. Without
-                    // this the keys would reach the focused pane instead.
-                    if let Some(sel) = theme_pick {
-                        let n = Palette::NAMES.len();
-                        let mut close: Option<bool> = None; // Some(keep?)
-                        let mut next = sel;
-                        match ke.code {
-                            KeyCode::Left | KeyCode::Up => next = (sel + n - 1) % n,
-                            KeyCode::Right | KeyCode::Down => next = (sel + 1) % n,
-                            KeyCode::Char('h') | KeyCode::Char('k') => next = (sel + n - 1) % n,
-                            KeyCode::Char('l') | KeyCode::Char('j') => next = (sel + 1) % n,
-                            KeyCode::Char('\u{2d9}') | KeyCode::Char('\u{2da}') => {
-                                next = (sel + n - 1) % n
+                                KeyCode::Char(c)
+                                    if !alt && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    pick.query.push(c);
+                                    pick.sel = 0;
+                                }
+                                _ => {}
                             }
-                            KeyCode::Char('\u{ac}') | KeyCode::Char('\u{2206}') => {
-                                next = (sel + 1) % n
+                            if close {
+                                dir_pick = None;
                             }
-                            KeyCode::Enter => close = Some(true),
-                            KeyCode::Esc => close = Some(false),
-                            KeyCode::Char('\u{2020}') => close = Some(true),
-                            KeyCode::Char('t') if ke.modifiers.contains(KeyModifiers::ALT) => {
-                                close = Some(true)
-                            }
-                            _ => {}
-                        }
-                        match close {
-                            Some(true) => {
-                                theme_pick = None;
+                            if let Some((path, save)) = chosen {
+                                spawn_dir = Some(path.clone());
+                                let shown = crate::spawndir::tilde(&path);
                                 reload_note_anchor = None;
-                                reload_note = Some(format!(
-                                    "theme: {} — add `theme = \"{}\"` to keep it",
-                                    Palette::NAMES[sel],
-                                    Palette::NAMES[sel]
-                                ));
+                                reload_note = Some(if save {
+                                    match write_agent_dir(&cfg_path, &shown) {
+                                        Ok(()) => format!("spawn dir: {shown} (saved to config)"),
+                                        Err(e) => format!(
+                                            "spawn dir: {shown} (this session; save error: {e})"
+                                        ),
+                                    }
+                                } else {
+                                    format!("spawn dir: {shown} — new panes start here")
+                                });
                                 reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                // A config write bumps the mtime; adopt it now so
+                                // the reload watcher does not report our own save
+                                // back to us as an external edit.
+                                cfg_mtime = Config::mtime(&cfg_path);
                             }
-                            Some(false) => {
-                                // Restore the configured theme: the preview
-                                // never touched the config file.
-                                theme_pick = None;
-                                pal = cfg.palette();
+                            dirty = true;
+                            continue;
+                        }
+                        // While the theme picker is open it owns the keyboard:
+                        // arrows/hjkl step through presets, Enter keeps the
+                        // choice, Escape restores what was there before. Without
+                        // this the keys would reach the focused pane instead.
+                        if let Some(sel) = theme_pick {
+                            let n = Palette::NAMES.len();
+                            let mut close: Option<bool> = None; // Some(keep?)
+                            let mut next = sel;
+                            match ke.code {
+                                KeyCode::Left | KeyCode::Up => next = (sel + n - 1) % n,
+                                KeyCode::Right | KeyCode::Down => next = (sel + 1) % n,
+                                KeyCode::Char('h') | KeyCode::Char('k') => next = (sel + n - 1) % n,
+                                KeyCode::Char('l') | KeyCode::Char('j') => next = (sel + 1) % n,
+                                KeyCode::Char('\u{2d9}') | KeyCode::Char('\u{2da}') => {
+                                    next = (sel + n - 1) % n
+                                }
+                                KeyCode::Char('\u{ac}') | KeyCode::Char('\u{2206}') => {
+                                    next = (sel + 1) % n
+                                }
+                                KeyCode::Enter => close = Some(true),
+                                KeyCode::Esc => close = Some(false),
+                                KeyCode::Char('\u{2020}') => close = Some(true),
+                                KeyCode::Char('t') if ke.modifiers.contains(KeyModifiers::ALT) => {
+                                    close = Some(true)
+                                }
+                                _ => {}
                             }
-                            None => {
-                                if next != sel {
-                                    theme_pick = Some(next);
-                                    pal = Palette::preset(Palette::NAMES[next]).unwrap_or_default();
+                            match close {
+                                Some(true) => {
+                                    theme_pick = None;
+                                    reload_note_anchor = None;
+                                    reload_note = Some(format!(
+                                        "theme: {} — add `theme = \"{}\"` to keep it",
+                                        Palette::NAMES[sel],
+                                        Palette::NAMES[sel]
+                                    ));
+                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                }
+                                Some(false) => {
+                                    // Restore the configured theme: the preview
+                                    // never touched the config file.
+                                    theme_pick = None;
+                                    pal = cfg.palette();
+                                }
+                                None => {
+                                    if next != sel {
+                                        theme_pick = Some(next);
+                                        pal = Palette::preset(Palette::NAMES[next])
+                                            .unwrap_or_default();
+                                    }
                                 }
                             }
+                            dirty = true;
+                            continue;
                         }
-                        dirty = true;
-                        continue;
+                        if let Some(cmd) = handle_key(&ke) {
+                            // Any command other than another digit ends the number
+                            // being typed, the way a non-count key ends a vi count.
+                            // The pending jump commits first, so `⌥+1 2` then
+                            // `⌥+s` lands the split on column 12, not on wherever
+                            // focus happened to be.
+                            if !matches!(cmd, Cmd::JumpDigit(_)) {
+                                if let Some(n) = jump.take() {
+                                    let v = Viewport::new(cols);
+                                    let f = FollowScroll {
+                                        margin: cfg.scroll_margin,
+                                        center: cfg.center_focus,
+                                    };
+                                    let _ = layout.apply(Action::JumpToColumn(n), v, f);
+                                    dirty = true;
+                                }
+                            }
+                            match cmd {
+                                Cmd::JumpDigit(d) => {
+                                    jump.push(d, Instant::now());
+                                    dirty = true;
+                                }
+                                // Arm the disclaimer rather than exiting: the
+                                // second press (handled above) is the one that
+                                // actually kills every pane.
+                                Cmd::Quit => {
+                                    quit_confirm = true;
+                                    dirty = true;
+                                }
+                                Cmd::ToggleHud => {
+                                    hud_active = !hud_was_active;
+                                    dirty = true;
+                                }
+                                Cmd::DirPick => {
+                                    // Rebuilt on every open: repos are cloned and
+                                    // deleted while gwae runs, and the scan is a
+                                    // handful of readdirs.
+                                    let all = crate::spawndir::candidates(
+                                        spawn_dir.as_deref(),
+                                        &cfg.agent_dir,
+                                        &cfg.agent_dirs,
+                                        &cfg.agent_dir_roots,
+                                    );
+                                    dir_pick = Some(DirPicker {
+                                        all,
+                                        query: String::new(),
+                                        sel: 0,
+                                    });
+                                    dirty = true;
+                                }
+                                Cmd::ThemePick(_) => {
+                                    // Open on the currently configured theme when
+                                    // it is a known preset, so stepping starts
+                                    // from what the user is actually looking at.
+                                    let cur = Palette::NAMES
+                                        .iter()
+                                        .position(|n| Palette::preset(n) == Some(pal))
+                                        .unwrap_or(0);
+                                    theme_pick = Some(cur);
+                                    pal = Palette::preset(Palette::NAMES[cur]).unwrap_or_default();
+                                    dirty = true;
+                                }
+                                Cmd::Scroll(d) => {
+                                    let v = Viewport::new(cols);
+                                    let _ = layout.apply(
+                                        Action::ScrollViewport(d),
+                                        v,
+                                        FollowScroll::default(),
+                                    );
+                                    dirty = true;
+                                }
+                                Cmd::ScrollBack(d) => {
+                                    if let Some(pid) = focused_pane(&layout) {
+                                        if let Some(p) = panes.get_mut(&pid) {
+                                            // A full-screen app (vim, less) owns
+                                            // its own scrolling and has no
+                                            // scrollback of ours to move, so send
+                                            // it the arrow keys it expects instead.
+                                            if p.grid.alternate_screen() {
+                                                let key: &[u8] =
+                                                    if d > 0 { b"\x1b[A" } else { b"\x1b[B" };
+                                                for _ in 0..d.abs().min(20) {
+                                                    let _ = p.writer.write_all(key);
+                                                }
+                                                let _ = p.writer.flush();
+                                            } else if p.grid.scroll_by(d) {
+                                                dirty = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                Cmd::ScrollPane(d) => {
+                                    if let Some(pid) = focused_pane(&layout) {
+                                        if let Some(p) = panes.get_mut(&pid) {
+                                            p.h_scroll = (p.h_scroll + d).max(0);
+                                            dirty = true;
+                                        }
+                                    }
+                                }
+                                Cmd::Act(a) => {
+                                    let v = Viewport::new(cols);
+                                    let f = FollowScroll {
+                                        margin: cfg.scroll_margin,
+                                        center: cfg.center_focus,
+                                    };
+                                    // Closing the last pane leaves nothing to show,
+                                    // so gwae exits instead of resurrecting a
+                                    // fresh default layout.
+                                    if a == Action::KillPane && layout_pane_count(&layout) <= 1 {
+                                        break 'main;
+                                    }
+                                    let _ = layout.apply(a, v, f);
+                                    // A spawn-agent verb ends focused on the new
+                                    // column just right of the previous focus; mark its pane so sync spawns
+                                    // the agent harness rather than a shell.
+                                    if matches!(a, Action::SpawnAgent | Action::SpawnAgentRow) {
+                                        if let Some(pid) = focused_pane(&layout) {
+                                            agent_panes.insert(pid);
+                                        }
+                                    }
+                                    if let Err(e) = sync_panes(
+                                        &mut layout,
+                                        &mut panes,
+                                        &tx,
+                                        0,
+                                        &agent_panes,
+                                        spawn_dir.as_deref(),
+                                    ) {
+                                        tracing::error!("sync panes: {e}");
+                                    }
+                                    dirty = true;
+                                }
+                                Cmd::Input(bytes) => {
+                                    if let Some(pid) = focused_pane(&layout) {
+                                        if let Some(p) = panes.get_mut(&pid) {
+                                            // Typing means you want the prompt:
+                                            // snap a scrolled-back pane to live.
+                                            if p.grid.scroll_to_bottom() {
+                                                dirty = true;
+                                            }
+                                            let _ = p.writer.write_all(&bytes);
+                                            let _ = p.writer.flush();
+                                        }
+                                    }
+                                }
+                                Cmd::SmartJump => {
+                                    // Jump to the next pane that needs attention
+                                    // (failed > waiting > done), if any.
+                                    if let Some(target) = smart_jump_target(&layout) {
+                                        let v = Viewport::new(cols);
+                                        let f = FollowScroll {
+                                            margin: cfg.scroll_margin,
+                                            center: cfg.center_focus,
+                                        };
+                                        let _ = layout.apply(Action::FocusPane(target), v, f);
+                                        dirty = true;
+                                    }
+                                }
+                                Cmd::Paste => {
+                                    // Explicit clipboard paste. gwae reads the
+                                    // clipboard itself here rather than relying on
+                                    // the host to bracket a ⌘/Ctrl+V, so this is
+                                    // the route that works when the terminal has
+                                    // no bracketed-paste support at all.
+                                    //
+                                    // A pending confirmation means this ⌥+v is the
+                                    // second one: paste what was held, no questions.
+                                    let confirmed = paste_confirm
+                                        .take()
+                                        .filter(|(_, until)| Instant::now() < *until)
+                                        .map(|(t, _)| t);
+                                    let (note, anchor) = match confirmed {
+                                        Some(text) => paste_into_focused(
+                                            &layout, &mut panes, &cfg, cols, rows, &text,
+                                        ),
+                                        None => match select::read_clipboard() {
+                                            None => {
+                                                (Some("clipboard unreadable".to_string()), None)
+                                            }
+                                            Some(text) => {
+                                                let lines = text.lines().count();
+                                                if lines > PASTE_CONFIRM_LINES
+                                                    || text.len() > PASTE_CONFIRM_BYTES
+                                                {
+                                                    let n = format!(
+                                                        "paste {lines} lines? {} again",
+                                                        crate::keys::chord("v")
+                                                    );
+                                                    paste_confirm =
+                                                        Some((text, Instant::now() + NOTE_LINGER));
+                                                    (Some(n), None)
+                                                } else {
+                                                    paste_into_focused(
+                                                        &layout, &mut panes, &cfg, cols, rows,
+                                                        &text,
+                                                    )
+                                                }
+                                            }
+                                        },
+                                    };
+                                    if note.is_some() {
+                                        reload_note = note;
+                                        reload_note_anchor = anchor;
+                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                    }
+                                    dirty = true;
+                                }
+                                Cmd::Copy => {
+                                    // Keyboard copy. Scope is contextual: a
+                                    // finished drag-selection if there is one
+                                    // (copying it again is what the user means by
+                                    // pressing copy *after* selecting), else the
+                                    // visible pane.
+                                    let (note, anchor) = copy_from_focused(
+                                        &layout, &panes, &cfg, cols, rows, selection,
+                                    );
+                                    reload_note = Some(note);
+                                    reload_note_anchor = anchor;
+                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                    dirty = true;
+                                }
+                                Cmd::None => {}
+                            }
+                        }
                     }
-                    if let Some(cmd) = handle_key(&ke) {
-                        // Any command other than another digit ends the number
-                        // being typed, the way a non-count key ends a vi count.
-                        // The pending jump commits first, so `⌥+1 2` then
-                        // `⌥+s` lands the split on column 12, not on wherever
-                        // focus happened to be.
-                        if !matches!(cmd, Cmd::JumpDigit(_)) {
+                    Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Release => {
+                        if is_alt_modifier(&ke) && bare_alt_held {
+                            // Releasing the modifier ends the chord, so a pending
+                            // `⌥+<number>` commits here: this is the whole point
+                            // of accumulating, and it is what makes columns past 9
+                            // addressable at all.
                             if let Some(n) = jump.take() {
                                 let v = Viewport::new(cols);
                                 let f = FollowScroll {
@@ -4817,470 +5056,257 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     center: cfg.center_focus,
                                 };
                                 let _ = layout.apply(Action::JumpToColumn(n), v, f);
-                                dirty = true;
                             }
-                        }
-                        match cmd {
-                            Cmd::JumpDigit(d) => {
-                                jump.push(d, Instant::now());
-                                dirty = true;
-                            }
-                            // Arm the disclaimer rather than exiting: the
-                            // second press (handled above) is the one that
-                            // actually kills every pane.
-                            Cmd::Quit => {
-                                quit_confirm = true;
-                                dirty = true;
-                            }
-                            Cmd::ToggleHud => {
-                                hud_active = !hud_was_active;
-                                dirty = true;
-                            }
-                            Cmd::DirPick => {
-                                // Rebuilt on every open: repos are cloned and
-                                // deleted while gwae runs, and the scan is a
-                                // handful of readdirs.
-                                let all = crate::spawndir::candidates(
-                                    spawn_dir.as_deref(),
-                                    &cfg.agent_dir,
-                                    &cfg.agent_dirs,
-                                    &cfg.agent_dir_roots,
-                                );
-                                dir_pick = Some(DirPicker {
-                                    all,
-                                    query: String::new(),
-                                    sel: 0,
-                                });
-                                dirty = true;
-                            }
-                            Cmd::ThemePick(_) => {
-                                // Open on the currently configured theme when
-                                // it is a known preset, so stepping starts
-                                // from what the user is actually looking at.
-                                let cur = Palette::NAMES
-                                    .iter()
-                                    .position(|n| Palette::preset(n) == Some(pal))
-                                    .unwrap_or(0);
-                                theme_pick = Some(cur);
-                                pal = Palette::preset(Palette::NAMES[cur]).unwrap_or_default();
-                                dirty = true;
-                            }
-                            Cmd::Scroll(d) => {
-                                let v = Viewport::new(cols);
-                                let _ = layout.apply(
-                                    Action::ScrollViewport(d),
-                                    v,
-                                    FollowScroll::default(),
-                                );
-                                dirty = true;
-                            }
-                            Cmd::ScrollBack(d) => {
-                                if let Some(pid) = focused_pane(&layout) {
-                                    if let Some(p) = panes.get_mut(&pid) {
-                                        // A full-screen app (vim, less) owns
-                                        // its own scrolling and has no
-                                        // scrollback of ours to move, so send
-                                        // it the arrow keys it expects instead.
-                                        if p.grid.alternate_screen() {
-                                            let key: &[u8] =
-                                                if d > 0 { b"\x1b[A" } else { b"\x1b[B" };
-                                            for _ in 0..d.abs().min(20) {
-                                                let _ = p.writer.write_all(key);
-                                            }
-                                            let _ = p.writer.flush();
-                                        } else if p.grid.scroll_by(d) {
-                                            dirty = true;
-                                        }
-                                    }
-                                }
-                            }
-                            Cmd::ScrollPane(d) => {
-                                if let Some(pid) = focused_pane(&layout) {
-                                    if let Some(p) = panes.get_mut(&pid) {
-                                        p.h_scroll = (p.h_scroll + d).max(0);
-                                        dirty = true;
-                                    }
-                                }
-                            }
-                            Cmd::Act(a) => {
-                                let v = Viewport::new(cols);
-                                let f = FollowScroll {
-                                    margin: cfg.scroll_margin,
-                                    center: cfg.center_focus,
-                                };
-                                // Closing the last pane leaves nothing to show,
-                                // so gwae exits instead of resurrecting a
-                                // fresh default layout.
-                                if a == Action::KillPane && layout_pane_count(&layout) <= 1 {
-                                    break 'main;
-                                }
-                                let _ = layout.apply(a, v, f);
-                                // A spawn-agent verb ends focused on the new
-                                // column just right of the previous focus; mark its pane so sync spawns
-                                // the agent harness rather than a shell.
-                                if matches!(a, Action::SpawnAgent | Action::SpawnAgentRow) {
-                                    if let Some(pid) = focused_pane(&layout) {
-                                        agent_panes.insert(pid);
-                                    }
-                                }
-                                if let Err(e) = sync_panes(
-                                    &mut layout,
-                                    &mut panes,
-                                    &tx,
-                                    0,
-                                    &agent_panes,
-                                    spawn_dir.as_deref(),
-                                ) {
-                                    tracing::error!("sync panes: {e}");
-                                }
-                                dirty = true;
-                            }
-                            Cmd::Input(bytes) => {
-                                if let Some(pid) = focused_pane(&layout) {
-                                    if let Some(p) = panes.get_mut(&pid) {
-                                        // Typing means you want the prompt:
-                                        // snap a scrolled-back pane to live.
-                                        if p.grid.scroll_to_bottom() {
-                                            dirty = true;
-                                        }
-                                        let _ = p.writer.write_all(&bytes);
-                                        let _ = p.writer.flush();
-                                    }
-                                }
-                            }
-                            Cmd::SmartJump => {
-                                // Jump to the next pane that needs attention
-                                // (failed > waiting > done), if any.
-                                if let Some(target) = smart_jump_target(&layout) {
-                                    let v = Viewport::new(cols);
-                                    let f = FollowScroll {
-                                        margin: cfg.scroll_margin,
-                                        center: cfg.center_focus,
-                                    };
-                                    let _ = layout.apply(Action::FocusPane(target), v, f);
-                                    dirty = true;
-                                }
-                            }
-                            Cmd::Paste => {
-                                // Explicit clipboard paste. gwae reads the
-                                // clipboard itself here rather than relying on
-                                // the host to bracket a ⌘/Ctrl+V, so this is
-                                // the route that works when the terminal has
-                                // no bracketed-paste support at all.
-                                //
-                                // A pending confirmation means this ⌥+v is the
-                                // second one: paste what was held, no questions.
-                                let confirmed = paste_confirm
-                                    .take()
-                                    .filter(|(_, until)| Instant::now() < *until)
-                                    .map(|(t, _)| t);
-                                let (note, anchor) = match confirmed {
-                                    Some(text) => paste_into_focused(
-                                        &layout, &mut panes, &cfg, cols, rows, &text,
-                                    ),
-                                    None => match select::read_clipboard() {
-                                        None => (Some("clipboard unreadable".to_string()), None),
-                                        Some(text) => {
-                                            let lines = text.lines().count();
-                                            if lines > PASTE_CONFIRM_LINES
-                                                || text.len() > PASTE_CONFIRM_BYTES
-                                            {
-                                                let n = format!(
-                                                    "paste {lines} lines? {} again",
-                                                    crate::keys::chord("v")
-                                                );
-                                                paste_confirm =
-                                                    Some((text, Instant::now() + NOTE_LINGER));
-                                                (Some(n), None)
-                                            } else {
-                                                paste_into_focused(
-                                                    &layout, &mut panes, &cfg, cols, rows, &text,
-                                                )
-                                            }
-                                        }
-                                    },
-                                };
-                                if note.is_some() {
-                                    reload_note = note;
-                                    reload_note_anchor = anchor;
-                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                }
-                                dirty = true;
-                            }
-                            Cmd::Copy => {
-                                // Keyboard copy. Scope is contextual: a
-                                // finished drag-selection if there is one
-                                // (copying it again is what the user means by
-                                // pressing copy *after* selecting), else the
-                                // visible pane.
-                                let (note, anchor) =
-                                    copy_from_focused(&layout, &panes, &cfg, cols, rows, selection);
-                                reload_note = Some(note);
-                                reload_note_anchor = anchor;
-                                reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                dirty = true;
-                            }
-                            Cmd::None => {}
-                        }
-                    }
-                }
-                Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Release => {
-                    if is_alt_modifier(&ke) && bare_alt_held {
-                        // Releasing the modifier ends the chord, so a pending
-                        // `⌥+<number>` commits here: this is the whole point
-                        // of accumulating, and it is what makes columns past 9
-                        // addressable at all.
-                        if let Some(n) = jump.take() {
-                            let v = Viewport::new(cols);
-                            let f = FollowScroll {
-                                margin: cfg.scroll_margin,
-                                center: cfg.center_focus,
-                            };
-                            let _ = layout.apply(Action::JumpToColumn(n), v, f);
-                        }
-                        bare_alt_held = false;
-                        // Bare release means the physical key is up — drop the
-                        // fallback window too so a preceding Alt+hjkl chord
-                        // doesn't linger after the hold is gone.
-                        chord_alt_until = None;
-                        dirty = true;
-                    } else if ke.modifiers.contains(KeyModifiers::ALT) || is_alt_modifier(&ke) {
-                        // Keep chord hold alive until its timeout expires.
-                    }
-                }
-                Ok(Event::Mouse(me)) => {
-                    // The ⌥-hold dashboard is a control surface, not a
-                    // picture: while it is up, a click on a tile focuses that
-                    // pane and a click anywhere else on the panel is
-                    // swallowed, so the box never leaks a selection drag into
-                    // the pane it is covering.
-                    if let Some(plan) = &hud_plan {
-                        let r = plan.rect;
-                        let on_panel = me.column >= r.x
-                            && me.row >= r.y
-                            && me.column < r.x.saturating_add(r.w)
-                            && me.row < r.y.saturating_add(r.h);
-                        if on_panel {
-                            if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                                if let Some(pid) = hud_pane_at(plan, me.column, me.row) {
-                                    if focused_pane(&layout) != Some(pid) {
-                                        let v = Viewport::new(cols);
-                                        let f = FollowScroll {
-                                            margin: cfg.scroll_margin,
-                                            center: cfg.center_focus,
-                                        };
-                                        let _ = layout.apply(Action::FocusPane(pid), v, f);
-                                        dirty = true;
-                                    }
-                                }
-                            }
-                            continue;
-                        }
-                    }
-                    let chrome = chrome_rows(&cfg);
-                    let views = focused_pane_views_with_chrome(
-                        &layout,
-                        cols,
-                        rows,
-                        cfg.content_width,
-                        &panes,
-                        true,
-                        chrome,
-                    );
-                    // A drag that wanders outside the pane (or off-screen)
-                    // must still extend and finish the selection, exactly as
-                    // it does in a browser or a native terminal. So resolve
-                    // the target against the *owning* pane of a live drag
-                    // first, clamping the point to that pane's rect, and only
-                    // fall back to "whatever pane is under the cursor" when no
-                    // drag is in flight.
-                    let hit = selection
-                        .filter(|s| s.dragging)
-                        .and_then(|s| clamped_pane_point(&views, s.pane, me.column, me.row))
-                        .or_else(|| pane_at(&views, me.column, me.row));
-                    let mut handled = false;
-                    // Peek slivers are hints, not interactive text: a click
-                    // should focus the neighbour (like clicking a tab edge),
-                    // never start a selection or forward mouse to the child.
-                    let hit_is_peek = hit
-                        .and_then(|(pid, _, _)| views.iter().find(|v| v.pid == pid).map(|v| v.peek))
-                        .unwrap_or(false);
-                    if hit_is_peek {
-                        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
-                            if let Some((pid, _, _)) = hit {
-                                if focused_pane(&layout) != Some(pid) {
-                                    let v = Viewport::new(cols);
-                                    let f = FollowScroll {
-                                        margin: cfg.scroll_margin,
-                                        center: cfg.center_focus,
-                                    };
-                                    let _ = layout.apply(Action::FocusPane(pid), v, f);
-                                    dirty = true;
-                                }
-                            }
-                        }
-                        // Never start a drag, never forward to child.
-                        handled = true;
-                    } else if let Some((pid, gx, gy)) = hit {
-                        let child_wants_mouse = panes
-                            .get(&pid)
-                            .map(|p| p.grid.wants_mouse())
-                            .unwrap_or(false);
-                        if mouse_role(me.kind, me.modifiers, child_wants_mouse) == MouseRole::Select
-                        {
-                            let point = select::Point::new(gx, gy);
-                            match me.kind {
-                                MouseEventKind::Down(MouseButton::Left) => {
-                                    // Press arms a selection but shows nothing
-                                    // yet: a plain click must clear the old
-                                    // highlight, not paint a one-cell one.
-                                    if selection.is_some() {
-                                        dirty = true;
-                                    }
-                                    selection = Some(Selection {
-                                        pane: pid,
-                                        anchor: point,
-                                        cursor: point,
-                                        dragging: true,
-                                    });
-                                    // Clicking a pane still focuses it.
-                                    if focused_pane(&layout) != Some(pid) {
-                                        let v = Viewport::new(cols);
-                                        let f = FollowScroll {
-                                            margin: cfg.scroll_margin,
-                                            center: cfg.center_focus,
-                                        };
-                                        let _ = layout.apply(Action::FocusPane(pid), v, f);
-                                        dirty = true;
-                                    }
-                                }
-                                MouseEventKind::Drag(MouseButton::Left) => {
-                                    if let Some(s) = selection.as_mut() {
-                                        if s.dragging && s.cursor != point {
-                                            s.cursor = point;
-                                            dirty = true;
-                                        }
-                                    }
-                                }
-                                MouseEventKind::Up(MouseButton::Left) => {
-                                    if let Some(s) = selection.as_mut() {
-                                        s.cursor = point;
-                                        s.dragging = false;
-                                    }
-                                    // A press+release without movement is a
-                                    // plain click, not a selection: drop it so
-                                    // no stray highlight lingers and nothing
-                                    // overwrites the user's clipboard.
-                                    let done = selection.filter(|s| !s.is_empty());
-                                    match done {
-                                        Some(s) => {
-                                            let text = panes
-                                                .get(&s.pane)
-                                                .map(|p| select::selected_text(&p.grid, &s))
-                                                .unwrap_or_default();
-                                            let copied = select::copy_to_clipboard(&text);
-                                            reload_note = Some(if copied {
-                                                copy_note(&text)
-                                            } else {
-                                                "clipboard unavailable".to_string()
-                                            });
-                                            reload_note_anchor = views
-                                                .iter()
-                                                .find(|v| v.pid == s.pane)
-                                                .map(|v| v.rect);
-                                            reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                        }
-                                        None => selection = None,
-                                    }
-                                    dirty = true;
-                                }
-                                _ => {}
-                            }
-                            handled = true;
-                        }
-                    }
-                    if let Some((pid, gx, gy)) = (!handled)
-                        .then(|| pane_at(&views, me.column, me.row))
-                        .flatten()
-                    {
-                        if matches!(me.kind, MouseEventKind::Down(MouseButton::Left))
-                            && focused_pane(&layout) != Some(pid)
-                        {
-                            let v = Viewport::new(cols);
-                            let f = FollowScroll {
-                                margin: cfg.scroll_margin,
-                                center: cfg.center_focus,
-                            };
-                            let _ = layout.apply(Action::FocusPane(pid), v, f);
+                            bare_alt_held = false;
+                            // Bare release means the physical key is up — drop the
+                            // fallback window too so a preceding Alt+hjkl chord
+                            // doesn't linger after the hold is gone.
+                            chord_alt_until = None;
                             dirty = true;
+                        } else if ke.modifiers.contains(KeyModifiers::ALT) || is_alt_modifier(&ke) {
+                            // Keep chord hold alive until its timeout expires.
                         }
-                        if let Some(p) = panes.get_mut(&pid) {
-                            // A child that asked for mouse reporting owns the
-                            // event, translated into its own grid coordinates,
-                            // so vim/less/an agent TUI behave exactly as they
-                            // would natively. gwae claims no wheel of its
-                            // own: scrollback is `⌥+↑/↓` (see `handle_key`).
-                            if p.grid.wants_mouse() {
-                                if let Some(bytes) = sgr_mouse_report(&me, gx, gy) {
-                                    let _ = p.writer.write_all(&bytes);
-                                    let _ = p.writer.flush();
+                    }
+                    Ok(Event::Mouse(me)) => {
+                        // The ⌥-hold dashboard is a control surface, not a
+                        // picture: while it is up, a click on a tile focuses that
+                        // pane and a click anywhere else on the panel is
+                        // swallowed, so the box never leaks a selection drag into
+                        // the pane it is covering.
+                        if let Some(plan) = &hud_plan {
+                            let r = plan.rect;
+                            let on_panel = me.column >= r.x
+                                && me.row >= r.y
+                                && me.column < r.x.saturating_add(r.w)
+                                && me.row < r.y.saturating_add(r.h);
+                            if on_panel {
+                                if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                                    if let Some(pid) = hud_pane_at(plan, me.column, me.row) {
+                                        if focused_pane(&layout) != Some(pid) {
+                                            let v = Viewport::new(cols);
+                                            let f = FollowScroll {
+                                                margin: cfg.scroll_margin,
+                                                center: cfg.center_focus,
+                                            };
+                                            let _ = layout.apply(Action::FocusPane(pid), v, f);
+                                            dirty = true;
+                                        }
+                                    }
                                 }
+                                continue;
                             }
                         }
-                    }
-                }
-                Ok(Event::Paste(text)) => {
-                    // The host bracketed a paste for us (⌘/Ctrl+V). Hand the
-                    // whole payload to the focused pane in one delivery
-                    // instead of letting it arrive as N keystrokes, which is
-                    // what used to submit a multi-line paste line by line.
-                    // A finished selection is dismissed the way typing does.
-                    if selection.take_if(|s| !s.dragging).is_some() {
-                        dirty = true;
-                    }
-                    if let Some(pid) = focused_pane(&layout) {
-                        // Resolve the toast's anchor rect *before* taking the
-                        // pane mutably: the view list borrows `panes`.
-                        let anchor = focused_pane_views_with_chrome(
+                        let chrome = chrome_rows(&cfg);
+                        let views = focused_pane_views_with_chrome(
                             &layout,
                             cols,
                             rows,
                             cfg.content_width,
                             &panes,
                             true,
-                            chrome_rows(&cfg),
-                        )
-                        .iter()
-                        .find(|v| v.pid == pid)
-                        .map(|v| v.rect);
-                        if let Some(p) = panes.get_mut(&pid) {
-                            let lines = text.lines().count();
-                            let bracketed = p.grid.wants_bracketed_paste();
-                            if write_paste(p, &text) > 0 && lines > 1 {
-                                // Say so only when it is the case a user can
-                                // get wrong: a multi-line paste is the one
-                                // that used to run commands on its own.
-                                reload_note = Some(paste_note(&text, bracketed));
-                                reload_note_anchor = anchor;
-                                reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                            chrome,
+                        );
+                        // A drag that wanders outside the pane (or off-screen)
+                        // must still extend and finish the selection, exactly as
+                        // it does in a browser or a native terminal. So resolve
+                        // the target against the *owning* pane of a live drag
+                        // first, clamping the point to that pane's rect, and only
+                        // fall back to "whatever pane is under the cursor" when no
+                        // drag is in flight.
+                        let hit = selection
+                            .filter(|s| s.dragging)
+                            .and_then(|s| clamped_pane_point(&views, s.pane, me.column, me.row))
+                            .or_else(|| pane_at(&views, me.column, me.row));
+                        let mut handled = false;
+                        // Peek slivers are hints, not interactive text: a click
+                        // should focus the neighbour (like clicking a tab edge),
+                        // never start a selection or forward mouse to the child.
+                        let hit_is_peek = hit
+                            .and_then(|(pid, _, _)| {
+                                views.iter().find(|v| v.pid == pid).map(|v| v.peek)
+                            })
+                            .unwrap_or(false);
+                        if hit_is_peek {
+                            if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                                if let Some((pid, _, _)) = hit {
+                                    if focused_pane(&layout) != Some(pid) {
+                                        let v = Viewport::new(cols);
+                                        let f = FollowScroll {
+                                            margin: cfg.scroll_margin,
+                                            center: cfg.center_focus,
+                                        };
+                                        let _ = layout.apply(Action::FocusPane(pid), v, f);
+                                        dirty = true;
+                                    }
+                                }
                             }
-                            dirty = true;
+                            // Never start a drag, never forward to child.
+                            handled = true;
+                        } else if let Some((pid, gx, gy)) = hit {
+                            let child_wants_mouse = panes
+                                .get(&pid)
+                                .map(|p| p.grid.wants_mouse())
+                                .unwrap_or(false);
+                            if mouse_role(me.kind, me.modifiers, child_wants_mouse)
+                                == MouseRole::Select
+                            {
+                                let point = select::Point::new(gx, gy);
+                                match me.kind {
+                                    MouseEventKind::Down(MouseButton::Left) => {
+                                        // Press arms a selection but shows nothing
+                                        // yet: a plain click must clear the old
+                                        // highlight, not paint a one-cell one.
+                                        if selection.is_some() {
+                                            dirty = true;
+                                        }
+                                        selection = Some(Selection {
+                                            pane: pid,
+                                            anchor: point,
+                                            cursor: point,
+                                            dragging: true,
+                                        });
+                                        // Clicking a pane still focuses it.
+                                        if focused_pane(&layout) != Some(pid) {
+                                            let v = Viewport::new(cols);
+                                            let f = FollowScroll {
+                                                margin: cfg.scroll_margin,
+                                                center: cfg.center_focus,
+                                            };
+                                            let _ = layout.apply(Action::FocusPane(pid), v, f);
+                                            dirty = true;
+                                        }
+                                    }
+                                    MouseEventKind::Drag(MouseButton::Left) => {
+                                        if let Some(s) = selection.as_mut() {
+                                            if s.dragging && s.cursor != point {
+                                                s.cursor = point;
+                                                dirty = true;
+                                            }
+                                        }
+                                    }
+                                    MouseEventKind::Up(MouseButton::Left) => {
+                                        if let Some(s) = selection.as_mut() {
+                                            s.cursor = point;
+                                            s.dragging = false;
+                                        }
+                                        // A press+release without movement is a
+                                        // plain click, not a selection: drop it so
+                                        // no stray highlight lingers and nothing
+                                        // overwrites the user's clipboard.
+                                        let done = selection.filter(|s| !s.is_empty());
+                                        match done {
+                                            Some(s) => {
+                                                let text = panes
+                                                    .get(&s.pane)
+                                                    .map(|p| select::selected_text(&p.grid, &s))
+                                                    .unwrap_or_default();
+                                                let copied = select::copy_to_clipboard(&text);
+                                                reload_note = Some(if copied {
+                                                    copy_note(&text)
+                                                } else {
+                                                    "clipboard unavailable".to_string()
+                                                });
+                                                reload_note_anchor = views
+                                                    .iter()
+                                                    .find(|v| v.pid == s.pane)
+                                                    .map(|v| v.rect);
+                                                reload_note_until =
+                                                    Some(Instant::now() + NOTE_LINGER);
+                                            }
+                                            None => selection = None,
+                                        }
+                                        dirty = true;
+                                    }
+                                    _ => {}
+                                }
+                                handled = true;
+                            }
+                        }
+                        if let Some((pid, gx, gy)) = (!handled)
+                            .then(|| pane_at(&views, me.column, me.row))
+                            .flatten()
+                        {
+                            if matches!(me.kind, MouseEventKind::Down(MouseButton::Left))
+                                && focused_pane(&layout) != Some(pid)
+                            {
+                                let v = Viewport::new(cols);
+                                let f = FollowScroll {
+                                    margin: cfg.scroll_margin,
+                                    center: cfg.center_focus,
+                                };
+                                let _ = layout.apply(Action::FocusPane(pid), v, f);
+                                dirty = true;
+                            }
+                            if let Some(p) = panes.get_mut(&pid) {
+                                // A child that asked for mouse reporting owns the
+                                // event, translated into its own grid coordinates,
+                                // so vim/less/an agent TUI behave exactly as they
+                                // would natively. gwae claims no wheel of its
+                                // own: scrollback is `⌥+↑/↓` (see `handle_key`).
+                                if p.grid.wants_mouse() {
+                                    if let Some(bytes) = sgr_mouse_report(&me, gx, gy) {
+                                        let _ = p.writer.write_all(&bytes);
+                                        let _ = p.writer.flush();
+                                    }
+                                }
+                            }
                         }
                     }
+                    Ok(Event::Paste(text)) => {
+                        // The host bracketed a paste for us (⌘/Ctrl+V). Hand the
+                        // whole payload to the focused pane in one delivery
+                        // instead of letting it arrive as N keystrokes, which is
+                        // what used to submit a multi-line paste line by line.
+                        // A finished selection is dismissed the way typing does.
+                        if selection.take_if(|s| !s.dragging).is_some() {
+                            dirty = true;
+                        }
+                        if let Some(pid) = focused_pane(&layout) {
+                            // Resolve the toast's anchor rect *before* taking the
+                            // pane mutably: the view list borrows `panes`.
+                            let anchor = focused_pane_views_with_chrome(
+                                &layout,
+                                cols,
+                                rows,
+                                cfg.content_width,
+                                &panes,
+                                true,
+                                chrome_rows(&cfg),
+                            )
+                            .iter()
+                            .find(|v| v.pid == pid)
+                            .map(|v| v.rect);
+                            if let Some(p) = panes.get_mut(&pid) {
+                                let lines = text.lines().count();
+                                let bracketed = p.grid.wants_bracketed_paste();
+                                if write_paste(p, &text) > 0 && lines > 1 {
+                                    // Say so only when it is the case a user can
+                                    // get wrong: a multi-line paste is the one
+                                    // that used to run commands on its own.
+                                    reload_note = Some(paste_note(&text, bracketed));
+                                    reload_note_anchor = anchor;
+                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                }
+                                dirty = true;
+                            }
+                        }
+                    }
+                    Ok(Event::Resize(c, r)) => {
+                        cols = c.max(1);
+                        rows = r.max(2);
+                        // A wider terminal shrinks the strip relative to the
+                        // viewport; drop any now-invalid scroll immediately so the
+                        // strip snaps back to full bleed on the next paint.
+                        layout.clamp_scrolls(Viewport::new(cols));
+                        dirty = true;
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!("event read: {e}");
+                    }
                 }
-                Ok(Event::Resize(c, r)) => {
-                    cols = c.max(1);
-                    rows = r.max(2);
-                    // A wider terminal shrinks the strip relative to the
-                    // viewport; drop any now-invalid scroll immediately so the
-                    // strip snaps back to full bleed on the next paint.
-                    layout.clamp_scrolls(Viewport::new(cols));
-                    dirty = true;
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!("event read: {e}");
-                }
+                // Drain loop polls zero-timeout at top; break when empty.
+                // Continue in handlers now targets 'drain, batching writes.
             }
         }
 

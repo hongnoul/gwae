@@ -10,7 +10,7 @@
       in {
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "gwae";
-          version = "1.0.1";
+          version = "1.1.0";
           src = self;
           nativeBuildInputs = with pkgs; [ cargo rustc pkg-config ];
           buildPhase = "cargo build --release";

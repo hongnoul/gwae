@@ -1,6 +1,6 @@
 # Maintainer: hongnoul
 pkgname=gwae-bin
-pkgver=1.0.1
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="niri's scrolling tiling for your CLI agents, in any terminal (daemon-free multiplexer)"
 arch=('x86_64' 'aarch64')
