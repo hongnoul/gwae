@@ -121,6 +121,21 @@ impl Session {
         String::from_utf8_lossy(&out).into_owned()
     }
 
+    fn drain_until(&self, needle: &str, timeout: Duration) -> String {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut out = Vec::new();
+        while std::time::Instant::now() < deadline {
+            if let Ok(b) = self.rx.recv_timeout(Duration::from_millis(200)) {
+                out.extend_from_slice(&b);
+                let s = String::from_utf8_lossy(&out);
+                if s.contains(needle) {
+                    return s.into_owned();
+                }
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
     fn kill(mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -274,7 +289,7 @@ fn the_picker_finds_projects_by_marker_whatever_the_layout() {
     let mut s = Session::start(&root, "", "sleep 60", &root, &[]);
     let _ = s.drain();
     s.send(OPT_D);
-    let out = s.drain();
+    let out = s.drain_until("alpha-proj", Duration::from_secs(8));
     assert!(
         out.contains("alpha-proj") && out.contains("beta-proj"),
         "⌥+d should discover projects by marker, whatever the layout; got:\n{out}"
@@ -300,7 +315,7 @@ fn picking_a_directory_moves_the_next_pane_there() {
     let _ = s.drain();
     // Type the filter, then take the top match for this session.
     s.send(b"picked");
-    let filtered = s.drain();
+    let filtered = s.drain_until("picked-proj", Duration::from_secs(8));
     assert!(
         filtered.contains("picked-proj"),
         "typing should filter to the match; got:\n{filtered}"
@@ -343,7 +358,7 @@ fn saving_from_the_picker_writes_agent_dir_to_the_config() {
     s.send(b"saved");
     let _ = s.drain();
     s.send(OPT_S);
-    let out = s.drain();
+    let out = s.drain_until("saved", Duration::from_secs(8));
     assert!(
         out.contains("saved"),
         "it should confirm the save; got:\n{out}"
