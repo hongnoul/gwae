@@ -1974,10 +1974,9 @@ fn visible_column_range(layout: &Layout, row_idx: usize, cols: u16) -> Option<(u
 /// Where every piece of the ⌥-hold dashboard lands.
 ///
 /// Geometry is computed once, by [`plan_center_minimap`], and then consumed
-/// three times: to paint the panel, to scrim everything around it, and to
-/// resolve a click on a tile back to a pane. Sharing one plan is what keeps
-/// those three from drifting apart, which is exactly how "click focuses the
-/// wrong pane" bugs are born.
+/// twice: to paint the panel and to resolve a click on a tile back to a pane.
+/// Sharing one plan is what keeps those two from drifting apart, which is
+/// exactly how "click focuses the wrong pane" bugs are born.
 struct HudPlan {
     /// The panel's screen rect, frame included.
     rect: Rect,
@@ -2238,8 +2237,8 @@ fn hud_pane_at(plan: &HudPlan, x: u16, y: u16) -> Option<PaneId> {
 /// the keys that act on what you are looking at.
 ///
 /// Plan-and-paint in one call. The render loop keeps the two apart (it needs
-/// the plan for the scrim and for click-to-focus); tests, which only care
-/// about what lands on the screen, use this.
+/// the plan for click-to-focus); tests, which only care about what lands on
+/// the screen, use this.
 #[cfg(test)]
 fn draw_center_minimap(
     out: &mut [Cell],
@@ -2256,7 +2255,7 @@ fn draw_center_minimap(
 }
 
 /// Paint a planned dashboard. Split from [`plan_center_minimap`] so geometry
-/// is decided once and reused by the scrim and by click-to-focus.
+/// is decided once and reused by click-to-focus.
 fn paint_center_minimap(
     out: &mut [Cell],
     cols: u16,
@@ -2465,38 +2464,6 @@ fn paint_center_minimap(
             Palette::muted(pal.text),
             false,
         );
-    }
-}
-
-/// Dim every cell outside `keep` so a centered panel reads as *above* the
-/// session rather than pasted into it. Pane content stays legible (this is a
-/// scrim, not a blackout) and the panel's own cells are untouched.
-fn dim_behind(out: &mut [Cell], cols: u16, rows: u16, keep: Rect) {
-    let scale = |c: CColor| match c {
-        CColor::Rgb(r, g, b) => CColor::Rgb(
-            ((r as u16 * 9) / 16) as u8,
-            ((g as u16 * 9) / 16) as u8,
-            ((b as u16 * 9) / 16) as u8,
-        ),
-        // Indexed and default colors have no components to scale; dropping
-        // them to a fixed grey would fight the user's own terminal scheme.
-        other => other,
-    };
-    for y in 0..rows {
-        for x in 0..cols {
-            let inside = x >= keep.x
-                && y >= keep.y
-                && x < keep.x.saturating_add(keep.w)
-                && y < keep.y.saturating_add(keep.h);
-            if inside {
-                continue;
-            }
-            if let Some(c) = out.get_mut(y as usize * cols as usize + x as usize) {
-                c.style.fg = scale(c.style.fg);
-                c.style.bg = scale(c.style.bg);
-                c.style.bold = false;
-            }
-        }
     }
 }
 
@@ -5419,9 +5386,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         } else {
             HudFacts::default()
         };
-        // Geometry is planned once: the scrim, the panel, and click-to-focus
-        // all read the same plan, so a click can never land on a tile the
-        // paint put somewhere else.
+        // Geometry is planned once: the panel and click-to-focus all read
+        // the same plan, so a click can never land on a tile the paint put
+        // somewhere else.
         hud_plan = (show_center_minimap && !show_hud)
             .then(|| plan_center_minimap(cols, rows, &layout, &cfg.minimap))
             .flatten();
@@ -5444,10 +5411,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
             if show_center_minimap && !show_hud {
                 if let Some(plan) = &hud_plan {
-                    // Scrim first, panel second: dimming the session behind
-                    // the box is what makes the reveal unmissable over busy
-                    // output.
-                    dim_behind(&mut frame, cols, rows, plan.rect);
                     paint_center_minimap(&mut frame, cols, rows, &layout, plan, &pal, &hud_facts);
                 }
             }
@@ -8626,46 +8589,6 @@ mod tests {
             .expect("dashboard fits");
         assert_eq!(plan.gutter[1], "2 deploy", "a real name is worth showing");
         assert_eq!(plan.gutter[2], "3", "a generated one is just its number");
-    }
-
-    #[test]
-    fn the_scrim_dims_around_the_panel_and_never_through_it() {
-        let (cols, rows) = (40u16, 12u16);
-        let bright = CColor::Rgb(200, 200, 200);
-        let mut out = vec![
-            Cell {
-                ch: 'x',
-                style: gwae_term::Style {
-                    fg: bright,
-                    bg: bright,
-                    bold: true,
-                    ..Default::default()
-                },
-                width: 1,
-                ..Default::default()
-            };
-            cols as usize * rows as usize
-        ];
-        let keep = Rect {
-            x: 10,
-            y: 4,
-            w: 8,
-            h: 3,
-        };
-        dim_behind(&mut out, cols, rows, keep);
-        let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
-        // Inside the panel rect: untouched, so the panel paints over a clean
-        // backdrop rather than a pre-dimmed one.
-        assert_eq!(at(10, 4).style.bg, bright);
-        assert_eq!(at(17, 6).style.bg, bright);
-        assert!(at(12, 5).style.bold);
-        // Outside: dimmed, but still legible content rather than a blackout.
-        for (x, y) in [(0u16, 0u16), (9, 4), (18, 6), (39, 11)] {
-            let c = at(x, y);
-            assert_ne!(c.style.bg, bright, "cell ({x},{y}) should be dimmed");
-            assert_eq!(c.ch, 'x', "the scrim restyles, it does not erase");
-            assert!(!c.style.bold, "bold would fight the scrim");
-        }
     }
 
     #[test]
