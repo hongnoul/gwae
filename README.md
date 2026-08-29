@@ -122,7 +122,15 @@ curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 
 Downloads the latest prebuilt binary for your platform to `~/.local/bin` (override with `GWAE_INSTALL_DIR`), verifying the checksum.
 
-On Windows, grab `gwae-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/hongnoul/gwae/releases/latest) and put `gwae.exe` on your `PATH`.
+On Windows:
+
+```powershell
+irm https://hongnoul.github.io/gwae/install.ps1 | iex   # PowerShell 5+ / pwsh
+# or
+scoop bucket add gwae https://github.com/hongnoul/scoop-bucket; scoop install gwae
+```
+
+Manual fallback: grab `gwae-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/hongnoul/gwae/releases/latest) and put `gwae.exe` on your `PATH`.
 
 ### Homebrew (macOS & Linux)
 
@@ -155,7 +163,7 @@ cargo install --path crates/gwae     # -> ~/.cargo/bin/gwae
 # or: make install                      # first writable bin dir on PATH
 ```
 
-Packaging scaffolding for AUR and Nix lives in [`packaging/`](packaging/); neither is published yet.
+Packaging for `scoop` lives in [`packaging/scoop/`](packaging/scoop/) (auto-bumped on every release), AUR (`packaging/aur/`, `gwae-bin`) is wired in the release workflow and gated on `AUR_SSH_KEY`. Nix scaffolding lives in [`packaging/nix/`](packaging/nix/) (not yet in `nixpkgs`).
 
 ### Staying up to date
 

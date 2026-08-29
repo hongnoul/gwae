@@ -411,3 +411,110 @@ jobs:
             git push
             echo "pushed scoop-bucket@${VERSION}"
           fi
+
+  bump-aur:
+    name: bump-aur (AUR gwae-bin)
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check for AUR_SSH_KEY
+        id: has_key
+        env:
+          KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [ -z "${KEY:-}" ]; then
+            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::AUR_SSH_KEY not set — skipping AUR push. Set with: gh secret set AUR_SSH_KEY --body \"\$(cat ~/.ssh/aur)\" --repo hongnoul/gwae  (and add the SSH pubkey to https://aur.archlinux.org/account/)"
+          else
+            echo "has=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.has_key.outputs.has == 'true'
+      - name: Push to AUR (gwae-bin)
+        if: steps.has_key.outputs.has == 'true'
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          REPO="hongnoul/gwae"
+          echo "bump-aur: $TAG -> $VERSION"
+          TMP=$(mktemp -d)
+
+          fetch_sha() {
+            local asset="$1"
+            local url="https://github.com/${REPO}/releases/download/${TAG}/${asset}.sha256"
+            if curl -fsSL "$url" -o /tmp/_aur_sha 2>/dev/null; then
+              awk '{print $1}' /tmp/_aur_sha
+            else
+              echo "::error::could not fetch SHA for $asset ($url)"
+              exit 1
+            fi
+          }
+          SHA_X64=$(fetch_sha "gwae-x86_64-unknown-linux-musl.tar.gz")
+          SHA_ARM=$(fetch_sha "gwae-aarch64-unknown-linux-musl.tar.gz")
+          echo "SHAs: x64=$SHA_X64 arm=$SHA_ARM"
+
+          # Patch local PKGBUILD from packaging/aur/PKGBUILD (source of truth)
+          sed -i.bak -E "s/^pkgver=.*/pkgver=${VERSION}/" packaging/aur/PKGBUILD
+          sed -i.bak -E "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${SHA_X64}')/" packaging/aur/PKGBUILD
+          sed -i.bak -E "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${SHA_ARM}')/" packaging/aur/PKGBUILD
+          rm -f packaging/aur/PKGBUILD.bak
+
+          # Validate .SRCINFO is derivable (makepkg --printsrcinfo requires arch tooling, so at least parse PKGBUILD)
+          bash -n packaging/aur/PKGBUILD
+          echo "PKGBUILD syntax ok"
+
+          # Configure SSH for AUR
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519,rsa aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+
+          # Clone (or init) gwae-bin AUR repo
+          if ! git clone "ssh://aur@aur.archlinux.org/gwae-bin.git" "$TMP/aur" 2>/dev/null; then
+            echo "::warning::clone of aur/gwae-bin failed — first publish requires creating the package on https://aur.archlinux.org/packages (ssh aur@aur.archlinux.org setup, or manual submit). Skipping."
+            exit 0
+          fi
+
+          # Copy PKGBUILD + regenerate .SRCINFO if makepkg available
+          cp packaging/aur/PKGBUILD "$TMP/aur/PKGBUILD"
+          if command -v makepkg >/dev/null 2>&1; then
+            (cd "$TMP/aur" && makepkg --printsrcinfo > .SRCINFO 2>/dev/null || true)
+          else
+            # Minimal .SRCINFO fallback so AUR accepts the push (aura checks it)
+            cat > "$TMP/aur/.SRCINFO" <<SRCINFO
+          pkgbase = gwae-bin
+          	pkgdesc = niri's scrolling tiling for your CLI agents, in any terminal (daemon-free multiplexer)
+          	pkgver = ${VERSION}
+          	pkgrel = 1
+          	url = https://github.com/hongnoul/gwae
+          	arch = x86_64
+          	arch = aarch64
+          	license = MIT
+          	provides = gwae
+          	conflicts = gwae
+          	source_x86_64 = gwae-${VERSION}-x86_64.tar.gz::https://github.com/hongnoul/gwae/releases/download/v${VERSION}/gwae-x86_64-unknown-linux-musl.tar.gz
+          	source_aarch64 = gwae-${VERSION}-aarch64.tar.gz::https://github.com/hongnoul/gwae/releases/download/v${VERSION}/gwae-aarch64-unknown-linux-musl.tar.gz
+          	sha256sums_x86_64 = ${SHA_X64}
+          	sha256sums_aarch64 = ${SHA_ARM}
+
+          pkgname = gwae-bin
+          SRCINFO
+          fi
+
+          cd "$TMP/aur"
+          git config user.name "gwae-bot"
+          git config user.email "gwae-bot@hongnoul.github.io"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "AUR already at $VERSION"
+          else
+            git commit -m "gwae-bin ${VERSION}"
+            # Use the explicit SSH key
+            GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes" git push
+            echo "pushed AUR gwae-bin@${VERSION}"
+          fi
+          shred -u ~/.ssh/aur 2>/dev/null || rm -f ~/.ssh/aur
