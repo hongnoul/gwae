@@ -235,9 +235,7 @@
         </p>
         <div class="install">
           <code id="install-cmd"
-            >curl -fsSL
-            https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh
-            | bash</code
+            >curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash</code
           >
           <button
             onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent.replace(/\s+/g,' ').trim());this.textContent='copied';setTimeout(()=>this.textContent='copy',1200)"
@@ -282,7 +280,7 @@
             >Install → Guided setup → Spawn agents → Hold ⌥ to triage</strong
           >
         </p>
-        <pre><code>curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash
+        <pre><code>curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 gwae                  # one strip, one quarter-width pane
 gwae init             # guided setup: theme, layout, chrome (live preview)
 gwae run "claude"     # your agent in column 0

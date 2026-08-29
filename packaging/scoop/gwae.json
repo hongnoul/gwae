@@ -1,0 +1,27 @@
+{
+  "version": "1.1.0",
+  "description": "gwae: niri's scrolling tiling for your CLI agents, in any terminal",
+  "homepage": "https://github.com/hongnoul/gwae",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/hongnoul/gwae/releases/download/v1.1.0/gwae-x86_64-pc-windows-msvc.zip",
+      "hash": "300ea72c19f6a7002a2f13cd99bf971fcd045e0a5340a24080ad9e406bb8a586",
+      "extract_dir": ""
+    }
+  },
+  "bin": "gwae.exe",
+  "checkver": {
+    "github": "https://github.com/hongnoul/gwae"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/hongnoul/gwae/releases/download/v$version/gwae-x86_64-pc-windows-msvc.zip"
+      }
+    },
+    "hash": {
+      "url": "https://github.com/hongnoul/gwae/releases/download/v$version/gwae-x86_64-pc-windows-msvc.zip.sha256"
+    }
+  }
+}

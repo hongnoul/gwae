@@ -17,8 +17,8 @@ Any terminal, macOS / Linux / Windows. One process, no daemon.
 Two agents and a system monitor, each at full width on the strip grid, with placeholder boxes tiling the empty columns. Nothing is sped up.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash   # macOS & Linux
-brew install hongnoul/tap/gwae                                                             # Homebrew
+curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash   # macOS & Linux
+brew install hongnoul/tap/gwae                                 # Homebrew
 cargo install gwae                                                                         # Rust 1.85+
 ```
 
@@ -116,7 +116,8 @@ Bindings live in one place, `crates/gwae/src/binds.rs`, and tests enforce that t
 
 ```bash
 # macOS & Linux
-curl -fsSL https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh | bash
+curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
+# fallback: https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh
 ```
 
 Downloads the latest prebuilt binary for your platform to `~/.local/bin` (override with `GWAE_INSTALL_DIR`), verifying the checksum.
