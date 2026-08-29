@@ -322,35 +322,35 @@ pub fn tilde(p: &Path) -> String {
     if home.is_empty() {
         return s;
     }
-    // HOME and p may be canonicalized differently (`/var` vs `/private/var`
-    // on macOS, or a symlinked temp dir in tests).  Canonicalize HOME for the
-    // prefix check so `~/...` still wins and the label stays short.
-    let home_canon = PathBuf::from(&home)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(&home))
-        .to_string_lossy()
-        .to_string();
-    // `p` is already canonicalized by `candidates` and by the TUI's chosen
-    // path; canonicalize defensively in case a caller passes a non-canonical
-    // path.
-    let s_canon = PathBuf::from(&s)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(&s))
-        .to_string_lossy()
-        .to_string();
-    if s_canon == home_canon {
-        return "~".into();
-    }
-    if let Some(rest) = s_canon.strip_prefix(&format!("{home_canon}/")) {
-        return format!("~/{rest}");
-    }
-    // Fall back to the non-canonical home prefix (covers non-existent HOME
-    // in tests where canonicalize fails for one side only).
     if s == home {
         return "~".into();
     }
     if let Some(rest) = s.strip_prefix(&format!("{home}/")) {
         return format!("~/{rest}");
+    }
+    // On macOS /var is a symlink to /private/var, and $TMPDIR lives under
+    // /var/folders/...  `candidates` canonicalizes each found path to
+    // /private/var/..., while HOME stays /var/... — so the prefix above
+    // misses and the label would be an absolute path. Handle that once by
+    // canonicalizing only HOME (one stat, not one per candidate per frame).
+    if let Ok(home_canon) = PathBuf::from(&home).canonicalize() {
+        let hc = home_canon.to_string_lossy().to_string();
+        if s == hc {
+            return "~".into();
+        }
+        if let Some(rest) = s.strip_prefix(&format!("{hc}/")) {
+            return format!("~/{rest}");
+        }
+        // And the reverse: HOME is already /private/var but p is still /var.
+        if home.starts_with("/private/var") && s.starts_with("/var/") {
+            let alt = format!("/var{}", &home[8..]);
+            if s == alt {
+                return "~".into();
+            }
+            if let Some(rest) = s.strip_prefix(&format!("{alt}/")) {
+                return format!("~/{rest}");
+            }
+        }
     }
     s
 }

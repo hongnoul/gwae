@@ -516,9 +516,29 @@ fn a_picked_spawn_directory_survives_a_reload() {
     s.writer.write_all(b"\x1bd").expect("open picker");
     s.writer.flush().expect("flush");
     std::thread::sleep(Duration::from_secs(2));
+    // Typing before the candidate scan has painted can make the filter
+    // miss the list entirely, so wait until the picker has mounted and
+    // named the project the test just created.
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        // Peek at PTY output without blocking the test's own sleep budget.
+        std::thread::sleep(Duration::from_millis(200));
+        let snap = s.screen();
+        if snap.contains("picked-proj") {
+            break;
+        }
+    }
     s.writer.write_all(b"picked").expect("filter");
     s.writer.flush().expect("flush");
     std::thread::sleep(Duration::from_millis(1500));
+    // Ensure the filter result still lists the project before choosing.
+    let deadline2 = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < deadline2 {
+        std::thread::sleep(Duration::from_millis(100));
+        if s.screen().contains("picked-proj") {
+            break;
+        }
+    }
     s.writer.write_all(b"\r").expect("choose");
     s.writer.flush().expect("flush");
     std::thread::sleep(Duration::from_secs(2));
