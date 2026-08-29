@@ -312,7 +312,10 @@ fn picking_a_directory_moves_the_next_pane_there() {
     let mut s = Session::start(&root, "", "sleep 60", &root, &[]);
     let _ = s.drain();
     s.send(OPT_D);
-    let _ = s.drain();
+    // Wait for the picker to have mounted and listed this run's project
+    // before typing; otherwise the filter arrives while candidates are still
+    // being walked and the first drain consumes an empty frame.
+    let _ = s.drain_until("picked-proj", Duration::from_secs(8));
     // Type the filter, then take the top match for this session.
     s.send(b"picked");
     let filtered = s.drain_until("picked-proj", Duration::from_secs(8));
@@ -354,9 +357,13 @@ fn saving_from_the_picker_writes_agent_dir_to_the_config() {
     );
     let _ = s.drain();
     s.send(OPT_D);
-    let _ = s.drain();
+    let _ = s.drain_until("saved-proj", Duration::from_secs(8));
     s.send(b"saved");
-    let _ = s.drain();
+    let filtered = s.drain_until("saved-proj", Duration::from_secs(8));
+    assert!(
+        filtered.contains("saved-proj"),
+        "filtering should keep the match; got:\n{filtered}"
+    );
     s.send(OPT_S);
     let out = s.drain_until("saved", Duration::from_secs(8));
     assert!(

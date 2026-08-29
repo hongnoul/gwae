@@ -319,13 +319,40 @@ pub struct Candidate {
 pub fn tilde(p: &Path) -> String {
     let s = p.to_string_lossy().to_string();
     let home = std::env::var("HOME").unwrap_or_default();
-    if !home.is_empty() && s == home {
+    if home.is_empty() {
+        return s;
+    }
+    // HOME and p may be canonicalized differently (`/var` vs `/private/var`
+    // on macOS, or a symlinked temp dir in tests).  Canonicalize HOME for the
+    // prefix check so `~/...` still wins and the label stays short.
+    let home_canon = PathBuf::from(&home)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(&home))
+        .to_string_lossy()
+        .to_string();
+    // `p` is already canonicalized by `candidates` and by the TUI's chosen
+    // path; canonicalize defensively in case a caller passes a non-canonical
+    // path.
+    let s_canon = PathBuf::from(&s)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(&s))
+        .to_string_lossy()
+        .to_string();
+    if s_canon == home_canon {
         return "~".into();
     }
-    match (home.is_empty(), s.strip_prefix(&format!("{home}/"))) {
-        (false, Some(rest)) => format!("~/{rest}"),
-        _ => s,
+    if let Some(rest) = s_canon.strip_prefix(&format!("{home_canon}/")) {
+        return format!("~/{rest}");
     }
+    // Fall back to the non-canonical home prefix (covers non-existent HOME
+    // in tests where canonicalize fails for one side only).
+    if s == home {
+        return "~".into();
+    }
+    if let Some(rest) = s.strip_prefix(&format!("{home}/")) {
+        return format!("~/{rest}");
+    }
+    s
 }
 
 /// Everything the picker can offer, best-first and de-duplicated.
