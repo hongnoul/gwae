@@ -332,7 +332,9 @@ pub fn tilde(p: &Path) -> String {
     // /var/folders/...  `candidates` canonicalizes each found path to
     // /private/var/..., while HOME stays /var/... — so the prefix above
     // misses and the label would be an absolute path. Handle that once by
-    // canonicalizing only HOME (one stat, not one per candidate per frame).
+    // canonicalizing only HOME (one stat, not one per candidate per frame),
+    // and for the synthetic /var case where canonicalize can't reach a
+    // nonexistent temp tempdir, fall back to prefix rewriting.
     if let Ok(home_canon) = PathBuf::from(&home).canonicalize() {
         let hc = home_canon.to_string_lossy().to_string();
         if s == hc {
@@ -350,6 +352,16 @@ pub fn tilde(p: &Path) -> String {
             if let Some(rest) = s.strip_prefix(&format!("{alt}/")) {
                 return format!("~/{rest}");
             }
+        }
+    } else if home.starts_with("/var/folders/") && s.starts_with("/private/var/folders/") {
+        // HOME is a temp dir that doesn't exist yet (test setup race) or a
+        // synthetic path where canonicalize failed; still alias /var ↔ /private/var.
+        let alt_home = format!("/private{home}");
+        if s == alt_home {
+            return "~".into();
+        }
+        if let Some(rest) = s.strip_prefix(&format!("{alt_home}/")) {
+            return format!("~/{rest}");
         }
     }
     s
