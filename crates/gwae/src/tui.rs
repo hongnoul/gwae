@@ -3728,80 +3728,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     Some(Cmd::Input(key_bytes(ev)))
 }
 
-fn focused_pane_rect(
-    layout: &Layout,
-    panes: &HashMap<PaneId, PtyPane>,
-    cfg: &Config,
-    cols: u16,
-    rows: u16,
-) -> Option<Rect> {
-    let pid = focused_pane(layout)?;
-    focused_pane_views_with_chrome(
-        layout,
-        cols,
-        rows,
-        cfg.content_width,
-        panes,
-        true,
-        chrome_rows(cfg),
-    )
-    .iter()
-    .find(|v| v.pid == pid)
-    .map(|v| v.rect)
-}
-
-#[allow(dead_code)]
-fn copy_from_focused(
-    layout: &Layout,
-    panes: &HashMap<PaneId, PtyPane>,
-    cfg: &Config,
-    cols: u16,
-    rows: u16,
-    selection: Option<Selection<PaneId>>,
-) -> (String, Option<Rect>) {
-    let anchor = focused_pane_rect(layout, panes, cfg, cols, rows);
-    let Some(pid) = focused_pane(layout) else {
-        return ("no pane focused".to_string(), None);
-    };
-    let Some(p) = panes.get(&pid) else {
-        return ("no pane focused".to_string(), None);
-    };
-    // Scope 1: a selection in *this* pane. A selection left in some other pane
-    // is not what "copy" means while focus is here.
-    let text = match selection.filter(|s| s.pane == pid && !s.is_empty()) {
-        Some(s) => select::selected_text(&p.grid, &s),
-        // Scope 2: the visible pane, top to bottom.
-        None => {
-            let size = p.grid.size();
-            let whole = Selection {
-                pane: pid,
-                anchor: select::Point::new(0, 0),
-                cursor: select::Point::new(
-                    size.cols.saturating_sub(1),
-                    size.rows.saturating_sub(1),
-                ),
-                dragging: false,
-            };
-            let text = select::selected_text(&p.grid, &whole);
-            text.trim_end_matches('\n').to_string()
-        }
-    };
-    if text.is_empty() {
-        return ("nothing to copy".to_string(), anchor);
-    }
-    (copy_note(&text), anchor)
-}
-
-fn copy_note(text: &str) -> String {
-    let lines = text.lines().count();
-    if lines > 1 {
-        format!("copied {lines} lines")
-    } else {
-        let n = text.chars().count();
-        format!("copied {n} char{}", if n == 1 { "" } else { "s" })
-    }
-}
-
 /// Kill any pane whose id is no longer in the layout, and spawn missing ones.
 fn sync_panes(
     layout: &mut Layout,
@@ -6312,13 +6238,6 @@ mod tests {
         let mut frame = vec![Cell::default(); cols as usize * rows as usize];
         draw_toast(&mut frame, cols, rows, "hi", &Palette::default(), true);
         assert_eq!(frame[9 * cols as usize + 1].ch, 'h');
-    }
-
-    #[test]
-    fn copy_note_counts_lines_or_characters() {
-        assert_eq!(copy_note("hello"), "copied 5 chars");
-        assert_eq!(copy_note("x"), "copied 1 char");
-        assert_eq!(copy_note("a\nb\nc"), "copied 3 lines");
     }
 
     #[test]

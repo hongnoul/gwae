@@ -67,6 +67,7 @@ impl<P: Copy + Eq> Selection<P> {
 /// terminal grid is space-padded to the full width, and pasting that padding
 /// back is never what anyone wants), and wide-glyph continuation cells are
 /// skipped so a CJK character is copied once, not twice.
+#[allow(dead_code)]
 pub fn selected_text<G: TermGrid>(grid: &G, sel: &Selection<impl Copy + Eq>) -> String {
     let size = grid.size();
     let (start, end) = sel.ends();
