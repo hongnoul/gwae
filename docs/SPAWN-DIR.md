@@ -25,6 +25,32 @@ Three layers, cheapest first, each one able to stand alone:
 
 The picker's candidate list is discovered, not typed.
 
+## Per-harness default
+
+`⌥+;` does not always mean the same harness: `default_agent` is the user's
+preferred one (`jcode`, `claude`, `codex`, …). A single global `agent_dir`
+makes `⌥+;` open the wrong repo when the preferred harness lives elsewhere.
+
+`harness_dirs` is a per-harness fallback table that is not tied to any
+particular harness name:
+
+```toml
+# generic fallback (old key, still works)
+agent_dir = "~/git/gwae"
+
+# per-harness: key = harness command as in default_agent
+harness_dirs = { jcode = "~/git/gwae", Muse = "~/src/foo" }
+# or dotted / table forms:
+# harness_dirs.jcode = "~/git/gwae"
+# [harness_dirs]
+# jcode = "~/git/gwae"
+```
+
+In the `⌥+d` picker the title shows the harness (`spawn dir [jcode]:`),
+and `⌥+s` writes to `harness_dirs.<harness>` when a harness is set
+(otherwise it writes `agent_dir` as before). Any harness is a valid key, so
+the UI is general to whichever harness the user configured as preferred.
+
 ## Discovery must not guess at names
 
 The first cut scanned a list of likely parents (`~/git`, `~/code`, `~/src`,
@@ -53,7 +79,7 @@ people who want to narrow or widen the search (`["~/work", "/srv"]`).
 
 ## Precedence
 
-`⌥+d` session pick > `--dir` > `agent_dir` > gwae's own cwd.
+`⌥+d` session pick > `--dir` > `harness_dirs[preferred_harness]` > `agent_dir` > gwae's own cwd.
 
 One resolved value lives in the TUI loop (`spawn_dir`), and both spawn paths
 (startup pane 1.1 and `sync_panes` for `⌥+;` / `⌥+:`) read it. Plain shell

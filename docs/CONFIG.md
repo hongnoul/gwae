@@ -21,6 +21,7 @@ content_width = 0
 default_agent = "claude"           # first pane + ; launch this
 agents = ["my-agent-wrapper"]     # extra names for the selector
 agent_dir = "~/git/gwae"          # directory new panes start in ("" = gwae's cwd)
+harness_dirs = { jcode = "~/git/gwae" } # per-harness override; key = default_agent, any harness works
 agent_dirs = ["~/notes"]          # always offered in the ⌥+d picker
 agent_dir_roots = ["~/work"]      # where ⌥+d looks for projects (default: your home dir)
 theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal

@@ -175,15 +175,37 @@ fn agent_status(cfg: &Config) -> String {
 /// decision `run_tui` makes, including the fallback, so a typo'd `agent_dir`
 /// is findable instead of silently ignored.
 fn spawn_dir_status(cfg: &Config, cli_dir: Option<&str>) -> String {
-    let resolved = spawndir::resolve(cli_dir, &cfg.agent_dir);
-    let unset = cfg.agent_dir.trim().is_empty() && cli_dir.is_none();
+    let harness_dir = cfg.dir_for_harness(&cfg.default_agent);
+    let resolved = spawndir::resolve_for_harness(cli_dir, harness_dir, &cfg.agent_dir);
+    let h_label = if cfg.default_agent.trim().is_empty() {
+        String::new()
+    } else {
+        crate::tui::shell_split(&cfg.default_agent)
+            .first()
+            .cloned()
+            .unwrap_or_default()
+    };
+    let unset = harness_dir.trim().is_empty()
+        && cfg.agent_dir.trim().is_empty()
+        && cli_dir.is_none();
     match resolved {
         Some(p) if unset => format!("{} (gwae's cwd; unset, ⌥+d picks one) [ok]", p.display()),
-        Some(p) if Some(&p) != spawndir::inherited().as_ref() => format!("{} [ok]", p.display()),
+        Some(p) if Some(&p) != spawndir::inherited().as_ref() => {
+            if !h_label.is_empty() && !harness_dir.trim().is_empty() {
+                format!("{} [{}] [ok]", p.display(), h_label)
+            } else {
+                format!("{} [ok]", p.display())
+            }
+        }
         _ => {
             let raw = cli_dir
                 .filter(|s| !s.trim().is_empty())
-                .unwrap_or(&cfg.agent_dir);
+                .unwrap_or(harness_dir);
+            let raw = if raw.trim().is_empty() {
+                &cfg.agent_dir
+            } else {
+                raw
+            };
             match spawndir::check(raw) {
                 Ok(p) => format!("{} [ok]", p.display()),
                 Err(e) => format!("INVALID {raw:?}: {e}; panes inherit gwae's cwd"),

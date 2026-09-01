@@ -416,6 +416,229 @@ pub fn toml_string_pub(s: &str) -> String {
     toml_string(s)
 }
 
+/// Comment-preserving rewrite for `harness_dirs.<key> = "dir"`.
+///
+/// TOML allows `harness_dirs = { jcode = "..." }` and the dotted form
+/// `[harness_dirs]` + `jcode = "..."` and inline mutations. The cheap
+/// approach that handles each without a full parser is to do three passes:
+/// 1) replace a dotted `harness_dirs.<key> = ...` line anywhere,
+/// 2) replace inside an existing inline table `harness_dirs = { … }`,
+/// 3) otherwise append/insert a dotted assignment after any existing
+///    `[harness_dirs]` block or at the file's top-level tail.
+///
+/// Preserves comments/order; the file stays valid TOML.
+pub fn set_harness_dir_text(text: &str, key: &str, dir: &str) -> String {
+    let dotted = format!("harness_dirs.{key}");
+    // 1. dotted form anywhere.
+    let as_dotted = set_scalar_text(text, &dotted, &toml_string(dir));
+    if as_dotted != text && as_dotted.contains(&format!("{dotted} =")) {
+        // We actually replaced a dotted line; done.
+        // Detect via whether the new text differs and contains the key now.
+        // If user had no dotted line, set_scalar_text just appended one —
+        // we still want to prefer inline table editing when one exists, so
+        // only early-return when the original had a dotted line.
+        if text.lines().any(|l| {
+            let t = l.trim_start();
+            !t.starts_with('#') && !t.starts_with('[') && t.starts_with(&dotted)
+                && t[dotted.len()..].trim_start().starts_with('=')
+        }) {
+            return as_dotted;
+        }
+    }
+    // 2. inline table `harness_dirs = { ... }`
+    let lines: Vec<&str> = text.lines().collect();
+    for (idx, raw) in lines.iter().enumerate() {
+        let t = raw.trim_start();
+        if t.starts_with('[') {
+            continue;
+        }
+        // Look for `harness_dirs = {` on this line.
+        let Some(eq) = t.find('=') else { continue };
+        let lhs = t[..eq].trim();
+        if lhs != "harness_dirs" {
+            continue;
+        }
+        let rhs = t[eq + 1..].trim_start();
+        if !(rhs.starts_with('{') && rhs.contains('}')) {
+            continue;
+        }
+        // Replace or insert `key = "dir"` inside the braces, preserving prior content.
+        // Parse naively: extract inside `{ }`.
+        let lbrace = t.find('{').unwrap();
+        let rbrace = t.rfind('}').unwrap();
+        let inside = &t[lbrace + 1..rbrace];
+        let val = toml_string(dir);
+        // If key already there, replace its value; else append.
+        let mut replaced = false;
+        let mut parts: Vec<String> = Vec::new();
+        // Split on commas not inside quotes (values are strings, so crude split on ',' is fine).
+        let mut cur = String::new();
+        let mut in_q = false;
+        let mut esc = false;
+        for ch in inside.chars() {
+            if esc {
+                cur.push(ch);
+                esc = false;
+                continue;
+            }
+            if ch == '\\' && in_q {
+                cur.push(ch);
+                esc = true;
+                continue;
+            }
+            if ch == '"' {
+                in_q = !in_q;
+                cur.push(ch);
+                continue;
+            }
+            if ch == ',' && !in_q {
+                parts.push(cur);
+                cur = String::new();
+                continue;
+            }
+            cur.push(ch);
+        }
+        if !cur.trim().is_empty() || inside.contains(',') {
+            parts.push(cur);
+        }
+        for p in parts.iter_mut() {
+            let trimmed = p.trim_start();
+            // Extract key before `=`
+            if let Some(eq2) = trimmed.find('=') {
+                let k = trimmed[..eq2].trim().trim_matches('"').trim();
+                // Unquote dotted key form key.
+                if k == key {
+                    *p = format!(" {key} = {val} ");
+                    replaced = true;
+                }
+            }
+        }
+        let new_inside = if replaced {
+            parts.join(",")
+        } else {
+            if inside.trim().is_empty() {
+                format!(" {key} = {val} ")
+            } else {
+                let trimmed = inside.trim_end();
+                let sep = if trimmed.ends_with(',') { " " } else { ", " };
+                format!("{inside}{sep}{key} = {val} ")
+            }
+        };
+        let prefix = &raw[..raw.find('{').unwrap() + 1];
+        let suffix = &raw[raw.rfind('}').unwrap()..];
+        // Rebuild line preserving leading indent and trailing comment outside braces? Keep simple: just the braces content.
+        // Preserve any leading indent from original.
+        let indent_len = raw.len() - raw.trim_start().len();
+        let indent = &raw[..indent_len];
+        let new_line = format!("{indent}harness_dirs = {{{new_inside}}}");
+        let _ = (prefix, suffix); // not used but keep signature clear
+        let mut out: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+        out[idx] = new_line;
+        let mut s = out.join("\n");
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        return s;
+    }
+    // 3. No inline table; if a `[harness_dirs]` section exists, add/replace `key =` inside it.
+    if text.lines().any(|l| l.trim() == "[harness_dirs]") {
+        let mut out: Vec<String> = Vec::new();
+        let mut in_harness = false;
+        let mut replaced = false;
+        for raw in text.lines() {
+            let t = raw.trim();
+            if t.starts_with('[') {
+                in_harness = t == "[harness_dirs]";
+                out.push(raw.to_string());
+                continue;
+            }
+            if in_harness && !replaced {
+                let trimmed = raw.trim_start();
+                if !trimmed.starts_with('#') && !trimmed.is_empty() {
+                    if let Some(eq) = trimmed.find('=') {
+                        let k = trimmed[..eq].trim().trim_matches('"').trim();
+                        if k == key {
+                            let indent_len = raw.len() - raw.trim_start().len();
+                            let indent = &raw[..indent_len];
+                            out.push(format!("{indent}{key} = {}", toml_string(dir)));
+                            replaced = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+            out.push(raw.to_string());
+        }
+        if !replaced {
+            // Append inside the section, before next table or EOF.
+            let mut inserted = false;
+            let mut out2: Vec<String> = Vec::new();
+            let mut in_harness2 = false;
+            for (i, raw) in out.iter().enumerate() {
+                if raw.trim() == "[harness_dirs]" {
+                    in_harness2 = true;
+                } else if raw.trim_start().starts_with('[') {
+                    if in_harness2 && !inserted {
+                        out2.push(format!("{key} = {}", toml_string(dir)));
+                        inserted = true;
+                    }
+                    in_harness2 = false;
+                }
+                out2.push(raw.clone());
+                // If at EOF and still in harness section.
+                if i == out.len() - 1 && in_harness2 && !inserted {
+                    out2.push(format!("{key} = {}", toml_string(dir)));
+                    inserted = true;
+                }
+            }
+            let mut s = out2.join("\n");
+            if !s.ends_with('\n') {
+                s.push('\n');
+            }
+            return s;
+        }
+        let mut s = out.join("\n");
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        return s;
+    }
+    // 4. No existing harness_dirs at all: insert a dotted assignment like default_agent does,
+    //    before the first table header if any.
+    let line = format!("harness_dirs.{key} = {}", toml_string(dir));
+    let mut out: Vec<String> = Vec::new();
+    let mut replaced = false;
+    // Reuse dotted insertion path: the `as_dotted` above already handled appending a dotted line;
+    // but we short-circuited only when original had a dotted line, so this path adds it now.
+    // Prefer inline table for first write: `harness_dirs = { jcode = "..." }`
+    let inline = format!("harness_dirs = {{ {key} = {} }}", toml_string(dir));
+    for raw in text.lines() {
+        let t = raw.trim_start();
+        if t.starts_with('[') && !replaced {
+            // Insert before first table.
+            if out.last().map(|l: &String| !l.trim().is_empty()).unwrap_or(false) {
+                out.push(String::new());
+            }
+            out.push(inline.clone());
+            out.push(String::new());
+            replaced = true;
+        }
+        out.push(raw.to_string());
+    }
+    if !replaced {
+        if !out.is_empty() && !out.last().unwrap().trim().is_empty() {
+            out.push(String::new());
+        }
+        out.push(inline);
+    }
+    let _ = line;
+    let mut s = out.join("\n");
+    if !s.ends_with('\n') {
+        s.push('\n');
+    }
+    s
+}
+
 /// Quote a value as a TOML basic string.
 fn toml_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
