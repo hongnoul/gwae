@@ -103,35 +103,37 @@ whose muscle memory is now "every gwae verb is an `⌥` chord".
   paragraph, not a mechanism. This is the difference between a mux that
   pastes a repo into an agent prompt and one that asks first.
 
-## Layer 2 — `⌥+c`, copy with a scope
+## Layer 2 — `⌥+c`, copy mode (View vs Session)
 
-Keyboard copy, with the scope chosen by context rather than by asking:
+Keyboard copy is a toggle mode, not an instant action:
 
-1. a live drag-selection in the focused pane → the selection;
-2. else the pane has OSC 133 marks → the last turn;
-3. else → the visible pane plus its scrollback.
+* `⌥+c` / `⌥+y` (`ç` on macOS): enter/exit copy mode. On re-entry the
+  previous `hjkl` choice is gone — the next pane is the focused one until
+  you move.
+* Inside copy mode: `h`/`j`/`k`/`l` (with or without `⌥`) moves focus to
+  the pane you want to copy, using the same `Action::Focus*` table every
+  other feature uses. `1-9`/`⌥+digit` jumps also work as plain chords.
+* `⏎` copies the *visible* viewport of the focused pane. `a` copies the
+  *entire session* (visible plus the 10k scrollback `gwae-term` keeps).
+* `Esc` or a second `⌥+c` cancels without copying. The toast
+  `copy mode · hjkl pick pane · Enter copy view · a copy all · Esc to cancel`
+  stays visible for `NOTE_LINGER`.
 
-The toast reports what happened and advertises the amendments:
-`copied turn · 38 lines   p pane  s sel`. Within `NOTE_LINGER`, `p`/`s`/`t`
-re-copy at that scope; anything else commits. Amending is free because the
-clipboard is a scratch register — unlike `⌥+q`, there is nothing to undo.
+Drag-to-copy (press → drag → release, inverse highlight) remains the fast
+path and never enters copy mode.
 
-Enabling work, unchanged from the roadmap's yank entry and in this order:
+### What shipped vs what was planned
 
-1. **Scrollback text API** in `gwae-term`. `TermGrid` exposes the visible
-   screen plus `scrollback_offset` only, so "the whole pane" is currently
-   unreachable. Needs a row-range accessor over the vt100 scrollback.
-2. **Prompt marks.** `tui.rs` keeps OSC 133 *status* (`saw_osc133`) but
-   discards position. Store per-pane `PromptMark { abs_row, exit }`, fixed
-   up as rows scroll out, to delimit a turn. Turn scope is the unit people
-   actually paste elsewhere, so this is the layer that earns the feature.
-3. **`Effect::Menu`.** The second keystroke of the toast is not expressible
-   in today's `Effect`, and `binds.rs` is load-bearing: its test feeds every
-   entry through the real `handle_key`. Add `Effect::Menu(&[MenuItem])` plus
-   a test that presses `⌥+c` then each item key and asserts the resulting
-   `Cmd::Copy { scope }`. Without that the cheat-sheet and the cowsay hints
-   can drift from the dispatcher, which is the exact failure `binds.rs`
-   exists to prevent.
+* `TermGrid::{visible_text,session_text}` already exists. `Vt100Grid`
+  overrides `session_text()` to include the scrollback; on `vt100 0.15`
+  that call used to panic at `visible_rows` when `offset > rows` and is
+  now guarded to only call `Screen::contents()` at safe offsets.
+* `tui.rs` keeps a `copy_mode: bool` alongside `selection`. `Cmd::Copy`
+  toggles it; plain `hjkl`/`a`/`⏎`/`Esc` are handled *before*
+  `handle_key`, so copy mode owns those bare keys without stealing
+  `⌥+hjkl` from the normal dispatcher. `binds.rs` hint updated to
+  `copy mode — pick pane then view or all` so the cow/HUD/README cannot
+  drift.
 
 ## Layer 3 — images, behind a config key
 
@@ -147,8 +149,8 @@ exists, so over SSH write a file and toast the path.
 |---|---|---|---|
 | P0 | bracketed paste in/out, chunking, sanitizing | — | **done** |
 | P1 | `⌥+v` with the large-paste confirm | P0 | **done** |
-| P2 | `⌥+c` selection + pane scope | P0 | **done** (visible pane; scrollback below) |
-| P3 | turn scope, `⌥+y` alias, `Effect::Menu` | P2, prompt marks | alias done; turn scope open |
+| P2 | `⌥+c` copy mode (View vs Session) | P0, `TermGrid::{visible,session}_text` | **done** (View/Session via `a`/`⏎` in copy mode) |
+| P3 | turn scope, `Effect::Menu` | P2, prompt marks | `⌥+y` alias done; turn scope open |
 | P4 | image copy | P3, encoder | open |
 
 ### What P0-P2 actually shipped
@@ -156,37 +158,33 @@ exists, so over SSH write a file and toast the path.
 * `select.rs` owns the encoding: `paste_bytes(text, bracketed)` normalizes
   newlines to `\r`, strips embedded `ESC[200~`/`ESC[201~`, and brackets only
   when the *child* asked. `read_clipboard()` mirrors `copy_to_clipboard`.
-* `gwae-term` exposes `wants_bracketed_paste()` over vt100's DECSET 2004.
+* `gwae-term` exposes `wants_bracketed_paste()` over vt100's DECSET 2004, and
+  `TermGrid::{visible_text,session_text}` with `Vt100Grid` override for the
+  10k scrollback (`tui.rs` copies via `copy_pane_text` at `CopyScope::{View,Session}`).
 * `tui.rs` enables bracketed paste at startup and disables it in all three
   teardown paths; `reap.rs` adds `\x1b[?2004l` to the signal-safe restore.
   `write_paste` is the single delivery path, chunked at 4 KiB.
-* `⌥+c` / `⌥+y` copy, `⌥+v` pastes, both on the Meta and the macOS glyph
+* `⌥+c` / `⌥+y` toggle copy mode, `hjkl` (with or without `⌥`) picks the pane,
+  `a`/`⏎` copies session/view, both on the Meta and the macOS glyph
   route (`ç`, `√`). `binds.rs` carries them, so the cheat-sheet, the cowsay
   hints, and the README table are generated and cross-checked as usual.
 
 ### What is still open
 
-* **Scrollback scope.** `⌥+c` with no selection copies the *visible* pane.
-  "Top of session" still needs the row-range accessor over vt100's
-  scrollback described below; until then the toast is honest about taking
-  what is on screen.
 * **Turn scope**, which needs prompt marks (item 2 below). This is the one
   that earns the feature for agent work, and it is the natural next step.
 * **Image copy**, unchanged from P4.
 
 ## Remaining enabling work
 
-1. *Scrollback text API* in `gwae-term`: `TermGrid` exposes only the visible
-   screen plus `scrollback_offset`, so "top of session" is unreachable.
-   Needs a row-range accessor over the vt100 scrollback.
-2. *Prompt marks*: `tui.rs` keeps OSC 133 **status** (`saw_osc133`) but not
+1. *Prompt marks*: `tui.rs` keeps OSC 133 **status** (`saw_osc133`) but not
    positions. Store per-pane `PromptMark { abs_row, exit }`, fixed up as rows
    scroll out, to delimit a turn.
-3. *`Effect::Menu`*: the second keystroke of an amendable toast is not
+2. *`Effect::Menu`*: the second keystroke of an amendable toast is not
    expressible in today's `Effect`, and `binds.rs` is load-bearing. Add
    `Effect::Menu(&[MenuItem])` plus a test that presses `⌥+c` then each item
    key and asserts the resulting `Cmd::Copy { scope }`.
-4. *Image encoder* (`shot.rs`) and *image clipboard*, as in P4 above.
+3. *Image encoder* (`shot.rs`) and *image clipboard*, as in P4 above.
 
 ## Invariants
 

@@ -95,7 +95,7 @@ Every action is an `⌥` chord. `⌥` is the Option key on macOS, Alt elsewhere.
 | `⌥+g` (`©`) | **Smart-jump** — jump to pane that needs you (see below) |
 | `⌥+t` (`†` on macOS) | **Theme picker** — step presets with `←`/`→`, live-previewed on the real UI; `⏎` keeps, `esc` restores |
 | `⌥+d` (`∂` on macOS) | **Spawn-directory picker** — choose the directory new panes start in. Your projects are found automatically (by `.git`/`.hg`/`.jj` marker, so any layout works) along with your `zoxide` history. Type to filter, `↑/↓` to move, `⏎` uses it for this session, `⌥+s` saves it as `agent_dir`, `esc` cancels |
-| `⌥+c` (`ç` on macOS) / `⌥+y` | **Copy** — the live drag-selection if there is one, else the whole visible pane. Reports what it took (`copied 38 lines`) |
+| `⌥+c` (`ç` on macOS) / `⌥+y` | **Copy mode** — `⌥+c` to enter, `hjkl` (with or without `⌥`) to pick the pane, `⏎` copies the visible viewport, `a` copies the entire session including scrollback (`Esc`/`⌥+c` cancels). Drag selection still copies on release |
 | `⌥+v` (`√` on macOS) | **Paste** the system clipboard into the focused pane, bracketed if the child asked for it. Over ~8 lines or 2 KB it asks first: press `⌥+v` again within the toast to confirm |
 | `⌥+/` or `⌥+?` (`÷` / `¿` on macOS) | **Toggle the cheat-sheet HUD** — same overlay shown at startup; any other key dismisses it |
 | `⌥+Shift+q` | Force-quit gwae — opens a centered confirmation overlay; press `⌥+Shift+q` again (or `⏎`) to kill every pane, any other key cancels |
