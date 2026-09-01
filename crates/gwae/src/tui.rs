@@ -368,6 +368,44 @@ fn is_ghostty() -> bool {
         .contains("ghostty")
 }
 
+/// Whether the macOS Option key (⌥, reported as Alternate/Alt) is physically
+/// held, via a native CoreGraphics poll.
+///
+/// Why this exists: most terminals never deliver an event for a bare Option
+/// press alone. gwae previously needed Kitty's `REPORT_ALL_KEYS_AS_ESCAPE`
+/// to see `LeftAlt/RightAlt` modifier events, but that breaks macOS Hangul
+/// (and other CJK) IME preedit — every key is reported as CSI-u and OS
+/// composition never commits. Commit `b857f73` dropped REPORT_ALL and kept
+/// only DISAMBIGUATE/ALTERNATE/EVENT_TYPES, so `bare_alt_held` stopped
+/// firing. The existing `chord_alt_until` fallback only covers `⌥+x` chords
+/// (with a 180ms window), so holding Option alone produced nothing.
+///
+/// Polling `CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState)`
+/// and testing `kCGEventFlagMaskAlternate` (NX_ALTERNATEMASK = 0x80000) reads
+/// the system-wide modifier flags directly, the same source Mission Control
+/// and the menu bar use. It costs one FFI call per frame, requires no
+/// Accessibility permission, touches no terminal protocol, and works under
+/// every terminal including Ghostty. Non-macOS builds compile to `false`.
+#[cfg(target_os = "macos")]
+fn macos_option_held() -> bool {
+    // `kCGEventSourceStateCombinedSessionState = 0`
+    // `kCGEventFlagMaskAlternate = NX_ALTERNATEMASK = 0x00080000`
+    const K_COMBINED_SESSION: i32 = 0;
+    const K_ALTERNATE: u64 = 0x0008_0000;
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceFlagsState(state: i32) -> u64;
+    }
+    // CGEventSourceFlagsState has been present since macOS 10.4.
+    let flags = unsafe { CGEventSourceFlagsState(K_COMBINED_SESSION) };
+    (flags & K_ALTERNATE) != 0
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_option_held() -> bool {
+    false
+}
+
 /// Strip control characters that could escape an OSC title sequence and clip
 /// the result to a reasonable window-title length. Prevents a malicious child
 /// title from running state-changing escapes on the host terminal.
@@ -5353,7 +5391,13 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             dirty = true;
         }
         let chord_alt_held = chord_alt_until.is_some();
-        let effective_alt_held = bare_alt_held || chord_alt_held;
+        // Bare Option polling: on macOS most terminals never emit a bare Alt
+        // KeyEvent, so `bare_alt_held` alone cannot reveal the HUD. Poll the
+        // system modifier flags directly; this works without REPORT_ALL and
+        // without breaking Hangul IME. Keep the chord timer path as well — it
+        // is still the portable/Linux fallback and the way to keep the HUD up
+        // briefly after a chord on terminals that never send release events.
+        let effective_alt_held = bare_alt_held || chord_alt_held || macos_option_held();
         let cur_has_attention = has_attention(&layout);
         if cur_has_attention != last_has_attention || effective_alt_held != last_alt_held {
             dirty = true;
