@@ -247,7 +247,10 @@ impl Config {
         // Keys come from `default_agent` which `agent.rs` stores verbatim; but
         // tolerate `jcode --resume` style by stripping args for lookup, since a
         // user writes `harness_dirs = { jcode = "..." }` not `harness_dirs = { "jcode --resume" = … }`.
-        let exe = crate::tui::shell_split(h).first().cloned().unwrap_or_default();
+        let exe = crate::tui::shell_split(h)
+            .first()
+            .cloned()
+            .unwrap_or_default();
         for key in [exe.as_str(), h] {
             if key.is_empty() {
                 continue;
@@ -744,7 +747,10 @@ mod tests {
     #[test]
     fn harness_dirs_parse_and_lookup() {
         let cfg = parse("harness_dirs = { jcode = \"~/git/gwae\", Muse = \"/tmp\" }\n");
-        assert_eq!(cfg.harness_dirs.get("jcode").map(|s| s.as_str()), Some("~/git/gwae"));
+        assert_eq!(
+            cfg.harness_dirs.get("jcode").map(|s| s.as_str()),
+            Some("~/git/gwae")
+        );
         assert_eq!(cfg.dir_for_harness("jcode"), "~/git/gwae");
         assert_eq!(cfg.dir_for_harness("claude"), "");
         // dotted form and table form also parse via serde
@@ -765,12 +771,21 @@ mod tests {
             ("harness_dirs = { jcode = \"~/a\" }\n", "jcode", "~/new"),
             ("harness_dirs.jcode = \"~/old\"\n", "jcode", "~/new2"),
             ("[harness_dirs]\njcode = \"~/old\"\n", "jcode", "~/new3"),
-            ("startup_panes = 1\n\n[theme]\npreset = \"nord\"\n", "jcode", "~/git/gwae"),
+            (
+                "startup_panes = 1\n\n[theme]\npreset = \"nord\"\n",
+                "jcode",
+                "~/git/gwae",
+            ),
         ];
         for (before, key, dir) in cases {
             let after = crate::agent::set_harness_dir_text(before, key, dir);
-            let v: toml::Value = toml::from_str(&after).unwrap_or_else(|e| panic!("broke toml {e:?} after={after:?} from {before:?}"));
-            assert_eq!(v["harness_dirs"][key].as_str(), Some(dir), "after={after:?} before={before:?}");
+            let v: toml::Value = toml::from_str(&after)
+                .unwrap_or_else(|e| panic!("broke toml {e:?} after={after:?} from {before:?}"));
+            assert_eq!(
+                v["harness_dirs"][key].as_str(),
+                Some(dir),
+                "after={after:?} before={before:?}"
+            );
         }
     }
 }

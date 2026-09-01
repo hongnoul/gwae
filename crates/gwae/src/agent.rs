@@ -439,7 +439,9 @@ pub fn set_harness_dir_text(text: &str, key: &str, dir: &str) -> String {
         // only early-return when the original had a dotted line.
         if text.lines().any(|l| {
             let t = l.trim_start();
-            !t.starts_with('#') && !t.starts_with('[') && t.starts_with(&dotted)
+            !t.starts_with('#')
+                && !t.starts_with('[')
+                && t.starts_with(&dotted)
                 && t[dotted.len()..].trim_start().starts_with('=')
         }) {
             return as_dotted;
@@ -616,7 +618,11 @@ pub fn set_harness_dir_text(text: &str, key: &str, dir: &str) -> String {
         let t = raw.trim_start();
         if t.starts_with('[') && !replaced {
             // Insert before first table.
-            if out.last().map(|l: &String| !l.trim().is_empty()).unwrap_or(false) {
+            if out
+                .last()
+                .map(|l: &String| !l.trim().is_empty())
+                .unwrap_or(false)
+            {
                 out.push(String::new());
             }
             out.push(inline.clone());

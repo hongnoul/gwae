@@ -185,9 +185,8 @@ fn spawn_dir_status(cfg: &Config, cli_dir: Option<&str>) -> String {
             .cloned()
             .unwrap_or_default()
     };
-    let unset = harness_dir.trim().is_empty()
-        && cfg.agent_dir.trim().is_empty()
-        && cli_dir.is_none();
+    let unset =
+        harness_dir.trim().is_empty() && cfg.agent_dir.trim().is_empty() && cli_dir.is_none();
     match resolved {
         Some(p) if unset => format!("{} (gwae's cwd; unset, ⌥+d picks one) [ok]", p.display()),
         Some(p) if Some(&p) != spawndir::inherited().as_ref() => {

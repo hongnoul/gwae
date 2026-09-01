@@ -252,13 +252,25 @@ fn copy_mode_enters_reports_view_and_session_to_clipboard() {
     use std::sync::mpsc::channel;
     use std::time::{Duration, Instant};
 
-    fn frame_count(out: &[u8]) -> usize { out.windows(8).filter(|w| *w == b"\x1b[?2026h").count() }
+    fn frame_count(out: &[u8]) -> usize {
+        out.windows(8).filter(|w| *w == b"\x1b[?2026h").count()
+    }
     fn clipboard_helper() -> &'static str {
-        if cfg!(target_os = "macos") { "pbcopy" } else if cfg!(windows) { "clip" } else { "wl-copy" }
+        if cfg!(target_os = "macos") {
+            "pbcopy"
+        } else if cfg!(windows) {
+            "clip"
+        } else {
+            "wl-copy"
+        }
     }
 
     static NEXT: AtomicUsize = AtomicUsize::new(999);
-    let dir = std::env::temp_dir().join(format!("gwae-copy-mode-e2e-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    let dir = std::env::temp_dir().join(format!(
+        "gwae-copy-mode-e2e-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("gwae")).expect("config dir");
     let bin = dir.join("bin");
@@ -267,58 +279,136 @@ fn copy_mode_enters_reports_view_and_session_to_clipboard() {
     let captured = dir.join("clipboard.txt");
     let stub = bin.join(clipboard_helper());
     std::fs::write(&stub, format!("#!/bin/sh\ncat > {}\n", captured.display())).expect("stub");
-    #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap(); }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     let pty = native_pty_system();
-    let pair = pty.openpty(PtySize { rows: 24, cols: 100, pixel_width: 0, pixel_height: 0 }).expect("pty");
+    let pair = pty
+        .openpty(PtySize {
+            rows: 24,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .expect("pty");
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
     cmd.env("XDG_CONFIG_HOME", &dir);
     cmd.env("TERM", "xterm-256color");
-    cmd.env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()));
+    cmd.env(
+        "PATH",
+        format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    );
     cmd.arg("run");
     let script = dir.join("pane.sh");
-    std::fs::write(&script, "#!/bin/sh\nfor i in $(seq 1 60); do echo VIEW-$i; done\nprintf 'TAIL-LINE\n'\nsleep 30\n").expect("script");
-    #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap(); }
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nfor i in $(seq 1 60); do echo VIEW-$i; done\nprintf 'TAIL-LINE\n'\nsleep 30\n",
+    )
+    .expect("script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     cmd.arg(script.display().to_string());
     let mut child = pair.slave.spawn_command(cmd).expect("spawn");
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().expect("reader");
     let mut writer = pair.master.take_writer().expect("writer");
     let (tx, rx) = channel::<Vec<u8>>();
-    std::thread::spawn(move || { let mut buf=[0u8;8192]; loop { match reader.read(&mut buf) { Ok(0)|Err(_)=>break, Ok(n)=> if tx.send(buf[..n].to_vec()).is_err(){break} } } });
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
 
-    let mut boot=Vec::new();
-    let deadline=Instant::now()+Duration::from_secs(20);
-    while Instant::now()<deadline && frame_count(&boot)<1 { if let Ok(b)=rx.recv_timeout(Duration::from_millis(200)) { boot.extend_from_slice(&b);} }
-    assert!(frame_count(&boot)>=1, "no frame");
-    writer.write_all(b"\x1b").unwrap(); writer.flush().ok();
+    let mut boot = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && frame_count(&boot) < 1 {
+        if let Ok(b) = rx.recv_timeout(Duration::from_millis(200)) {
+            boot.extend_from_slice(&b);
+        }
+    }
+    assert!(frame_count(&boot) >= 1, "no frame");
+    writer.write_all(b"\x1b").unwrap();
+    writer.flush().ok();
     // drain until pane content visible
-    for _ in 0..20 { if let Ok(b)=rx.recv_timeout(Duration::from_millis(200)) { boot.extend_from_slice(&b);} std::thread::sleep(Duration::from_millis(50)); }
+    for _ in 0..20 {
+        if let Ok(b) = rx.recv_timeout(Duration::from_millis(200)) {
+            boot.extend_from_slice(&b);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
     // Enter copy mode via glyph (Option+c on macOS sends ç)
-    writer.write_all("ç".as_bytes()).unwrap(); writer.flush().ok();
+    writer.write_all("ç".as_bytes()).unwrap();
+    writer.flush().ok();
     std::thread::sleep(Duration::from_millis(400));
-    let mut out=Vec::new(); while let Ok(b)=rx.recv_timeout(Duration::from_millis(200)) { out.extend_from_slice(&b); if out.windows(9).any(|w| w==b"copy mode") { break; } }
-    assert!(String::from_utf8_lossy(&out).contains("copy mode"), "copy mode not entered: {}", String::from_utf8_lossy(&out).escape_debug());
+    let mut out = Vec::new();
+    while let Ok(b) = rx.recv_timeout(Duration::from_millis(200)) {
+        out.extend_from_slice(&b);
+        if out.windows(9).any(|w| w == b"copy mode") {
+            break;
+        }
+    }
+    assert!(
+        String::from_utf8_lossy(&out).contains("copy mode"),
+        "copy mode not entered: {}",
+        String::from_utf8_lossy(&out).escape_debug()
+    );
     // Press a plain 'a' to copy session (should capture scrollback)
     let _ = std::fs::remove_file(&captured);
-    writer.write_all(b"a").unwrap(); writer.flush().ok();
-    let deadline=Instant::now()+Duration::from_secs(5);
-    while Instant::now()<deadline && !captured.exists() { std::thread::sleep(Duration::from_millis(50)); }
+    writer.write_all(b"a").unwrap();
+    writer.flush().ok();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && !captured.exists() {
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let sess = std::fs::read_to_string(&captured).unwrap_or_default();
-    assert!(sess.contains("VIEW-1"), "session missing scrollback VIEW-1, got {:?}", &sess[..sess.len().min(300)]);
+    assert!(
+        sess.contains("VIEW-1"),
+        "session missing scrollback VIEW-1, got {:?}",
+        &sess[..sess.len().min(300)]
+    );
     assert!(sess.contains("TAIL-LINE"), "session missing tail");
 
     // Re-enter and copy view (Enter) should be smaller than session
     std::thread::sleep(Duration::from_millis(200));
-    writer.write_all("ç".as_bytes()).unwrap(); writer.flush().ok();
+    writer.write_all("ç".as_bytes()).unwrap();
+    writer.flush().ok();
     std::thread::sleep(Duration::from_millis(300));
     let _ = std::fs::remove_file(&captured);
-    writer.write_all(b"\r").unwrap(); writer.flush().ok();
-    let deadline=Instant::now()+Duration::from_secs(5);
-    while Instant::now()<deadline && !captured.exists() { std::thread::sleep(Duration::from_millis(50)); }
+    writer.write_all(b"\r").unwrap();
+    writer.flush().ok();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && !captured.exists() {
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let view = std::fs::read_to_string(&captured).unwrap_or_default();
     assert!(!view.is_empty(), "view empty");
-    assert!(view.len() < sess.len(), "view not smaller than session: view {} session {}", view.len(), sess.len());
+    assert!(
+        view.len() < sess.len(),
+        "view not smaller than session: view {} session {}",
+        view.len(),
+        sess.len()
+    );
 
-    let _=child.kill(); let _=child.wait(); drop(pair.master); let _=std::fs::remove_dir_all(&dir);
+    let _ = child.kill();
+    let _ = child.wait();
+    drop(pair.master);
+    let _ = std::fs::remove_dir_all(&dir);
 }

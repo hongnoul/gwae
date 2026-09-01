@@ -699,7 +699,11 @@ mod tests {
         );
         // cli > harness > fallback
         assert_eq!(
-            resolve_for_harness(Some(b.to_str().unwrap()), a.to_str().unwrap(), a.to_str().unwrap()),
+            resolve_for_harness(
+                Some(b.to_str().unwrap()),
+                a.to_str().unwrap(),
+                a.to_str().unwrap()
+            ),
             Some(b.clone())
         );
         // missing harness falls through to fallback

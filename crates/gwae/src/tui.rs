@@ -467,11 +467,7 @@ fn write_agent_dir(path: &std::path::Path, dir: &str) -> Result<(), String> {
 ///
 /// Table is written comment-preserving via raw TOML editing; this is the
 /// `⌥+s` path from the picker, so it must not reformat the rest of the file.
-fn write_harness_dir(
-    path: &std::path::Path,
-    harness: &str,
-    dir: &str,
-) -> Result<(), String> {
+fn write_harness_dir(path: &std::path::Path, harness: &str, dir: &str) -> Result<(), String> {
     let h = harness.trim();
     if h.is_empty() {
         return write_agent_dir(path, dir);
@@ -5188,7 +5184,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             "copy mode \u{00b7} hjkl pick pane \u{00b7} Enter copy view \u{00b7} a copy all \u{00b7} Esc to cancel"
                                                 .to_string(),
                                         );
-                                        reload_note_anchor = focused_pane_rect(&layout, &panes, &cfg, cols, rows);
+                                        reload_note_anchor =
+                                            focused_pane_rect(&layout, &panes, &cfg, cols, rows);
                                     } else {
                                         reload_note = Some("copy cancelled".to_string());
                                         reload_note_anchor = None;
@@ -8480,7 +8477,10 @@ mod tests {
         let wide = tile_text(16, "2", true, '!');
         assert_eq!(wide.chars().count(), 16, "always exactly the tile width");
         assert!(wide.starts_with("!2\u{25b8}"), "got {wide:?}");
-        assert!(wide.trim().ends_with('2') || wide.contains("!2"), "glyph and address kept, got {wide:?}");
+        assert!(
+            wide.trim().ends_with('2') || wide.contains("!2"),
+            "glyph and address kept, got {wide:?}"
+        );
         // No jump marker when this is not the smart-jump target.
         let plain = tile_text(16, "2", false, '!');
         assert_eq!(plain, format!("!2 {}", " ".repeat(13)), "got {plain:?}");
@@ -8491,7 +8491,10 @@ mod tests {
         // Tight: still glyph + address when 3 cells.
         let tight = tile_text(4, "2", false, '!');
         assert_eq!(tight.chars().count(), 4);
-        assert!(tight.starts_with("!2"), "glyph outlives everything: {tight:?}");
+        assert!(
+            tight.starts_with("!2"),
+            "glyph outlives everything: {tight:?}"
+        );
         // Two cells: glyph + address. One cell: the status alone, since a
         // waiting pane matters more than which key jumps to it.
         assert_eq!(tile_text(2, "2", true, '!'), "!2");
