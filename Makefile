@@ -7,7 +7,7 @@ CARGO  ?= cargo
 CONFIG_DIR  := $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/gwae,$(HOME)/.config/gwae)
 CONFIG_FILE := $(CONFIG_DIR)/gwae.toml
 
-.PHONY: build install install-keep reset-config check test clean hot dev hot-release
+.PHONY: build install install-keep reset-config check test clean dev
 
 ## Build the optimised release binary.
 build:
@@ -17,15 +17,9 @@ build:
 ## Builds debug (fast), starts watcher in background, and runs gwae
 ## with GWAE_DEV_RELOAD=1 so saving a file swaps the binary in place
 ## without losing any pane (same pid, same PTYs, jcode keeps running).
-##   make hot          # debug, ~5s rebuild (default)
-##   make hot-release  # release, ~60s rebuild, prod-like
-hot:
+##   make dev  # debug, ~5s rebuild
+dev:
 	@GWAE_PROFILE=debug ./scripts/hot.sh --run
-
-dev: hot
-
-hot-release:
-	@GWAE_PROFILE=release ./scripts/hot.sh --run
 
 ## Install the release binary into the first writable `bin` dir on PATH
 ## (falling back to ~/.local/bin), so `gwae` is runnable immediately even

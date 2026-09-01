@@ -7,8 +7,7 @@
 #   GWAE_DEV_RELOAD=1 gwae        # in another: the session that reloads itself
 #   GWAE_PROFILE=debug ./scripts/hot.sh --run   # fast debug build (default for --run)
 #   GWAE_PROFILE=release ./scripts/hot.sh --run # prod-like release build
-#   make hot / make dev           # one-command alias for --run (debug)
-#   make hot-release              # alias for --run with release profile
+#   make dev                      # one-command alias for --run (debug)
 #
 # gwae is daemon-free, so this is not a server: the running process notices
 # that its own binary changed, hands its PTYs to a new image of itself via
