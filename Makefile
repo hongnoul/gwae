@@ -7,11 +7,25 @@ CARGO  ?= cargo
 CONFIG_DIR  := $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/gwae,$(HOME)/.config/gwae)
 CONFIG_FILE := $(CONFIG_DIR)/gwae.toml
 
-.PHONY: build install install-keep reset-config check test clean
+.PHONY: build install install-keep reset-config check test clean hot dev hot-release
 
 ## Build the optimised release binary.
 build:
 	$(CARGO) build --release
+
+## npm run dev equivalent: one command, async hot reload.
+## Builds debug (fast), starts watcher in background, and runs gwae
+## with GWAE_DEV_RELOAD=1 so saving a file swaps the binary in place
+## without losing any pane (same pid, same PTYs, jcode keeps running).
+##   make hot          # debug, ~5s rebuild (default)
+##   make hot-release  # release, ~60s rebuild, prod-like
+hot:
+	@GWAE_PROFILE=debug ./scripts/hot.sh --run
+
+dev: hot
+
+hot-release:
+	@GWAE_PROFILE=release ./scripts/hot.sh --run
 
 ## Install the release binary into the first writable `bin` dir on PATH
 ## (falling back to ~/.local/bin), so `gwae` is runnable immediately even
@@ -33,11 +47,14 @@ install: build $(if $(KEEP_CONFIG),,reset-config)
 		[ -n "$$dir" ] || dir="$$(HOME=$$HOME; echo $$HOME/.local/bin)"; \
 	fi; \
 	mkdir -p "$$dir"; \
-	install -m755 $(BIN) "$$dir/gwae"; \
+	tmp="$$dir/gwae.new"; \
+	cp "$(BIN)" "$$tmp"; \
+	chmod 755 "$$tmp"; \
 	if command -v codesign >/dev/null 2>&1; then \
-		codesign -f -s - "$$dir/gwae" >/dev/null 2>&1 || true; \
+		codesign -f -s - "$$tmp" >/dev/null 2>&1 || true; \
 	fi; \
-	echo "installed gwae -> $$dir/gwae"
+	mv -f "$$tmp" "$$dir/gwae"; \
+	echo "installed gwae -> $$dir/gwae (atomic: cp .new -> codesign -> mv)"
 
 ## Install without clearing preferences.
 install-keep:
