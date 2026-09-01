@@ -254,6 +254,12 @@ With a single pane there is nothing to triage, so the hold shows the key hints a
 
 `⌥+g` jumps to the pane that needs you most — failed beats wants-attention beats done, nearest in layout order first, crossing strips and following with the scroll. Does nothing when every other pane is happily working.
 
+Hold `⌥` to reveal the dashboard, then tap `⌥+g` — the highlighted tile is where you'll land:
+
+<img src="docs/assets/gwae-attention.gif" alt="gwae Option-G smart-jump: hold Option to reveal the dashboard, tap Option-G to jump to the pane that needs attention" width="900">
+
+<video src="docs/assets/gwae-attention.mp4" autoplay loop muted playsinline width="900"></video>
+
 ## Configuration
 
 `gwae init` runs a short guided setup on first launch (theme with live swatches, panes at launch, column width, scroll style, labels — each question drawn over a live mockup of the grid). Re-run it any time; defaults become whatever your config currently says.
