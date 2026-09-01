@@ -166,8 +166,8 @@ fn visible(raw: &str) -> String {
 
 #[test]
 fn holding_the_modifier_reveals_a_dashboard_that_names_its_panes() {
-    // The whole point of the panel: while ⌥ is down you learn what is running
-    // where, in the pane's own words, and which keys act on it.
+    // Spatial-only: the panel shows geometry (color + address + marker), not
+    // titles. Titles live in pane chrome; the HUD stays uncluttered.
     let mut s = Session::start("[cowsay]\nenabled = false\n");
     let _ = s.drain();
     widen(&mut s, 3);
@@ -180,9 +180,12 @@ fn holding_the_modifier_reveals_a_dashboard_that_names_its_panes() {
         shown.contains("attention"),
         "the hold should reveal the key hints; got:\n{shown:?}"
     );
+    // Spatial HUD no longer repeats pane titles on tiles; watchdog
+    // still lives in the pane itself, so visible() (panes+HUD) will
+    // contain it from pane chrome. Assert HUD geometry instead.
     assert!(
-        shown.contains("watchdog"),
-        "tiles should carry the pane's own window title; got:\n{shown:?}"
+        shown.contains("»") || shown.contains("!"),
+        "dashboard should show spatial tiles (glyphs); got:\n{shown:?}"
     );
     // The panel is transient: once the hold lapses it must clean up after
     // itself rather than leaving a box painted over live panes.

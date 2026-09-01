@@ -3824,13 +3824,50 @@ fn paste_into_focused(
     (Some(paste_note(text, bracketed)), anchor)
 }
 
-/// Copy from the focused pane to the clipboard, choosing the scope by context:
-/// a finished drag-selection if there is one, else everything visible in the
-/// pane. Returns the toast and its anchor.
-///
-/// Trailing blank lines are dropped from the whole-pane scope: a pane's grid is
-/// padded to its full height, so copying it verbatim yields a wall of empty
-/// lines after the last real output, which is never what anyone pastes.
+/// Copy scope for copy mode.
+#[derive(Debug, Clone, Copy)]
+enum CopyScope {
+    View,
+    Session,
+}
+
+/// Copy from the focused pane at the given scope. View = visible, Session = scrollback+visible.
+fn copy_pane_text(
+    layout: &Layout,
+    panes: &mut HashMap<PaneId, PtyPane>,
+    cfg: &Config,
+    cols: u16,
+    rows: u16,
+    scope: CopyScope,
+) -> (String, Option<Rect>) {
+    let anchor = focused_pane_rect(layout, panes, cfg, cols, rows);
+    let Some(pid) = focused_pane(layout) else {
+        return ("no pane focused".to_string(), None);
+    };
+    let Some(p) = panes.get_mut(&pid) else {
+        return ("no pane focused".to_string(), None);
+    };
+    let text = match scope {
+        CopyScope::View => {
+            use gwae_term::TermGrid;
+            p.grid.visible_text()
+        }
+        CopyScope::Session => {
+            use gwae_term::TermGrid;
+            p.grid.session_text()
+        }
+    };
+    if text.is_empty() {
+        return ("nothing to copy".to_string(), anchor);
+    }
+    if select::copy_to_clipboard(&text) {
+        (copy_note(&text), anchor)
+    } else {
+        ("clipboard unavailable".to_string(), anchor)
+    }
+}
+
+#[allow(dead_code)]
 fn copy_from_focused(
     layout: &Layout,
     panes: &HashMap<PaneId, PtyPane>,
@@ -4366,6 +4403,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut quit_confirm = false;
     // Drag-to-copy: the live (or just-completed) pane selection, if any.
     let mut selection: Option<Selection<PaneId>> = None;
+    // Copy mode: toggle with Option+c, pick pane with plain hjkl, Enter=view, a=session.
+    let mut copy_mode = false;
 
     'main: loop {
         while let Ok(msg) = rx.try_recv() {
@@ -4834,6 +4873,95 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             dirty = true;
                             continue;
                         }
+                        // Copy mode owns the keyboard: plain hjkl moves focus,
+                        // Enter copies view, a copies session, Esc/Option+c cancels.
+                        if copy_mode {
+                            match ke.code {
+                                KeyCode::Esc => {
+                                    copy_mode = false;
+                                    reload_note = Some("copy cancelled".to_string());
+                                    reload_note_anchor = None;
+                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                    dirty = true;
+                                    continue;
+                                }
+                                KeyCode::Enter => {
+                                    let (note, anchor) = copy_pane_text(
+                                        &layout,
+                                        &mut panes,
+                                        &cfg,
+                                        cols,
+                                        rows,
+                                        CopyScope::View,
+                                    );
+                                    copy_mode = false;
+                                    reload_note = Some(note);
+                                    reload_note_anchor = anchor;
+                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                    dirty = true;
+                                    continue;
+                                }
+                                KeyCode::Char('a') | KeyCode::Char('A') => {
+                                    let (note, anchor) = copy_pane_text(
+                                        &layout,
+                                        &mut panes,
+                                        &cfg,
+                                        cols,
+                                        rows,
+                                        CopyScope::Session,
+                                    );
+                                    copy_mode = false;
+                                    reload_note = Some(note);
+                                    reload_note_anchor = anchor;
+                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                    dirty = true;
+                                    continue;
+                                }
+                                KeyCode::Char(c2)
+                                    if !ke.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    let ch = c2.to_ascii_lowercase();
+                                    if ch == 'h' || ch == 'j' || ch == 'k' || ch == 'l' {
+                                        let act = match ch {
+                                            'h' => Action::FocusLeft,
+                                            'j' => Action::FocusDown,
+                                            'k' => Action::FocusUp,
+                                            'l' => Action::FocusRight,
+                                            _ => unreachable!(),
+                                        };
+                                        let v = Viewport::new(cols);
+                                        let f = FollowScroll {
+                                            margin: cfg.scroll_margin,
+                                            center: cfg.center_focus,
+                                        };
+                                        let _ = layout.apply(act, v, f);
+                                        reload_note = Some(
+                                            "copy mode \u{00b7} hjkl pick pane \u{00b7} Enter copy view \u{00b7} a copy all \u{00b7} Esc to cancel"
+                                                .to_string(),
+                                        );
+                                        reload_note_anchor =
+                                            focused_pane_rect(&layout, &panes, &cfg, cols, rows);
+                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                        dirty = true;
+                                        continue;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            if !(ke.modifiers.contains(KeyModifiers::ALT)
+                                || matches!(
+                                    ke.code,
+                                    KeyCode::Char('\u{e7}')
+                                        | KeyCode::Char('\u{221a}')
+                                        | KeyCode::Char('\u{2d9}')
+                                        | KeyCode::Char('\u{2206}')
+                                        | KeyCode::Char('\u{2da}')
+                                        | KeyCode::Char('\u{ac}')
+                                ))
+                            {
+                                continue;
+                            }
+                        }
                         if let Some(cmd) = handle_key(&ke) {
                             // Any command other than another digit ends the number
                             // being typed, the way a non-count key ends a vi count.
@@ -5054,16 +5182,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     dirty = true;
                                 }
                                 Cmd::Copy => {
-                                    // Keyboard copy. Scope is contextual: a
-                                    // finished drag-selection if there is one
-                                    // (copying it again is what the user means by
-                                    // pressing copy *after* selecting), else the
-                                    // visible pane.
-                                    let (note, anchor) = copy_from_focused(
-                                        &layout, &panes, &cfg, cols, rows, selection,
-                                    );
-                                    reload_note = Some(note);
-                                    reload_note_anchor = anchor;
+                                    copy_mode = !copy_mode;
+                                    if copy_mode {
+                                        reload_note = Some(
+                                            "copy mode \u{00b7} hjkl pick pane \u{00b7} Enter copy view \u{00b7} a copy all \u{00b7} Esc to cancel"
+                                                .to_string(),
+                                        );
+                                        reload_note_anchor = focused_pane_rect(&layout, &panes, &cfg, cols, rows);
+                                    } else {
+                                        reload_note = Some("copy cancelled".to_string());
+                                        reload_note_anchor = None;
+                                    }
                                     reload_note_until = Some(Instant::now() + NOTE_LINGER);
                                     dirty = true;
                                 }

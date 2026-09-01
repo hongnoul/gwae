@@ -303,36 +303,44 @@ impl TermGrid for Vt100Grid {
     }
 
     fn session_text(&mut self) -> String {
+        // On vt100 0.15, set_scrollback(total) where total > rows panics in
+        // visible_rows. Instead walk in row-sized windows and deduplicate.
         let saved = self.scrollback_offset;
-        let total = {
-            self.parser.set_scrollback(100_000);
-            self.parser.screen().scrollback()
-        };
-        let out = if total > 0 {
-            self.parser.set_scrollback(total);
-            let dump = self.parser.screen().contents();
-            let live = {
-                self.parser.set_scrollback(0);
-                self.parser.screen().contents()
-            };
-            let s: Vec<&str> = dump.lines().collect();
-            let l: Vec<&str> = live.lines().collect();
-            let overlap = l.len().min(self.rows as usize);
-            if l.len() > overlap {
-                let mut m = s.clone();
-                m.extend_from_slice(&l[l.len() - overlap..]);
-                m.join("\n")
-            } else {
-                self.parser.set_scrollback(saved);
-                self.scrollback_offset = self.parser.screen().scrollback();
-                return live.trim_end_matches('\n').to_string();
+        self.parser.set_scrollback(100_000);
+        let total = self.parser.screen().scrollback();
+        if total == 0 {
+            let out = self.parser.screen().contents();
+            self.parser.set_scrollback(saved);
+            self.scrollback_offset = self.parser.screen().scrollback();
+            return out.trim_end_matches('\n').to_string();
+        }
+        // Collect windows of `rows` size stepping by `rows` to avoid overflow.
+        let mut lines: Vec<String> = Vec::new();
+        let step = self.rows as usize;
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for off in (0..=total).step_by(step.max(1)) {
+            self.parser.set_scrollback(off);
+            let chunk = self.parser.screen().contents();
+            for ln in chunk.lines() {
+                if seen.insert(ln.to_string()) {
+                    lines.push(ln.to_string());
+                }
             }
-        } else {
-            self.parser.screen().contents()
-        };
+        }
+        // vt100 history order is oldest-first in scrollback, newest-last in live;
+        // our window walk already interleaves correctly if we re-collect via total:0 ordering.
+        // Simpler: just return full contents via stitching seen in order of appearance,
+        // then ensure live tail included.
+        self.parser.set_scrollback(0);
+        let live = self.parser.screen().contents();
+        for ln in live.lines() {
+            if seen.insert(ln.to_string()) {
+                lines.push(ln.to_string());
+            }
+        }
         self.parser.set_scrollback(saved);
         self.scrollback_offset = self.parser.screen().scrollback();
-        out.trim_end_matches('\n').to_string()
+        lines.join("\n").trim_end_matches('\n').to_string()
     }
 }
 
