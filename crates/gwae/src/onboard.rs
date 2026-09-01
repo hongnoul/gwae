@@ -1001,7 +1001,9 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
                     }
                 }
                 Ok(false) => {
-                    banner_step = banner_step.wrapping_add(1);
+                    if banner_step + 1 < crate::splash::frames() {
+                        banner_step += 1;
+                    }
                 }
                 Err(_) => break,
             }
@@ -1067,7 +1069,9 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
                 }
             }
             Ok(false) => {
-                banner_step = banner_step.wrapping_add(1);
+                if banner_step + 1 < crate::splash::frames() {
+                    banner_step += 1;
+                }
             }
             Err(_) => {
                 fill_defaults(&qs, &mut chosen, at);

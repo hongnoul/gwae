@@ -34,7 +34,6 @@ use std::io::Write;
 use std::time::Duration;
 
 const RESET: &str = "\x1b[0m";
-const DIM: &str = "\x1b[2m";
 const BOLD: &str = "\x1b[1m";
 /// Clear and home, so each frame is absolute rather than differential.
 const CLEAR: &str = "\x1b[2J\x1b[H";
@@ -87,9 +86,10 @@ pub const TICK: Duration = Duration::from_millis(28);
 pub const BANNER_LINES: usize = 8;
 
 /// The banner for the ongoing onboarding flow: the same art as [`frame`] but
-/// looped, so staying on one question still shows movement at the top.
+/// settled after the first wipe, so the header stays static instead of
+/// looping.
 pub fn banner(step: usize, p: &Palette, cols: u16) -> String {
-    frame(step % frames(), p, cols)
+    frame(step.min(frames().saturating_sub(1)), p, cols)
 }
 
 /// The lit columns of the wordmark as a bitmap: `on[row][col]`.
@@ -129,7 +129,6 @@ fn fg(c: CColor) -> String {
 pub fn frame(step: usize, p: &Palette, cols: u16) -> String {
     let w = art_width();
     let cols = cols as usize;
-    let tag = "scrolling panes for your agents";
     if cols < w + 2 {
         // No room for the art: still name the tool, still never wrap.
         let word: String = WORD.chars().take(cols).collect();
@@ -182,15 +181,10 @@ pub fn frame(step: usize, p: &Palette, cols: u16) -> String {
         s.push_str(RESET);
         s.push_str("\r\n");
     }
-    // The tagline fades in only once the word is whole, so the eye reads one
-    // thing at a time.
+    // Blank line where the old tagline lived; keep the banner height stable
+    // without drawing scrolling text.
     s.push_str("\r\n");
-    if step >= w && tag.chars().count() <= cols {
-        let tpad = " ".repeat((cols - tag.chars().count()) / 2);
-        s.push_str(&format!("{tpad}{DIM}{tag}{RESET}\r\n"));
-    } else {
-        s.push_str("\r\n");
-    }
+    s.push_str("\r\n");
     s
 }
 
@@ -253,12 +247,11 @@ mod tests {
     fn the_last_frame_spells_the_word() {
         let p = Palette::default();
         let last = plain(&frame(frames() - 1, &p, 80));
-        // Every glyph column of the wordmark is lit by the end, so the art
-        // rows must contain ink and the tagline must have arrived.
+        // Every glyph column of the wordmark is lit by the end.
         let inked: usize = last.chars().filter(|c| *c == INK).count();
         let expected: usize = bitmap().iter().flatten().filter(|b| **b).count();
         assert_eq!(inked, expected, "final frame is missing lit cells");
-        assert!(last.contains("scrolling panes"), "tagline never appeared");
+        assert!(!last.contains("scrolling panes"), "tagline should be removed");
     }
 
     #[test]

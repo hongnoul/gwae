@@ -199,8 +199,8 @@ fn init_animates_the_title_card_before_the_first_question() {
         clears(&out)
     );
     assert!(
-        plain.contains("scrolling panes"),
-        "the tagline never resolved"
+        !plain.contains("scrolling panes"),
+        "the removed tagline must not appear"
     );
     assert!(
         plain.contains("Color theme"),
