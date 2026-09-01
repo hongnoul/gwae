@@ -949,16 +949,16 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
     let mut cursors: Vec<usize> = qs.iter().map(|q| q.default).collect();
     let raw = enable_raw_mode().is_ok();
     let base_palette = current_palette(&existing);
-    // The title card, played only on a first run: it is a greeting, and
-    // greeting someone who is here to *change* a setting is just a delay.
-    if !already_onboarded(&existing) {
-        crate::splash::play(&base_palette, term_cols());
-    }
+    let splash_completed = crate::splash::play(&base_palette, term_cols());
 
     // `at == total` is the summary screen: one state machine, so "back" out of
     // the summary is the same code path as "back" between questions.
     let mut at = 0usize;
-    let mut banner_step: usize = 0;
+    let mut banner_step: usize = if splash_completed {
+        crate::splash::frames().saturating_sub(1)
+    } else {
+        0
+    };
     // Cache the summary that was saved, so animation ticks don't re-save.
     let mut summary_cache: Option<(String, Option<crate::install::Outcome>)> = None;
     loop {
