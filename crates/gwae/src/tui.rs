@@ -4805,15 +4805,13 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 }
                                 _ => {}
                             }
+                            // The picker's harness decides which config key `save` writes.
+                            // Read it before we clear `dir_pick`.
+                            let harness_for_save = pick.harness_label.clone();
                             if close {
                                 dir_pick = None;
                             }
                             if let Some((path, save)) = chosen {
-                                // Remember which harness this was for; title already showed it.
-                                let harness_for_save = dir_pick
-                                    .as_ref()
-                                    .map(|p| p.harness_label.clone())
-                                    .unwrap_or_default();
                                 spawn_dir = Some(path.clone());
                                 let shown = crate::spawndir::tilde(&path);
                                 reload_note_anchor = None;
