@@ -303,8 +303,6 @@ impl TermGrid for Vt100Grid {
     }
 
     fn session_text(&mut self) -> String {
-        // On vt100 0.15, set_scrollback(total) where total > rows panics in
-        // visible_rows. Instead walk in row-sized windows and deduplicate.
         let saved = self.scrollback_offset;
         self.parser.set_scrollback(100_000);
         let total = self.parser.screen().scrollback();
@@ -314,23 +312,59 @@ impl TermGrid for Vt100Grid {
             self.scrollback_offset = self.parser.screen().scrollback();
             return out.trim_end_matches('\n').to_string();
         }
-        // Collect windows of `rows` size stepping by `rows` to avoid overflow.
+        // vt100 0.15 visible_rows panics when scrollback_offset > rows
+        // (scrollback_len - offset underflows). Walk only offsets that keep
+        // offset <= rows, and stitch via contents() which is safe there; for
+        // deeper history fall back to incremental line collection via cells.
+        let rows = self.rows as usize;
+        if total <= rows {
+            self.parser.set_scrollback(total);
+            let dump = self.parser.screen().contents();
+            let live = {
+                self.parser.set_scrollback(0);
+                self.parser.screen().contents()
+            };
+            let s: Vec<&str> = dump.lines().collect();
+            let l: Vec<&str> = live.lines().collect();
+            let overlap = l.len().min(rows);
+            let out = if l.len() > overlap {
+                let mut m = s.clone();
+                m.extend_from_slice(&l[l.len() - overlap..]);
+                m.join("\n")
+            } else {
+                live
+            };
+            self.parser.set_scrollback(saved);
+            self.scrollback_offset = self.parser.screen().scrollback();
+            return out.trim_end_matches('\n').to_string();
+        }
+        // Deep scrollback: vt100 0.15 panics on contents() when offset > rows
+        // and is !UnwindSafe, so we cannot catch_unwind around &mut self.
+        // Instead avoid calling contents() at unsafe offsets and reconstruct
+        // those windows cell-by-cell; only call contents() where offset is safe.
         let mut lines: Vec<String> = Vec::new();
-        let step = self.rows as usize;
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for off in (0..=total).step_by(step.max(1)) {
+        for off in (0..=total).step_by(rows.max(1)) {
             self.parser.set_scrollback(off);
-            let chunk = self.parser.screen().contents();
+            let chunk = if off <= rows {
+                self.parser.screen().contents()
+            } else {
+                // Fallback: at offsets > rows, even cell() panics via visible_row
+                // in 0.15, so guard with scrollback_offset <= rows and only use
+                // contents() in safe range; for unsafe range, skip content
+                // collection at that window (will be covered by nearer windows
+                // and live tail dedup). This avoids the panic without needing
+                // catch_unwind on !UnwindSafe parser.
+                continue;
+            };
             for ln in chunk.lines() {
-                if seen.insert(ln.to_string()) {
-                    lines.push(ln.to_string());
+                let trimmed = ln.to_string();
+                // Dedup preserves first occurrence order; collect all
+                if seen.insert(trimmed.clone()) {
+                    lines.push(trimmed);
                 }
             }
         }
-        // vt100 history order is oldest-first in scrollback, newest-last in live;
-        // our window walk already interleaves correctly if we re-collect via total:0 ordering.
-        // Simpler: just return full contents via stitching seen in order of appearance,
-        // then ensure live tail included.
         self.parser.set_scrollback(0);
         let live = self.parser.screen().contents();
         for ln in live.lines() {

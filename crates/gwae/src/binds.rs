@@ -313,7 +313,7 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('c'),
-        hint: "copies the selection, or this whole pane",
+        hint: "copy mode \u{2014} pick pane then view or all",
         glyph: Some('\u{e7}'),
         group: Group::Panes,
         desc: "copy",
