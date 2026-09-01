@@ -642,7 +642,6 @@ mod tests {
     #[test]
     fn bracketed_paste_mode_is_reported() {
         // gwae strips the host's paste markers when it decodes an
-        // `Event::Paste`, so it must know whether *this* child wants them put
         // back. Getting it wrong either runs a multi-line paste line by line
         // (markers withheld from a shell that asked) or prints `[200~` as
         // literal text (markers sent to a program that never asked).

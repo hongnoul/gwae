@@ -1,7 +1,6 @@
 # Configurable keybindings — strategy
 
 Status: design, not yet implemented. Written against `main` at the time the
-`⌥+c`/`⌥+v` copy-paste work was in flight, which is why the first phase is
 deliberately shaped to *not* touch `handle_key`'s behavior.
 
 ## Where we are today
@@ -37,7 +36,6 @@ Two other facts constrain the design:
 ## What "configurable" has to mean here
 
 1. **Rebind**: `⌥+w` should kill a pane if I say so.
-2. **Unbind**: `⌥+c` should reach the focused pane if I say so. Non-negotiable;
    see above.
 3. **Defaults still work with an empty config**, and an old config keeps
    behaving identically. No flag day.

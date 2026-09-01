@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use crate::theme::Palette;
 use crossterm::cursor;
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    self, DisableMouseCapture, EnableMouseCapture,
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, KeyboardEnhancementFlags,
     ModifierKeyCode, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
@@ -836,7 +836,6 @@ fn restore_terminal(stdout: &mut std::io::Stdout, kitty_keyboard: bool) {
     }
     let _ = stdout.write_all(b"\x1b[?7h");
     let _ = stdout.flush();
-    let _ = execute!(stdout, DisableBracketedPaste);
     let _ = execute!(stdout, DisableMouseCapture);
     let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
     let _ = disable_raw_mode();
@@ -3413,23 +3412,7 @@ enum Cmd {
     /// `⌥+12`. Only the main loop knows when the chord ends (Option released,
     /// or the idle timeout), so it owns the accumulator; this just reports
     /// "digit N was typed as part of a jump".
-    JumpDigit(u32),
-    /// Paste the system clipboard into the focused pane (`⌥+v`).
-    ///
-    /// The explicit route, for terminals that never bracket a paste for us and
-    /// for the muscle memory that every gwae verb is an `⌥` chord. Resolved in
-    /// the main loop, which owns the clipboard read and the large-paste
-    /// confirmation.
-    Paste,
-    /// Copy from the focused pane to the system clipboard (`⌥+c`).
-    ///
-    /// Scope is chosen by context in the main loop: a live drag-selection if
-    /// there is one, else the visible pane.
-    Copy,
-    /// Copy the focused pane as a PNG image (`⌥+Shift+c`).
-    /// Gated on `image_clipboard`; without it this degrades to a toast.
-    CopyImage,
-    Quit,
+    JumpDigit(u32),    Quit,
     None,
 }
 
@@ -3593,7 +3576,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{bf}') => return Some(Cmd::ToggleHud),
             // Ú (Option+Shift+;) spawns an agent on a new strip.
             Char('\u{da}') => return Some(Cmd::Act(Action::SpawnAgentRow)),
-            Char('\u{c7}') => return Some(Cmd::CopyImage), // Ç (Option+Shift+c)
             _ => {}
         }
     }
@@ -3611,8 +3593,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{2020}') => return Some(Cmd::ThemePick(0)),         // † (Option+t)
             Char('\u{2202}') => return Some(Cmd::DirPick),              // ∂ (Option+d)
             Char('\u{f7}') => return Some(Cmd::ToggleHud),              // ÷ (Option+/)
-            Char('\u{e7}') => return Some(Cmd::Copy),                   // ç (Option+c)
-            Char('\u{221a}') => return Some(Cmd::Paste),                // √ (Option+v)
             _ => {}
         }
     }
@@ -3682,17 +3662,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
                 }
             }
             'g' => return Some(Cmd::SmartJump),
-            'c' => {
-                if shift {
-                    return Some(Cmd::CopyImage);
-                } else {
-                    return Some(Cmd::Copy);
-                }
-            }
-            // `⌥+y` is the vi-flavoured alias for copy, kept from the
-            // roadmap's yank entry so that muscle memory is not wasted.
-            'y' => return Some(Cmd::Copy),
-            'v' => return Some(Cmd::Paste),
             't' => return Some(Cmd::ThemePick(0)),
             'd' => return Some(Cmd::DirPick),
             '/' | '?' => return Some(Cmd::ToggleHud),
@@ -3759,47 +3728,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     Some(Cmd::Input(key_bytes(ev)))
 }
 
-/// Deliver pasted text to a pane, bracketed the way that child expects.
-///
-/// The one paste path: both the host's `Event::Paste` (a ⌘/Ctrl+V typed into
-/// gwae) and the explicit `⌥+v` clipboard read end up here, so the two
-/// entrances cannot diverge in their newline handling or their bracketing.
-///
-/// Writes in chunks with a flush between: a paste can be a whole file, a PTY
-/// buffer is 4-64 KiB, and a single blocking write of the lot would stall the
-/// event loop — freezing every *other* pane's paint until the child drains.
-///
-/// Returns the number of bytes handed to the pane (0 when the payload was
-/// empty or the pane is gone), which the caller reports in a toast.
-fn write_paste(pane: &mut PtyPane, text: &str) -> usize {
-    let bytes = select::paste_bytes(text, pane.grid.wants_bracketed_paste());
-    if bytes.is_empty() {
-        return 0;
-    }
-    // Pasting means you want the prompt: snap a scrolled-back pane to live,
-    // exactly as typing does, or the user pastes into a view of the past.
-    pane.grid.scroll_to_bottom();
-    for chunk in bytes.chunks(select::PASTE_CHUNK) {
-        if pane.writer.write_all(chunk).is_err() {
-            return 0;
-        }
-        let _ = pane.writer.flush();
-    }
-    bytes.len()
-}
-
-/// Above this many lines, or this many bytes, `⌥+v` asks before pasting.
-///
-/// Small enough that a command, a URL, or a stack trace goes straight through
-/// (the overwhelming majority of pastes), large enough that "I had a whole file
-/// on the clipboard and forgot" gets caught. A wrong paste into an agent's
-/// prompt is not undoable from gwae's side: the child owns the bytes the
-/// instant they are written.
-const PASTE_CONFIRM_LINES: usize = 8;
-const PASTE_CONFIRM_BYTES: usize = 2048;
-
-/// The anchor rect for a toast about the focused pane, or `None` when there is
-/// no focused pane (the toast then falls back to the screen's bottom-left).
 fn focused_pane_rect(
     layout: &Layout,
     panes: &HashMap<PaneId, PtyPane>,
@@ -3820,77 +3748,6 @@ fn focused_pane_rect(
     .iter()
     .find(|v| v.pid == pid)
     .map(|v| v.rect)
-}
-
-/// Paste `text` into the focused pane, returning the toast to show and where
-/// to anchor it. Backs `⌥+v`; `Event::Paste` uses `write_paste` directly
-/// because it already holds the pane.
-fn paste_into_focused(
-    layout: &Layout,
-    panes: &mut HashMap<PaneId, PtyPane>,
-    cfg: &Config,
-    cols: u16,
-    rows: u16,
-    text: &str,
-) -> (Option<String>, Option<Rect>) {
-    let anchor = focused_pane_rect(layout, panes, cfg, cols, rows);
-    let Some(pid) = focused_pane(layout) else {
-        return (Some("no pane focused".to_string()), None);
-    };
-    let Some(p) = panes.get_mut(&pid) else {
-        return (Some("no pane focused".to_string()), None);
-    };
-    let bracketed = p.grid.wants_bracketed_paste();
-    if write_paste(p, text) == 0 {
-        return (Some("nothing to paste".to_string()), anchor);
-    }
-    // A single-line paste needs no narration through this route either, but
-    // `⌥+v` is an explicit request: confirming that *something* happened is
-    // worth one line, since unlike ⌘+V there is no OS-level feedback.
-    (Some(paste_note(text, bracketed)), anchor)
-}
-
-/// Copy scope for copy mode.
-#[derive(Debug, Clone, Copy)]
-enum CopyScope {
-    View,
-    Session,
-}
-
-/// Copy from the focused pane at the given scope. View = visible, Session = scrollback+visible.
-fn copy_pane_text(
-    layout: &Layout,
-    panes: &mut HashMap<PaneId, PtyPane>,
-    cfg: &Config,
-    cols: u16,
-    rows: u16,
-    scope: CopyScope,
-) -> (String, Option<Rect>) {
-    let anchor = focused_pane_rect(layout, panes, cfg, cols, rows);
-    let Some(pid) = focused_pane(layout) else {
-        return ("no pane focused".to_string(), None);
-    };
-    let Some(p) = panes.get_mut(&pid) else {
-        return ("no pane focused".to_string(), None);
-    };
-    let text = match scope {
-        CopyScope::View => {
-            use gwae_term::TermGrid;
-            p.grid.visible_text()
-        }
-        CopyScope::Session => {
-            use gwae_term::TermGrid;
-            p.grid.session_text()
-        }
-    };
-    if text.is_empty() {
-        return ("nothing to copy".to_string(), anchor);
-    }
-    if select::copy_to_clipboard(&text) {
-        (copy_note(&text), anchor)
-    } else {
-        ("clipboard unavailable".to_string(), anchor)
-    }
 }
 
 #[allow(dead_code)]
@@ -3932,10 +3789,16 @@ fn copy_from_focused(
     if text.is_empty() {
         return ("nothing to copy".to_string(), anchor);
     }
-    if select::copy_to_clipboard(&text) {
-        (copy_note(&text), anchor)
+    (copy_note(&text), anchor)
+}
+
+fn copy_note(text: &str) -> String {
+    let lines = text.lines().count();
+    if lines > 1 {
+        format!("copied {lines} lines")
     } else {
-        ("clipboard unavailable".to_string(), anchor)
+        let n = text.chars().count();
+        format!("copied {n} char{}", if n == 1 { "" } else { "s" })
     }
 }
 
@@ -4177,16 +4040,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     if let Err(e) = execute!(stdout, EnableMouseCapture) {
         tracing::warn!("enable mouse: {e}");
     }
-    // Ask the host to bracket pastes. Without this a ⌘/Ctrl+V arrives as raw
-    // key events, every newline decodes to `KeyCode::Enter`, and a five-line
-    // paste submits five times — running half-typed commands in a shell and
-    // half-written prompts in an agent. With it, crossterm hands us the whole
-    // payload as one `Event::Paste` that `write_paste` re-brackets for the
-    // child. A terminal that ignores the request leaves the old behaviour,
-    // which is why `⌥+v` exists as the explicit route.
-    if let Err(e) = execute!(stdout, EnableBracketedPaste) {
-        tracing::warn!("enable bracketed paste: {e}");
-    }
     // Whether the *host* terminal understands the Kitty graphics protocol.
     // Gates APC passthrough: forwarding graphics sequences to a terminal that
     // does not parse them would print base64 garbage over the frame.
@@ -4318,7 +4171,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             Err(e) => {
                 eprintln!("spawn: {e}");
                 let _ = stdout.write_all(b"\x1b[?7h");
-                let _ = execute!(stdout, DisableBracketedPaste);
                 let _ = execute!(stdout, DisableMouseCapture);
                 let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
                 let _ = disable_raw_mode();
@@ -4414,7 +4266,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // is expensive and irreversible from gwae's side (the child has it the
     // instant it is written), so the big ones ask first. Same grammar as the
     // `⌥+Shift+q` confirmation: repeat the chord to mean it.
-    let mut paste_confirm: Option<(String, Instant)> = None;
     // Theme picker (⌥+t): Some(index into Palette::NAMES) while open. The
     // selection previews live, so the whole screen is the preview and the
     // picker itself only needs to show the name.
@@ -4427,10 +4278,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // is up. Quitting kills every pane's process, so the chord arms this
     // overlay and a second deliberate keystroke commits.
     let mut quit_confirm = false;
-    // Drag-to-copy: the live (or just-completed) pane selection, if any.
+    // Pane selection (visual highlight only; clipboard is host-native).
     let mut selection: Option<Selection<PaneId>> = None;
-    // Copy mode: toggle with Option+c, pick pane with plain hjkl, Enter=view, a=session.
-    let mut copy_mode = false;
 
     'main: loop {
         while let Ok(msg) = rx.try_recv() {
@@ -4897,95 +4746,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             dirty = true;
                             continue;
                         }
-                        // Copy mode owns the keyboard: plain hjkl moves focus,
-                        // Enter copies view, a copies session, Esc/Option+c cancels.
-                        if copy_mode {
-                            match ke.code {
-                                KeyCode::Esc => {
-                                    copy_mode = false;
-                                    reload_note = Some("copy cancelled".to_string());
-                                    reload_note_anchor = None;
-                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                    dirty = true;
-                                    continue;
-                                }
-                                KeyCode::Enter => {
-                                    let (note, anchor) = copy_pane_text(
-                                        &layout,
-                                        &mut panes,
-                                        &cfg,
-                                        cols,
-                                        rows,
-                                        CopyScope::View,
-                                    );
-                                    copy_mode = false;
-                                    reload_note = Some(note);
-                                    reload_note_anchor = anchor;
-                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                    dirty = true;
-                                    continue;
-                                }
-                                KeyCode::Char('a') | KeyCode::Char('A') => {
-                                    let (note, anchor) = copy_pane_text(
-                                        &layout,
-                                        &mut panes,
-                                        &cfg,
-                                        cols,
-                                        rows,
-                                        CopyScope::Session,
-                                    );
-                                    copy_mode = false;
-                                    reload_note = Some(note);
-                                    reload_note_anchor = anchor;
-                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                    dirty = true;
-                                    continue;
-                                }
-                                KeyCode::Char(c2)
-                                    if !ke.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
-                                    let ch = c2.to_ascii_lowercase();
-                                    if ch == 'h' || ch == 'j' || ch == 'k' || ch == 'l' {
-                                        let act = match ch {
-                                            'h' => Action::FocusLeft,
-                                            'j' => Action::FocusDown,
-                                            'k' => Action::FocusUp,
-                                            'l' => Action::FocusRight,
-                                            _ => unreachable!(),
-                                        };
-                                        let v = Viewport::new(cols);
-                                        let f = FollowScroll {
-                                            margin: cfg.scroll_margin,
-                                            center: cfg.center_focus,
-                                        };
-                                        let _ = layout.apply(act, v, f);
-                                        reload_note = Some(
-                                            "copy mode \u{00b7} hjkl pick pane \u{00b7} Enter copy view \u{00b7} a copy all \u{00b7} Esc to cancel"
-                                                .to_string(),
-                                        );
-                                        reload_note_anchor =
-                                            focused_pane_rect(&layout, &panes, &cfg, cols, rows);
-                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                        dirty = true;
-                                        continue;
-                                    }
-                                }
-                                _ => {}
-                            }
-                            if !(ke.modifiers.contains(KeyModifiers::ALT)
-                                || matches!(
-                                    ke.code,
-                                    KeyCode::Char('\u{e7}')
-                                        | KeyCode::Char('\u{221a}')
-                                        | KeyCode::Char('\u{2d9}')
-                                        | KeyCode::Char('\u{2206}')
-                                        | KeyCode::Char('\u{2da}')
-                                        | KeyCode::Char('\u{ac}')
-                                ))
-                            {
-                                continue;
-                            }
-                        }
                         if let Some(cmd) = handle_key(&ke) {
                             // Any command other than another digit ends the number
                             // being typed, the way a non-count key ends a vi count.
@@ -5156,115 +4916,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         dirty = true;
                                     }
                                 }
-                                Cmd::Paste => {
-                                    // Explicit clipboard paste. gwae reads the
-                                    // clipboard itself here rather than relying on
-                                    // the host to bracket a ⌘/Ctrl+V, so this is
-                                    // the route that works when the terminal has
-                                    // no bracketed-paste support at all.
-                                    //
-                                    // A pending confirmation means this ⌥+v is the
-                                    // second one: paste what was held, no questions.
-                                    let confirmed = paste_confirm
-                                        .take()
-                                        .filter(|(_, until)| Instant::now() < *until)
-                                        .map(|(t, _)| t);
-                                    let (note, anchor) = match confirmed {
-                                        Some(text) => paste_into_focused(
-                                            &layout, &mut panes, &cfg, cols, rows, &text,
-                                        ),
-                                        None => match select::read_clipboard() {
-                                            None => {
-                                                (Some("clipboard unreadable".to_string()), None)
-                                            }
-                                            Some(text) => {
-                                                let lines = text.lines().count();
-                                                if lines > PASTE_CONFIRM_LINES
-                                                    || text.len() > PASTE_CONFIRM_BYTES
-                                                {
-                                                    let n = format!(
-                                                        "paste {lines} lines? {} again",
-                                                        crate::keys::chord("v")
-                                                    );
-                                                    paste_confirm =
-                                                        Some((text, Instant::now() + NOTE_LINGER));
-                                                    (Some(n), None)
-                                                } else {
-                                                    paste_into_focused(
-                                                        &layout, &mut panes, &cfg, cols, rows,
-                                                        &text,
-                                                    )
-                                                }
-                                            }
-                                        },
-                                    };
-                                    if note.is_some() {
-                                        reload_note = note;
-                                        reload_note_anchor = anchor;
-                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                    }
-                                    dirty = true;
-                                }
-                                Cmd::Copy => {
-                                    copy_mode = !copy_mode;
-                                    if copy_mode {
-                                        reload_note = Some(
-                                            "copy mode \u{00b7} hjkl pick pane \u{00b7} Enter copy view \u{00b7} a copy all \u{00b7} Esc to cancel"
-                                                .to_string(),
-                                        );
-                                        reload_note_anchor =
-                                            focused_pane_rect(&layout, &panes, &cfg, cols, rows);
-                                    } else {
-                                        reload_note = Some("copy cancelled".to_string());
-                                        reload_note_anchor = None;
-                                    }
-                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                    dirty = true;
-                                }
-                                Cmd::CopyImage => {
-                                    if !cfg.image_clipboard {
-                                        reload_note = Some(
-                                            "image clipboard off — set image_clipboard = true"
-                                                .to_string(),
-                                        );
-                                        reload_note_anchor =
-                                            focused_pane_rect(&layout, &panes, &cfg, cols, rows);
-                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                        dirty = true;
-                                    } else if let Some(pid) = focused_pane(&layout) {
-                                        let anchor =
-                                            focused_pane_rect(&layout, &panes, &cfg, cols, rows);
-                                        let png = panes
-                                            .get(&pid)
-                                            .map(|p| crate::shot::grid_to_png(&p.grid))
-                                            .unwrap_or_default();
-                                        if png.is_empty() {
-                                            reload_note = Some("nothing to copy".to_string());
-                                            reload_note_anchor = anchor;
-                                        } else if crate::select::copy_image_to_clipboard(&png) {
-                                            let (w, h) = crate::shot::png_dimensions(&png);
-                                            reload_note =
-                                                Some(format!("image copied ({}×{} px)", w, h));
-                                            reload_note_anchor = anchor;
-                                        } else if let Some(path) =
-                                            crate::select::write_image_fallback(&png)
-                                        {
-                                            reload_note =
-                                                Some(format!("image saved to {}", path.display()));
-                                            reload_note_anchor = anchor;
-                                        } else {
-                                            reload_note = Some("image copy failed".to_string());
-                                            reload_note_anchor = anchor;
-                                        }
-                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                        dirty = true;
-                                    } else {
-                                        reload_note = Some("no pane focused".to_string());
-                                        reload_note_anchor = None;
-                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                        dirty = true;
-                                    }
-                                }
                                 Cmd::None => {}
                             }
                         }
@@ -5418,26 +5069,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         // A press+release without movement is a
                                         // plain click, not a selection: drop it so
                                         // no stray highlight lingers and nothing
-                                        // overwrites the user's clipboard.
                                         let done = selection.filter(|s| !s.is_empty());
                                         match done {
                                             Some(s) => {
-                                                let text = panes
-                                                    .get(&s.pane)
-                                                    .map(|p| select::selected_text(&p.grid, &s))
-                                                    .unwrap_or_default();
-                                                let copied = select::copy_to_clipboard(&text);
-                                                reload_note = Some(if copied {
-                                                    copy_note(&text)
-                                                } else {
-                                                    "clipboard unavailable".to_string()
-                                                });
+                                                // Selection is kept for visual highlight; clipboard
+                                                // is now host-native — no auto-copy.
                                                 reload_note_anchor = views
                                                     .iter()
                                                     .find(|v| v.pid == s.pane)
                                                     .map(|v| v.rect);
-                                                reload_note_until =
-                                                    Some(Instant::now() + NOTE_LINGER);
+                                                reload_note = None;
+                                                reload_note_until = None;
                                             }
                                             None => selection = None,
                                         }
@@ -5475,64 +5117,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         let _ = p.writer.flush();
                                     }
                                 }
-                            }
-                        }
-                    }
-                    Ok(Event::Paste(text)) => {
-                        // Pasted text belongs to the picker while it is open:
-                        // typing `~/` by pasting a path must land in the filter,
-                        // not in the pane underneath it.
-                        if let Some(pick) = dir_pick.as_mut() {
-                            // Directory paths are single-line; a multi-line paste
-                            // (e.g. a file) is truncated to its first line so the
-                            // filter stays sane, and newlines are stripped.
-                            let mut t = text.trim().to_string();
-                            if let Some(first) = t.lines().next() {
-                                t = first.to_string();
-                            }
-                            t.retain(|c| c != '\r' && c != '\n');
-                            if !t.is_empty() {
-                                pick.query.push_str(&t);
-                                pick.sel = 0;
-                                dirty = true;
-                            }
-                            continue;
-                        }
-                        // The host bracketed a paste for us (⌘/Ctrl+V). Hand the
-                        // whole payload to the focused pane in one delivery
-                        // instead of letting it arrive as N keystrokes, which is
-                        // what used to submit a multi-line paste line by line.
-                        // A finished selection is dismissed the way typing does.
-                        if selection.take_if(|s| !s.dragging).is_some() {
-                            dirty = true;
-                        }
-                        if let Some(pid) = focused_pane(&layout) {
-                            // Resolve the toast's anchor rect *before* taking the
-                            // pane mutably: the view list borrows `panes`.
-                            let anchor = focused_pane_views_with_chrome(
-                                &layout,
-                                cols,
-                                rows,
-                                cfg.content_width,
-                                &panes,
-                                true,
-                                chrome_rows(&cfg),
-                            )
-                            .iter()
-                            .find(|v| v.pid == pid)
-                            .map(|v| v.rect);
-                            if let Some(p) = panes.get_mut(&pid) {
-                                let lines = text.lines().count();
-                                let bracketed = p.grid.wants_bracketed_paste();
-                                if write_paste(p, &text) > 0 && lines > 1 {
-                                    // Say so only when it is the case a user can
-                                    // get wrong: a multi-line paste is the one
-                                    // that used to run commands on its own.
-                                    reload_note = Some(paste_note(&text, bracketed));
-                                    reload_note_anchor = anchor;
-                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                }
-                                dirty = true;
                             }
                         }
                     }
@@ -5847,15 +5431,6 @@ fn clamped_pane_point(
 /// The toast shown after a successful drag-copy: how much was taken, in the
 /// unit the user was actually thinking in (lines when multi-line, characters
 /// otherwise).
-fn copy_note(text: &str) -> String {
-    let lines = text.lines().count();
-    if lines > 1 {
-        format!("copied {lines} lines")
-    } else {
-        let n = text.chars().count();
-        format!("copied {n} char{}", if n == 1 { "" } else { "s" })
-    }
-}
 
 /// The toast shown after a multi-line paste. A one-line paste is silent: it
 /// behaves exactly like typing and needs no narration.
@@ -5865,14 +5440,6 @@ fn copy_note(text: &str) -> String {
 /// bracketed paste (`bracketed` false) those newlines genuinely are Returns —
 /// nothing can prevent that, it is what the program asked for — so the toast
 /// says so rather than letting the user infer safety from silence.
-fn paste_note(text: &str, bracketed: bool) -> String {
-    let lines = text.lines().count();
-    if bracketed {
-        format!("pasted {lines} lines")
-    } else {
-        format!("pasted {lines} lines · no bracket, newlines run")
-    }
-}
 
 /// Encode a mouse event as an SGR (1006) report for a child that asked for
 /// mouse reporting, with coordinates translated into the pane's own grid
@@ -6745,58 +6312,6 @@ mod tests {
         let mut frame = vec![Cell::default(); cols as usize * rows as usize];
         draw_toast(&mut frame, cols, rows, "hi", &Palette::default(), true);
         assert_eq!(frame[9 * cols as usize + 1].ch, 'h');
-    }
-
-    #[test]
-    fn copy_and_paste_are_symmetric_chords_on_both_input_paths() {
-        // ⌥+c / ⌥+v are the pair everyone already knows from their OS. Both
-        // routes must reach them: Option-as-Meta (ESC+letter) and the macOS
-        // Unicode glyph a terminal sends when Option is *not* mapped to Meta.
-        // ⌥+Shift+c is the image variant.
-        assert_eq!(
-            handle_key(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::ALT)),
-            Some(Cmd::Copy)
-        );
-        assert_eq!(
-            handle_key(&KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT)),
-            Some(Cmd::Paste)
-        );
-        // ç and √ are what macOS emits for Option+c / Option+v.
-        assert_eq!(
-            handle_key(&KeyEvent::new(KeyCode::Char('\u{e7}'), KeyModifiers::NONE)),
-            Some(Cmd::Copy)
-        );
-        assert_eq!(
-            handle_key(&KeyEvent::new(
-                KeyCode::Char('\u{221a}'),
-                KeyModifiers::NONE
-            )),
-            Some(Cmd::Paste)
-        );
-        // ⌥+y is the vi-flavoured alias for copy, inherited from the roadmap's
-        // yank entry so that muscle memory is not wasted.
-        assert_eq!(
-            handle_key(&KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT)),
-            Some(Cmd::Copy)
-        );
-        // Plain c/v are ordinary text the focused pane owns: a mux that ate
-        // them would break typing "cv" in every pane.
-        assert!(matches!(
-            handle_key(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)),
-            Some(Cmd::Input(_))
-        ));
-        assert!(matches!(
-            handle_key(&KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)),
-            Some(Cmd::Input(_))
-        ));
-    }
-
-    #[test]
-    fn paste_note_warns_when_the_child_cannot_bracket() {
-        // Silence would imply safety. When the child never enabled DECSET
-        // 2004 those newlines really do submit, and the toast has to say so.
-        assert_eq!(paste_note("a\nb\nc", true), "pasted 3 lines");
-        assert!(paste_note("a\nb\nc", false).contains("newlines run"));
     }
 
     #[test]
@@ -8060,9 +7575,6 @@ mod tests {
                 Effect::ThemePick => Cmd::ThemePick(0),
                 Effect::DirPick => Cmd::DirPick,
                 Effect::ToggleHud => Cmd::ToggleHud,
-                Effect::Copy => Cmd::Copy,
-                Effect::CopyImage => Cmd::CopyImage,
-                Effect::Paste => Cmd::Paste,
                 Effect::Quit => Cmd::Quit,
                 Effect::Scroll(n) => Cmd::Scroll(n),
                 Effect::Unverifiable => return None,

@@ -17,7 +17,6 @@ mod preview;
 mod reap;
 mod reload;
 mod select;
-mod shot;
 mod spawndir;
 mod splash;
 mod theme;

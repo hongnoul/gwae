@@ -6,6 +6,9 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Removed
+- Clipboard features: `⌥+c`/`⌥+v`/`⌥+Shift+c`, drag-to-clipboard, OSC 52, image copy (`shot.rs`, `image_clipboard`), bracketed-paste handling. Host native paste/copy is used instead.
+
 ## [1.1.0] - 2026-08-28
 
 ### Added
