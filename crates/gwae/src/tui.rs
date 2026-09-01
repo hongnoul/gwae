@@ -3501,6 +3501,42 @@ impl JumpAccum {
 fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
     let alt = ev.modifiers.contains(KeyModifiers::ALT);
     let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
+    let sup = ev.modifiers.contains(KeyModifiers::SUPER);
+    let shift = physical_shift(ev);
+    // CSI-u branch must preserve modifiers (Ctrl+Shift vs Ctrl) for
+    // inner kitty-aware apps (jcode: Ctrl+K/J = prompt, Ctrl+Shift+K/J
+    // = line scroll). Legacy terminals encode both as the same 0x01 byte,
+    // so intercept Ctrl+Shift before the legacy push and emit kitty CSI-u
+    // (ESC [ <code> ; <mods> u) which crossterm decodes with CONTROL|SHIFT.
+    if ctrl && shift {
+        if let KeyCode::Char(c) = ev.code {
+            if c.is_ascii_alphabetic() {
+                let lc = c.to_ascii_lowercase();
+                let mut bits: u8 = 0;
+                if shift {
+                    bits |= 1;
+                }
+                if alt {
+                    bits |= 2;
+                }
+                if ctrl {
+                    bits |= 4;
+                }
+                if sup {
+                    bits |= 8;
+                }
+                if ev.modifiers.contains(KeyModifiers::HYPER) {
+                    bits |= 16;
+                }
+                if ev.modifiers.contains(KeyModifiers::META) {
+                    bits |= 32;
+                }
+                let mods = bits + 1; // kitty bias
+                // Alt is encoded in mods for CSI-u; do not also prefix ESC.
+                return format!("\x1b[{};{}u", lc as u32, mods).into_bytes();
+            }
+        }
+    }
     let mut out = Vec::new();
     // Meta prefix: ESC before the base sequence. Ctrl combinations take
     // precedence for the base encoding but still keep the Meta ESC in front
