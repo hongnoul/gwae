@@ -462,6 +462,34 @@ fn write_agent_dir(path: &std::path::Path, dir: &str) -> Result<(), String> {
     std::fs::write(path, out).map_err(|e| e.to_string())
 }
 
+/// Persist a per-harness spawn directory: `harness_dirs.<harness> = dir`
+/// when `harness` is non-empty, otherwise falls back to `agent_dir`.
+///
+/// Table is written comment-preserving via raw TOML editing; this is the
+/// `⌥+s` path from the picker, so it must not reformat the rest of the file.
+fn write_harness_dir(
+    path: &std::path::Path,
+    harness: &str,
+    dir: &str,
+) -> Result<(), String> {
+    let h = harness.trim();
+    if h.is_empty() {
+        return write_agent_dir(path, dir);
+    }
+    // Use the exe word as key so `default_agent = "jcode --resume"` still
+    // writes `harness_dirs.jcode`, which is what the config doc shows.
+    let key = crate::tui::shell_split(h)
+        .first()
+        .cloned()
+        .unwrap_or_else(|| h.to_string());
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let out = crate::agent::set_harness_dir_text(&text, &key, dir);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, out).map_err(|e| e.to_string())
+}
+
 /// Every descendant of `root`, deepest first, as reported by `ps`.
 ///
 /// Returned deepest-first so a caller can signal children before their
@@ -1833,10 +1861,13 @@ fn status_glyph_for(s: PaneStatus) -> char {
 /// the drawing code stays a pure function of the frame's facts, and so every
 /// decoration can be tested without spawning a pty.
 #[derive(Default)]
+#[allow(dead_code)]
 struct HudFacts {
     /// Short label per pane, already reduced from the raw window title.
+    #[allow(dead_code)]
     titles: HashMap<PaneId, String>,
     /// How long each pane has been silent (used to age attention tiles).
+    #[allow(dead_code)]
     quiet: HashMap<PaneId, Duration>,
     /// The pane `⌥+g` would jump to right now, if any.
     jump_target: Option<PaneId>,
@@ -1851,6 +1882,7 @@ struct HudFacts {
 /// meaningful already. So: drop everything before the last `": "`, then keep
 /// the final path segment, and strip control characters that a program could
 /// have smuggled into the title.
+#[allow(dead_code)]
 fn short_title(raw: &str) -> String {
     let raw = raw.trim();
     let after_colon = raw.rsplit_once(": ").map(|(_, r)| r).unwrap_or(raw).trim();
@@ -1869,6 +1901,7 @@ fn short_title(raw: &str) -> String {
 
 /// Compact age for a silent pane: seconds under a minute, then minutes, then
 /// hours. Two or three cells, so it fits beside a status glyph on a tile.
+#[allow(dead_code)]
 fn age_label(d: Duration) -> String {
     let s = d.as_secs();
     if s < 60 {
@@ -1904,35 +1937,25 @@ fn contrast_fg(bg: CColor, pal: &Palette) -> CColor {
     }
 }
 
-/// Render one minimap tile's `w` cells of text.
+/// Render one minimap tile's `w` cells of text — spatial-only.
 ///
-/// Screen order is fixed - status glyph, address, jump marker, title, age -
-/// and the pieces are fitted in priority order as the tile narrows.
-///
-/// Everything that identifies the tile is packed at its *left* edge, and the
-/// spare cells fall at the right. Tiles abut with no separator, so a
-/// right-aligned glyph would collide with the next tile's address (`»2 clau…»3`
-/// reads as one run); leading with `»2` gives every tile the same unmistakable
-/// signature, which is also where the eye goes when scanning a column of them.
-///
-/// The glyph and address always survive, since they are what makes a tile
-/// triageable and addressable. The *title* is dropped before the age: a name
-/// cut to one or two characters says nothing, while the age (which only
-/// appears on a pane that wants attention at all) is exactly the news you held
-/// ⌥ to get. The result is always exactly `w` characters, so the caller can
-/// paint it cell-for-cell.
-fn tile_text(w: u16, addr: &str, target: bool, title: &str, age: &str, glyph: char) -> String {
+/// Only the geometry matters: status color already carries health, the tile's
+/// position carries which column/stack it is, and the address + glyph are the
+/// minimal addressing cue (`»2`). Title and age were dropped: they crowded the
+/// map and duplicated what the pane's own chrome already shows. The result is
+/// always exactly `w` characters, padded with blanks, so the caller can paint
+/// cell-for-cell.
+fn tile_text(w: u16, addr: &str, target: bool, glyph: char) -> String {
     let w = w as usize;
     if w == 0 {
         return String::new();
     }
     if w == 1 {
         // One cell: status beats address. Which pane is *waiting* is worth
-        // more than which key jumps to it, and the tile's position in the
-        // row still gives the column away.
+        // more than which key jumps to it, and the tile's position still gives
+        // the column away.
         return glyph.to_string();
     }
-    // The address is the tile's identity; a stacked sub-pane passes "·".
     let addr: String = if addr.chars().count() < w {
         addr.to_string()
     } else {
@@ -1944,44 +1967,15 @@ fn tile_text(w: u16, addr: &str, target: bool, title: &str, age: &str, glyph: ch
     if w <= alen + 1 {
         return format!("{glyph}{addr}");
     }
-    // One cell after the address separates it from the name, and doubles as
-    // the smart-jump marker when this is the pane `⌥+g` would take you to.
+    // One cell after the address doubles as the smart-jump marker when this
+    // is the pane `⌥+g` would take you to.
     let sep = if target { '\u{25b8}' } else { ' ' }; // ▸
-    let mut rest = w - alen - 1 /* glyph */ - 1 /* sep */;
-    let age: String = if !age.is_empty() && age.chars().count() <= rest {
-        rest -= age.chars().count();
-        // One cell stays blank between the name and the age, or `deploy` and
-        // `50m` run together into `deploy50m` and neither is readable.
-        rest = rest.saturating_sub(1);
-        age.to_string()
-    } else {
-        String::new()
-    };
-    // A name cut below three characters is noise, so those cells stay blank.
-    const MIN_TITLE: usize = 3;
-    let mut mid = String::new();
-    if rest >= MIN_TITLE && !title.is_empty() {
-        let n = title.chars().count();
-        mid = if n <= rest {
-            title.to_string()
-        } else {
-            // Mark the cut so a truncated name never reads as the whole name.
-            title
-                .chars()
-                .take(rest - 1)
-                .chain(std::iter::once('\u{2026}')) // …
-                .collect()
-        };
-    }
     let mut s = String::new();
     s.push(glyph);
     s.push_str(&addr);
     s.push(sep);
-    s.push_str(&mid);
-    let pad = w.saturating_sub(s.chars().count() + age.chars().count());
+    let pad = w.saturating_sub(s.chars().count());
     s.extend(std::iter::repeat_n(' ', pad));
-    s.push_str(&age);
-    // Belt and braces: the caller paints `w` cells, so never return more.
     s.chars().take(w).collect()
 }
 
@@ -2225,11 +2219,11 @@ fn hud_hint() -> String {
     )
 }
 
-/// Cells the centered dashboard would like per column, so a tile can seat an
-/// address, the `⌥+g` marker, a name worth reading, an age and a status
-/// glyph. A target, not a guarantee: narrow terminals get less and
-/// [`tile_text`] degrades accordingly.
-const WIDTH_PER_TILE: u16 = 12;
+/// Cells the centered dashboard would like per column — spatial-only tiles
+/// need only glyph+address+marker, so 5 (e.g. `»12▸`) is enough. A target,
+/// not a guarantee: narrow terminals get less and [`tile_text`] degrades
+/// accordingly.
+const WIDTH_PER_TILE: u16 = 5;
 
 /// The most columns any single strip has. Sizing the map by this (rather than
 /// by the focused strip) keeps the panel from resizing under the user's eyes
@@ -2258,18 +2252,12 @@ fn hud_pane_at(plan: &HudPlan, x: u16, y: u16) -> Option<PaneId> {
 /// Centered agent dashboard, revealed while ⌥/Alt is held.
 ///
 /// One row per strip, one tile per pane, tile width proportional to the
-/// column's real width share. Beyond the position-indicator basics, each tile
-/// answers the questions you actually hold ⌥ to ask:
-///
-///  * **which one is it** - the pane's own window title (OSC 0/2), shortened,
-///    so you read `jcode` and `cargo` rather than `2` and `3`;
-///  * **how do I get there** - the column address `⌥+<n>` jumps to, with the
-///    in-flight number highlighted as you type it and everything else dimmed;
-///  * **where should I look** - the pane `⌥+g` would take you to is marked
-///    `▸`, and a pane that wants attention carries how long it has waited;
-///  * **what is on screen right now** - the strip's visible column span is
-///    underscored, which is the one thing an infinite strip cannot show you
-///    by itself.
+/// column's real width share. Spatial-only: each tile shows only the column
+/// address `⌥+<n>` and its status color/glyph, with the pane `⌥+g` would
+/// take you to marked `▸` and the in-flight number highlighted as you type.
+/// Titles and ages are omitted — the map shows *where* panes are, not *what*
+/// they are (which lives in the pane chrome itself). The strip's visible
+/// column span is still underscored.
 ///
 /// A gutter names each strip, the footer counts panes by status and spells
 /// the keys that act on what you are looking at.
@@ -2416,17 +2404,7 @@ fn paint_center_minimap(
         } else {
             "·".to_string()
         };
-        let age = match tile.status {
-            PaneStatus::Idle | PaneStatus::Failed => facts
-                .quiet
-                .get(&tile.pane)
-                .filter(|d| d.as_secs() >= 5)
-                .map(|d| age_label(*d))
-                .unwrap_or_default(),
-            _ => String::new(),
-        };
-        let title = facts.titles.get(&tile.pane).cloned().unwrap_or_default();
-        let text = tile_text(tile.w, &addr, target, &title, &age, glyph);
+        let text = tile_text(tile.w, &addr, target, glyph);
         for (dx, ch) in text.chars().enumerate() {
             let x = map_ox + tile.x as usize + dx;
             // Bold the leading `glyph + address` signature: it is what the
@@ -2527,6 +2505,8 @@ struct DirPicker {
     all: Vec<crate::spawndir::Candidate>,
     query: String,
     sel: usize,
+    /// Harness this picker is editing (e.g. "jcode"), empty when no harness.
+    harness_label: String,
 }
 
 impl DirPicker {
@@ -2557,7 +2537,13 @@ impl DirPicker {
 fn draw_dir_picker(out: &mut [Cell], cols: u16, rows: u16, pick: &DirPicker, pal: &Palette) {
     let shown = pick.shown();
     let rows_shown = shown.len().clamp(1, 10);
-    let title = format!(" spawn dir: {}_ ", pick.query);
+    // Title names the harness so a user with harness_dirs wonders less which
+    // entry ⌥+s will write. Plain "spawn dir:" when no harness is configured.
+    let title = if pick.harness_label.is_empty() {
+        format!(" spawn dir: {}_ ", pick.query)
+    } else {
+        format!(" spawn dir [{}]: {}_ ", pick.harness_label, pick.query)
+    };
     // The save key is the *chord*, not a bare `s`: every printable key types
     // into the filter, so advertising `s` would tell the user to type a
     // letter that filters instead of saving.
@@ -4154,12 +4140,15 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     if std::env::var_os("GWAE_DEBUG_SIZE").is_some() {
         eprintln!("[gwae] initial terminal size -> {cols} cols x {rows} rows");
     }
-    // Where every pane in this session starts. `--dir` beats `agent_dir`
-    // beats gwae's inherited cwd; `⌥+d` rebinds it live for panes spawned
-    // from then on (existing panes keep whatever they were born with, since
-    // a process's cwd is not ours to change).
-    let mut spawn_dir: Option<std::path::PathBuf> =
-        crate::spawndir::resolve(cli_dir.as_deref(), &cfg.agent_dir);
+    // Where every pane in this session starts. `--dir` beats per-harness
+    // `harness_dirs[default_agent]` beats `agent_dir` beats gwae's inherited cwd;
+    // `⌥+d` rebinds it live for panes spawned from then on (existing panes keep
+    // whatever they were born with, since a process's cwd is not ours to change).
+    let mut spawn_dir: Option<std::path::PathBuf> = crate::spawndir::resolve_for_harness(
+        cli_dir.as_deref(),
+        cfg.dir_for_harness(&cfg.default_agent),
+        &cfg.agent_dir,
+    );
     // A configured directory that does not exist is a typo worth surfacing:
     // the panes silently opening in `~` is exactly the confusion this
     // feature exists to remove.
@@ -4167,7 +4156,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         let raw = cli_dir
             .as_deref()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or(cfg.agent_dir.as_str());
+            .unwrap_or(cfg.dir_for_harness(&cfg.default_agent));
         let fell_back = spawn_dir == crate::spawndir::inherited();
         match (fell_back, raw.trim().is_empty()) {
             (true, false) => crate::spawndir::check(raw).err(),
@@ -4755,12 +4744,25 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 dir_pick = None;
                             }
                             if let Some((path, save)) = chosen {
+                                // Remember which harness this was for; title already showed it.
+                                let harness_for_save = dir_pick
+                                    .as_ref()
+                                    .map(|p| p.harness_label.clone())
+                                    .unwrap_or_default();
                                 spawn_dir = Some(path.clone());
                                 let shown = crate::spawndir::tilde(&path);
                                 reload_note_anchor = None;
                                 reload_note = Some(if save {
-                                    match write_agent_dir(&cfg_path, &shown) {
-                                        Ok(()) => format!("spawn dir: {shown} (saved to config)"),
+                                    match write_harness_dir(&cfg_path, &harness_for_save, &shown) {
+                                        Ok(()) => {
+                                            if harness_for_save.is_empty() {
+                                                format!("spawn dir: {shown} (saved to config)")
+                                            } else {
+                                                format!(
+                                                    "spawn dir [{harness_for_save}]: {shown} (saved to config)"
+                                                )
+                                            }
+                                        }
                                         Err(e) => format!(
                                             "spawn dir: {shown} (this session; save error: {e})"
                                         ),
@@ -4868,9 +4870,20 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 Cmd::DirPick => {
                                     // Rebuilt on every open: repos are cloned and
                                     // deleted while gwae runs, and the scan is a
-                                    // handful of readdirs.
-                                    let all = crate::spawndir::candidates(
+                                    // handful of readdirs. Harness label sourced
+                                    // from default_agent so ⌥+s knows which table
+                                    // entry to write.
+                                    let harness_label = if cfg.default_agent.trim().is_empty() {
+                                        String::new()
+                                    } else {
+                                        crate::tui::shell_split(&cfg.default_agent)
+                                            .first()
+                                            .cloned()
+                                            .unwrap_or_default()
+                                    };
+                                    let all = crate::spawndir::candidates_for_harness(
                                         spawn_dir.as_deref(),
+                                        cfg.dir_for_harness(&cfg.default_agent),
                                         &cfg.agent_dir,
                                         &cfg.agent_dirs,
                                         &cfg.agent_dir_roots,
@@ -4879,6 +4892,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         all,
                                         query: String::new(),
                                         sel: 0,
+                                        harness_label,
                                     });
                                     dirty = true;
                                 }
@@ -5411,21 +5425,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // Built only when the panel is actually up, so a normal frame pays
         // nothing for it.
         let hud_facts = if show_center_minimap && !show_hud {
-            let now = Instant::now();
             HudFacts {
-                titles: panes
-                    .iter()
-                    .filter_map(|(pid, p)| {
-                        let t = short_title(p.grid.title());
-                        (!t.is_empty()).then_some((*pid, t))
-                    })
-                    .collect(),
-                quiet: panes
-                    .iter()
-                    .map(|(pid, p)| (*pid, now.saturating_duration_since(p.last_output)))
-                    .collect(),
                 jump_target: smart_jump_target(&layout),
                 pending_jump: jump.pending(),
+                ..HudFacts::default()
             }
         } else {
             HudFacts::default()
@@ -8344,54 +8347,43 @@ mod tests {
 
     #[test]
     fn tile_text_degrades_in_a_fixed_order_as_the_tile_narrows() {
-        // Widest: glyph, address, jump marker, title and age all fit.
-        let wide = tile_text(16, "2", true, "jcode", "4m", '!');
+        // Spatial-only: glyph, address, jump marker, then padding.
+        let wide = tile_text(16, "2", true, '!');
         assert_eq!(wide.chars().count(), 16, "always exactly the tile width");
-        assert!(wide.starts_with("!2\u{25b8}jcode"), "got {wide:?}");
-        assert!(wide.ends_with("4m"), "age closes the tile, got {wide:?}");
+        assert!(wide.starts_with("!2\u{25b8}"), "got {wide:?}");
+        assert!(wide.trim().ends_with('2') || wide.contains("!2"), "glyph and address kept, got {wide:?}");
         // No jump marker when this is not the smart-jump target.
-        let plain = tile_text(16, "2", false, "jcode", "4m", '!');
-        assert!(plain.starts_with("!2 jcode"), "got {plain:?}");
-        // Narrower: the name is cut, but marked, and the age survives - a
-        // waiting pane's age is the news, a two-letter name is not.
-        let cut = tile_text(11, "2", false, "jcode-main", "4m", '!');
-        assert_eq!(cut.chars().count(), 11);
-        assert!(cut.ends_with("4m"), "age kept, got {cut:?}");
-        assert!(cut.starts_with("!2"), "glyph and address kept, got {cut:?}");
-        assert!(cut.contains('\u{2026}'), "the cut is marked, got {cut:?}");
-        // Narrower still: the title goes entirely rather than shrinking to
-        // noise, and the glyph/address/age triple still reads.
-        let mid = tile_text(6, "2", false, "jcode", "4m", '!');
+        let plain = tile_text(16, "2", false, '!');
+        assert_eq!(plain, format!("!2 {}", " ".repeat(13)), "got {plain:?}");
+        // Narrower still padded blanks, glyph/address/sep always readable.
+        let mid = tile_text(6, "2", false, '!');
         assert_eq!(mid.chars().count(), 6);
-        assert_eq!(mid, "!2  4m", "glyph, address, gap, age");
-        assert!(!mid.contains('j'), "no one-letter names, got {mid:?}");
-        // Narrow enough that even the age cannot fit: the glyph is last out.
-        let tight = tile_text(4, "2", false, "jcode", "4m", '!');
+        assert_eq!(mid, "!2    ", "glyph, address, gap, padding");
+        // Tight: still glyph + address when 3 cells.
+        let tight = tile_text(4, "2", false, '!');
         assert_eq!(tight.chars().count(), 4);
-        assert!(
-            tight.starts_with("!2"),
-            "glyph outlives everything: {tight:?}"
-        );
-        assert!(!tight.contains("4m"), "age dropped when it cannot fit");
+        assert!(tight.starts_with("!2"), "glyph outlives everything: {tight:?}");
         // Two cells: glyph + address. One cell: the status alone, since a
         // waiting pane matters more than which key jumps to it.
-        assert_eq!(tile_text(2, "2", true, "jcode", "4m", '!'), "!2");
-        assert_eq!(tile_text(1, "2", true, "jcode", "4m", '!'), "!");
+        assert_eq!(tile_text(2, "2", true, '!'), "!2");
+        assert_eq!(tile_text(1, "2", true, '!'), "!");
         // Two-digit columns fit when there is room and degrade to `+` when
         // there is not: a `1 0` chord addresses column 10, so the map must
         // not silently claim it is column 1.
-        assert!(tile_text(4, "10", false, "", "", '\u{bb}').starts_with("\u{bb}10"));
-        assert_eq!(tile_text(2, "10", false, "", "", '\u{bb}'), "\u{bb}+");
+        assert!(tile_text(4, "10", false, '\u{bb}').starts_with("\u{bb}10"));
+        assert_eq!(tile_text(2, "10", false, '\u{bb}'), "\u{bb}+");
+        assert_eq!(tile_text(3, "10", false, '\u{bb}'), "\u{bb}10");
         // Whatever the width, the tile is exactly that many cells.
         for w in 1..=24u16 {
-            for (t, a) in [("", ""), ("jcode", "4m"), ("a-very-long-name", "59s")] {
-                assert_eq!(
-                    tile_text(w, "12", true, t, a, '\u{bb}').chars().count(),
-                    w as usize,
-                    "width {w} with {t:?}/{a:?}"
-                );
-            }
+            assert_eq!(
+                tile_text(w, "12", true, '\u{bb}').chars().count(),
+                w as usize,
+                "width {w}"
+            );
         }
+        // Target marker occupies the sep cell.
+        assert_eq!(tile_text(3, "1", true, '»'), "»1\u{25b8}");
+        assert_eq!(tile_text(3, "1", false, '»'), "»1 ");
     }
 
     #[test]
@@ -8447,45 +8439,25 @@ mod tests {
         let (mut layout, ids) = dashboard_layout(4);
         layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Idle;
         let facts = HudFacts {
-            titles: [(ids[0], "jcode".to_string()), (ids[2], "cargo".to_string())]
-                .into_iter()
-                .collect(),
-            quiet: [(ids[2], Duration::from_secs(4 * 60))]
-                .into_iter()
-                .collect(),
             jump_target: smart_jump_target(&layout),
             pending_jump: None,
+            ..HudFacts::default()
         };
         assert_eq!(facts.jump_target, Some(ids[2]), "the idle pane wants you");
         let out = paint_dashboard(&layout, &facts, 100, 24);
         let text = screen_rows(&out, 100).join("\n");
+        // Spatial-only: titles and ages are not rendered; only glyph+addr+target.
         assert!(
-            text.contains("jcode"),
-            "the pane's own title identifies it, got:\n{text}"
-        );
-        assert!(
-            text.contains("cargo"),
-            "every titled pane is named:\n{text}"
+            !text.contains("jcode") && !text.contains("cargo"),
+            "spatial tiles carry no title text, got:\n{text}"
         );
         assert!(
             text.contains('\u{25b8}'),
             "the smart-jump target is marked, got:\n{text}"
         );
         assert!(
-            text.contains("4m"),
-            "an idle pane says how long it has waited:\n{text}"
-        );
-        // A running pane is not aged: only attention has a clock on it.
-        let quiet_running = HudFacts {
-            quiet: [(ids[0], Duration::from_secs(9 * 60))]
-                .into_iter()
-                .collect(),
-            ..HudFacts::default()
-        };
-        let out2 = paint_dashboard(&layout, &quiet_running, 100, 24);
-        assert!(
-            !screen_rows(&out2, 100).join("\n").contains("9m"),
-            "a working pane's silence is not news"
+            !text.contains("4m"),
+            "spatial tiles carry no age, got:\n{text}"
         );
     }
 
