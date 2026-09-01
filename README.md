@@ -8,13 +8,13 @@
 [![CI](https://github.com/hongnoul/gwae/actions/workflows/ci.yml/badge.svg)](https://github.com/hongnoul/gwae/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-**Run six coding agents side by side. Panes never shrink — the viewport scrolls instead.**
+**Infinite scroll terminal multiplexer optimized for MacOS / Windows**
 
 Any terminal, macOS / Linux / Windows. One process, no daemon.
 
 <img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
 
-Two agents and a system monitor, each at full width on the strip grid, with placeholder boxes tiling the empty columns. Nothing is sped up.
+Not sped up - you can go much faster than demo
 
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash   # macOS & Linux
