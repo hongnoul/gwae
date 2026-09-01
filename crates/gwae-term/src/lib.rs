@@ -107,6 +107,31 @@ pub trait TermGrid {
     fn hide_cursor(&self) -> bool;
     /// Scrollback rows currently pulled into view (0 = live).
     fn scrollback_offset(&self) -> usize;
+    /// Visible pane text (trimmed, no trailing blank lines).
+    fn visible_text(&self) -> String {
+        let size = self.size();
+        let mut out = String::new();
+        for y in 0..size.rows {
+            let mut line = String::new();
+            for x in 0..size.cols {
+                let c = self.cell(x, y);
+                if c.width != 0 {
+                    c.push_codepoints(&mut line);
+                }
+            }
+            let line = line.trim_end();
+            if y > 0 {
+                out.push('\n');
+            }
+            out.push_str(line);
+        }
+        out.trim_end_matches('\n').to_string()
+    }
+    /// Full session text including scrollback (when available). Default is
+    /// visible only; `Vt100Grid` overrides to include its 10k scrollback.
+    fn session_text(&mut self) -> String {
+        self.visible_text()
+    }
 }
 
 // --- vt100-backed grid (M0/M1 implementation) ---
@@ -275,6 +300,39 @@ impl TermGrid for Vt100Grid {
 
     fn scrollback_offset(&self) -> usize {
         self.scrollback_offset
+    }
+
+    fn session_text(&mut self) -> String {
+        let saved = self.scrollback_offset;
+        let total = {
+            self.parser.set_scrollback(100_000);
+            self.parser.screen().scrollback()
+        };
+        let out = if total > 0 {
+            self.parser.set_scrollback(total);
+            let dump = self.parser.screen().contents();
+            let live = {
+                self.parser.set_scrollback(0);
+                self.parser.screen().contents()
+            };
+            let s: Vec<&str> = dump.lines().collect();
+            let l: Vec<&str> = live.lines().collect();
+            let overlap = l.len().min(self.rows as usize);
+            if l.len() > overlap {
+                let mut m = s.clone();
+                m.extend_from_slice(&l[l.len() - overlap..]);
+                m.join("\n")
+            } else {
+                self.parser.set_scrollback(saved);
+                self.scrollback_offset = self.parser.screen().scrollback();
+                return live.trim_end_matches('\n').to_string();
+            }
+        } else {
+            self.parser.screen().contents()
+        };
+        self.parser.set_scrollback(saved);
+        self.scrollback_offset = self.parser.screen().scrollback();
+        out.trim_end_matches('\n').to_string()
     }
 }
 
