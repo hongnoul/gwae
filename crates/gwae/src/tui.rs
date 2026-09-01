@@ -8,10 +8,9 @@ use std::time::{Duration, Instant};
 use crate::theme::Palette;
 use crossterm::cursor;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture,
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, KeyboardEnhancementFlags,
-    ModifierKeyCode, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyEventState, KeyModifiers, KeyboardEnhancementFlags, ModifierKeyCode, MouseButton,
+    MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -3412,7 +3411,8 @@ enum Cmd {
     /// `⌥+12`. Only the main loop knows when the chord ends (Option released,
     /// or the idle timeout), so it owns the accumulator; this just reports
     /// "digit N was typed as part of a jump".
-    JumpDigit(u32),    Quit,
+    JumpDigit(u32),
+    Quit,
     None,
 }
 
@@ -3532,7 +3532,7 @@ fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
                     bits |= 32;
                 }
                 let mods = bits + 1; // kitty bias
-                // Alt is encoded in mods for CSI-u; do not also prefix ESC.
+                                     // Alt is encoded in mods for CSI-u; do not also prefix ESC.
                 return format!("\x1b[{};{}u", lc as u32, mods).into_bytes();
             }
         }
@@ -5389,19 +5389,6 @@ fn clamped_pane_point(
         .clamp(0, v.grid_cols.saturating_sub(1) as i32) as u16;
     Some((pid, gx, sy - r.y))
 }
-
-/// The toast shown after a successful drag-copy: how much was taken, in the
-/// unit the user was actually thinking in (lines when multi-line, characters
-/// otherwise).
-
-/// The toast shown after a multi-line paste. A one-line paste is silent: it
-/// behaves exactly like typing and needs no narration.
-///
-/// A multi-line paste is the case that used to run each line as its own
-/// command, so gwae says what it delivered. When the child never asked for
-/// bracketed paste (`bracketed` false) those newlines genuinely are Returns —
-/// nothing can prevent that, it is what the program asked for — so the toast
-/// says so rather than letting the user infer safety from silence.
 
 /// Encode a mouse event as an SGR (1006) report for a child that asked for
 /// mouse reporting, with coordinates translated into the pane's own grid

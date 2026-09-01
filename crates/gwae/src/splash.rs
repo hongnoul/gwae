@@ -251,7 +251,10 @@ mod tests {
         let inked: usize = last.chars().filter(|c| *c == INK).count();
         let expected: usize = bitmap().iter().flatten().filter(|b| **b).count();
         assert_eq!(inked, expected, "final frame is missing lit cells");
-        assert!(!last.contains("scrolling panes"), "tagline should be removed");
+        assert!(
+            !last.contains("scrolling panes"),
+            "tagline should be removed"
+        );
     }
 
     #[test]
