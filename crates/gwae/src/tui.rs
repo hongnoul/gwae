@@ -2074,23 +2074,12 @@ fn plan_center_minimap(
     // Fall back to the key hints alone.
     let single = layout.panes.len() <= 1 && layout.rows.len() <= 1;
 
-    // Strip gutter: the strip's position, plus its name when it has a real
-    // one. `Row.name` has existed since M0 and was never surfaced anywhere.
+    // Strip gutter: just the strip number.
     let gutter: Vec<String> = layout
         .rows
         .iter()
         .enumerate()
-        .map(|(i, r)| {
-            let name = r.name.trim();
-            let generic = name.is_empty()
-                || name.eq_ignore_ascii_case("row")
-                || name.eq_ignore_ascii_case(&format!("strip {}", i + 1));
-            if generic {
-                format!("{}", i + 1)
-            } else {
-                format!("{} {}", i + 1, name)
-            }
-        })
+        .map(|(i, _)| format!("{}", i + 1))
         .collect();
     let gutter_w = if single {
         0
@@ -6903,7 +6892,7 @@ mod tests {
         use gwae_layout::Width;
         let mut layout = Layout::default();
         // Add a second strip so the map has something to orient against.
-        let r2 = layout.new_row("two".to_string());
+        let r2 = layout.new_row();
         let p = layout.alloc_pane();
         layout.add_column(r2, Width::Cells(20), vec![p]);
         let mut out = vec![Cell::default(); 40 * 8];
@@ -6992,7 +6981,7 @@ mod tests {
     fn draw_minimap_status_colors_and_failed_glyph() {
         use gwae_layout::Width;
         let mut layout = Layout::default(); // 4 quarter panes on strip 1
-        let r2 = layout.new_row("two".to_string());
+        let r2 = layout.new_row();
         let p = layout.alloc_pane();
         layout.add_column(r2, Width::Cells(20), vec![p]);
         // Statuses: pane1 focused (accent), pane2 done, pane3 failed,
@@ -7055,7 +7044,7 @@ mod tests {
         // Option, so no render test above covers them. Assert both panels
         // paint the theme's colors and leak none of Mocha's.
         let mut layout = Layout::default();
-        let r2 = layout.new_row("two".to_string());
+        let r2 = layout.new_row();
         let p = layout.alloc_pane();
         layout.add_column(r2, gwae_layout::Width::Cells(20), vec![p]);
         let nord = Palette::NORD;
@@ -7108,7 +7097,7 @@ mod tests {
         // muted, and none of Mocha's may appear.
         use gwae_layout::Width;
         let mut layout = Layout::default(); // 4 quarter panes on strip 1
-        let r2 = layout.new_row("two".to_string());
+        let r2 = layout.new_row();
         let p = layout.alloc_pane();
         layout.add_column(r2, Width::Cells(20), vec![p]);
         let ids: Vec<PaneId> = {
@@ -8350,7 +8339,7 @@ mod tests {
     fn draw_minimap_overlay_still_paints_without_chrome() {
         // Overlay path does not depend on chrome rows.
         let mut layout = Layout::default();
-        let r2 = layout.new_row("two".to_string());
+        let r2 = layout.new_row();
         let pid = layout.alloc_pane();
         layout.add_column(r2, gwae_layout::Width::Cells(20), vec![pid]);
         let mm = crate::config::Minimap {
@@ -8368,7 +8357,7 @@ mod tests {
     #[test]
     fn draw_center_minimap_paints_centered_dashboard() {
         let mut layout = Layout::default();
-        let r2 = layout.new_row("two".to_string());
+        let r2 = layout.new_row();
         let p = layout.alloc_pane();
         layout.add_column(r2, gwae_layout::Width::Cells(20), vec![p]);
         // Mark one pane failed so we can assert status tint appears.
@@ -8696,8 +8685,8 @@ mod tests {
     #[test]
     fn truncated_strips_are_counted_not_silently_dropped() {
         let mut layout = Layout::default();
-        for i in 0..9 {
-            let r = layout.new_row(format!("strip {}", i + 2));
+        for _ in 0..9 {
+            let r = layout.new_row();
             let p = layout.alloc_pane();
             layout.add_column(r, gwae_layout::Width::Cells(20), vec![p]);
         }
@@ -8723,20 +8712,18 @@ mod tests {
     }
 
     #[test]
-    fn named_strips_are_labelled_and_generated_ones_are_not() {
+    fn strips_are_labelled_by_number() {
         let mut layout = Layout::default();
-        let named = layout.new_row("deploy".to_string());
+        let r2 = layout.new_row();
         let p = layout.alloc_pane();
-        layout.add_column(named, gwae_layout::Width::Cells(20), vec![p]);
-        // `strip 3` is what the NewRow verb generates; repeating it in the
-        // gutter beside the number would just say "3 strip 3".
-        let generated = layout.new_row("strip 3".to_string());
+        layout.add_column(r2, gwae_layout::Width::Cells(20), vec![p]);
+        let r3 = layout.new_row();
         let p2 = layout.alloc_pane();
-        layout.add_column(generated, gwae_layout::Width::Cells(20), vec![p2]);
+        layout.add_column(r3, gwae_layout::Width::Cells(20), vec![p2]);
         let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
             .expect("dashboard fits");
-        assert_eq!(plan.gutter[1], "2 deploy", "a real name is worth showing");
-        assert_eq!(plan.gutter[2], "3", "a generated one is just its number");
+        assert_eq!(plan.gutter[1], "2");
+        assert_eq!(plan.gutter[2], "3");
     }
 
     #[test]

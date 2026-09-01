@@ -228,11 +228,11 @@ mod tests {
     fn multiple_rows_one_highlighted() {
         let mut l = Layout::default();
         // Strip 2: a single column.
-        let r2 = l.new_row("second".to_string());
+        let r2 = l.new_row();
         let p = l.alloc_pane();
         l.add_column(r2, Width::Cells(40), vec![p]);
         // Strip 3: two columns with differing widths (40 vs 80 of 120 total).
-        let r3 = l.new_row("third".to_string());
+        let r3 = l.new_row();
         let p2 = l.alloc_pane();
         l.add_column(r3, Width::Cells(40), vec![p2]);
         let p3 = l.alloc_pane();
@@ -272,7 +272,7 @@ mod tests {
         // the map and the short strip reads as long as the full one, which is
         // exactly the wrong thing to tell someone comparing strips.
         let mut l = Layout::new(4);
-        let r2 = l.new_row("second".to_string());
+        let r2 = l.new_row();
         let p = l.alloc_pane();
         l.add_column(r2, Width::Preset(crate::Preset::Quarter), vec![p]);
 
@@ -299,7 +299,7 @@ mod tests {
         // A strip far shorter than the longest still gets at least one cell,
         // and no strip may exceed the map width at any budget.
         let mut l = Layout::new(12);
-        let r2 = l.new_row("tiny".to_string());
+        let r2 = l.new_row();
         let p = l.alloc_pane();
         l.add_column(r2, Width::Cells(1), vec![p]);
         for map_w in [4u16, 7, 16, 40, 120] {

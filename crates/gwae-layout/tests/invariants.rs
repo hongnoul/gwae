@@ -104,8 +104,8 @@ proptest! {
 #[test]
 fn rows_never_reorder() {
     let mut layout = Layout::default();
-    let a = layout.new_row("a".to_string());
-    let b = layout.new_row("b".to_string());
+    let a = layout.new_row();
+    let b = layout.new_row();
     let ids: Vec<_> = layout.rows.iter().map(|r| r.id).collect();
     assert_eq!(ids, vec![layout.focus.row, a, b]);
     // A NewColumn on the focused row only touches that row; order is preserved.

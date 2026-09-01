@@ -1,6 +1,6 @@
 //! Core data model for the 2D strip grid.
 //!
-//! A `Layout` is an ordered list of named `Row`s, each an infinite horizontal
+//! A `Layout` is an ordered list of `Row`s, each an infinite horizontal
 //! strip of `Column`s. A `Column` holds a vertical stack of one or more
 //! `Pane`s and keeps its own `Width`. Panes never shrink; the focused row's
 //! `scroll_x` pans the viewport across it.
@@ -61,7 +61,6 @@ impl Column {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Row {
     pub id: RowId,
-    pub name: String,
     pub columns: Vec<Column>,
     /// Horizontal viewport offset in cells.
     pub scroll_x: i32,
@@ -119,7 +118,7 @@ impl Layout {
             next_row: 0,
             next_pane: 0,
         };
-        let row = layout.new_row("main".to_string());
+        let row = layout.new_row();
         // A single strip of `n` panes, each 1/4 of the viewport.
         let width = Width::Preset(crate::width::Preset::Quarter);
         for _ in 0..strips {
@@ -188,12 +187,11 @@ impl Layout {
         id
     }
 
-    pub fn new_row(&mut self, name: String) -> RowId {
+    pub fn new_row(&mut self) -> RowId {
         let id = self.next_row;
         self.next_row += 1;
         self.rows.push(Row {
             id,
-            name,
             columns: Vec::new(),
             scroll_x: 0,
         });

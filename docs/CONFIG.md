@@ -207,7 +207,7 @@ questions you actually hold the modifier to ask, and carries more per tile:
 * **Where will this number land.** Typing `⌥+1 0` lights column 10 and dims
   the others while the digits are still in flight.
 * Strips share one scale, so a 2-column strip reads shorter than a 6-column
-  one, and a strip with a real name gets a gutter label.
+  one.
 * **Clicking a tile focuses that pane.** The session dims behind the panel.
 
 Tiles degrade gracefully as they narrow: the status glyph and the column digit

@@ -198,7 +198,7 @@ impl Layout {
             if self.row_is_empty(self.focus.row) {
                 return Ok(self.focused_scroll());
             }
-            self.new_row(format!("strip {}", self.rows.len() + 1));
+            self.new_row();
         }
         let target_id = self.rows[ti].id;
         let from = self.focus.row;
@@ -359,7 +359,7 @@ impl Layout {
             if lone {
                 return Ok(self.focused_scroll());
             }
-            self.new_row(format!("strip {}", self.rows.len() + 1));
+            self.new_row();
         }
         let target_id = self.rows[ti].id;
         let width = self
@@ -626,7 +626,7 @@ impl Layout {
     }
 
     fn apply_new_row(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
-        let row = self.new_row("row".to_string());
+        let row = self.new_row();
         let pane = self.alloc_pane();
         self.add_column(row, Width::DEFAULT, vec![pane]);
         self.focus.row = row;

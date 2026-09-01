@@ -225,9 +225,9 @@ No bottom status row. Hold `⌥`/Alt for a centered dashboard (no pane shrinkage
 
 ```
 ╭────────────────────────────────────────────────────────────────╮
-│1 main  »1 jcode    »2 claude   !3 cargo… 3m»4      ✗5▸depl… 50m│
-│        ────────────────────────────────────                    │
-│2 build »1 vim      »2                                          │
+│1 »1 jcode    »2 claude   !3 cargo… 3m»4      ✗5▸depl… 50m│
+│  ────────────────────────────────────                    │
+│2 »1 vim      »2                                          │
 │                                             9 »6 !1 ✓1 ✗1      │
 │         ⌥1-9 col · ⌥g attention · ⌥hjkl move · ⌥/ keys         │
 ╰────────────────────────────────────────────────────────────────╯
@@ -237,7 +237,7 @@ No bottom status row. Hold `⌥`/Alt for a centered dashboard (no pane shrinkage
 * A pane that wants attention carries how long it has waited (`3m`, `50m`).
 * The rule under a strip is the part of it **currently on screen** — the one thing an infinite strip cannot show you by itself.
 * Typing `⌥+1 0` lights column 10 and dims the rest as you type it.
-* Strips are drawn to one scale, so a 2-column strip reads shorter than a 6-column one, and named strips get a gutter label.
+* Strips are drawn to one scale, so a 2-column strip reads shorter than a 6-column one.
 * **Click a tile to focus that pane.** The screen behind dims while the panel is up.
 
 With a single pane there is nothing to triage, so the hold shows the key hints alone.
