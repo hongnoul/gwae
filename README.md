@@ -10,8 +10,6 @@
 
 **Infinite scroll terminal multiplexer optimized for MacOS / Windows**
 
-Any terminal, macOS / Linux / Windows. One process, no daemon.
-
 <img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
 
 Not sped up - you can go much faster than demo
