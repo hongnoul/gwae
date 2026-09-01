@@ -2495,8 +2495,39 @@ struct DirPicker {
 }
 
 impl DirPicker {
+    /// When the query itself expands to an existing directory, offer it as the
+    /// top candidate (`typed`). This is what makes `~/` + Enter resolve to `$HOME`
+    /// instead of to the top fuzzy match, and in general lets the user type any
+    /// valid path (including one outside the discovered set) and pick it.
+    fn typed_candidate(&self) -> Option<crate::spawndir::Candidate> {
+        let q = self.query.trim();
+        if q.is_empty() {
+            return None;
+        }
+        let p = crate::spawndir::expand(q);
+        if !p.is_dir() {
+            return None;
+        }
+        let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
+        Some(crate::spawndir::Candidate {
+            label: crate::spawndir::tilde(&canon),
+            path: canon,
+            origin: "typed",
+        })
+    }
     fn shown(&self) -> Vec<crate::spawndir::Candidate> {
-        crate::spawndir::filter(&self.all, &self.query)
+        let mut base = crate::spawndir::filter(&self.all, &self.query);
+        if let Some(typed) = self.typed_candidate() {
+            // De-duplicate: if the typed path is already in the filtered list
+            // (e.g. query "~" already contains the "home" candidate), move it to
+            // the top so a literal path always wins over a fuzzy match.
+            let t = &typed.path;
+            if let Some(pos) = base.iter().position(|c| &c.path == t) {
+                base.remove(pos);
+            }
+            base.insert(0, typed);
+        }
+        base
     }
     fn current(&self) -> Option<crate::spawndir::Candidate> {
         self.shown().get(self.sel).cloned()
@@ -3395,6 +3426,9 @@ enum Cmd {
     /// Scope is chosen by context in the main loop: a live drag-selection if
     /// there is one, else the visible pane.
     Copy,
+    /// Copy the focused pane as a PNG image (`⌥+Shift+c`).
+    /// Gated on `image_clipboard`; without it this degrades to a toast.
+    CopyImage,
     Quit,
     None,
 }
@@ -3559,6 +3593,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{bf}') => return Some(Cmd::ToggleHud),
             // Ú (Option+Shift+;) spawns an agent on a new strip.
             Char('\u{da}') => return Some(Cmd::Act(Action::SpawnAgentRow)),
+            Char('\u{c7}') => return Some(Cmd::CopyImage), // Ç (Option+Shift+c)
             _ => {}
         }
     }
@@ -3615,7 +3650,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         // ⌥+s and gwae would split the column instead of forwarding the key.
         // That silently ate chords the focused pane owns (jcode binds
         // ⌥+Shift+s to copy), so shifted variants fall through to the pane.
-        if shift && !matches!(c, 'q' | '/' | '?' | ';' | ':') {
+        if shift && !matches!(c, 'q' | '/' | '?' | ';' | ':' | 'c') {
             // Forward the shifted codepoint. Some terminals report Shift as a
             // modifier bit alongside the *unshifted* char; `key_bytes` encodes
             // `ev.code` verbatim and has no shift handling for `Char`, so the
@@ -3647,7 +3682,13 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
                 }
             }
             'g' => return Some(Cmd::SmartJump),
-            'c' => return Some(Cmd::Copy),
+            'c' => {
+                if shift {
+                    return Some(Cmd::CopyImage);
+                } else {
+                    return Some(Cmd::Copy);
+                }
+            }
             // `⌥+y` is the vi-flavoured alias for copy, kept from the
             // roadmap's yank entry so that muscle memory is not wasted.
             'y' => return Some(Cmd::Copy),
@@ -5182,6 +5223,50 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     reload_note_until = Some(Instant::now() + NOTE_LINGER);
                                     dirty = true;
                                 }
+                                Cmd::CopyImage => {
+                                    if !cfg.image_clipboard {
+                                        reload_note = Some(
+                                            "image clipboard off — set image_clipboard = true"
+                                                .to_string(),
+                                        );
+                                        reload_note_anchor =
+                                            focused_pane_rect(&layout, &panes, &cfg, cols, rows);
+                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                        dirty = true;
+                                    } else if let Some(pid) = focused_pane(&layout) {
+                                        let anchor =
+                                            focused_pane_rect(&layout, &panes, &cfg, cols, rows);
+                                        let png = panes
+                                            .get(&pid)
+                                            .map(|p| crate::shot::grid_to_png(&p.grid))
+                                            .unwrap_or_default();
+                                        if png.is_empty() {
+                                            reload_note = Some("nothing to copy".to_string());
+                                            reload_note_anchor = anchor;
+                                        } else if crate::select::copy_image_to_clipboard(&png) {
+                                            let (w, h) = crate::shot::png_dimensions(&png);
+                                            reload_note =
+                                                Some(format!("image copied ({}×{} px)", w, h));
+                                            reload_note_anchor = anchor;
+                                        } else if let Some(path) =
+                                            crate::select::write_image_fallback(&png)
+                                        {
+                                            reload_note =
+                                                Some(format!("image saved to {}", path.display()));
+                                            reload_note_anchor = anchor;
+                                        } else {
+                                            reload_note = Some("image copy failed".to_string());
+                                            reload_note_anchor = anchor;
+                                        }
+                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                        dirty = true;
+                                    } else {
+                                        reload_note = Some("no pane focused".to_string());
+                                        reload_note_anchor = None;
+                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                        dirty = true;
+                                    }
+                                }
                                 Cmd::None => {}
                             }
                         }
@@ -5396,6 +5481,25 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         }
                     }
                     Ok(Event::Paste(text)) => {
+                        // Pasted text belongs to the picker while it is open:
+                        // typing `~/` by pasting a path must land in the filter,
+                        // not in the pane underneath it.
+                        if let Some(pick) = dir_pick.as_mut() {
+                            // Directory paths are single-line; a multi-line paste
+                            // (e.g. a file) is truncated to its first line so the
+                            // filter stays sane, and newlines are stripped.
+                            let mut t = text.trim().to_string();
+                            if let Some(first) = t.lines().next() {
+                                t = first.to_string();
+                            }
+                            t.retain(|c| c != '\r' && c != '\n');
+                            if !t.is_empty() {
+                                pick.query.push_str(&t);
+                                pick.sel = 0;
+                                dirty = true;
+                            }
+                            continue;
+                        }
                         // The host bracketed a paste for us (⌘/Ctrl+V). Hand the
                         // whole payload to the focused pane in one delivery
                         // instead of letting it arrive as N keystrokes, which is
@@ -6650,6 +6754,7 @@ mod tests {
         // ⌥+c / ⌥+v are the pair everyone already knows from their OS. Both
         // routes must reach them: Option-as-Meta (ESC+letter) and the macOS
         // Unicode glyph a terminal sends when Option is *not* mapped to Meta.
+        // ⌥+Shift+c is the image variant.
         assert_eq!(
             handle_key(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::ALT)),
             Some(Cmd::Copy)
@@ -7958,6 +8063,7 @@ mod tests {
                 Effect::DirPick => Cmd::DirPick,
                 Effect::ToggleHud => Cmd::ToggleHud,
                 Effect::Copy => Cmd::Copy,
+                Effect::CopyImage => Cmd::CopyImage,
                 Effect::Paste => Cmd::Paste,
                 Effect::Quit => Cmd::Quit,
                 Effect::Scroll(n) => Cmd::Scroll(n),

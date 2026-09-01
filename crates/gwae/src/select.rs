@@ -342,6 +342,159 @@ fn spawn_paste(program: &str, args: &[&str]) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+// --- image clipboard (P4) ---------------------------------------------
+
+/// Write PNG bytes to the system image clipboard.
+///
+/// Tries native helpers first; returns false when none succeed so the caller
+/// can fall back to writing a file and toasting the path (SSH / headless).
+pub fn copy_image_to_clipboard(png: &[u8]) -> bool {
+    if png.is_empty() {
+        return false;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if spawn_image_copy_macos(png) {
+            return true;
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        if spawn_image_bytes("wl-copy", &["-t", "image/png"], png) {
+            return true;
+        }
+        if spawn_image_bytes(
+            "xclip",
+            &["-selection", "clipboard", "-t", "image/png"],
+            png,
+        ) {
+            return true;
+        }
+    }
+    #[cfg(windows)]
+    {
+        if spawn_image_bytes_windows(png) {
+            return true;
+        }
+    }
+    false
+}
+
+fn spawn_image_bytes(program: &str, args: &[&str], bytes: &[u8]) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    if let Some(stdin) = child.stdin.as_mut() {
+        if stdin.write_all(bytes).is_err() {
+            let _ = child.kill();
+            return false;
+        }
+    }
+    drop(child.stdin.take());
+    child.wait().map(|s| s.success()).unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_image_copy_macos(png: &[u8]) -> bool {
+    use std::process::{Command, Stdio};
+    // Use a temp file + osascript to set «class PNGf».
+    let mut tmp = std::env::temp_dir();
+    tmp.push(format!("gwae-clip-{}.png", std::process::id()));
+    if std::fs::write(&tmp, png).is_err() {
+        return false;
+    }
+    let applescript = format!(
+        "set theFile to POSIX file \"{}\"\n\
+         set theData to read theFile as «class PNGf»\n\
+         set the clipboard to theData\n",
+        tmp.display()
+    );
+    let mut cmd = Command::new("osascript");
+    cmd.args(["-e", &applescript])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let ok = cmd.status().map(|s| s.success()).unwrap_or(false);
+    let _ = std::fs::remove_file(&tmp);
+    if ok {
+        return true;
+    }
+    spawn_image_fallback_macos(png)
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_image_fallback_macos(png: &[u8]) -> bool {
+    spawn_image_bytes("pbcopy", &[], png)
+}
+
+#[cfg(windows)]
+fn spawn_image_bytes_windows(png: &[u8]) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut tmp = std::env::temp_dir();
+    tmp.push(format!("gwae-clip-{}.png", std::process::id()));
+    if std::fs::write(&tmp, png).is_err() {
+        return false;
+    }
+    let ps = format!(
+        "Set-Clipboard -Path \"{}\"",
+        tmp.display().to_string().replace('\"', "\"\"")
+    );
+    let ok = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let _ = std::fs::remove_file(&tmp);
+    if ok {
+        return true;
+    }
+    let mut child = match Command::new("clip")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    if let Some(stdin) = child.stdin.as_mut() {
+        if stdin.write_all(png).is_err() {
+            let _ = child.kill();
+            return false;
+        }
+    }
+    drop(child.stdin.take());
+    child.wait().map(|s| s.success()).unwrap_or(false)
+}
+
+/// SSH/headless fallback: write PNG to a temp file and return its path.
+pub fn write_image_fallback(png: &[u8]) -> Option<std::path::PathBuf> {
+    let mut p = std::env::temp_dir();
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    p.push(format!(
+        "gwae-shot-{}-{}.png",
+        std::process::id(),
+        n % 1_000_000
+    ));
+    std::fs::write(&p, png).ok()?;
+    Some(p)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

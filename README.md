@@ -96,6 +96,7 @@ Every action is an `⌥` chord. `⌥` is the Option key on macOS, Alt elsewhere.
 | `⌥+t` (`†` on macOS) | **Theme picker** — step presets with `←`/`→`, live-previewed on the real UI; `⏎` keeps, `esc` restores |
 | `⌥+d` (`∂` on macOS) | **Spawn-directory picker** — choose the directory new panes start in. Your projects are found automatically (by `.git`/`.hg`/`.jj` marker, so any layout works) along with your `zoxide` history. Type to filter, `↑/↓` to move, `⏎` uses it for this session, `⌥+s` saves it as `agent_dir`, `esc` cancels |
 | `⌥+c` (`ç` on macOS) / `⌥+y` | **Copy mode** — `⌥+c` to enter, `hjkl` (with or without `⌥`) to pick the pane, `⏎` copies the visible viewport, `a` copies the entire session including scrollback (`Esc`/`⌥+c` cancels). Drag selection still copies on release |
+| `⌥+Shift+c` (`Ç` on macOS) | **Copy image** — renders the focused pane to PNG and copies `image/png` (`wl-copy -t image/png` / `xclip -t image/png` / macOS `osascript` PNGf). Needs `image_clipboard = true` in config; over SSH writes a temp file and toasts the path instead |
 | `⌥+v` (`√` on macOS) | **Paste** the system clipboard into the focused pane, bracketed if the child asked for it. Over ~8 lines or 2 KB it asks first: press `⌥+v` again within the toast to confirm |
 | `⌥+/` or `⌥+?` (`÷` / `¿` on macOS) | **Toggle the cheat-sheet HUD** — same overlay shown at startup; any other key dismisses it |
 | `⌥+Shift+q` | Force-quit gwae — opens a centered confirmation overlay; press `⌥+Shift+q` again (or `⏎`) to kill every pane, any other key cancels |

@@ -151,7 +151,7 @@ exists, so over SSH write a file and toast the path.
 | P1 | `⌥+v` with the large-paste confirm | P0 | **done** |
 | P2 | `⌥+c` copy mode (View vs Session) | P0, `TermGrid::{visible,session}_text` | **done** (View/Session via `a`/`⏎` in copy mode) |
 | P3 | turn scope, `Effect::Menu` | P2, prompt marks | `⌥+y` alias done; turn scope open |
-| P4 | image copy | P3, encoder | open |
+| P4 | image copy | P3, encoder | **done** (`image_clipboard`, `shot.rs`, `⌥+Shift+c`, file fallback) |
 
 ### What P0-P2 actually shipped
 
@@ -173,7 +173,13 @@ exists, so over SSH write a file and toast the path.
 
 * **Turn scope**, which needs prompt marks (item 2 below). This is the one
   that earns the feature for agent work, and it is the natural next step.
-* **Image copy**, unchanged from P4.
+
+* **Image copy** now ships: `⌥+Shift+c` (`Ç`) renders the focused pane to PNG
+  via `shot.rs` (embedded 8×8 font, hand-rolled PNG) and copies `image/png` via
+  `wl-copy -t image/png` / `xclip -t image/png` / `osascript «class PNGf»`
+  / `Set-Clipboard`. Behind `image_clipboard = true` (default `false`); when the
+  helper is absent it writes a temp file and toasts the path (SSH fallback).
+  No OSC 52 image path exists — that's intentional, terminals don't speak it.
 
 ## Remaining enabling work
 

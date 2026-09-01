@@ -117,6 +117,14 @@ pub struct Config {
     /// Staying current: whether gwae checks for new releases, and how it is
     /// allowed to upgrade itself. See `docs/UPDATES.md`.
     pub update: Update,
+    /// Copy a pane as a PNG image (`⌥+Shift+c`) instead of text.
+    /// Off by default. When on, gwae renders the focused pane's cells to
+    /// RGBA via [`crate::theme`] + an embedded mono font and copies the PNG
+    /// via `wl-copy -t image/png` / `xclip -t image/png` / macOS
+    /// `osascript` (`«class PNGf»`). No OSC 52 path exists, so over SSH gwae
+    /// writes a temp file and toasts the path instead.
+    #[serde(default)]
+    pub image_clipboard: bool,
 }
 
 impl Default for Config {
@@ -145,6 +153,7 @@ impl Default for Config {
             cell_labels: true,
             input_poll_ms: default_input_poll_ms(),
             update: Update::default(),
+            image_clipboard: false,
         }
     }
 }

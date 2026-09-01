@@ -789,12 +789,14 @@ pub fn already_onboarded(text: &str) -> bool {
 
 /// Read one keystroke, blocking. `None` on EOF / read error, which the caller
 /// treats as "stop asking" rather than as an answer.
+#[allow(dead_code)]
 fn read_key() -> Option<Key> {
     read_with(key_from_event)
 }
 
 /// Read one keystroke, decoded by `f`. Lets the summary screen use a stricter
 /// decoder than the questions without duplicating the event loop.
+#[allow(dead_code)]
 fn read_with(f: fn(KeyCode, KeyModifiers) -> Key) -> Option<Key> {
     loop {
         match event::read() {

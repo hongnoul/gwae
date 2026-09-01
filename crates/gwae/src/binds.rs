@@ -64,6 +64,8 @@ pub enum Effect {
     ToggleHud,
     /// Copy from the focused pane (`⌥+c`).
     Copy,
+    /// Copy the focused pane as an image (`⌥+Shift+c`, behind `image_clipboard`).
+    CopyImage,
     /// Paste the clipboard into the focused pane (`⌥+v`).
     Paste,
     /// Quit gwae.
@@ -318,6 +320,14 @@ pub const BINDS: &[Bind] = &[
         group: Group::Panes,
         desc: "copy",
         effect: Effect::Copy,
+    },
+    Bind {
+        trigger: Trigger::ShiftChord('c'),
+        hint: "copies this pane as an image (needs image_clipboard)",
+        glyph: Some('\u{c7}'),
+        group: Group::Panes,
+        desc: "copy image",
+        effect: Effect::CopyImage,
     },
     Bind {
         trigger: Trigger::Chord('v'),
