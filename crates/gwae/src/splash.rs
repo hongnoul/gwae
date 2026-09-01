@@ -81,6 +81,17 @@ pub fn frames() -> usize {
 /// read the word, too short to be in anyone's way.
 pub const TICK: Duration = Duration::from_millis(28);
 
+/// The number of terminal rows the settled banner occupies at full width
+/// (five art rows plus surrounding blanks and the tagline). Used by onboarding
+/// to reserve chrome.
+pub const BANNER_LINES: usize = 8;
+
+/// The banner for the ongoing onboarding flow: the same art as [`frame`] but
+/// looped, so staying on one question still shows movement at the top.
+pub fn banner(step: usize, p: &Palette, cols: u16) -> String {
+    frame(step % frames(), p, cols)
+}
+
 /// The lit columns of the wordmark as a bitmap: `on[row][col]`.
 fn bitmap() -> Vec<Vec<bool>> {
     let w = art_width();

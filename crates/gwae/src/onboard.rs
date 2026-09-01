@@ -841,6 +841,55 @@ fn question_rows(q: &Question) -> usize {
     q.options.len() + 5
 }
 
+/// Rows the banner occupies: one line fallback on narrow terminals, else the full art.
+fn banner_lines(cols: u16) -> usize {
+    if (cols as usize) < crate::splash::art_width() + 2 {
+        1
+    } else {
+        crate::splash::BANNER_LINES
+    }
+}
+
+/// Palette the banner should be painted in right now.
+///
+/// The banner is the wordmark, so it should wear the theme the user is *looking
+/// at*: the highlight when the current question is the theme picker, else the
+/// already-answered theme, else the palette the config already had.
+fn banner_palette(
+    so_far: &[(String, String)],
+    q: &Question,
+    cursor: usize,
+    fallback: &Palette,
+) -> Palette {
+    if q.key == "theme" {
+        if let Some(p) = Palette::preset(q.options[cursor].label) {
+            return p;
+        }
+    }
+    for (k, v) in so_far.iter().rev() {
+        if k == "theme" {
+            let name = v.trim_matches('"');
+            if let Some(p) = Palette::preset(name) {
+                return p;
+            }
+        }
+    }
+    *fallback
+}
+
+/// Resolve the palette from already-answered pairs (for the summary screen).
+fn palette_from_pairs(pairs: &[(String, String)], fallback: &Palette) -> Palette {
+    for (k, v) in pairs.iter().rev() {
+        if k == "theme" {
+            let name = v.trim_matches('"');
+            if let Some(p) = Palette::preset(name) {
+                return p;
+            }
+        }
+    }
+    *fallback
+}
+
 /// The terminal size, defaulting to a conservative 80x24.
 fn term_size() -> (u16, u16) {
     crossterm::terminal::size().unwrap_or((80, 24))
@@ -861,6 +910,15 @@ fn draw(s: &str) {
     let _ = out.write_all(CLEAR.as_bytes());
     let _ = out.write_all(s.as_bytes());
     let _ = out.flush();
+}
+
+/// Draw the animated banner plus `body` as one screen.
+fn draw_with_banner(banner_step: usize, pal: &Palette, cols: u16, body: &str) {
+    let banner = crate::splash::banner(banner_step, pal, cols);
+    let mut s = String::with_capacity(banner.len() + body.len());
+    s.push_str(&banner);
+    s.push_str(body);
+    draw(&s);
 }
 
 /// Run the guided flow and write the result. Returns the keys written.
@@ -888,101 +946,130 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
     let mut chosen: Vec<Option<Answer>> = vec![None; total];
     let mut cursors: Vec<usize> = qs.iter().map(|q| q.default).collect();
     let raw = enable_raw_mode().is_ok();
+    let base_palette = current_palette(&existing);
     // The title card, played only on a first run: it is a greeting, and
     // greeting someone who is here to *change* a setting is just a delay.
     if !already_onboarded(&existing) {
-        crate::splash::play(&current_palette(&existing), term_cols());
+        crate::splash::play(&base_palette, term_cols());
     }
 
     // `at == total` is the summary screen: one state machine, so "back" out of
     // the summary is the same code path as "back" between questions.
     let mut at = 0usize;
-    let mut drained = false;
+    let mut banner_step: usize = 0;
+    // Cache the summary that was saved, so animation ticks don't re-save.
+    let mut summary_cache: Option<(String, Option<crate::install::Outcome>)> = None;
     loop {
         if at == total {
-            // The one answer that changes the *machine* rather than a file,
-            // done on the way to the summary so its real result (not merely
-            // the answer) is what the screen reports. Backing up and changing
-            // the answer re-runs it, which is why the outcome is computed here
-            // rather than remembered from the first pass.
-            let install = run_install(&qs, &chosen);
-            draw(&summary_screen(
-                &qs,
-                &chosen,
-                cfg_path,
-                &manual,
-                install.as_ref(),
-            ));
-            if !drained {
-                // Drop keys typed *during* the flow so a stray Enter cannot
+            // Compute and save once per entry to the summary; animation ticks
+            // only repaint.
+            if summary_cache.is_none() {
+                // Drop keys typed during the flow so a stray Enter cannot
                 // dismiss the summary before it has been read.
                 while matches!(event::poll(Duration::from_millis(0)), Ok(true)) {
                     let _ = event::read();
                 }
-                drained = true;
+                let install = run_install(&qs, &chosen);
+                // `summary_screen` saves; keep its body and the install outcome
+                // so ticks don't re-run the installer or rewrite the file.
+                let body = summary_screen(&qs, &chosen, cfg_path, &manual, install.as_ref());
+                summary_cache = Some((body, install));
             }
-            // Only Enter and backspace mean anything at a screen that is not
-            // asking a question; `summary_key` is what enforces that.
-            match read_with(summary_key) {
-                Some(Key::Prev) if total > 0 => {
-                    at = total - 1;
-                    // Re-ask with the previous answer under the cursor.
-                    if let Some(a) = chosen[at].clone() {
-                        park_cursor(&qs[at], &mut cursors[at], &a);
+            let body = summary_cache.as_ref().unwrap().0.clone();
+            let shown = answered(&qs, &chosen);
+            let pal = palette_from_pairs(&shown, &base_palette);
+            let (cols, _) = term_size();
+            draw_with_banner(banner_step, &pal, cols, &body);
+            // Animated wait: repaint banner every TICK even without input.
+            let mut go_back = false;
+            let mut done = false;
+            match event::poll(crate::splash::TICK) {
+                Ok(true) => {
+                    let key = match event::read() {
+                        Ok(Event::Key(ke)) if ke.kind != KeyEventKind::Release => {
+                            summary_key(ke.code, ke.modifiers)
+                        }
+                        Ok(_) => continue,
+                        Err(_) => break,
+                    };
+                    match key {
+                        Key::Prev if total > 0 => go_back = true,
+                        Key::Next | Key::Abort => done = true,
+                        _ => {}
                     }
-                    chosen[at] = None;
                 }
-                Some(Key::Next) | Some(Key::Abort) | None => break,
-                Some(_) => {}
+                Ok(false) => {
+                    banner_step = banner_step.wrapping_add(1);
+                }
+                Err(_) => break,
+            }
+            if go_back {
+                at = total - 1;
+                if let Some(a) = chosen[at].clone() {
+                    park_cursor(&qs[at], &mut cursors[at], &a);
+                }
+                chosen[at] = None;
+                summary_cache = None;
+            } else if done {
+                break;
             }
             continue;
         }
+        // Leaving/entering summary invalidates the cached save.
+        summary_cache = None;
 
         let q = &qs[at];
         // Only answers *before* this question feed the preview; the current
         // one is supplied by the highlight, so moving the cursor repaints.
         let so_far = answered(&qs[..at], &chosen[..at]);
         let (cols, rows) = term_size();
-        // Re-measured every frame, not once at startup: a user who resizes
-        // mid-flow gets a preview sized for the window they are looking at.
-        // The mockup shrinks before it disappears, and disappears before the
-        // question it is illustrating scrolls off the top.
-        draw(&render_sized(
-            q,
-            at,
-            total,
-            cursors[at],
-            &so_far,
-            crate::preview::fits(cols, rows, question_rows(q)),
-        ));
-        let Some(key) = read_key() else {
-            // EOF (a closed pipe, a terminal going away): take the defaults
-            // for everything still unanswered rather than half-writing.
-            fill_defaults(&qs, &mut chosen, at);
-            at = total;
-            continue;
-        };
-        match step(q, cursors[at], key) {
-            Step::Move(c) => cursors[at] = c,
-            Step::Ignore => {}
-            Step::Abort => {
-                if raw {
-                    let _ = disable_raw_mode();
+        let bl = banner_lines(cols);
+        let chrome = question_rows(q) + bl;
+        let h = crate::preview::fits(cols, rows, chrome);
+        let body = render_sized(q, at, total, cursors[at], &so_far, h);
+        let pal = banner_palette(&so_far, q, cursors[at], &base_palette);
+        draw_with_banner(banner_step, &pal, cols, &body);
+        match event::poll(crate::splash::TICK) {
+            Ok(true) => {
+                let raw_key = match event::read() {
+                    Ok(Event::Key(ke)) if ke.kind != KeyEventKind::Release => {
+                        key_from_event(ke.code, ke.modifiers)
+                    }
+                    Ok(_) => continue,
+                    Err(_) => {
+                        fill_defaults(&qs, &mut chosen, at);
+                        at = total;
+                        continue;
+                    }
+                };
+                match step(q, cursors[at], raw_key) {
+                    Step::Move(c) => cursors[at] = c,
+                    Step::Ignore => {}
+                    Step::Abort => {
+                        if raw {
+                            let _ = disable_raw_mode();
+                        }
+                        draw("");
+                        return Vec::new();
+                    }
+                    Step::Back => at = at.saturating_sub(1),
+                    Step::Done(Answer::RestDefaults) => {
+                        fill_defaults(&qs, &mut chosen, at);
+                        at = total;
+                    }
+                    Step::Done(a) => {
+                        park_cursor(q, &mut cursors[at], &a);
+                        chosen[at] = Some(a);
+                        at += 1;
+                    }
                 }
-                draw("");
-                return Vec::new();
             }
-            // Backspace on the first question has nowhere to go, so it is a
-            // no-op rather than an accidental exit from setup.
-            Step::Back => at = at.saturating_sub(1),
-            Step::Done(Answer::RestDefaults) => {
+            Ok(false) => {
+                banner_step = banner_step.wrapping_add(1);
+            }
+            Err(_) => {
                 fill_defaults(&qs, &mut chosen, at);
                 at = total;
-            }
-            Step::Done(a) => {
-                park_cursor(q, &mut cursors[at], &a);
-                chosen[at] = Some(a);
-                at += 1;
             }
         }
     }
