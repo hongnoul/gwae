@@ -737,6 +737,16 @@ fn term_cols() -> usize {
 /// on-screen numbers map to. Pure in `cols`, so the exact layout at any pane
 /// width is testable.
 pub fn render_at(plan: &Plan, cols: usize) -> (String, Vec<Found>) {
+    let mut header = String::new();
+    if !matches!(plan, Plan::Configured(_)) {
+        let splash_w = crate::splash::art_width();
+        if cols >= 50 && cols >= splash_w + 2 {
+            let pal = crate::theme::Palette::default();
+            header.push_str(&crate::splash::banner(usize::MAX, &pal, cols as u16));
+        } else if cols >= 17 {
+            header.push_str("gwae\n");
+        }
+    }
     // Under ~50 columns (a quarter-width pane on a typical screen) the paths
     // and the explanatory footer push the list off the top of the pane, which
     // leaves the user staring at a prompt with no visible options. The narrow
@@ -830,6 +840,9 @@ pub fn render_at(plan: &Plan, cols: usize) -> (String, Vec<Found>) {
                 crate::config::Config::default_path().display()
             ));
         }
+    }
+    if !header.is_empty() {
+        s = header + &s;
     }
     (s, choices)
 }

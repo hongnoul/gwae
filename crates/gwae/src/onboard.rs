@@ -126,6 +126,55 @@ pub enum Answer {
     RestDefaults,
 }
 
+/// The harness question, built from what this machine actually has.
+///
+/// Lists the harnesses found on `PATH` (known names like `jcode`/`claude` plus
+/// anything that looks like an agent), capped at nine so the instant-digit
+/// shortcut stays unambiguous. When nothing is installed the question offers the
+/// known names as intended choices so a fresh machine can still pick.
+pub fn harness_question_with(extra: &[String]) -> Question {
+    let found = crate::agent::detect_with(extra);
+    let mut options: Vec<Opt> = Vec::new();
+    if found.is_empty() {
+        for (cmd, label) in crate::agent::KNOWN_AGENTS.iter().take(9) {
+            let value = crate::agent::toml_string_pub(cmd);
+            options.push(Opt {
+                label: Box::leak(label.to_string().into_boxed_str()),
+                value: Box::leak(value.into_boxed_str()),
+                blurb: Box::leak("not yet installed".to_string().into_boxed_str()),
+            });
+        }
+    } else {
+        for f in found.iter().take(9) {
+            let blurb = f.path.display().to_string();
+            let blurb = if blurb.is_empty() {
+                "installed".to_string()
+            } else {
+                blurb
+            };
+            options.push(Opt {
+                label: Box::leak(f.label.clone().into_boxed_str()),
+                value: Box::leak(crate::agent::toml_string_pub(&f.cmd).into_boxed_str()),
+                blurb: Box::leak(blurb.into_boxed_str()),
+            });
+        }
+    }
+    Question {
+        key: "default_agent",
+        prompt: "Agent harness",
+        help: "Which command ⌥+; runs in a new pane. Detected from your PATH.",
+        options,
+        default: 0,
+        swatch: false,
+        keep_existing: false,
+    }
+}
+
+/// Convenience: [`harness_question_with`] with no configured extras.
+pub fn harness_question() -> Question {
+    harness_question_with(&[])
+}
+
 /// Every question, in the order they are asked.
 ///
 /// Ordering is "biggest visible effect first": a user who bails after two
@@ -138,7 +187,11 @@ pub enum Answer {
 /// best left to a hand edit (`skeleton`'s inset frames, `[minimap]` geometry,
 /// `scroll_margin`).
 pub fn questions() -> Vec<Question> {
-    vec![
+    questions_with(&[])
+}
+
+pub fn questions_with(extra: &[String]) -> Vec<Question> {
+    let mut qs = vec![
         Question {
             key: "theme",
             prompt: "Color theme",
@@ -269,7 +322,9 @@ pub fn questions() -> Vec<Question> {
             swatch: false,
             keep_existing: false,
         },
-    ]
+    ];
+    qs.push(harness_question_with(extra));
+    qs
 }
 
 /// Re-point every question's default at what the config file already says, so
@@ -357,11 +412,20 @@ pub fn all_questions() -> Vec<Question> {
     all_questions_for(crate::install::Facts::probe())
 }
 
+/// Like [`all_questions`] but seeded with extra harness names from config.
+pub fn all_questions_with_extra(extra: &[String]) -> Vec<Question> {
+    all_questions_for_with_extra(crate::install::Facts::probe(), extra)
+}
+
 /// [`all_questions`] against a described machine, so tests never depend on
 /// what happens to be installed on the one running them.
 pub fn all_questions_for(f: crate::install::Facts) -> Vec<Question> {
+    all_questions_for_with_extra(f, &[])
+}
+
+pub fn all_questions_for_with_extra(f: crate::install::Facts, extra: &[String]) -> Vec<Question> {
     let _ = f;
-    let mut qs = questions();
+    let mut qs = questions_with(extra);
     qs.push(cowsay_question());
     qs
 }
@@ -598,7 +662,7 @@ fn previewable(
     q: &Question,
     answered_so_far: &[(String, String)],
 ) -> Option<crate::preview::Prefs> {
-    if q.key == INSTALL_KEY {
+    if q.key == INSTALL_KEY || q.key == "default_agent" {
         return None;
     }
     Some(crate::preview::Prefs::from_pairs(answered_so_far))
@@ -905,6 +969,12 @@ fn current_palette(text: &str) -> Palette {
         .unwrap_or_default()
 }
 
+fn extra_agents_from_text(text: &str) -> Vec<String> {
+    toml::from_str::<crate::config::Config>(text)
+        .map(|c| c.agents)
+        .unwrap_or_default()
+}
+
 /// Draw one screen and flush it, so a question is never half-painted while we
 /// are already blocking on a keystroke.
 fn draw(s: &str) {
@@ -943,7 +1013,8 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
     let manual = crate::latency::apply_silently(input_poll_ms, cfg_path);
 
     let existing = std::fs::read_to_string(cfg_path).unwrap_or_default();
-    let qs = with_existing(all_questions(), &existing);
+    let extra = extra_agents_from_text(&existing);
+    let qs = with_existing(all_questions_with_extra(&extra), &existing);
     let total = qs.len();
     let mut chosen: Vec<Option<Answer>> = vec![None; total];
     let mut cursors: Vec<usize> = qs.iter().map(|q| q.default).collect();
