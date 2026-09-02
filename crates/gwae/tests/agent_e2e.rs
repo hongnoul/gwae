@@ -198,12 +198,38 @@ impl Pty {
     }
 
     /// Fast-forward the guided setup the gateway runs after the agent pick:
-    /// `q` takes the default for every remaining question, then Enter
-    /// dismisses the summary screen. The flow runs in raw mode, so these are
-    /// bare keystrokes with no trailing newline - exactly what a keyboard
-    /// sends. Tests that care about onboarding itself drive it explicitly.
+    /// first handle Agent harness if present (front), then Color theme -> summary.
     fn skip_onboarding(&mut self) {
-        self.wait_for("Color theme");
+        // Harness at front has no mockup; some runs start at Agent harness, older at Color theme
+        // Wait for either, then ensure we land on Color theme before q
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut saw_harness = false;
+        let mut saw_theme = false;
+        let mut buf = String::new();
+        while Instant::now() < deadline && !(saw_harness || saw_theme) {
+            match self.rx.recv_timeout(Duration::from_millis(250)) {
+                Ok(b) => {
+                    buf.push_str(&String::from_utf8_lossy(&b));
+                    if buf.contains("Agent harness") {
+                        saw_harness = true;
+                    }
+                    if buf.contains("Color theme") {
+                        saw_theme = true;
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+        if saw_harness {
+            // Ensure we have seen harness in accumulated output
+            if !buf.contains("Agent harness") {
+                self.wait_for("Agent harness");
+            }
+            self.send("\r");
+            self.wait_for("Color theme");
+        } else if !saw_theme {
+            self.wait_for("Color theme");
+        }
         self.send("q");
         self.dismiss_summary();
     }
@@ -814,7 +840,10 @@ fn onboarding_tunes_latency_silently_before_it_asks_anything() {
     let mut p = sb.spawn(&[]);
     p.wait_for("Which agent");
     p.send("1\n");
-    // By the time the first question is on screen, the fix is already on disk.
+    // Init harness is front, so handle Agent harness before Color theme
+    p.wait_for("Agent harness");
+    p.send("\r");
+    // By the time the first visual question is on screen, the fix is already on disk.
     let seen = p.wait_for("Color theme");
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline && !sb.read_config().contains("input_poll_ms = 1") {
@@ -843,6 +872,8 @@ fn the_summary_screen_reports_what_landed_in_the_file() {
     let mut p = sb.spawn(&[]);
     p.wait_for("Which agent");
     p.send("1\n");
+    p.wait_for("Agent harness");
+    p.send("\r");
     p.wait_for("Color theme");
     p.send("q");
     let seen = p.wait_for("gwae is configured");
@@ -870,6 +901,8 @@ fn onboarding_says_nothing_about_latency_when_there_is_nothing_to_fix() {
     let mut p = sb.spawn(&[]);
     p.wait_for("Which agent");
     p.send("1\n");
+    p.wait_for("Agent harness");
+    p.send("\r");
     p.wait_for("Color theme");
     p.send("q");
     p.dismiss_summary();
@@ -909,8 +942,8 @@ fn first_run_configures_the_whole_terminal_not_just_the_agent() {
     let mut p = sb.spawn(&[]);
     p.wait_for("Which agent");
     p.send("1\n");
-    // Theme: arrow down to the fifth option (nord) and take it with Enter, so
-    // we prove the *highlight* is what lands in the file, not the default.
+    p.wait_for("Agent harness");
+    p.send("\r");
     p.wait_for("Color theme");
     p.send("jjjj\r");
     // Everything else: defaults, then dismiss the summary.
@@ -970,6 +1003,8 @@ fn a_machine_that_already_has_btm_is_never_asked() {
     let mut p = sb.spawn_allowing_install(&[]);
     p.wait_for("Which agent");
     p.send("1\n");
+    p.wait_for("Agent harness");
+    p.send("\r");
     p.wait_for("Color theme");
     p.send("q");
     let seen = p.wait_for("gwae is configured");
