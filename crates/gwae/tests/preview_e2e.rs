@@ -302,8 +302,10 @@ fn mockup(plain: &str) -> Vec<String> {
 
 /// Skip the title card and land on question 1.
 fn to_first_question(s: &mut Session) {
-    // Any key dismisses the card; the flow then draws question 1.
+    // Any key dismisses the card; harness is front (no mockup), so accept it then land on theme with mockup.
     s.press("\x1b[B");
+    s.wait_for("Agent harness", |t| t.contains("Agent harness"));
+    s.press("\r");
     s.wait_for_question(1);
 }
 

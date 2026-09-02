@@ -191,7 +191,8 @@ pub fn questions() -> Vec<Question> {
 }
 
 pub fn questions_with(extra: &[String]) -> Vec<Question> {
-    let mut qs = vec![
+    let mut qs = vec![harness_question_with(extra)];
+    qs.extend(vec![
         Question {
             key: "theme",
             prompt: "Color theme",
@@ -322,8 +323,7 @@ pub fn questions_with(extra: &[String]) -> Vec<Question> {
             swatch: false,
             keep_existing: false,
         },
-    ];
-    qs.push(harness_question_with(extra));
+    ]);
     qs
 }
 
@@ -1418,7 +1418,8 @@ mod tests {
         // re-opened the question with option 1 selected and silently discarded
         // the choice. Both the answer path and the summary's "back" use this
         // helper, so they cannot drift apart again.
-        let q = &questions()[0];
+        let qs = questions();
+        let q = qs.iter().find(|q| q.key == "theme").unwrap();
         let mut cursor = q.default;
         // The digit path: cursor is still on the default when Done arrives.
         let Step::Done(a) = step(q, cursor, Key::Digit(5)) else {
@@ -1474,7 +1475,8 @@ mod tests {
 
     #[test]
     fn theme_options_are_the_real_presets() {
-        let q = &questions()[0];
+        let qs = questions();
+        let q = qs.iter().find(|q| q.key == "theme").unwrap();
         let labels: Vec<&str> = q.options.iter().map(|o| o.label).collect();
         assert_eq!(
             labels,
@@ -1488,7 +1490,8 @@ mod tests {
 
     #[test]
     fn arrows_and_jk_move_the_same_highlight_and_wrap() {
-        let q = &questions()[0];
+        let qs = questions();
+        let q = qs.iter().find(|q| q.key == "theme").unwrap();
         let n = q.options.len();
         assert_eq!(step(q, 0, Key::Down), Step::Move(1));
         assert_eq!(step(q, 0, Key::Up), Step::Move(n - 1), "wraps to the end");
@@ -1505,7 +1508,8 @@ mod tests {
 
     #[test]
     fn enter_takes_the_highlight_and_a_digit_takes_effect_immediately() {
-        let q = &questions()[0];
+        let qs = questions();
+        let q = qs.iter().find(|q| q.key == "theme").unwrap();
         assert_eq!(
             step(q, 0, Key::Next),
             Step::Done(Answer::Set(q.default_value().into()))
@@ -1544,7 +1548,8 @@ mod tests {
         ] {
             assert_eq!(key_from_event(code, KeyModifiers::NONE), want, "{code:?}");
         }
-        let q = &questions()[0];
+        let qs = questions();
+        let q = qs.iter().find(|q| q.key == "theme").unwrap();
         // Going back is not an answer: it must not set the key.
         assert_eq!(step(q, 3, Key::Prev), Step::Back);
         // ...and going forward from the same place still is.
@@ -1710,7 +1715,7 @@ mod tests {
     #[test]
     fn each_question_is_its_own_screen_with_a_visible_highlight() {
         let qs = all();
-        let q = &qs[0];
+        let q = qs.iter().find(|q| q.key == "theme").unwrap();
         let screen = render_question(q, 0, qs.len(), 2);
         // The highlight is on the cursor, not on the factory default.
         let line = screen
