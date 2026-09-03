@@ -1260,6 +1260,7 @@ fn summary_screen(
 
 /// Offer onboarding from the agent gateway: only when this config has never
 /// been through it, and only on a real terminal.
+#[allow(dead_code)]
 pub fn maybe_run(cfg_path: &Path, input_poll_ms: u64) {
     let text = std::fs::read_to_string(cfg_path).unwrap_or_default();
     if already_onboarded(&text) {

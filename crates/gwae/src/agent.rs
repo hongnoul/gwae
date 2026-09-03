@@ -949,6 +949,30 @@ pub fn run(
         std::process::exit(0);
     }
 
+    // At first run (not yet `onboarded`) the harness is asked exactly once,
+    // inside the onboarding flow (`harness_question_with` as the first
+    // question). The gateway's own numbered picker (`render` + `prompt`) and
+    // the onboarding harness would otherwise ask the same thing back-to-back.
+    // Skip the gateway picker here and let onboarding own the choice — but
+    // only when the gateway would have prompted; a `Configured` harness must
+    // still exec silently and not interrupt an already-configured user.
+    if !print_only && !matches!(p, Plan::Configured(_)) && std::io::stdin().is_terminal() {
+        let cfg_text = std::fs::read_to_string(cfg_path).unwrap_or_default();
+        if !crate::onboard::already_onboarded(&cfg_text) {
+            // Onboarding already saves `default_agent`; derive the exec target
+            // from what it wrote rather than re-prompting.
+            let _ = crate::onboard::run(cfg_path, input_poll_ms);
+            let new_text = std::fs::read_to_string(cfg_path).unwrap_or_default();
+            let new_cfg = toml::from_str::<crate::config::Config>(&new_text).unwrap_or_default();
+            let p2 = plan(new_cfg.default_agent.trim(), detect_with(&new_cfg.agents));
+            let cmd = match p2 {
+                Plan::Configured(c) => c,
+                _ => fallback_shell(),
+            };
+            exec(&cmd);
+        }
+    }
+
     let cmd = match p {
         Plan::Configured(cmd) => cmd,
         Plan::NoneInstalled { .. } => {
@@ -966,7 +990,6 @@ pub fn run(
                             cfg_path.display()
                         ),
                     }
-                    crate::onboard::maybe_run(cfg_path, input_poll_ms);
                     cmd
                 }
                 _ => fallback_shell(),
@@ -990,7 +1013,6 @@ pub fn run(
                             cfg_path.display()
                         ),
                     }
-                    crate::onboard::maybe_run(cfg_path, input_poll_ms);
                     pick
                 }
                 None => fallback_shell(),
