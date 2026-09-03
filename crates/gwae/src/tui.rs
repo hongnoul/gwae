@@ -2442,10 +2442,10 @@ fn paint_center_minimap(
             false,
         );
     }
-    // Footer: tallies right-aligned on their own row, then the key hints
+    // Footer: tallies centred on their own row, then the key hints
     // centred on the last inner row.
     if let Some(fy) = plan.tally_y {
-        let mut x = (ox + bw).saturating_sub(tally_w + 1);
+        let mut x = plan.inner_ox + (plan.inner_w.saturating_sub(tally_w)) / 2;
         for (text, fg) in &tally {
             for ch in text.chars() {
                 put(out, x as u16, fy, ch, *fg, bg, true);
