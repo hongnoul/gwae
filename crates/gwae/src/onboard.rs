@@ -171,6 +171,7 @@ pub fn harness_question_with(extra: &[String]) -> Question {
 }
 
 /// Convenience: [`harness_question_with`] with no configured extras.
+#[allow(dead_code)]
 pub fn harness_question() -> Question {
     harness_question_with(&[])
 }
@@ -186,6 +187,7 @@ pub fn harness_question() -> Question {
 /// (`input_poll_ms`, applied silently), and anything that is a niche taste
 /// best left to a hand edit (`skeleton`'s inset frames, `[minimap]` geometry,
 /// `scroll_margin`).
+#[allow(dead_code)]
 pub fn questions() -> Vec<Question> {
     questions_with(&[])
 }
@@ -408,6 +410,7 @@ pub const INSTALL_KEY: &str = "install.btm";
 ///
 /// The `btm` offer comes last and only when it would do something: asking
 /// someone who already has it would be setup pretending not to know.
+#[allow(dead_code)]
 pub fn all_questions() -> Vec<Question> {
     all_questions_for(crate::install::Facts::probe())
 }
