@@ -5786,6 +5786,18 @@ mod tests {
             handle_key(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT)),
             Some(Cmd::Act(Action::FocusDown))
         );
+        // Caps Lock is not Shift: Ctrl+CapsLock+K must reach the pane as a
+        // control byte, not scroll. (physical_shift excludes CAPS_LOCK.)
+        let ev = KeyEvent::new_with_kind_and_state(
+            KeyCode::Char('K'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+            KeyEventState::CAPS_LOCK,
+        );
+        assert!(
+            matches!(handle_key(&ev), Some(Cmd::Input(_))),
+            "Ctrl+CapsLock+K belongs to the pane, not to scrollback"
+        );
     }
 
     #[test]
