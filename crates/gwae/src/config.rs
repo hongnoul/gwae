@@ -555,9 +555,12 @@ mod tests {
     fn cowsay_defaults_name_the_platform_modifier() {
         // The hints are the only keybinding docs many users ever read, so they
         // must speak the local keyboard's vocabulary: `⌥` on macOS, `Alt`
-        // elsewhere, never both and never the wrong one.
+        // elsewhere, never both and never the wrong one. The two Ctrl+Shift
+        // scroll hints are the exception: they are Control chords (not `$mod`
+        // chords), so they name the platform's Control key instead.
         let cfg = parse("");
         let m = keys::mod_key();
+        let ctrl = keys::ctrl_key();
         // Chord hints must name the modifier. A few bindings are mouse or
         // key-range prose (`1-9`, `click`, `↑/↓`) and correctly have no
         // modifier to name.
@@ -570,6 +573,9 @@ mod tests {
         assert!(chord_hints > 0, "some hints are chords");
         for msg in &cfg.cowsay.messages {
             if msg.starts_with(['1', 'c', 'w', '←', '↵', '⇧', 'E', 'S']) {
+                continue;
+            }
+            if msg.contains(ctrl) {
                 continue;
             }
             assert!(msg.contains(m), "hint {msg:?} does not mention {m:?}");
@@ -604,6 +610,7 @@ mod tests {
         // been hand-edited back into a liability.
         let cfg = parse("");
         let m = keys::mod_key();
+        let ctrl = keys::ctrl_key();
         assert_eq!(
             cfg.cowsay.messages,
             crate::binds::cowsay_hints(),
@@ -615,7 +622,7 @@ mod tests {
                 "hint {msg:?} omits the modifier"
             );
             assert!(
-                msg.contains(m) || msg.contains("click"),
+                msg.contains(m) || msg.contains(ctrl) || msg.contains("click"),
                 "hint {msg:?} names no modifier and is not a mouse hint"
             );
         }

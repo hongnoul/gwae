@@ -26,6 +26,10 @@ pub enum Trigger {
     Chord(char),
     /// `$mod` + Shift + this character.
     ShiftChord(char),
+    /// Ctrl + Shift + this character (the jcode-style transcript scroll).
+    /// Labelled from [`crate::keys::ctrl_shift_chord`] so it reads `⌃+⇧+K`
+    /// on macOS and `Ctrl+Shift+K` elsewhere.
+    CtrlShift(char),
     /// `$mod` + Return, optionally with Shift. Spelled by the platform module
     /// so it reads `⌥+↵` on macOS and `Alt+Enter` elsewhere. Machine-checkable
     /// like the character chords: the dispatcher only produces these commands
@@ -68,6 +72,8 @@ pub enum Effect {
     Quit,
     /// Scroll the row viewport by this many cells.
     Scroll(i32),
+    /// Scroll the focused pane's history by this many rows (positive = back).
+    ScrollBack(i32),
     /// Not a single dispatcher outcome (prose entries).
     Unverifiable,
 }
@@ -102,6 +108,7 @@ impl Bind {
         match self.trigger {
             Trigger::Chord(c) => keys::chord(&c.to_string()),
             Trigger::ShiftChord(c) => keys::shift_chord(&c.to_string()),
+            Trigger::CtrlShift(c) => keys::ctrl_shift_chord(&c.to_string()),
             // The two Enter rows are `$mod` chords like everything else; the
             // label has to carry the modifier or the cow tells the user to
             // press a bare Return, which just goes to the focused pane.
@@ -214,11 +221,27 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::ModProse("↑/↓"),
-        hint: "reads back through this pane's history",
+        hint: "reads back through this pane's history line by line",
         glyph: None,
         group: Group::Navigate,
         desc: "scrollback",
         effect: Effect::Unverifiable,
+    },
+    Bind {
+        trigger: Trigger::CtrlShift('K'),
+        hint: "scrolls this pane's history up like jcode's transcript",
+        glyph: None,
+        group: Group::Navigate,
+        desc: "scroll up",
+        effect: Effect::ScrollBack(1),
+    },
+    Bind {
+        trigger: Trigger::CtrlShift('J'),
+        hint: "scrolls this pane's history down like jcode's transcript",
+        glyph: None,
+        group: Group::Navigate,
+        desc: "scroll down",
+        effect: Effect::ScrollBack(-1),
     },
     Bind {
         trigger: Trigger::ModProse("←/→"),

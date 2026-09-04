@@ -30,18 +30,22 @@ use crate::select::{self, Selection};
 /// it takes away from the host terminal. These are the three ways an event can
 /// be resolved, in the order a terminal user expects:
 ///  - the child asked for mouse reporting, so it owns the event (vim, an agent
-///    TUI) - unless Shift is held, the long-standing xterm convention for
-///    "give me the multiplexer's selection instead";
+///    TUI, jcode itself) - unless Shift is held, the long-standing xterm
+///    convention for "give me the multiplexer's selection/scroll instead";
 ///  - otherwise a left press/drag/release drives our own drag-to-copy;
-///  - anything else is handled locally, or not at all. gwae claims no wheel
-///    of its own: scrollback moves with `⌥+↑/↓` (see `handle_key`).
+///  - a wheel notch over a pane scrolls that pane's history (Shift+wheel is
+///    the one exception: it always reaches the child, for horizontal scroll).
+///
+/// Anything else is handled locally, or not at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MouseRole {
     /// Forward verbatim to the child as an SGR mouse report.
     Forward,
     /// Drive gwae's own drag-to-copy selection.
     Select,
-    /// Handled locally, or ignored. gwae has no wheel behavior of its own.
+    /// Scroll the pane's history directly (`ScrollBack`).
+    Wheel,
+    /// Handled locally, or ignored.
     Local,
 }
 
@@ -54,15 +58,51 @@ fn mouse_role(kind: MouseEventKind, modifiers: KeyModifiers, child_wants_mouse: 
             | MouseEventKind::Drag(MouseButton::Left)
             | MouseEventKind::Up(MouseButton::Left)
     );
-    if child_wants_mouse && !(shift && selecting) {
+    if selecting {
+        // A reporting child owns the drag, unless Shift is held: the xterm
+        // convention for "let the multiplexer select instead of the app".
+        if child_wants_mouse && !shift {
+            return MouseRole::Forward;
+        }
+        return MouseRole::Select;
+    }
+    if is_wheel(kind) {
+        let horizontal = matches!(
+            kind,
+            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight
+        );
+        // A reporting child owns the wheel (jcode scrolls its own
+        // transcript, vim its own buffer) - except vertical Shift+wheel,
+        // the escape hatch that scrolls gwae's history instead.
+        // Horizontal flicks always stay with a reporting child: only the
+        // child knows wide content.
+        if child_wants_mouse && (!shift || horizontal) {
+            return MouseRole::Forward;
+        }
+        return MouseRole::Wheel;
+    }
+    // Anything else (right/middle buttons, moves): a reporting child owns
+    // it, otherwise gwae handles it locally or ignores it.
+    if child_wants_mouse {
         return MouseRole::Forward;
     }
-    if selecting {
-        MouseRole::Select
-    } else {
-        MouseRole::Local
-    }
+    MouseRole::Local
 }
+
+/// True for the four wheel kinds (vertical notches and horizontal flicks).
+fn is_wheel(kind: MouseEventKind) -> bool {
+    matches!(
+        kind,
+        MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight
+    )
+}
+
+/// One notch of wheel travel in scrollback rows: line-by-line like jcode's
+/// transcript, not a page jump. Small enough to keep precise positioning.
+const WHEEL_SCROLL_LINES: i32 = 3;
 
 /// Peek-sliver rendering: a neighbour clipped to fewer than this many
 /// visible columns is not drawn as truncated text.
@@ -3401,8 +3441,9 @@ enum Cmd {
     Scroll(i32),
     ScrollPane(i32),
     /// Move the focused pane's *vertical* scrollback by this many rows
-    /// (positive = back into history). The keyboard route into scrollback,
-    /// and since gwae no longer claims the wheel, the only one.
+    /// (positive = back into history). Reached from the keyboard
+    /// (`⌥+↑/↓`, Ctrl+Shift+J/K) and from the wheel over a plain pane;
+    /// a reporting child owns its own wheel instead.
     ScrollBack(i32),
     Input(Vec<u8>),
     /// Smart-jump: focus the next pane that needs the user (`⌥+g`). Resolved
@@ -3656,6 +3697,20 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         if ev.code == Esc {
             return Some(Cmd::None);
         }
+        // Ctrl+Shift+J / Ctrl+Shift+K scroll the focused pane's history line
+        // by line, like jcode's transcript scroll. Plain Ctrl+J / Ctrl+K
+        // belong to the pane (jcode uses them for prompt jump), so only the
+        // shifted form is claimed here. `physical_shift` covers Kitty's
+        // shifted-codepoint form (Ctrl+Shift+J arriving as Char('J')).
+        // This sits above the generic fallthrough so the chord never types
+        // into the child.
+        if ctrl && shift {
+            match logical_char(ev) {
+                Some('k') => return Some(Cmd::ScrollBack(1)),
+                Some('j') => return Some(Cmd::ScrollBack(-1)),
+                _ => {}
+            }
+        }
         return Some(Cmd::Input(key_bytes(ev)));
     }
     // Alt chords (work when the terminal sends Option as Meta).
@@ -3737,8 +3792,9 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             });
         }
     }
-    // Up/Down move the focused pane's scrollback: gwae does not claim the
-    // wheel, so this is how you read back through a pane's history. Shift (and
+    // Up/Down move the focused pane's scrollback: the wheel joins them as
+    // a per-notch line step (see the mouse arm), and Ctrl+Shift+J/K match
+    // jcode's transcript scroll one line at a time. Shift (and
     // PageUp/PageDown) move by a screenful-ish jump rather than a line.
     if matches!(ev.code, Up | Down | PageUp | PageDown) {
         let step = if shift || matches!(ev.code, PageUp | PageDown) {
@@ -5070,70 +5126,104 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 .get(&pid)
                                 .map(|p| p.grid.wants_mouse())
                                 .unwrap_or(false);
-                            if mouse_role(me.kind, me.modifiers, child_wants_mouse)
-                                == MouseRole::Select
-                            {
-                                let point = select::Point::new(gx, gy);
-                                match me.kind {
-                                    MouseEventKind::Down(MouseButton::Left) => {
-                                        // Press arms a selection but shows nothing
-                                        // yet: a plain click must clear the old
-                                        // highlight, not paint a one-cell one.
-                                        if selection.is_some() {
-                                            dirty = true;
-                                        }
-                                        selection = Some(Selection {
-                                            pane: pid,
-                                            anchor: point,
-                                            cursor: point,
-                                            dragging: true,
-                                        });
-                                        // Clicking a pane still focuses it.
-                                        if focused_pane(&layout) != Some(pid) {
-                                            let v = Viewport::new(cols);
-                                            let f = FollowScroll {
-                                                margin: cfg.scroll_margin,
-                                                center: cfg.center_focus,
+                            match mouse_role(me.kind, me.modifiers, child_wants_mouse) {
+                                MouseRole::Wheel => {
+                                    // The wheel scrolls the pane under the
+                                    // cursor, not just the focused one: with
+                                    // several panes on screen the cursor is the
+                                    // only sane target, the way a browser or a
+                                    // native terminal behaves. A full-screen
+                                    // app owns its own scrolling and keeps no
+                                    // scrollback of ours, so it gets the arrow
+                                    // keys it expects instead (mirrors the
+                                    // `ScrollBack` arm above).
+                                    if let Some(p) = panes.get_mut(&pid) {
+                                        if p.grid.alternate_screen() {
+                                            let key: &[u8] = match me.kind {
+                                                MouseEventKind::ScrollUp => b"\x1b[A",
+                                                _ => b"\x1b[B]",
                                             };
-                                            let _ = layout.apply(Action::FocusPane(pid), v, f);
-                                            dirty = true;
-                                        }
-                                    }
-                                    MouseEventKind::Drag(MouseButton::Left) => {
-                                        if let Some(s) = selection.as_mut() {
-                                            if s.dragging && s.cursor != point {
-                                                s.cursor = point;
+                                            for _ in 0..WHEEL_SCROLL_LINES {
+                                                let _ = p.writer.write_all(key);
+                                            }
+                                            let _ = p.writer.flush();
+                                        } else {
+                                            let d = match me.kind {
+                                                MouseEventKind::ScrollUp
+                                                | MouseEventKind::ScrollLeft => WHEEL_SCROLL_LINES,
+                                                _ => -WHEEL_SCROLL_LINES,
+                                            };
+                                            if p.grid.scroll_by(d) {
                                                 dirty = true;
                                             }
                                         }
                                     }
-                                    MouseEventKind::Up(MouseButton::Left) => {
-                                        if let Some(s) = selection.as_mut() {
-                                            s.cursor = point;
-                                            s.dragging = false;
-                                        }
-                                        // A press+release without movement is a
-                                        // plain click, not a selection: drop it so
-                                        // no stray highlight lingers and nothing
-                                        let done = selection.filter(|s| !s.is_empty());
-                                        match done {
-                                            Some(s) => {
-                                                // Selection is kept for visual highlight; clipboard
-                                                // is now host-native — no auto-copy.
-                                                reload_note_anchor = views
-                                                    .iter()
-                                                    .find(|v| v.pid == s.pane)
-                                                    .map(|v| v.rect);
-                                                reload_note = None;
-                                                reload_note_until = None;
-                                            }
-                                            None => selection = None,
-                                        }
-                                        dirty = true;
-                                    }
-                                    _ => {}
+                                    handled = true;
                                 }
-                                handled = true;
+                                MouseRole::Select => {
+                                    let point = select::Point::new(gx, gy);
+                                    match me.kind {
+                                        MouseEventKind::Down(MouseButton::Left) => {
+                                            // Press arms a selection but shows nothing
+                                            // yet: a plain click must clear the old
+                                            // highlight, not paint a one-cell one.
+                                            if selection.is_some() {
+                                                dirty = true;
+                                            }
+                                            selection = Some(Selection {
+                                                pane: pid,
+                                                anchor: point,
+                                                cursor: point,
+                                                dragging: true,
+                                            });
+                                            // Clicking a pane still focuses it.
+                                            if focused_pane(&layout) != Some(pid) {
+                                                let v = Viewport::new(cols);
+                                                let f = FollowScroll {
+                                                    margin: cfg.scroll_margin,
+                                                    center: cfg.center_focus,
+                                                };
+                                                let _ = layout.apply(Action::FocusPane(pid), v, f);
+                                                dirty = true;
+                                            }
+                                        }
+                                        MouseEventKind::Drag(MouseButton::Left) => {
+                                            if let Some(s) = selection.as_mut() {
+                                                if s.dragging && s.cursor != point {
+                                                    s.cursor = point;
+                                                    dirty = true;
+                                                }
+                                            }
+                                        }
+                                        MouseEventKind::Up(MouseButton::Left) => {
+                                            if let Some(s) = selection.as_mut() {
+                                                s.cursor = point;
+                                                s.dragging = false;
+                                            }
+                                            // A press+release without movement is a
+                                            // plain click, not a selection: drop it so
+                                            // no stray highlight lingers and nothing
+                                            let done = selection.filter(|s| !s.is_empty());
+                                            match done {
+                                                Some(s) => {
+                                                    // Selection is kept for visual highlight; clipboard
+                                                    // is now host-native — no auto-copy.
+                                                    reload_note_anchor = views
+                                                        .iter()
+                                                        .find(|v| v.pid == s.pane)
+                                                        .map(|v| v.rect);
+                                                    reload_note = None;
+                                                    reload_note_until = None;
+                                                }
+                                                None => selection = None,
+                                            }
+                                            dirty = true;
+                                        }
+                                        _ => {}
+                                    }
+                                    handled = true;
+                                }
+                                MouseRole::Forward | MouseRole::Local => {}
                             }
                         }
                         if let Some((pid, gx, gy)) = (!handled)
@@ -5154,9 +5244,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             if let Some(p) = panes.get_mut(&pid) {
                                 // A child that asked for mouse reporting owns the
                                 // event, translated into its own grid coordinates,
-                                // so vim/less/an agent TUI behave exactly as they
-                                // would natively. gwae claims no wheel of its
-                                // own: scrollback is `⌥+↑/↓` (see `handle_key`).
+                                // so vim/less/jcode behave exactly as they would
+                                // natively. The wheel reaches here only for such
+                                // a child (plain panes scroll above); a finished
+                                // drag-selection never does.
                                 if p.grid.wants_mouse() {
                                     if let Some(bytes) = sgr_mouse_report(&me, gx, gy) {
                                         let _ = p.writer.write_all(&bytes);
@@ -5589,9 +5680,10 @@ mod tests {
 
     #[test]
     fn alt_up_down_is_the_keyboard_route_into_scrollback() {
-        // gwae no longer claims the wheel, so this is the *only* way to
-        // read back through a pane's history. If it regressed, scrollback
-        // would exist with nothing able to reach it.
+        // `⌥+↑/↓` is the original keyboard route into scrollback;
+        // Ctrl+Shift+J/K and the wheel join it (see below), so this asserts
+        // the long-standing chords keep working rather than being the only
+        // way back into history.
         assert_eq!(
             handle_key(&KeyEvent::new(KeyCode::Up, KeyModifiers::ALT)),
             Some(Cmd::ScrollBack(3)),
@@ -5631,6 +5723,89 @@ mod tests {
         assert_eq!(
             handle_key(&KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)),
             Some(Cmd::ScrollPane(-1))
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_jk_scroll_scrollback_a_line_like_jcode() {
+        // jcode's transcript: Ctrl+Shift+K scrolls up a line, Ctrl+Shift+J
+        // scrolls down a line. Plain Ctrl+J / Ctrl+K stay with the pane
+        // (jcode uses them for prompt jump), so only the shifted form is
+        // claimed here.
+        let shift_ctrl = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::Char('k'), shift_ctrl)),
+            Some(Cmd::ScrollBack(1)),
+            "Ctrl+Shift+K should scroll back one line"
+        );
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::Char('j'), shift_ctrl)),
+            Some(Cmd::ScrollBack(-1)),
+            "Ctrl+Shift+J should scroll forward one line"
+        );
+        // Kitty's shifted-codepoint form (Shift reported as uppercase with
+        // the SHIFT bit cleared) counts too: `physical_shift` sees the 'K'.
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::Char('K'), KeyModifiers::CONTROL)),
+            Some(Cmd::ScrollBack(1)),
+            "Kitty-form Ctrl+Shift+K should scroll back one line"
+        );
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::Char('J'), KeyModifiers::CONTROL)),
+            Some(Cmd::ScrollBack(-1)),
+            "Kitty-form Ctrl+Shift+J should scroll forward one line"
+        );
+        // Unshifted Ctrl+J / Ctrl+K reach the child untouched.
+        for c in ['j', 'k'] {
+            assert!(
+                matches!(
+                    handle_key(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)),
+                    Some(Cmd::Input(_))
+                ),
+                "plain Ctrl+{c} belongs to the pane, not to scrollback"
+            );
+        }
+        // Alt must not hijack the chord either: ⌥+J/K are focus moves.
+        assert_eq!(
+            handle_key(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT)),
+            Some(Cmd::Act(Action::FocusDown))
+        );
+    }
+
+    #[test]
+    fn wheel_scrolls_a_plain_pane_but_reaches_a_reporting_child() {
+        use MouseEventKind::*;
+        let plain = KeyModifiers::NONE;
+        // A plain shell keeps no mouse of its own: the wheel scrolls gwae's
+        // history directly (vertical and horizontal alike), like jcode.
+        for kind in [ScrollUp, ScrollDown, ScrollLeft, ScrollRight] {
+            assert_eq!(
+                mouse_role(kind, plain, false),
+                MouseRole::Wheel,
+                "{kind:?} over a plain pane should scroll history"
+            );
+        }
+        // A child that asked for mouse reporting owns the wheel (jcode
+        // scrolls its own transcript, vim its own buffer).
+        for kind in [ScrollUp, ScrollDown, ScrollLeft, ScrollRight] {
+            assert_eq!(
+                mouse_role(kind, plain, true),
+                MouseRole::Forward,
+                "{kind:?} must reach a reporting child"
+            );
+        }
+        // Shift+vertical wheel is the escape hatch: even a reporting child
+        // yields to the multiplexer's scroll. Horizontal flicks always stay
+        // with the child (only it knows wide content).
+        assert_eq!(
+            mouse_role(ScrollUp, KeyModifiers::SHIFT, true),
+            MouseRole::Wheel,
+            "Shift+wheel lets the multiplexer scroll past a reporting child"
+        );
+        assert_eq!(
+            mouse_role(ScrollLeft, KeyModifiers::SHIFT, true),
+            MouseRole::Forward,
+            "Shift+horizontal wheel stays with the child"
         );
     }
 
@@ -6248,19 +6423,25 @@ mod tests {
                 MouseRole::Select
             );
         }
-        // The wheel is never a selection: gwae resolves it locally, which
-        // now means it does nothing unless the child asked for reporting.
+        // The wheel is never a selection: plain panes scroll their history
+        // (`Wheel`), and a reporting child owns the event (`Forward`).
         assert_eq!(
             mouse_role(MouseEventKind::ScrollUp, plain, false),
-            MouseRole::Local
+            MouseRole::Wheel
         );
         assert_eq!(
             mouse_role(MouseEventKind::ScrollUp, plain, true),
             MouseRole::Forward
         );
-        // Shift+wheel is still the child's business when it reports mouse.
+        // Shift+vertical wheel is the escape hatch: even a reporting child
+        // yields to the multiplexer's scroll. Horizontal flicks always stay
+        // with the child (only it knows wide content).
         assert_eq!(
             mouse_role(MouseEventKind::ScrollUp, KeyModifiers::SHIFT, true),
+            MouseRole::Wheel
+        );
+        assert_eq!(
+            mouse_role(MouseEventKind::ScrollLeft, KeyModifiers::SHIFT, true),
             MouseRole::Forward
         );
         // Right-drag is not our selection either.
@@ -7608,6 +7789,7 @@ mod tests {
                 Effect::ToggleKeepAwake => Cmd::ToggleKeepAwake,
                 Effect::Quit => Cmd::Quit,
                 Effect::Scroll(n) => Cmd::Scroll(n),
+                Effect::ScrollBack(n) => Cmd::ScrollBack(n),
                 Effect::Unverifiable => return None,
             })
         };
@@ -7637,6 +7819,27 @@ mod tests {
                         b.label(),
                         b.desc
                     );
+                }
+                Trigger::CtrlShift(c) => {
+                    // Ctrl+Shift arrives either as the lowercase char with
+                    // CONTROL|SHIFT or, under Kitty's alternate-keys flag, as
+                    // the uppercase char with CONTROL alone. Both must reach
+                    // the advertised scroll.
+                    for ev in [
+                        KeyEvent::new(
+                            KeyCode::Char(c.to_ascii_lowercase()),
+                            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                        ),
+                        KeyEvent::new(KeyCode::Char(c.to_ascii_uppercase()), KeyModifiers::CONTROL),
+                    ] {
+                        assert_eq!(
+                            handle_key(&ev),
+                            want,
+                            "{} ({}) must dispatch as advertised",
+                            b.label(),
+                            b.desc
+                        );
+                    }
                 }
                 Trigger::EnterChord { shift } => {
                     let mut mods = KeyModifiers::ALT;
@@ -7832,6 +8035,10 @@ mod tests {
         assert!(
             all.iter().any(|s| s.contains("focus left")),
             "HUD cheat-sheet present, got {all:?}"
+        );
+        assert!(
+            all.iter().any(|s| s.contains("scroll up")),
+            "HUD cheat-sheet covers Ctrl+Shift+K scroll, got {all:?}"
         );
         assert!(
             all.iter().any(|s| s.contains("click")),

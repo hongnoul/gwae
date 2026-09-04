@@ -1,11 +1,9 @@
-//! End-to-end: reading back through a pane's scrollback with `⌥+↑`/`⌥+↓`.
+//! End-to-end: reading back through a pane's scrollback.
 //!
-//! gwae used to capture the mouse wheel for this. That is gone: the wheel
-//! now only ever reaches a child that asked for mouse reporting, so the
-//! keyboard is the *only* route into a pane's history. This suite exists
-//! because that makes it load-bearing - a regression here would leave
-//! scrollback with nothing able to reach it, which is exactly the kind of
-//! removal that goes unnoticed until a user tries to scroll.
+//! Three routes reach it, all asserted here against the shipped binary: the
+//! long-standing `⌥+↑`/`⌥+↓` chords, the jcode-style `Ctrl+Shift+J`/`K`
+//! line scroll, and the mouse wheel over the pane (which scrolls gwae's
+//! history for a plain shell, exactly like jcode's transcript).
 //!
 //! It drives the real binary through a PTY and reconstructs the screen from
 //! the frames it paints, because gwae repaints *incrementally*: the bytes
@@ -336,23 +334,84 @@ fn typing_snaps_a_scrolled_back_pane_to_the_live_bottom() {
 }
 
 #[test]
-fn the_wheel_no_longer_scrolls_a_pane_that_did_not_ask_for_it() {
-    // The removal itself, asserted rather than assumed: a plain shell does not
-    // request mouse reporting, so wheel events must change nothing at all.
+fn the_wheel_scrolls_a_plain_panes_history_like_jcode() {
+    // A plain shell never asks for mouse reporting, so the wheel is gwae's
+    // to resolve: each notch scrolls history, the way jcode's transcript
+    // scrolls under the same gesture.
+    //
+    // Startup panes are quarter-width (the leftmost column owns screen
+    // x=1..25), so the SGR reports aim at x=10/y=10 (1-based), well inside
+    // the pane. An earlier draft aimed at x=40, which lands on empty
+    // background past the pane and scrolls nothing.
     let mut s = Session::start();
     s.emit_history();
-    let before = s.span();
+    let live = s.span();
+    assert_eq!(
+        live.1,
+        60,
+        "should start at the live bottom; got:\n{}",
+        s.render()
+    );
 
-    // SGR (1006) wheel-up reports over the middle of the pane.
+    // SGR (1006) wheel-up reports inside the pane.
     for _ in 0..10 {
-        s.send(b"\x1b[<64;40;10M");
+        s.send(b"\x1b[<64;10;10M");
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    s.settle(1.5);
+    let back = s.span();
+    assert!(
+        back.0 < live.0 && back.1 < live.1,
+        "the wheel did not scroll back: was {live:?}, now {back:?}\n{}",
+        s.render()
+    );
+
+    // And wheel-down returns to exactly where we started.
+    for _ in 0..10 {
+        s.send(b"\x1b[<65;10;10M");
         std::thread::sleep(Duration::from_millis(40));
     }
     s.settle(1.5);
     assert_eq!(
         s.span(),
-        before,
-        "the wheel still moved the pane's scrollback\n{}",
+        live,
+        "wheel-down did not return to the live bottom\n{}",
+        s.render()
+    );
+    s.kill();
+}
+
+#[test]
+fn ctrl_shift_jk_scrolls_history_a_line_at_a_time_like_jcode() {
+    // The keyboard twin of the wheel: Ctrl+Shift+K steps one line back into
+    // history, Ctrl+Shift+J steps one line forward. Sent as Kitty CSI-u
+    // (`ESC[107;6u` / `ESC[106;6u`), the wire form a Kitty-aware terminal
+    // produces for the chord.
+    let mut s = Session::start();
+    s.emit_history();
+    let live = s.span();
+
+    for _ in 0..8 {
+        s.send(b"\x1b[107;6u");
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    s.settle(2.0);
+    let back = s.span();
+    assert!(
+        back.0 < live.0 && back.1 < live.1,
+        "Ctrl+Shift+K did not scroll back: was {live:?}, now {back:?}\n{}",
+        s.render()
+    );
+
+    for _ in 0..8 {
+        s.send(b"\x1b[106;6u");
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    s.settle(2.0);
+    let fwd = s.span();
+    assert!(
+        fwd.0 > back.0 && fwd.1 > back.1,
+        "Ctrl+Shift+J did not scroll forward: was {back:?}, now {fwd:?}\n{}",
         s.render()
     );
     s.kill();

@@ -48,6 +48,25 @@ pub fn chord(key: &str) -> String {
     format!("{}+{}", mod_key(), key)
 }
 
+/// The Control key's display name: `⌃` on macOS (matching how macOS itself
+/// renders it in menus), spelled out as `Ctrl` elsewhere, where keycaps say
+/// "Ctrl" and the glyph is unfamiliar.
+pub fn ctrl_key() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "⌃"
+    } else {
+        "Ctrl"
+    }
+}
+
+/// A Control chord with Shift, e.g. `⌃+⇧+K` on macOS or `Ctrl+Shift+K`
+/// elsewhere. Used for the jcode-style transcript scroll bindings, which are
+/// Control chords rather than the `$mod` (Option/Alt) chords the rest of
+/// gwae's bindings use.
+pub fn ctrl_shift_chord(key: &str) -> String {
+    format!("{}+{}+{}", ctrl_key(), shift_key(), key)
+}
+
 /// A shifted chord, e.g. `⌥+⇧+q` on macOS or `Alt+Shift+q` elsewhere.
 pub fn shift_chord(key: &str) -> String {
     format!("{}+{}+{}", mod_key(), shift_key(), key)
@@ -62,9 +81,11 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert_eq!(mod_key(), "⌥");
             assert_eq!(chord("g"), "⌥+g");
+            assert_eq!(ctrl_shift_chord("K"), "⌃+⇧+K");
         } else {
             assert_eq!(mod_key(), "Alt");
             assert_eq!(chord("g"), "Alt+g");
+            assert_eq!(ctrl_shift_chord("K"), "Ctrl+Shift+K");
         }
     }
 
@@ -73,7 +94,7 @@ mod tests {
         // The point of the fallback: no glyphs that a Linux/Windows terminal
         // font may not have, and no macOS-only vocabulary.
         if !cfg!(target_os = "macos") {
-            for s in [mod_key(), enter_key(), shift_key()] {
+            for s in [mod_key(), enter_key(), shift_key(), ctrl_key()] {
                 assert!(s.is_ascii(), "{s:?} should be plain ASCII off macOS");
             }
         }

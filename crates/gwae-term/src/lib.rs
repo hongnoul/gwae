@@ -198,8 +198,15 @@ impl Vt100Grid {
 
     /// Scroll the view by `delta` rows (positive = back into history).
     /// Returns true when the visible offset actually changed.
+    ///
+    /// The offset is clamped to the visible row count: vt100 0.15's
+    /// `visible_rows` underflows (`scrollback_len - offset`, `rows_len -
+    /// offset) when the offset exceeds the row count, which panics the
+    /// render loop and kills the session. Deep history stays reachable
+    /// one screen at a time rather than in a single jump.
     pub fn scroll_by(&mut self, delta: i32) -> bool {
-        let want = (self.scrollback_offset as i64 + delta as i64).max(0) as usize;
+        let max = self.rows as usize;
+        let want = ((self.scrollback_offset as i64 + delta as i64).max(0) as usize).min(max);
         self.parser.set_scrollback(want);
         let now = self.parser.screen().scrollback();
         let changed = now != self.scrollback_offset;
@@ -611,6 +618,28 @@ mod tests {
         assert!(g.scroll_by(-99));
         assert_eq!(g.scrollback_offset(), 0);
         assert!(!g.scroll_by(-1));
+    }
+
+    #[test]
+    fn scrollback_offset_never_exceeds_visible_rows() {
+        // vt100 0.15's `visible_rows` underflows when the scrollback offset
+        // exceeds the row count, panicking the render loop and killing the
+        // session. Ten fast wheel notches (3 rows each) against a 3-row grid
+        // used to do exactly that; the offset must clamp at the row count.
+        let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
+        for i in 0..10 {
+            g.feed(format!("line{i}\r\n").as_bytes());
+        }
+        for _ in 0..10 {
+            g.scroll_by(3);
+        }
+        assert!(
+            g.scrollback_offset() <= 3,
+            "offset {} exceeds visible rows",
+            g.scrollback_offset()
+        );
+        // And the clamped view still renders without panicking.
+        let _: String = (0..6).map(|x| g.cell(x, 0).ch).collect();
     }
 
     #[test]
