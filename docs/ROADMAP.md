@@ -26,7 +26,7 @@ Kill the biggest risk first: prove the render path.
 - **Exit**: dogfood daily Claude Code + Jcode sessions — ongoing, this is the launch gate
 
 ## M3 - Comfortable daily driver (in progress)
-- [x] Scrollback (`⌥+↑/↓`), drag-select copy, kitty graphics passthrough
+- [x] Scrollback (`⌥+↑/↓`, Ctrl+Shift+J/K, wheel), drag-select copy, kitty graphics passthrough
 - [ ] Scrollback search
 - [ ] `⌥+y` yank (pane/turn, text or image) — spec below
 - [ ] Scroll animation

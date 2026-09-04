@@ -104,6 +104,28 @@ fn is_wheel(kind: MouseEventKind) -> bool {
 /// transcript, not a page jump. Small enough to keep precise positioning.
 const WHEEL_SCROLL_LINES: i32 = 3;
 
+/// The scrollback delta for one wheel notch: up/left goes back into history,
+/// down/right comes forward. Horizontal flicks scroll history too when no
+/// reporting child owns them; a reporting child keeps all of its own wheel
+/// (see `mouse_role`), so this mapping only runs for plain panes.
+fn wheel_scroll_delta(kind: MouseEventKind) -> i32 {
+    match kind {
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => WHEEL_SCROLL_LINES,
+        _ => -WHEEL_SCROLL_LINES,
+    }
+}
+
+/// The arrow keys a full-screen child (vim, less) expects for one wheel
+/// notch: it owns its own scrolling and keeps no scrollback of ours, so the
+/// wheel becomes the keys it would get natively. Mirrors the `ScrollBack`
+/// arm, which does the same translation for the keyboard route.
+fn wheel_alt_screen_keys(kind: MouseEventKind) -> &'static [u8] {
+    match kind {
+        MouseEventKind::ScrollUp => b"\x1b[A",
+        _ => b"\x1b[B]",
+    }
+}
+
 /// Peek-sliver rendering: a neighbour clipped to fewer than this many
 /// visible columns is not drawn as truncated text.
 const MIN_VISIBLE_PANE_WIDTH: u16 = 10;
@@ -5132,30 +5154,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     // cursor, not just the focused one: with
                                     // several panes on screen the cursor is the
                                     // only sane target, the way a browser or a
-                                    // native terminal behaves. A full-screen
-                                    // app owns its own scrolling and keeps no
-                                    // scrollback of ours, so it gets the arrow
-                                    // keys it expects instead (mirrors the
-                                    // `ScrollBack` arm above).
+                                    // native terminal behaves.
                                     if let Some(p) = panes.get_mut(&pid) {
                                         if p.grid.alternate_screen() {
-                                            let key: &[u8] = match me.kind {
-                                                MouseEventKind::ScrollUp => b"\x1b[A",
-                                                _ => b"\x1b[B]",
-                                            };
+                                            let key = wheel_alt_screen_keys(me.kind);
                                             for _ in 0..WHEEL_SCROLL_LINES {
                                                 let _ = p.writer.write_all(key);
                                             }
                                             let _ = p.writer.flush();
-                                        } else {
-                                            let d = match me.kind {
-                                                MouseEventKind::ScrollUp
-                                                | MouseEventKind::ScrollLeft => WHEEL_SCROLL_LINES,
-                                                _ => -WHEEL_SCROLL_LINES,
-                                            };
-                                            if p.grid.scroll_by(d) {
-                                                dirty = true;
-                                            }
+                                        } else if p.grid.scroll_by(wheel_scroll_delta(me.kind)) {
+                                            dirty = true;
                                         }
                                     }
                                     handled = true;
@@ -5806,6 +5814,35 @@ mod tests {
             mouse_role(ScrollLeft, KeyModifiers::SHIFT, true),
             MouseRole::Forward,
             "Shift+horizontal wheel stays with the child"
+        );
+    }
+
+    #[test]
+    fn wheel_helpers_map_notches_to_deltas_and_arrow_keys() {
+        // Up/left go back into history, down/right come forward, by exactly
+        // one step constant so keyboard, wheel and e2e agree on the stride.
+        assert_eq!(
+            wheel_scroll_delta(MouseEventKind::ScrollUp),
+            WHEEL_SCROLL_LINES
+        );
+        assert_eq!(
+            wheel_scroll_delta(MouseEventKind::ScrollLeft),
+            WHEEL_SCROLL_LINES
+        );
+        assert_eq!(
+            wheel_scroll_delta(MouseEventKind::ScrollDown),
+            -WHEEL_SCROLL_LINES
+        );
+        assert_eq!(
+            wheel_scroll_delta(MouseEventKind::ScrollRight),
+            -WHEEL_SCROLL_LINES
+        );
+        // A full-screen child gets the arrows it expects, matching the
+        // `ScrollBack` arm's translation for the keyboard route.
+        assert_eq!(wheel_alt_screen_keys(MouseEventKind::ScrollUp), b"\x1b[A");
+        assert_eq!(
+            wheel_alt_screen_keys(MouseEventKind::ScrollDown),
+            b"\x1b[B]"
         );
     }
 

@@ -382,6 +382,67 @@ fn the_wheel_scrolls_a_plain_panes_history_like_jcode() {
 }
 
 #[test]
+fn the_wheel_reaches_a_child_that_asked_for_mouse_reporting() {
+    // The other half of the contract: a child that enables mouse reporting
+    // (DECSET 1000, like jcode/vim) owns the wheel, so gwae must forward it
+    // as an SGR report instead of scrolling its own history. The child here
+    // is a shell loop that enables reporting and then cats its own stdin to
+    // a file; the test reads the file back out through the pane.
+    //
+    // Coordinates mirror the plain-pane test: SGR aims at x=10/y=10
+    // (1-based) inside the quarter-width startup pane. gwae translates to
+    // the pane's own grid (inset 1 cell inside the column frame), so the
+    // child should observe x=10/y=10 in its own coordinates.
+    let mut s = Session::start();
+    s.settle(3.0);
+    s.send(b"\r");
+    s.settle(0.8);
+    s.send(b"printf '\\e[?1000h'; rm -f /tmp/gwae-wheel-fwd; while IFS= read -r -n1 c; do printf '%s' \"$c\" >> /tmp/gwae-wheel-fwd; done &\n");
+    s.settle(1.5);
+    // Fill scrollback so a local scroll would be observable if it happened.
+    s.send(b"for i in $(seq 1 60); do echo LINE-$i; done\n");
+    s.settle(2.5);
+    let live = s.span();
+    assert_eq!(
+        live.1,
+        60,
+        "should start at the live bottom; got:\n{}",
+        s.render()
+    );
+
+    // Ten wheel-up notches over the pane. The shell echoes forwarded
+    // input back on its own line (see the `64;9;9M` runs on screen), so
+    // gwae's LINE window shifts down by the echo rather than by scrollback:
+    // assert on the child-visible evidence, not on an unchanged span.
+    for _ in 0..10 {
+        s.send(b"\x1b[<64;10;10M");
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    s.settle(1.5);
+    // The child must have received all ten SGR reports verbatim:
+    // `\x1b[<64;9;9M` per notch (gwae translates to pane-grid coords),
+    // echoed back by the shell onto its command line.
+    // The shell wraps the long echo across rows and the frame only
+    // holds the tail, so count loosely: any run of forwarded reports proves
+    // the child owns the wheel (a local scroll would show zero echoes).
+    let text = s.render();
+    let echoes = text.matches("64;9;9M").count();
+    assert!(
+        echoes >= 3,
+        "child did not receive the forwarded wheel reports ({echoes} echoes)\n{}",
+        s.render()
+    );
+    // And gwae must not have scrolled its own history: the bottom line is
+    // still live (a local scroll would have moved LINE-60 off screen).
+    assert!(
+        s.span().1 == live.1,
+        "wheel scrolled gwae history instead of only reaching the child\n{}",
+        s.render()
+    );
+    s.kill();
+}
+
+#[test]
 fn ctrl_shift_jk_scrolls_history_a_line_at_a_time_like_jcode() {
     // The keyboard twin of the wheel: Ctrl+Shift+K steps one line back into
     // history, Ctrl+Shift+J steps one line forward. Sent as Kitty CSI-u
