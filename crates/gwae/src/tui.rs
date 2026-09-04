@@ -3726,6 +3726,14 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         // shifted-codepoint form (Ctrl+Shift+J arriving as Char('J')).
         // This sits above the generic fallthrough so the chord never types
         // into the child.
+        //
+        // Known tradeoff: an inner jcode keeps its own Ctrl+Shift+J/K line
+        // scroll, which this shadows at the multiplexer layer (the inner
+        // pane never sees the chord). Plain Ctrl+J/K still reach it for
+        // prompt jump, and Shift+wheel scrolls gwae history past a
+        // reporting child, so no scroll direction is ever unreachable —
+        // but an inner jcode's own line-scroll chord is the price of a
+        // multiplexer-level one.
         if ctrl && shift {
             match logical_char(ev) {
                 Some('k') => return Some(Cmd::ScrollBack(1)),

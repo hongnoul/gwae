@@ -97,6 +97,8 @@ All chords use `⌥` on macOS, `Alt` elsewhere. Other keys go to the focused pan
 ⌥+q            kill pane
 click          focus pane
 drag           select and copy
+wheel          scroll this pane's history (child TUIs keep their own)
+Ctrl+Shift+J/K scroll this pane's history a line, like jcode
 ```
 
 Full list: [docs/KEYBINDS.md](docs/KEYBINDS.md)

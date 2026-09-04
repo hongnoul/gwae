@@ -237,6 +237,15 @@ impl TermGrid for Vt100Grid {
         self.parser.set_size(size.rows, size.cols);
         self.rows = size.rows;
         self.cols = size.cols;
+        // Shrinking the grid can strand the offset above the row count, the
+        // same vt100 0.15 `visible_rows` underflow `scroll_by` guards
+        // against. Re-clamp here so a resize mid-scrollback cannot panic the
+        // next paint.
+        let max = self.rows as usize;
+        if self.scrollback_offset > max {
+            self.parser.set_scrollback(max);
+            self.scrollback_offset = self.parser.screen().scrollback();
+        }
     }
 
     fn feed(&mut self, bytes: &[u8]) -> Vec<Damage> {
@@ -244,8 +253,9 @@ impl TermGrid for Vt100Grid {
         self.parser.process(bytes);
         // vt100 shifts the scrollback offset itself when new lines scroll the
         // buffer (so a scrolled-back view stays pinned to the same content);
-        // adopt its value so our cached offset never drifts.
-        self.scrollback_offset = self.parser.screen().scrollback();
+        // adopt its value so our cached offset never drifts. Clamp to the row
+        // count for the same underflow reason as `scroll_by`/`resize`.
+        self.scrollback_offset = self.parser.screen().scrollback().min(self.rows as usize);
         vec![Damage {
             x: 0,
             y: 0,
@@ -639,6 +649,27 @@ mod tests {
             g.scrollback_offset()
         );
         // And the clamped view still renders without panicking.
+        let _: String = (0..6).map(|x| g.cell(x, 0).ch).collect();
+    }
+
+    #[test]
+    fn shrinking_the_grid_reclamps_a_stranded_offset() {
+        // Scroll deep on a tall grid, then shrink below the offset: without
+        // a re-clamp the next paint underflows vt100's `visible_rows` and
+        // kills the session. A terminal resize mid-scrollback is the way
+        // this happens outside the test.
+        let mut g = Vt100Grid::new(Size { cols: 10, rows: 10 });
+        for i in 0..20 {
+            g.feed(format!("line{i}\r\n").as_bytes());
+        }
+        g.scroll_by(8);
+        assert_eq!(g.scrollback_offset(), 8);
+        g.resize(Size { cols: 10, rows: 3 });
+        assert!(
+            g.scrollback_offset() <= 3,
+            "resize stranded offset {}",
+            g.scrollback_offset()
+        );
         let _: String = (0..6).map(|x| g.cell(x, 0).ch).collect();
     }
 
