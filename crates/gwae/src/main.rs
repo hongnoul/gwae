@@ -10,6 +10,7 @@ mod cli;
 mod config;
 mod cowsay;
 mod install;
+mod keepawake;
 mod keys;
 mod latency;
 mod onboard;
@@ -113,6 +114,7 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
             println!("  agent: {}", agent_status(&cfg));
             println!("  updates: {}", update_status(&cfg));
             println!("  spawn dir: {}", spawn_dir_status(&cfg, dir.as_deref()));
+            println!("  keep-awake: {}", keepawake::doctor_line(cfg.keep_awake));
             println!("  onboarding: {}", onboarding_status(&path));
             println!(
                 "  latency: {}",

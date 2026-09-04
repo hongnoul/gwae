@@ -406,6 +406,39 @@ pub fn cowsay_question() -> Question {
 /// summary line as everything else.
 pub const INSTALL_KEY: &str = "install.btm";
 
+/// Whether to hold the Mac awake while gwae runs (macOS `caffeinate`).
+///
+/// Offered only where it can work: on other platforms the key does nothing,
+/// so asking would be setup pretending not to know. Defaults to off, because
+/// an awake machine is the user's call. The blurb carries the honest limit:
+/// a closed lid still sleeps outside clamshell mode.
+pub fn keep_awake_question() -> Option<Question> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    Some(Question {
+        key: "keep_awake",
+        prompt: "Keep the Mac awake while gwae runs",
+        help: "Holds idle/display sleep via caffeinate so agents keep working \
+             while you are away. A closed lid still sleeps outside clamshell mode.",
+        options: vec![
+            Opt {
+                label: "off",
+                value: "false",
+                blurb: "sleep as normal (default)",
+            },
+            Opt {
+                label: "on",
+                value: "true",
+                blurb: "agents keep running with the display asleep",
+            },
+        ],
+        default: 0,
+        swatch: false,
+        keep_existing: false,
+    })
+}
+
 /// Every question of the flow, in order.
 ///
 /// The `btm` offer comes last and only when it would do something: asking
@@ -430,6 +463,11 @@ pub fn all_questions_for_with_extra(f: crate::install::Facts, extra: &[String]) 
     let _ = f;
     let mut qs = questions_with(extra);
     qs.push(cowsay_question());
+    // Last, only where it works: a behavior toggle, not a look, so it comes
+    // after every question the preview illustrates.
+    if let Some(q) = keep_awake_question() {
+        qs.push(q);
+    }
     qs
 }
 
@@ -659,13 +697,14 @@ pub fn render_sized(
 /// The preview state for a question, or `None` when a picture would be a lie.
 ///
 /// A question earns a mockup only if the mockup can *answer* it. `install.btm`
-/// changes the machine, not the screen, and drawing an unchanged grid under it
-/// would quietly teach the user that the preview is decorative.
+/// and `keep_awake` change the machine, not the screen, and drawing an
+/// unchanged grid under them would quietly teach the user that the preview
+/// is decorative.
 fn previewable(
     q: &Question,
     answered_so_far: &[(String, String)],
 ) -> Option<crate::preview::Prefs> {
-    if q.key == INSTALL_KEY || q.key == "default_agent" {
+    if q.key == INSTALL_KEY || q.key == "default_agent" || q.key == "keep_awake" {
         return None;
     }
     Some(crate::preview::Prefs::from_pairs(answered_so_far))
@@ -1475,6 +1514,64 @@ mod tests {
                 q.key
             );
         }
+    }
+
+    #[test]
+    fn keep_awake_is_macos_only_and_off_by_default() {
+        // The question exists exactly where the key works. On other platforms
+        // the key is inert, so asking would be setup pretending not to know.
+        match keep_awake_question() {
+            Some(q) => {
+                assert!(cfg!(target_os = "macos"), "asked off macOS");
+                assert_eq!(q.key, "keep_awake");
+                assert_eq!(q.default_value(), "false", "awake is the user's call");
+                // Both answers must be values the real parser accepts, or we
+                // would be creating the broken config `doctor` blames on users.
+                for o in &q.options {
+                    let cfg: Config = toml::from_str(&format!("{} = {}\n", q.key, o.value))
+                        .expect("keep_awake option parses");
+                    assert_eq!(cfg.keep_awake, o.value == "true");
+                }
+                // It is the last question: a behavior toggle, not a look, so
+                // it comes after everything the preview illustrates.
+                let qs = all();
+                assert_eq!(qs.last().map(|q| q.key), Some("keep_awake"));
+                // And it earns no preview: a picture of an unchanged grid
+                // would teach that the preview is decorative.
+                assert!(previewable(&q, &[]).is_none(), "behavior needs no picture");
+                // Accepting every default stays a behavior no-op.
+                assert!(!Config::default().keep_awake);
+            }
+            None => assert!(
+                !cfg!(target_os = "macos"),
+                "macOS must be asked about keep-awake"
+            ),
+        }
+    }
+
+    #[test]
+    fn keep_awake_survives_a_rerun_and_a_live_reload() {
+        // Re-running setup starts from the file, so answering yes once is not
+        // undone by accepting defaults the next time.
+        let qs = with_existing(all(), "keep_awake = true\n");
+        if let Some(q) = qs.iter().find(|q| q.key == "keep_awake") {
+            assert_eq!(q.default_value(), "true");
+        }
+        // ...and a mid-session edit of the key applies live: the reload does
+        // not pin the old value, it adopts the file's (the render loop then
+        // reconciles the guard and says so).
+        let mut cfg = Config::default();
+        assert!(!cfg.keep_awake);
+        let new: Config = toml::from_str("keep_awake = true\n").unwrap();
+        cfg.adopt_appearance(new);
+        assert!(cfg.keep_awake, "live reload must adopt keep-awake");
+        // ...while keys the session consumed at launch stay pinned.
+        let mut cfg = Config::default();
+        cfg.startup_panes = 4;
+        let new: Config = toml::from_str("theme = \"nord\"\nstartup_panes = 9\n").unwrap();
+        cfg.adopt_appearance(new);
+        assert_eq!(cfg.startup_panes, 4, "startup_panes stays pinned");
+        assert_eq!(cfg.palette(), Palette::NORD, "but the theme rides along");
     }
 
     #[test]

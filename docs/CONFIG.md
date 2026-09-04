@@ -35,6 +35,7 @@ theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-la
 # focus_color = "#74c7ec"    # -> theme.accent
 # skeleton_color = "#6c7086" # -> theme.overlay
 input_poll_ms = 2            # applied silently by setup; 1 is the recommended value
+keep_awake = false           # macOS only: hold idle/display sleep via caffeinate
 
 [minimap]
 show = true
@@ -81,7 +82,25 @@ on, `←`/`h`/`⌫` goes back, a digit selects without Enter, `s` skips a questi
 and `esc` takes the defaults for the rest. It ends on a summary screen listing
 every setting and the file it landed in, where only `⏎` (leave) and `⌫` (back
 to the last question) do anything. It asks about `theme`,
-`default_column_width`, `center_focus`, `cell_labels` and `cowsay.enabled`.
+`default_column_width`, `center_focus`, `cell_labels`, `cowsay.enabled`,
+and (macOS only) `keep_awake`.
+
+## Keeping the Mac awake (`keep_awake`)
+
+gwae is a single process with no daemon: when macOS sleeps, every pane (and
+every agent in it) freezes until wake. `keep_awake = true` holds a
+`caffeinate` assertion for gwae's own lifetime, so idle and display sleep
+never pause a session you walked away from. macOS-only; elsewhere the key
+does nothing. Default `false`: an awake machine is your call, never the
+multiplexer's presumption. Set `GWAE_NO_KEEP_AWAKE=1` to force it off
+(scripted setups, tests). Editing the key applies live to the running
+session, with a one-line toast confirming the change.
+
+Honest limit: this does **not** defeat lid-close sleep. A closed lid still
+sleeps the machine unless it is in clamshell mode (power + external display
++ external input) or sleep is disabled outright (`sudo pmset disablesleep
+1`). What it buys is the common case: lid open, display asleep, agents
+still running in the morning. `gwae doctor` reports the effective state.
 
 Everything else here is hand-edit only, deliberately:
 
@@ -107,7 +126,8 @@ read fresh by the agent gateway each time `;` opens a pane, so editing it (or
 letting the gateway save your pick) applies to the *next* agent pane without a
 restart; panes already running a harness keep running it. Everything read every
 frame - colors, `[minimap]`, scroll behavior - takes effect
-immediately.
+immediately. `keep_awake` also applies live: flipping it starts or drops the
+`caffeinate` assertion at once, with the change named in the toast.
 
 A config that fails to parse mid-edit (an editor saving between keystrokes)
 leaves the running settings alone and reports the error, rather than dropping
@@ -186,6 +206,7 @@ and a config file that is not being applied at all points at the syntax error:
 | `focus_color` | color | preset `accent` | **Legacy alias for `theme.accent`**. Overrides the theme's `accent`; use `[theme] accent = ...` for new configs. |
 | `skeleton_color` | color | preset `overlay` | **Legacy alias for `theme.overlay`**. Overrides the theme's `overlay`; use `[theme] overlay = ...` for new configs. |
 | `input_poll_ms` | integer | `2` | Set to `1` **silently by `gwae init`**, before the first question: it has exactly one right answer, so it is not worth a question. Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. gwae sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. `1` is the recommended value; run `gwae tune` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
+| `keep_awake` | bool | `false` | macOS-only: hold a `caffeinate` assertion (idle/display sleep) while gwae runs, so agents keep working with the display asleep. Asked last by `gwae init` on macOS; hand-editable everywhere. Does **not** defeat lid-close sleep outside clamshell mode (power + external display + input) or `sudo pmset disablesleep 1`. Applies live on save. `GWAE_NO_KEEP_AWAKE=1` forces it off. |
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit (the same digit `⌥+1..9` jumps to). Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
 | `minimap.mode` | string | `"off"` | Chrome presentation: `off` (no persistent row; `⌥`/Alt reveals centered HUD + minimap), `overlay` (bottom-right corner), `edge_ticks` (frame ticks). Legacy `reserved` / `reserved_quasimode` parse as `off` (no bottom row). |
 | `minimap.max_width` | integer | `32` | Width of the minimap. A hard *cap* for the corner `overlay`, whose whole point is a small footprint over live panes. For the centered panel revealed by `⌥`/Alt it is a **floor**: that panel spends its cells on pane names, so it asks for ~12 per column and takes the larger of the two, capped at ⅔ of the screen. Raising this widens the panel; lowering it will not squeeze names out of a screen with room for them. |

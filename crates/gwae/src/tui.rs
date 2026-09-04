@@ -3920,6 +3920,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // the abnormal exits too, not just ⌥+Shift+q.
     crate::reap::install();
     let _reap_guard = crate::reap::Guard;
+    // Hold idle/display sleep while the session lives (macOS `caffeinate`,
+    // no-op elsewhere or when disabled). Tied to the process lifetime via the
+    // guard's drop, and reconciled on config reload below.
+    let mut keep_awake = crate::keepawake::Guard::acquire(cfg.keep_awake);
     enable_raw_mode().map_err(|e| {
         eprintln!("raw mode: {e}");
         1
@@ -4386,13 +4390,23 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         let (new_pal, bad) = new.palette_checked();
                         // Keep the panes and their harnesses exactly as they
                         // are; only adopt what is re-read every frame.
+                        let was_awake = cfg.keep_awake;
                         cfg.adopt_appearance(new);
                         pal = new_pal;
                         reload_note_anchor = None;
-                        reload_note = Some(match bad {
+                        let mut note = match bad {
                             Some(name) => format!("unknown theme {name:?}"),
                             None => format!("config reloaded: {}", cfg.theme_name()),
-                        });
+                        };
+                        if was_awake != cfg.keep_awake {
+                            keep_awake.refresh(cfg.keep_awake);
+                            note.push_str(if cfg.keep_awake {
+                                "; keep-awake on"
+                            } else {
+                                "; keep-awake off"
+                            });
+                        }
+                        reload_note = Some(note);
                         dirty = true;
                     }
                     Err(e) => {
@@ -4430,6 +4444,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     // screen and paint into a screen it never entered.
                     tracing::info!("hot reload: binary changed, execing new image");
                     restore_terminal(&mut stdout, kitty_keyboard);
+                    // Drop the sleep assertion before the exec: the new image
+                    // acquires its own guard at startup, and the old
+                    // `caffeinate` (bound with `-w` to this pid) exits with us.
+                    keep_awake.release();
                     match perform_reload(&layout, &panes, &agent_panes, spawn_dir.as_deref()) {
                         // `Ok` is uninhabited: the process is gone.
                         Ok(never) => match never {},
@@ -4438,6 +4456,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             // and still owns every pane. Put the screen back
                             // and carry on rather than dying with them.
                             tracing::error!("hot reload failed: {e}");
+                            // Re-acquire the sleep assertion we released
+                            // before the exec: this image is still the
+                            // session, so it keeps the promise the config
+                            // makes.
+                            keep_awake.refresh(cfg.keep_awake);
                             if let Err(e) = re_enter_terminal(&mut stdout) {
                                 tracing::error!("restore after failed reload: {e}");
                                 break 'main;

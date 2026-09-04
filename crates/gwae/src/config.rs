@@ -114,6 +114,13 @@ pub struct Config {
     /// possible input latency (backspace/delete will feel instant).
     #[serde(default = "default_input_poll_ms")]
     pub input_poll_ms: u64,
+    /// Hold a macOS `caffeinate` assertion while gwae runs, so idle and
+    /// display sleep never pause the panes. macOS-only; elsewhere this key
+    /// does nothing. Default `false`: an awake machine is the user's call,
+    /// never the multiplexer's presumption. Note the honest limit: a closed
+    /// lid still sleeps outside clamshell mode (power + external
+    /// display + external input).
+    pub keep_awake: bool,
     /// Staying current: whether gwae checks for new releases, and how it is
     /// allowed to upgrade itself. See `docs/UPDATES.md`.
     pub update: Update,
@@ -144,6 +151,7 @@ impl Default for Config {
             cowsay: Cowsay::default(),
             cell_labels: true,
             input_poll_ms: default_input_poll_ms(),
+            keep_awake: false,
             update: Update::default(),
         }
     }
@@ -233,6 +241,10 @@ impl Config {
             harness_dirs,
             ..new
         };
+        // `keep_awake` rides along with the reload rather than being pinned:
+        // it is a behavior toggle like the theme, applied live to the running
+        // session (the guard is reconciled in the render loop). `startup_panes`
+        // above stays pinned because it was consumed once at launch.
     }
 
     /// Directory configured for a particular harness, falling back to `agent_dir`.
