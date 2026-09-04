@@ -62,6 +62,8 @@ pub enum Effect {
     DirPick,
     /// Toggle the cheat-sheet HUD.
     ToggleHud,
+    /// Toggle the macOS keep-awake assertion.
+    ToggleKeepAwake,
     /// Quit gwae.
     Quit,
     /// Scroll the row viewport by this many cells.
@@ -314,6 +316,14 @@ pub const BINDS: &[Bind] = &[
         group: Group::Panes,
         desc: "toggle help",
         effect: Effect::ToggleHud,
+    },
+    Bind {
+        trigger: Trigger::Chord('w'),
+        hint: "keeps the Mac awake while gwae runs",
+        glyph: Some('\u{2211}'),
+        group: Group::Panes,
+        desc: "keep awake",
+        effect: Effect::ToggleKeepAwake,
     },
     Bind {
         trigger: Trigger::EnterChord { shift: false },

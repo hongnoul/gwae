@@ -96,6 +96,11 @@ multiplexer's presumption. Set `GWAE_NO_KEEP_AWAKE=1` to force it off
 (scripted setups, tests). Editing the key applies live to the running
 session, with a one-line toast confirming the change.
 
+`⌥+w` toggles it mid-session and writes the choice back to the config, so
+the keypress survives a restart. While the assertion is held the focus ring
+paints red — the state is visible without opening anything, on every theme.
+Toggling off restores your theme exactly.
+
 Honest limit: this does **not** defeat lid-close sleep. A closed lid still
 sleeps the machine unless it is in clamshell mode (power + external display
 + external input) or sleep is disabled outright (`sudo pmset disablesleep

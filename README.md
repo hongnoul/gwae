@@ -92,6 +92,7 @@ All chords use `⌥` on macOS, `Alt` elsewhere. Other keys go to the focused pan
 ⌥+Shift+h/j/k/l move pane
 ⌥+g            jump to pane that needs attention
 ⌥+t            theme picker
+⌥+w            keep Mac awake (focus ring turns red)
 ⌥+/            help
 ⌥+q            kill pane
 click          focus pane

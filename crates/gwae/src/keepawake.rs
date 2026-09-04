@@ -150,6 +150,40 @@ pub fn doctor_line(enabled: bool) -> String {
     line_for(enabled, &availability())
 }
 
+/// The focus-ring color while the assertion is held: unmissable red.
+///
+/// A fixed color rather than a theme key, because it is a *state* signal,
+/// not a taste: red means "this machine is deliberately not sleeping", and
+/// that must read the same on every preset.
+pub const ACTIVE_ACCENT: gwae_term::CColor = gwae_term::CColor::Rgb(0xff, 0x40, 0x40);
+
+/// The palette this frame should paint with: the configured one, with the
+/// accent swapped for [`ACTIVE_ACCENT`] while the guard holds an assertion.
+///
+/// Layered at render time rather than stored, so toggling off restores the
+/// theme exactly and a config reload can never bake the red in.
+pub fn effective_palette(base: &crate::theme::Palette, guard: &Guard) -> crate::theme::Palette {
+    let mut pal = *base;
+    if guard.active() {
+        pal.accent = ACTIVE_ACCENT;
+    }
+    pal
+}
+
+/// [`effective_palette`] against a described state, so tests can cover the
+/// active branch without spawning `caffeinate`.
+#[cfg(test)]
+pub fn effective_palette_for_test(
+    base: &crate::theme::Palette,
+    active: bool,
+) -> crate::theme::Palette {
+    let mut pal = *base;
+    if active {
+        pal.accent = ACTIVE_ACCENT;
+    }
+    pal
+}
+
 /// [`doctor_line`] against a described machine, so tests never depend on
 /// what happens to be installed on the one running them.
 fn line_for(enabled: bool, avail: &Availability) -> String {
@@ -238,5 +272,29 @@ mod tests {
         let _ = availability();
         let _ = doctor_line(false);
         let _ = doctor_line(true);
+    }
+
+    #[test]
+    fn inactive_guard_leaves_every_color_alone() {
+        // Toggling off must restore the theme exactly: the red is layered
+        // per frame, never written into the palette a reload would keep.
+        let g = Guard::acquire(false);
+        for base in [
+            crate::theme::Palette::CATPPUCCIN_MOCHA,
+            crate::theme::Palette::NORD,
+        ] {
+            assert_eq!(effective_palette(&base, &g), base);
+            assert_eq!(effective_palette_for_test(&base, false), base);
+        }
+    }
+
+    #[test]
+    fn active_state_swaps_only_the_accent() {
+        let base = crate::theme::Palette::NORD;
+        let on = effective_palette_for_test(&base, true);
+        assert_eq!(on.accent, ACTIVE_ACCENT, "the ring must read as red");
+        let mut rest = on;
+        rest.accent = base.accent;
+        assert_eq!(rest, base, "nothing else may change");
     }
 }

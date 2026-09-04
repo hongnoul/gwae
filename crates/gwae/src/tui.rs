@@ -461,6 +461,19 @@ fn write_agent_dir(path: &std::path::Path, dir: &str) -> Result<(), String> {
     std::fs::write(path, out).map_err(|e| e.to_string())
 }
 
+/// Persist the `⌥+w` toggle as `keep_awake` in the config file, so the
+/// keypress and the file agree and the choice survives a restart.
+///
+/// Same comment-preserving rewrite as the spawn-dir save path.
+fn write_keep_awake(path: &std::path::Path, on: bool) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let out = crate::agent::set_scalar_text(&text, "keep_awake", if on { "true" } else { "false" });
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, out).map_err(|e| e.to_string())
+}
+
 /// Persist a per-harness spawn directory: `harness_dirs.<harness> = dir`
 /// when `harness` is non-empty, otherwise falls back to `agent_dir`.
 ///
@@ -3404,6 +3417,11 @@ enum Cmd {
     /// Toggle the centered cheat-sheet HUD (`⌥+/`), the same overlay shown
     /// once at startup. Any other key still dismisses it.
     ToggleHud,
+    /// Toggle `keep_awake` (`⌥+w`): hold or release the macOS `caffeinate`
+    /// assertion that keeps idle/display sleep from freezing the panes.
+    /// Resolved in the main loop (which owns the guard and the config), not
+    /// here.
+    ToggleKeepAwake,
     /// One digit of a column jump (`⌥+1`, or `⌥+1 2` while Option stays down).
     ///
     /// Deliberately *not* resolved to a column here: a single keypress is
@@ -3628,6 +3646,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
             Char('\u{2020}') => return Some(Cmd::ThemePick(0)),         // † (Option+t)
             Char('\u{2202}') => return Some(Cmd::DirPick),              // ∂ (Option+d)
+            Char('\u{2211}') => return Some(Cmd::ToggleKeepAwake),      // ∑ (Option+w)
             Char('\u{f7}') => return Some(Cmd::ToggleHud),              // ÷ (Option+/)
             _ => {}
         }
@@ -3700,6 +3719,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             'g' => return Some(Cmd::SmartJump),
             't' => return Some(Cmd::ThemePick(0)),
             'd' => return Some(Cmd::DirPick),
+            'w' => return Some(Cmd::ToggleKeepAwake),
             '/' | '?' => return Some(Cmd::ToggleHud),
             _ if c.is_ascii_digit() => {
                 return Some(Cmd::JumpDigit(c.to_digit(10).unwrap_or(1)));
@@ -4764,6 +4784,47 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     hud_active = !hud_was_active;
                                     dirty = true;
                                 }
+                                Cmd::ToggleKeepAwake => {
+                                    // macOS-only: elsewhere the key does
+                                    // nothing, so say so rather than
+                                    // silently typing into the pane.
+                                    if !cfg!(target_os = "macos") {
+                                        reload_note_anchor = None;
+                                        reload_note = Some("keep-awake is macOS-only".to_string());
+                                    } else {
+                                        cfg.keep_awake = !cfg.keep_awake;
+                                        keep_awake.refresh(cfg.keep_awake);
+                                        reload_note_anchor = None;
+                                        reload_note = Some(
+                                            match write_keep_awake(&cfg_path, cfg.keep_awake) {
+                                                Ok(()) => {
+                                                    if cfg.keep_awake {
+                                                        "keep-awake on: Mac stays up while gwae runs (saved)"
+                                                        .to_string()
+                                                    } else {
+                                                        "keep-awake off (saved)".to_string()
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    if cfg.keep_awake {
+                                                        format!(
+                                                        "keep-awake on (this session; save error: {e})"
+                                                    )
+                                                    } else {
+                                                        format!(
+                                                        "keep-awake off (this session; save error: {e})"
+                                                    )
+                                                    }
+                                                }
+                                            },
+                                        );
+                                        // A config write bumps the mtime;
+                                        // adopt it now so the reload poll
+                                        // does not echo our own toggle back.
+                                        cfg_mtime = Config::mtime(&cfg_path);
+                                    }
+                                    dirty = true;
+                                }
                                 Cmd::DirPick => {
                                     // Rebuilt on every open: repos are cloned and
                                     // deleted while gwae runs, and the scan is a
@@ -5226,6 +5287,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             .then(|| plan_center_minimap(cols, rows, &layout, &cfg.minimap))
             .flatten();
         if dirty {
+            // While the keep-awake assertion is held the focus ring paints
+            // red: the state must be visible without opening anything, and a
+            // derived copy keeps the theme intact when it is released.
+            let pal = crate::keepawake::effective_palette(&pal, &keep_awake);
             render_frame(
                 &mut frame,
                 &layout,
@@ -7540,6 +7605,7 @@ mod tests {
                 Effect::ThemePick => Cmd::ThemePick(0),
                 Effect::DirPick => Cmd::DirPick,
                 Effect::ToggleHud => Cmd::ToggleHud,
+                Effect::ToggleKeepAwake => Cmd::ToggleKeepAwake,
                 Effect::Quit => Cmd::Quit,
                 Effect::Scroll(n) => Cmd::Scroll(n),
                 Effect::Unverifiable => return None,
@@ -7613,6 +7679,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn keep_awake_toggle_reaches_the_main_loop_on_both_paths() {
+        // Option-as-Meta path and the macOS glyph path must both decode as
+        // the toggle: the cross-check test covers the BINDS entry, but this
+        // pins the exact events so a dispatcher refactor cannot silently turn
+        // ⌥+w into pane input.
+        let meta = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
+        assert_eq!(handle_key(&meta), Some(Cmd::ToggleKeepAwake));
+        let glyph = KeyEvent::new(KeyCode::Char('\u{2211}'), KeyModifiers::NONE);
+        assert_eq!(handle_key(&glyph), Some(Cmd::ToggleKeepAwake));
+        // ...while a bare `w` still types into the pane.
+        let bare = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE);
+        assert!(
+            matches!(handle_key(&bare), Some(Cmd::Input(_))),
+            "bare w must reach the pane"
+        );
+    }
+
+    #[test]
+    fn keep_awake_red_ring_layers_over_the_theme_and_releases() {
+        // The ring is derived per frame, never stored: toggling off must
+        // restore the theme exactly, and a theme edit mid-session must not
+        // bake the red in.
+        let nord = crate::theme::Palette::NORD;
+        let off = crate::keepawake::Guard::acquire(false);
+        assert_eq!(
+            crate::keepawake::effective_palette(&nord, &off),
+            nord,
+            "inactive guard must leave the theme untouched"
+        );
+        // An active guard swaps only the accent; everything else survives.
+        let fake_active = crate::keepawake::effective_palette_for_test(&nord, true);
+        assert_eq!(
+            fake_active.accent,
+            crate::keepawake::ACTIVE_ACCENT,
+            "active guard must paint the ring red"
+        );
+        let mut rest = fake_active;
+        rest.accent = nord.accent;
+        assert_eq!(rest, nord, "only the accent may change");
     }
 
     #[test]
