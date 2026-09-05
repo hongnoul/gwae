@@ -10,8 +10,8 @@ provides=('gwae')
 conflicts=('gwae')
 source_x86_64=("gwae-$pkgver-x86_64.tar.gz::https://github.com/hongnoul/gwae/releases/download/v$pkgver/gwae-x86_64-unknown-linux-musl.tar.gz")
 source_aarch64=("gwae-$pkgver-aarch64.tar.gz::https://github.com/hongnoul/gwae/releases/download/v$pkgver/gwae-aarch64-unknown-linux-musl.tar.gz")
-sha256sums_x86_64=('ef636c868450641b76064aed6da2f3b9f564407d5f3771c3712696846ca1a1d6')
-sha256sums_aarch64=('ebc6603285f87bb2441a31407056eb184eb5cc1c82f4ae197ea6295777735184')
+sha256sums_x86_64=('9b3d95dfc62cdd77786366f8c033c135c2e7287858dd8b0f42e53766d02514c5')
+sha256sums_aarch64=('615695d2ccd01e98d57bebe740e5f9c0a71a55d63a0320e00e2eb076438a3fa3')
 
 package() {
   install -Dm755 gwae "$pkgdir/usr/bin/gwae"

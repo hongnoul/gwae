@@ -12,21 +12,21 @@ class Gwae < Formula
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/hongnoul/gwae/releases/download/v1.1.0/gwae-aarch64-apple-darwin.tar.gz"
-      sha256 "c81f64ed1a730e445d5bed70782c06865ede16661fb450b9faccc314778819e2"
+      url "https://github.com/hongnoul/gwae/releases/download/v1.2.0/gwae-aarch64-apple-darwin.tar.gz"
+      sha256 "d7cc8819d980226f28c79c3c2b2281544910394e2a88c5cb06e998c4159c4654"
     else
-      url "https://github.com/hongnoul/gwae/releases/download/v1.1.0/gwae-x86_64-apple-darwin.tar.gz"
-      sha256 "a60e09976068318acee90bf2cd888c6f8318aeca0042a580cce4a1fb4b505fae"
+      url "https://github.com/hongnoul/gwae/releases/download/v1.2.0/gwae-x86_64-apple-darwin.tar.gz"
+      sha256 "075b44088ecc926b8a1f0b032a68194be5859d565e38edc0dda34c11e042e873"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/hongnoul/gwae/releases/download/v1.1.0/gwae-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "ebc6603285f87bb2441a31407056eb184eb5cc1c82f4ae197ea6295777735184"
+      url "https://github.com/hongnoul/gwae/releases/download/v1.2.0/gwae-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "615695d2ccd01e98d57bebe740e5f9c0a71a55d63a0320e00e2eb076438a3fa3"
     else
-      url "https://github.com/hongnoul/gwae/releases/download/v1.1.0/gwae-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "ef636c868450641b76064aed6da2f3b9f564407d5f3771c3712696846ca1a1d6"
+      url "https://github.com/hongnoul/gwae/releases/download/v1.2.0/gwae-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "9b3d95dfc62cdd77786366f8c033c135c2e7287858dd8b0f42e53766d02514c5"
     end
   end
 
