@@ -1522,7 +1522,8 @@ mod tests {
         // the key is inert, so asking would be setup pretending not to know.
         match keep_awake_question() {
             Some(q) => {
-                assert!(cfg!(target_os = "macos"), "asked off macOS");
+                #[cfg(not(target_os = "macos"))]
+                panic!("asked off macOS");
                 assert_eq!(q.key, "keep_awake");
                 assert_eq!(q.default_value(), "false", "awake is the user's call");
                 // Both answers must be values the real parser accepts, or we
@@ -1542,10 +1543,10 @@ mod tests {
                 // Accepting every default stays a behavior no-op.
                 assert!(!Config::default().keep_awake);
             }
-            None => assert!(
-                !cfg!(target_os = "macos"),
-                "macOS must be asked about keep-awake"
-            ),
+            None => {
+                #[cfg(target_os = "macos")]
+                panic!("macOS must be asked about keep-awake");
+            }
         }
     }
 
@@ -1566,8 +1567,10 @@ mod tests {
         cfg.adopt_appearance(new);
         assert!(cfg.keep_awake, "live reload must adopt keep-awake");
         // ...while keys the session consumed at launch stay pinned.
-        let mut cfg = Config::default();
-        cfg.startup_panes = 4;
+        let mut cfg = Config {
+            startup_panes: 4,
+            ..Default::default()
+        };
         let new: Config = toml::from_str("theme = \"nord\"\nstartup_panes = 9\n").unwrap();
         cfg.adopt_appearance(new);
         assert_eq!(cfg.startup_panes, 4, "startup_panes stays pinned");
