@@ -59,6 +59,10 @@ impl Guard {
     /// exec replaces this process and the new image acquires its own guard
     /// from the handed-over config. `-w` ends the old `caffeinate` once this
     /// pid is gone, so no orphan survives even if the kill races the exec.
+    ///
+    /// Unix-only, like the hot-reload exec path that calls it: Windows has
+    /// no exec handover, so no caller there.
+    #[cfg(unix)]
     pub fn release(&mut self) {
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();

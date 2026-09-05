@@ -1516,38 +1516,39 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn keep_awake_is_macos_only_and_off_by_default() {
-        // The question exists exactly where the key works. On other platforms
-        // the key is inert, so asking would be setup pretending not to know.
-        match keep_awake_question() {
-            Some(q) => {
-                #[cfg(not(target_os = "macos"))]
-                panic!("asked off macOS");
-                assert_eq!(q.key, "keep_awake");
-                assert_eq!(q.default_value(), "false", "awake is the user's call");
-                // Both answers must be values the real parser accepts, or we
-                // would be creating the broken config `doctor` blames on users.
-                for o in &q.options {
-                    let cfg: Config = toml::from_str(&format!("{} = {}\n", q.key, o.value))
-                        .expect("keep_awake option parses");
-                    assert_eq!(cfg.keep_awake, o.value == "true");
-                }
-                // It is the last question: a behavior toggle, not a look, so
-                // it comes after everything the preview illustrates.
-                let qs = all();
-                assert_eq!(qs.last().map(|q| q.key), Some("keep_awake"));
-                // And it earns no preview: a picture of an unchanged grid
-                // would teach that the preview is decorative.
-                assert!(previewable(&q, &[]).is_none(), "behavior needs no picture");
-                // Accepting every default stays a behavior no-op.
-                assert!(!Config::default().keep_awake);
-            }
-            None => {
-                #[cfg(target_os = "macos")]
-                panic!("macOS must be asked about keep-awake");
-            }
+    fn keep_awake_is_asked_and_off_by_default() {
+        // The question exists exactly where the key works.
+        let Some(q) = keep_awake_question() else {
+            panic!("macOS must be asked about keep-awake");
+        };
+        assert_eq!(q.key, "keep_awake");
+        assert_eq!(q.default_value(), "false", "awake is the user's call");
+        // Both answers must be values the real parser accepts, or we
+        // would be creating the broken config `doctor` blames on users.
+        for o in &q.options {
+            let cfg: Config = toml::from_str(&format!("{} = {}\n", q.key, o.value))
+                .expect("keep_awake option parses");
+            assert_eq!(cfg.keep_awake, o.value == "true");
         }
+        // It is the last question: a behavior toggle, not a look, so
+        // it comes after everything the preview illustrates.
+        let qs = all();
+        assert_eq!(qs.last().map(|q| q.key), Some("keep_awake"));
+        // And it earns no preview: a picture of an unchanged grid
+        // would teach that the preview is decorative.
+        assert!(previewable(&q, &[]).is_none(), "behavior needs no picture");
+        // Accepting every default stays a behavior no-op.
+        assert!(!Config::default().keep_awake);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn keep_awake_is_macos_only() {
+        // Off macOS the key is inert, so asking would be setup pretending
+        // not to know.
+        assert!(keep_awake_question().is_none(), "asked off macOS");
     }
 
     #[test]
