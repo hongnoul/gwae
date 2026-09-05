@@ -7,7 +7,7 @@
 class Gwae < Formula
   desc "niri's scrolling tiling for your CLI agents, in any terminal"
   homepage "https://github.com/hongnoul/gwae"
-  version "1.1.0"
+  version "1.2.0"
   license "MIT"
 
   on_macos do

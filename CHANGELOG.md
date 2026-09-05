@@ -6,8 +6,21 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-05
+
+### Added
+- **Setup asks the harness first.** Onboarding leads with the Agent harness question (built from what is actually on `PATH`, capped at nine so digit shortcuts stay unambiguous), so a user who bails after two questions has still picked their harness and their colors. The agent gateway no longer asks twice: on a fresh machine it hands the first pick to onboarding and execs what onboarding saved.
+- **Keep the Mac awake while agents work (`⌥+w`, `keep_awake`).** Holds an idle/display sleep assertion via `caffeinate` so long agent runs are not frozen by sleep; the focus ring turns red while active. Offered once during onboarding (macOS only, off by default), toggled live with `⌥+w`.
+- **Scroll pane history like jcode.** `Ctrl+Shift+J/K` and the mouse wheel scroll the focused pane's scrollback, with the offset clamped on resize and feed. CapsLock no longer fakes the scroll chord, and `Ctrl+Shift` still reaches kitty-aware inner panes (jcode scroll vs prompt preserved).
+- **Centered `⌥`-hold dashboard with a status tally.** The hold panel leads with which agent needs you (glyph + digit + pane title, idle/failed age) above the keybinds, with proportional strip widths and single-pane key hints.
+
 ### Removed
 - Clipboard features: `⌥+c`/`⌥+v`/`⌥+Shift+c`, drag-to-clipboard, OSC 52, image copy (`shot.rs`, `image_clipboard`), bracketed-paste handling. Host native paste/copy is used instead.
+
+### Fixed
+- Spawn-dir picker keeps the typed path as the top pick and saves the harness choice on close; per-harness default directories via `harness_dirs`.
+- Splash shows on every `gwae init`, keeps the animated banner through the whole flow, and drops the scrolling tagline.
+- `⌥+d` candidates build on demand so cold runners no longer sample an empty picker (spawndir e2e de-flaked).
 
 ## [1.1.0] - 2026-08-28
 
