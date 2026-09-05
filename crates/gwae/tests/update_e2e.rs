@@ -162,6 +162,39 @@ fn a_receipt_pointing_somewhere_else_does_not_speak_for_this_binary() {
         line.contains("detected from path"),
         "a stale receipt must be ignored, got: {line}"
     );
+    // Ignoring must be loud: the user who sees "detected from path" alone
+    // cannot tell a missing receipt from a receipt for a different install.
+    assert!(
+        line.contains("/somewhere/else/bin"),
+        "the ignored receipt must be named, got: {line}"
+    );
+}
+
+#[test]
+fn upgrade_names_the_receipt_it_is_ignoring() {
+    // Same stale-receipt machine as above, but pinned to `unknown` so the run
+    // reaches the refusal branch: the refusal must point at the receipt so the
+    // fix is obvious (reinstall there, move this binary, or pin `source`).
+    let dir = sandbox();
+    std::fs::write(
+        dir.join("state/gwae/install.toml"),
+        "source = \"install.sh\"\ndir = \"/somewhere/else/bin\"\nversion = \"0.0.1\"\n",
+    )
+    .expect("write receipt");
+    let (out, _, code) = run(
+        &dir,
+        Some("[update]\nsource = \"unknown\"\n"),
+        &["upgrade", "--check"],
+    );
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("will not guess"),
+        "must still refuse: {out}"
+    );
+    assert!(
+        out.contains("/somewhere/else/bin"),
+        "the refusal must name the ignored receipt: {out}"
+    );
 }
 
 #[test]

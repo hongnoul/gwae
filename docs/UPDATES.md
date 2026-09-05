@@ -129,6 +129,10 @@ dir = "/home/u/.local/bin"
 version = "1.0.1"
 ```
 
+`make install` writes the same file with `source = "source"`, so a checkout
+build knows it is a checkout even when `target/` detection cannot see it (e.g.
+the binary was copied to a `bin` dir on `PATH`).
+
 State, not config: it is machine-written bookkeeping, so it stays out of
 `~/.config/gwae`, which is a directory the user is invited to hand-edit.
 Deleting it is safe and costs a fallback to path detection. It is ignored

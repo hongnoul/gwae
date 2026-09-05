@@ -820,6 +820,15 @@ pub fn run_upgrade(configured: Option<Source>, check_only: bool, assume_yes: boo
     // So this is checked before the up-to-date exit, not after it.
     if matches!(p, Plan::Ask) {
         println!("  latest:  {latest}");
+        if let Some(r) = ignored_receipt(&facts) {
+            println!(
+                "\nnote: there is an install receipt for {} ({} {}), but this binary",
+                r.dir.display(),
+                r.source.as_str(),
+                r.version
+            );
+            println!("runs from {}, so the receipt does not apply to it.", facts.exe.display());
+        }
         println!("\ngwae cannot tell how it was installed, so it will not guess.");
         println!("Set the route in your config and re-run:");
         println!("  [update]");
@@ -879,12 +888,30 @@ fn provenance(f: &Facts) -> String {
     if f.configured.is_some() {
         return " (from config)".to_string();
     }
-    match &f.receipt {
-        Some(r) if r.dir.as_os_str().is_empty() || same_dir(f.exe.parent(), &r.dir) => {
-            " (from install receipt)".to_string()
+    if let Some(r) = &f.receipt {
+        if r.dir.as_os_str().is_empty() || same_dir(f.exe.parent(), &r.dir) {
+            return " (from install receipt)".to_string();
         }
-        _ => " (detected from path)".to_string(),
+        // A receipt exists but describes a different install (e.g. the binary
+        // was copied elsewhere, or a second install lives on PATH first).
+        // Say so: otherwise "detected from path" reads as "gwae knows nothing",
+        // when it actually knows something that just does not apply here.
+        return format!(
+            " (detected from path; install receipt for {} ignored)",
+            r.dir.display()
+        );
     }
+    " (detected from path)".to_string()
+}
+
+/// A receipt that exists but must not speak for this binary, because the
+/// binary no longer sits in the directory the receipt names.
+fn ignored_receipt(f: &Facts) -> Option<&Receipt> {
+    let r = f.receipt.as_ref()?;
+    if r.dir.as_os_str().is_empty() || same_dir(f.exe.parent(), &r.dir) {
+        return None;
+    }
+    Some(r)
 }
 
 /// A y/N prompt on stdin. `false` when stdin is not a terminal, so a piped
@@ -1060,6 +1087,22 @@ mod tests {
         let mut moved = facts("/opt/homebrew/bin/gwae");
         moved.receipt = Some(receipt);
         assert_eq!(detect(&moved), Source::Homebrew);
+        // ...but the reason must be visible, not "detected from path" as if
+        // there were nothing else to say. This is the user-visible half of
+        // the stale-receipt guarantee: ignoring must be loud.
+        assert!(
+            provenance(&moved).contains("/Users/x/.local/bin"),
+            "ignored receipt must be named: {}",
+            provenance(&moved)
+        );
+        assert!(
+            ignored_receipt(&moved).is_some(),
+            "the Ask branch must have a note to print"
+        );
+        assert!(
+            ignored_receipt(&f).is_none(),
+            "an applying receipt is not an ignored one"
+        );
     }
 
     #[test]

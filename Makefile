@@ -48,7 +48,17 @@ install: build $(if $(KEEP_CONFIG),,reset-config)
 		codesign -f -s - "$$tmp" >/dev/null 2>&1 || true; \
 	fi; \
 	mv -f "$$tmp" "$$dir/gwae"; \
-	echo "installed gwae -> $$dir/gwae (atomic: cp .new -> codesign -> mv)"
+	echo "installed gwae -> $$dir/gwae (atomic: cp .new -> codesign -> mv)"; \
+	state_dir="$${XDG_STATE_HOME:-$$HOME/.local/state}/gwae"; \
+	if mkdir -p "$$state_dir" 2>/dev/null; then \
+		version="$$($$dir/gwae --version 2>/dev/null || true)"; \
+		version="$${version##* }"; \
+		{ echo "# Written by gwae's Makefile (make install); read by gwae upgrade. Safe to delete."; \
+		  echo 'source = "source"'; \
+		  echo "dir = \"$$dir\""; \
+		  echo "version = \"$$version\""; \
+		} > "$$state_dir/install.toml"; \
+	fi
 
 ## Install without clearing preferences.
 install-keep:
