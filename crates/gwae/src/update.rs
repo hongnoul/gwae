@@ -827,7 +827,10 @@ pub fn run_upgrade(configured: Option<Source>, check_only: bool, assume_yes: boo
                 r.source.as_str(),
                 r.version
             );
-            println!("runs from {}, so the receipt does not apply to it.", facts.exe.display());
+            println!(
+                "runs from {}, so the receipt does not apply to it.",
+                facts.exe.display()
+            );
         }
         println!("\ngwae cannot tell how it was installed, so it will not guess.");
         println!("Set the route in your config and re-run:");

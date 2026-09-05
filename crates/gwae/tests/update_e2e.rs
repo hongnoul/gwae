@@ -187,10 +187,7 @@ fn upgrade_names_the_receipt_it_is_ignoring() {
         &["upgrade", "--check"],
     );
     assert_eq!(code, 1, "{out}");
-    assert!(
-        out.contains("will not guess"),
-        "must still refuse: {out}"
-    );
+    assert!(out.contains("will not guess"), "must still refuse: {out}");
     assert!(
         out.contains("/somewhere/else/bin"),
         "the refusal must name the ignored receipt: {out}"
