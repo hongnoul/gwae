@@ -320,12 +320,21 @@ fn narrow_panes_fall_back_to_the_plain_word() {
     // is genuinely too narrow for it.
     let sb = Sandbox::new("[minimap]\nshow = false\nmode = \"off\"\n");
     let inner = format!("{} init", env!("CARGO_BIN_EXE_gwae"));
+    // Wait for the inner harness question's key hints, which only paint once
+    // the splash has handed over to question 1 inside the pane. The old
+    // signal was `catppuccin-mocha`, but that arrived via the outer session's
+    // "config reloaded" toast: the inner init used to rewrite `input_poll_ms`
+    // to 1 on every run, and the outer TUI announced the rewrite. Now that
+    // 1ms is the default there is no rewrite and no toast, so the test timed
+    // out waiting for text nothing prints anymore. The footer fragment is
+    // machine-independent (harness names and PATHs are not) and fits the
+    // ~10-cell pane without wrapping mid-phrase.
     let out = capture_no_hud(&sb, &["run", &inner], 48, 30, |s| {
-        strip_ansi(s).contains("catppuccin-mocha")
+        strip_ansi(s).contains("jk pick")
     });
     let plain = strip_ansi(&out);
     assert!(
-        plain.contains("catppuccin-mocha"),
+        plain.contains("jk pick"),
         "onboarding never ran in the narrow pane"
     );
     assert!(
