@@ -5842,10 +5842,16 @@ mod tests {
         // The forwarded bytes must preserve the chord: a kitty-aware harness
         // decodes CSI-u, so Ctrl+Shift+K must not collapse to a bare 0x0b
         // (plain Ctrl+K), which is jcode's prompt jump, not its scroll.
+        // Both shift forms forward identically: the explicit CONTROL|SHIFT
+        // lowercase event and Kitty's CONTROL + uppercase codepoint.
         let k = KeyEvent::new(KeyCode::Char('k'), shift_ctrl);
         let j = KeyEvent::new(KeyCode::Char('j'), shift_ctrl);
+        let kitty_k = KeyEvent::new(KeyCode::Char('K'), KeyModifiers::CONTROL);
+        let kitty_j = KeyEvent::new(KeyCode::Char('J'), KeyModifiers::CONTROL);
         assert_eq!(key_bytes(&k), b"\x1b[107;6u".to_vec());
         assert_eq!(key_bytes(&j), b"\x1b[106;6u".to_vec());
+        assert_eq!(key_bytes(&kitty_k), b"\x1b[107;6u".to_vec());
+        assert_eq!(key_bytes(&kitty_j), b"\x1b[106;6u".to_vec());
     }
 
     #[test]
