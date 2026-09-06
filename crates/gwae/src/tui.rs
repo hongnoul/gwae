@@ -3790,7 +3790,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         // ⌥+s and gwae would split the column instead of forwarding the key.
         // That silently ate chords the focused pane owns (jcode binds
         // ⌥+Shift+s to copy), so shifted variants fall through to the pane.
-        if shift && !matches!(c, 'q' | '/' | '?' | ';' | ':' | 'c') {
+        if shift && !matches!(c, 'q' | '/' | '?' | ';' | ':') {
             // Forward the shifted codepoint. Some terminals report Shift as a
             // modifier bit alongside the *unshifted* char; `key_bytes` encodes
             // `ev.code` verbatim and has no shift handling for `Char`, so the
