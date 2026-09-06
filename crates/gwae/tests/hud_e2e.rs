@@ -249,8 +249,39 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     );
     let _ = s.drain();
     widen(&mut s, 3);
-    s.send(&alt(b'h'));
-    let raw = s.peek(100);
+    // The panel paints over several frames; on a loaded runner one peek can
+    // catch it mid-paint (hints up, map tiles not yet), so re-reveal and
+    // re-collect until the map row parses rather than asserting on the
+    // first window. Each chord re-opens the hold, so resending is free.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let raw = loop {
+        s.send(&alt(b'h'));
+        let raw = s.peek(150);
+        if visible(&raw).contains("attention") {
+            let mut probe = Vt100Grid::new(Size {
+                cols: 140,
+                rows: 30,
+            });
+            probe.feed(raw.as_bytes());
+            let found = (0..30).any(|y| {
+                (1..140)
+                    .filter(|&x| {
+                        probe.cell(x, y).ch.is_ascii_digit()
+                            && matches!(probe.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
+                    })
+                    .count()
+                    >= 2
+            });
+            if found {
+                break raw;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "dashboard never painted a populated minimap row; last got:\n{:?}",
+            visible(&raw)
+        );
+    };
     s.kill();
     assert!(
         visible(&raw).contains("attention"),

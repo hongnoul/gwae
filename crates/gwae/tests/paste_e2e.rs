@@ -7,6 +7,12 @@
 //! These tests drive the real binary through a real PTY with a stub `pbpaste`
 //! on PATH, so the clipboard read is hermetic.
 
+//! macOS-only: the stubs fake `pbpaste`, and the helper table differs on
+//! other platforms (wl-paste/xclip). Faking the whole table is not worth
+//! the flake surface, so the entire file — helpers included, which keeps
+//! `clippy -D warnings` green on Linux — compiles out elsewhere.
+#![cfg(target_os = "macos")]
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
