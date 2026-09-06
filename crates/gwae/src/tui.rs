@@ -173,6 +173,24 @@ fn logical_char(ev: &KeyEvent) -> Option<char> {
     }
 }
 
+/// True when this event is the jcode-style transcript-scroll chord
+/// (Ctrl+Shift+J/K) that gwae otherwise claims for its own history line
+/// scroll (see `handle_key`).
+///
+/// The dispatch site uses this to prefer the harness: when the focused pane
+/// is an agent pane, the chord is forwarded to the child untouched so an
+/// inner jcode keeps its native scroll. Everywhere else gwae keeps the
+/// chord, so plain shells still scroll a line via keyboard.
+fn is_harness_scroll_chord(ev: &KeyEvent) -> bool {
+    if ev.modifiers.contains(KeyModifiers::ALT) {
+        return false;
+    }
+    if !ev.modifiers.contains(KeyModifiers::CONTROL) || !physical_shift(ev) {
+        return false;
+    }
+    matches!(logical_char(ev), Some('j') | Some('k'))
+}
+
 /// How long a pane without OSC 133 shell integration must stay silent before
 /// the activity heuristic calls it idle ("wants attention") instead of
 /// working. Long enough that a compiler pausing between crates doesn't
@@ -3727,13 +3745,12 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         // This sits above the generic fallthrough so the chord never types
         // into the child.
         //
-        // Known tradeoff: an inner jcode keeps its own Ctrl+Shift+J/K line
-        // scroll, which this shadows at the multiplexer layer (the inner
-        // pane never sees the chord). Plain Ctrl+J/K still reach it for
-        // prompt jump, and Shift+wheel scrolls gwae history past a
-        // reporting child, so no scroll direction is ever unreachable —
-        // but an inner jcode's own line-scroll chord is the price of a
-        // multiplexer-level one.
+        // Harness exception lives at the dispatch site, not here: when the
+        // focused pane is an agent pane, the event loop forwards this chord
+        // to the child untouched (see `is_harness_scroll_chord`), so an
+        // inner jcode keeps its own native transcript scroll. `handle_key`
+        // stays focus-blind on purpose, which is what keeps the
+        // `advertised_bindings_match_the_dispatcher` cross-check honest.
         if ctrl && shift {
             match logical_char(ev) {
                 Some('k') => return Some(Cmd::ScrollBack(1)),
@@ -4837,6 +4854,26 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             dirty = true;
                             continue;
                         }
+                        // Harness-first scroll: an agent harness (jcode) owns
+                        // Ctrl+Shift+J/K natively, so when it is focused the
+                        // chord is forwarded to the child untouched instead of
+                        // scrolling gwae's history. Plain shells keep the gwae
+                        // line scroll. `key_bytes` emits kitty CSI-u for the
+                        // chord so a kitty-aware child decodes CONTROL|SHIFT.
+                        if is_harness_scroll_chord(&ke)
+                            && focused_pane(&layout).is_some_and(|pid| agent_panes.contains(&pid))
+                        {
+                            if let Some(pid) = focused_pane(&layout) {
+                                if let Some(p) = panes.get_mut(&pid) {
+                                    if p.grid.scroll_to_bottom() {
+                                        dirty = true;
+                                    }
+                                    let _ = p.writer.write_all(&key_bytes(&ke));
+                                    let _ = p.writer.flush();
+                                }
+                            }
+                            continue;
+                        }
                         if let Some(cmd) = handle_key(&ke) {
                             // Any command other than another digit ends the number
                             // being typed, the way a non-count key ends a vi count.
@@ -5740,6 +5777,62 @@ mod tests {
             handle_key(&KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)),
             Some(Cmd::ScrollPane(-1))
         );
+    }
+
+    #[test]
+    fn harness_scroll_chord_matches_both_shift_forms_but_nothing_else() {
+        // The dispatch-site carve-out must fire for exactly the chord the
+        // multiplexer otherwise claims: Ctrl+Shift+J/K in both the explicit
+        // (CONTROL|SHIFT + lowercase) and Kitty (CONTROL + uppercase) forms.
+        let shift_ctrl = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+        for ev in [
+            KeyEvent::new(KeyCode::Char('j'), shift_ctrl),
+            KeyEvent::new(KeyCode::Char('k'), shift_ctrl),
+            KeyEvent::new(KeyCode::Char('J'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('K'), KeyModifiers::CONTROL),
+        ] {
+            assert!(is_harness_scroll_chord(&ev), "{ev:?} is the harness chord");
+        }
+        // Plain prompt-jump chords, Alt focus moves, and Caps Lock impostors
+        // are not the scroll chord and must never trigger the carve-out.
+        let caps = KeyEvent::new_with_kind_and_state(
+            KeyCode::Char('K'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+            KeyEventState::CAPS_LOCK,
+        );
+        for ev in [
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Char('x'), shift_ctrl),
+            caps,
+        ] {
+            assert!(
+                !is_harness_scroll_chord(&ev),
+                "{ev:?} must not count as the harness chord"
+            );
+        }
+        // ...and every positive case is one `handle_key` would otherwise
+        // claim as multiplexer scroll, which is the conflict being resolved.
+        for ev in [
+            KeyEvent::new(KeyCode::Char('j'), shift_ctrl),
+            KeyEvent::new(KeyCode::Char('k'), shift_ctrl),
+            KeyEvent::new(KeyCode::Char('J'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('K'), KeyModifiers::CONTROL),
+        ] {
+            assert!(
+                matches!(handle_key(&ev), Some(Cmd::ScrollBack(_))),
+                "{ev:?} must be a multiplexer scroll without the carve-out"
+            );
+        }
+        // The forwarded bytes must preserve the chord: a kitty-aware harness
+        // decodes CSI-u, so Ctrl+Shift+K must not collapse to a bare 0x0b
+        // (plain Ctrl+K), which is jcode's prompt jump, not its scroll.
+        let k = KeyEvent::new(KeyCode::Char('k'), shift_ctrl);
+        let j = KeyEvent::new(KeyCode::Char('j'), shift_ctrl);
+        assert_eq!(key_bytes(&k), b"\x1b[107;6u".to_vec());
+        assert_eq!(key_bytes(&j), b"\x1b[106;6u".to_vec());
     }
 
     #[test]

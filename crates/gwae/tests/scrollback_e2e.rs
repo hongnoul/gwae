@@ -35,6 +35,89 @@ struct Session {
 }
 
 impl Session {
+    /// A session whose first pane is an agent pane (bare `gwae run`, past
+    /// onboarding, with `default_agent` pointing at `harness`), instead of
+    /// the plain `run sh` shell the other cases use. `harness` is an
+    /// executable on PATH that the gateway execs as the pane's child.
+    fn start_with_agent(harness: &str) -> (Session, std::path::PathBuf) {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "gwae-harness-scroll-e2e-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(bin.join("gwae")).expect("temp config dir");
+        std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
+        // A fake harness that logs every byte it receives and holds the pane,
+        // so the test can prove the scroll chord reached the child. A
+        // `read`/`printf` loop, not `cat`: libc block-buffers `cat` to a
+        // file, so a few bytes would sit in the buffer past the test window,
+        // while each `printf >>` lands in the file synchronously.
+        std::fs::write(
+            bin.join(harness),
+            "#!/bin/sh\nprintf 'HARNESS-READY\\n'\nwhile IFS= read -r -n1 c; do printf '%s' \"$c\" >> \"$HARNESS_LOG\"; done\n",
+        )
+        .expect("write stub");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(bin.join(harness), std::fs::Permissions::from_mode(0o755))
+                .expect("chmod stub");
+        }
+        let log = dir.join("harness.log");
+        std::fs::write(
+            dir.join("gwae/gwae.toml"),
+            format!(
+                "onboarded = true\ndefault_column_width = \"full\"\ndefault_agent = \"{harness}\"\n[minimap]\nshow = false\n"
+            ),
+        )
+        .expect("write config");
+
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: ROWS,
+                cols: COLS,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("openpty");
+        let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
+        cmd.env("XDG_CONFIG_HOME", &dir);
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("GWAE_NO_INSTALL", "1");
+        cmd.env("PATH", format!("{}:/bin:/usr/bin", bin.display()));
+        cmd.env("HARNESS_LOG", &log);
+        cmd.arg("run");
+        let child = pair.slave.spawn_command(cmd).expect("spawn gwae");
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().expect("reader");
+        let writer = pair.master.take_writer().expect("writer");
+        let (tx, rx) = channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        (
+            Session {
+                rx,
+                writer,
+                child,
+                _master: pair.master,
+                grid: vec![vec![' '; COLS as usize]; ROWS as usize],
+                cx: 0,
+                cy: 0,
+            },
+            log,
+        )
+    }
+
     fn start() -> Session {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
@@ -473,6 +556,43 @@ fn ctrl_shift_jk_scrolls_history_a_line_at_a_time_like_jcode() {
     assert!(
         fwd.0 > back.0 && fwd.1 > back.1,
         "Ctrl+Shift+J did not scroll forward: was {back:?}, now {fwd:?}\n{}",
+        s.render()
+    );
+    s.kill();
+}
+
+#[test]
+fn ctrl_shift_jk_reaches_a_harness_pane_instead_of_scrolling_gwae() {
+    // Harness-first scrolling: when the focused pane is an agent pane, the
+    // same Kitty CSI-u chord the previous test sends must reach the child
+    // untouched (an inner jcode scrolls its own transcript) instead of
+    // moving gwae's history. The fake harness logs raw stdin bytes into a
+    // file, so the assertion reads the file for the forwarded chord.
+    let (mut s, log) = Session::start_with_agent("fake-harness");
+    s.settle(3.0);
+    s.send(b"\r");
+    s.settle(2.5);
+    // `settle` already folded the stream into the grid: assert on the
+    // screen, not on a fresh read of a consumed channel. Re-poll with new
+    // settles until the harness line paints.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline && !s.render().contains("HARNESS-READY") {
+        s.settle(1.0);
+    }
+    assert!(
+        s.render().contains("HARNESS-READY"),
+        "fake harness never started; got:\n{}",
+        s.render()
+    );
+
+    s.send(b"\x1b[107;6u");
+    s.settle(2.0);
+    // gwae forwards the chord's kitty CSI-u form (see `key_bytes`), which
+    // the shell loop logs byte for byte into the file.
+    let logged = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        logged.contains("\x1b[107;6u"),
+        "Ctrl+Shift+K never reached the harness child; log was {logged:?}\n{}",
         s.render()
     );
     s.kill();

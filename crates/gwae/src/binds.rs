@@ -229,7 +229,7 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::CtrlShift('K'),
-        hint: "scrolls this pane's history up like jcode's transcript",
+        hint: "scrolls this pane's history up like jcode's transcript (an agent pane keeps it instead)",
         glyph: None,
         group: Group::Navigate,
         desc: "scroll up",
@@ -237,7 +237,7 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::CtrlShift('J'),
-        hint: "scrolls this pane's history down like jcode's transcript",
+        hint: "scrolls this pane's history down like jcode's transcript (an agent pane keeps it instead)",
         glyph: None,
         group: Group::Navigate,
         desc: "scroll down",
