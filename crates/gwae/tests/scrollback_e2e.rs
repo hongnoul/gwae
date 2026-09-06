@@ -579,9 +579,17 @@ fn ctrl_shift_jk_reaches_a_harness_pane_instead_of_scrolling_gwae() {
     while Instant::now() < deadline && !s.render().contains("HARNESS-READY") {
         s.settle(1.0);
     }
+    // TEMP-DIAG(ubuntu): the harness line never paints on ubuntu CI.
+    // Report whether the child ran at all (log file) inside the assert
+    // message so it prints with the failure.
+    let log_exists = std::path::Path::new(&log).exists();
+    let log_content =
+        std::fs::read_to_string(&log).unwrap_or_else(|e| format!("<unreadable: {e}>"));
+    let stub_path = log.parent().unwrap().join("bin/fake-harness");
+    let stub = std::fs::read_to_string(&stub_path).unwrap_or_default();
     assert!(
         s.render().contains("HARNESS-READY"),
-        "fake harness never started; got:\n{}",
+        "fake harness never started; DIAG log_exists={log_exists} log_content={log_content:?} stub={stub:?}\ngot:\n{}",
         s.render()
     );
 
