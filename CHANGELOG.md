@@ -6,11 +6,11 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
-### Changed
-- **Default `input_poll_ms` is now 1ms.** The event loop polls pane output and HUD status at the recommended rate out of the box; the 30ms idle backoff (after 750ms quiet) keeps an untouched session cheap, so the faster default costs nothing at rest.
-
 ### Added
 - **`⌥+v` pastes the clipboard into plain panes.** Shells that grab the key themselves (fish binds `ESC+v` to `edit_command_buffer`, the "external editor requested" error without `$VISUAL`/`$EDITOR`) can never receive a forwarded paste, so gwae claims the chord: it reads the system clipboard (`pbpaste` / `wl-paste` / `xclip` / `xsel`) and bracket-writes it per the child's own `DECSET 2004` state, with a toast confirming. Agent panes forward `ESC+v` to the inner jcode untouched so its smart paste stays authoritative, and `⌥+v` in the spawn-dir picker pastes a path into the filter. See [`docs/COPY-PASTE.md`](docs/COPY-PASTE.md).
+
+### Changed
+- **Default `input_poll_ms` is now 1ms.** The event loop polls pane output and HUD status at the recommended rate out of the box; the 30ms idle backoff (after 750ms quiet) keeps an untouched session cheap, so the faster default costs nothing at rest.
 
 ## [1.2.0] - 2026-09-05
 
