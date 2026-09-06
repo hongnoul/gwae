@@ -1070,13 +1070,12 @@ fn focused_pane_views_with_chrome(
         };
         // The emulator matches the pane's *logical* column width (the full
         // column minus any frame inset) unless an explicit content_width
-        // extends the logical width for horizontal scrolling. Use the
-        // unclamped width: the last column's right frame pulls in by one to
-        // stay on screen, but its content must not shrink with it. Clamping
-        // here is what made a widened pane 4 shrink instead of overflowing
-        // like pane 1 does.
-        let logical_w = (e - cs).max(0) as u16;
-        let grid_cols = logical_w.max(content_width);
+        // extends the logical width for horizontal scrolling. This is the
+        // same unclamped width as above: the last column's right frame pulls
+        // in by one to stay on screen, but its content must not shrink with
+        // it. Clamping here is what made a widened pane 4 shrink instead of
+        // overflowing like pane 1 does.
+        let grid_cols = full_unclamped.max(content_width);
         let col_x0 = (left as i32 - sx).max(0) as u16; // grid col at `left`
         let p = col.panes.len().max(1);
         let gap = 1u16;
