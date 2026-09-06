@@ -244,7 +244,9 @@ fn typing_a_column_number_previews_it_on_the_dashboard() {
 #[test]
 fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     use gwae_term::{CColor, Size, TermGrid, Vt100Grid};
-    let mut s = Session::start("theme = \"terminal\"\n[cowsay]\nenabled = false\n");
+    let mut s = Session::start(
+        "[theme]\npreset = \"terminal\"\naccent = 11\nrunning = 11\n[cowsay]\nenabled = false\n",
+    );
     let _ = s.drain();
     widen(&mut s, 3);
     s.send(&alt(b'h'));
@@ -261,11 +263,19 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     grid.feed(raw.as_bytes());
     let mut addresses = 0;
     let mut focused = 0;
-    for y in 0..30 {
-        // The focused tile identifies the map row, excluding the tally footer.
-        if !(0..140).any(|x| grid.cell(x, y).style.underline) {
-            continue;
-        }
+    // Identify the map by geometry, not the new underline/color behavior.
+    let map_y = (0..30)
+        .find(|&y| {
+            (1..140)
+                .filter(|&x| {
+                    grid.cell(x, y).ch.is_ascii_digit()
+                        && matches!(grid.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
+                })
+                .count()
+                >= 2
+        })
+        .expect("a populated minimap row");
+    for y in [map_y] {
         for x in 0..140 {
             let c = grid.cell(x, y);
             // The dashboard's address signature is a status glyph + digit.
@@ -274,7 +284,12 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
                 && matches!(grid.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
             {
                 addresses += 1;
-                assert_eq!(c.style.fg, CColor::Default, "address ink");
+                assert_eq!(
+                    c.style.fg,
+                    CColor::Default,
+                    "address ink at ({x}, {y}), background {:?}",
+                    c.style.bg
+                );
                 assert_eq!(c.style.bg, CColor::Default, "no yellow or other ANSI fill");
                 focused += usize::from(c.style.underline);
             }
