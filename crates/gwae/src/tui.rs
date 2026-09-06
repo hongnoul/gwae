@@ -4863,6 +4863,19 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         if is_harness_scroll_chord(&ke)
                             && focused_pane(&layout).is_some_and(|pid| agent_panes.contains(&pid))
                         {
+                            // A non-digit key ends the vi-style count like any
+                            // other command below: `⌥+1 2` then this chord
+                            // lands on column 12 first, instead of leaving a
+                            // stale jump armed behind the forwarded keystroke.
+                            if let Some(n) = jump.take() {
+                                let v = Viewport::new(cols);
+                                let f = FollowScroll {
+                                    margin: cfg.scroll_margin,
+                                    center: cfg.center_focus,
+                                };
+                                let _ = layout.apply(Action::JumpToColumn(n), v, f);
+                                dirty = true;
+                            }
                             if let Some(pid) = focused_pane(&layout) {
                                 if let Some(p) = panes.get_mut(&pid) {
                                     if p.grid.scroll_to_bottom() {
