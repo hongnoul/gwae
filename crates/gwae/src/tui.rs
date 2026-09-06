@@ -9208,6 +9208,84 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
     }
 }
 
+/// Live-PTy proof that pane 4's content overflows at its logical width
+/// rather than wrapping early: a widened last column keeps a 39-cell grid
+/// (80 cols, half width, 1-cell left frame inset), so a 39-char line fills
+/// exactly one emulator row instead of wrapping at the 38-cell visible
+/// rect the old clamped sizing produced.
+#[test]
+fn widened_last_pane_wraps_at_logical_width_e2e() {
+    use gwae_layout::{Action, FollowScroll, Preset, Viewport, Width};
+    let cols: u16 = 80;
+    let rows: u16 = 10;
+    let mut layout = Layout::new(1);
+    if let Some(r) = layout.row_mut(layout.focus.row) {
+        r.columns.clear();
+    }
+    let row = layout.focus.row;
+    let mut pids = Vec::new();
+    for _ in 0..4 {
+        let p = layout.alloc_pane();
+        layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
+        pids.push(p);
+    }
+    // Widen pane 4 to half (quarter -> third -> half).
+    layout.focus.column = 3;
+    let vp = Viewport::new(cols);
+    for _ in 0..2 {
+        let _ = layout.apply(Action::CycleWidth, vp, FollowScroll::default());
+    }
+    let views = focused_pane_views(&layout, cols, rows, 0, &HashMap::new(), true);
+    let v = views.iter().find(|v| v.col == 3).unwrap();
+    assert_eq!(v.grid_cols, 39, "pane 4 keeps its logical grid width");
+
+    // Print exactly 39 chars with no trailing newline, then check the
+    // emulator wrapped (or not) at the live grid width.
+    let (tx, rx) = channel::<PaneMsg>();
+    let cmd = format!("sh -c \"printf '%s' {}\"", "D".repeat(v.grid_cols as usize));
+    let pane = spawn_pane(pids[3], &cmd, v.grid_cols, rows, tx.clone(), None).expect("spawn pane");
+    let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+    panes.insert(pids[3], pane);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        let done = panes
+            .get(&pids[3])
+            .map(|p| p.grid.cell(v.grid_cols.saturating_sub(1), 0).ch == 'D')
+            .unwrap_or(false);
+        if done {
+            break;
+        }
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(PaneMsg::Output(pid, bytes)) => {
+                if let Some(p) = panes.get_mut(&pid) {
+                    p.grid.feed(&bytes);
+                }
+            }
+            Ok(PaneMsg::Exited(_)) => {}
+            Err(_) => {}
+        }
+    }
+    let p = panes.get(&pids[3]).expect("pane 4 live");
+    assert_eq!(
+        p.grid.cell(0, 0).ch,
+        'D',
+        "line starts at the first grid cell"
+    );
+    assert_eq!(
+        p.grid.cell(v.grid_cols.saturating_sub(1), 0).ch,
+        'D',
+        "39-char line fills the logical row without wrapping early"
+    );
+    assert_eq!(
+        p.grid.cell(0, 1).ch,
+        ' ',
+        "nothing spills to row 1: no early wrap at the visible width"
+    );
+    for p in panes.values_mut() {
+        kill_pane_tree(&mut p.child);
+    }
+}
+
 #[cfg(test)]
 mod strip_label_tests {
     use super::*;
