@@ -3498,6 +3498,15 @@ enum Cmd {
     /// Open the spawn-directory picker (`⌥+d`): choose the directory new
     /// panes start in, for this session or written back to the config.
     DirPick,
+    /// Paste the system clipboard into the focused pane (`⌥+v`).
+    ///
+    /// The explicit route for shells that grabbed the key themselves: fish
+    /// binds `ESC+v` to `edit_command_buffer` (the "external editor"
+    /// error when `$VISUAL`/`$EDITOR` is unset), so a plain PTY pane can
+    /// never receive a paste that way. Resolved in the main loop, which
+    /// owns the clipboard read: agent panes forward the chord to the inner
+    /// jcode (its own smart paste), plain panes get gwae's bracketed write.
+    Paste,
     /// Toggle the centered cheat-sheet HUD (`⌥+/`), the same overlay shown
     /// once at startup. Any other key still dismisses it.
     ToggleHud,
@@ -3730,6 +3739,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
             Char('\u{2020}') => return Some(Cmd::ThemePick(0)),         // † (Option+t)
             Char('\u{2202}') => return Some(Cmd::DirPick),              // ∂ (Option+d)
+            Char('\u{221a}') => return Some(Cmd::Paste),                // √ (Option+v)
             Char('\u{2211}') => return Some(Cmd::ToggleKeepAwake),      // ∑ (Option+w)
             Char('\u{f7}') => return Some(Cmd::ToggleHud),              // ÷ (Option+/)
             _ => {}
@@ -3823,6 +3833,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             'g' => return Some(Cmd::SmartJump),
             't' => return Some(Cmd::ThemePick(0)),
             'd' => return Some(Cmd::DirPick),
+            'v' => return Some(Cmd::Paste),
             'w' => return Some(Cmd::ToggleKeepAwake),
             '/' | '?' => return Some(Cmd::ToggleHud),
             _ if c.is_ascii_digit() => {
@@ -4688,6 +4699,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         | KeyCode::Char('\u{2026}')
                                         | KeyCode::Char('\u{153}')
                                         | KeyCode::Char('\u{a9}')
+                                        | KeyCode::Char('\u{221a}')
                                         | KeyCode::Char('\u{d3}')
                                         | KeyCode::Char('\u{d4}')
                                         | KeyCode::Char('\u{f8ff}')
@@ -5098,6 +5110,89 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         };
                                         let _ = layout.apply(Action::FocusPane(target), v, f);
                                         dirty = true;
+                                    }
+                                }
+                                Cmd::Paste => {
+                                    // `⌥+v` smart paste. The focused child
+                                    // decides who pastes:
+                                    //
+                                    // * Agent pane: forward the chord to the
+                                    //   inner jcode untouched (`ESC+v`), so
+                                    //   its own smart paste (text vs image vs
+                                    //   dictation) stays the authority. gwae
+                                    //   claiming it would double-paste or lose
+                                    //   the image path.
+                                    // * Plain pane: read the system clipboard
+                                    //   here and bracket-write it. fish binds
+                                    //   `ESC+v` to `edit_command_buffer`,
+                                    //   which errors without $VISUAL/$EDITOR,
+                                    //   so forwarding is never a paste there.
+                                    let is_agent = focused_pane(&layout)
+                                        .is_some_and(|pid| agent_panes.contains(&pid));
+                                    if is_agent {
+                                        if let Some(pid) = focused_pane(&layout) {
+                                            if let Some(p) = panes.get_mut(&pid) {
+                                                if p.grid.scroll_to_bottom() {
+                                                    dirty = true;
+                                                }
+                                                let _ = p.writer.write_all(&key_bytes(&ke));
+                                                let _ = p.writer.flush();
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                    let anchor = focused_pane_views_with_chrome(
+                                        &layout,
+                                        cols,
+                                        rows,
+                                        cfg.content_width,
+                                        &panes,
+                                        true,
+                                        chrome_rows(&cfg),
+                                    )
+                                    .iter()
+                                    .find(|v| focused_pane(&layout).is_some_and(|pid| v.pid == pid))
+                                    .map(|v| v.rect);
+                                    match crate::select::read_clipboard() {
+                                        None => {
+                                            reload_note = Some("clipboard unreadable".to_string());
+                                            reload_note_anchor = anchor;
+                                            reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                        }
+                                        Some(text) => {
+                                            if let Some(pid) = focused_pane(&layout) {
+                                                if let Some(p) = panes.get_mut(&pid) {
+                                                    let bracketed = p.grid.wants_bracketed_paste();
+                                                    let bytes = crate::select::paste_bytes(
+                                                        &text, bracketed,
+                                                    );
+                                                    if bytes.is_empty() {
+                                                        reload_note =
+                                                            Some("nothing to paste".to_string());
+                                                    } else {
+                                                        p.grid.scroll_to_bottom();
+                                                        for chunk in
+                                                            bytes.chunks(crate::select::PASTE_CHUNK)
+                                                        {
+                                                            if p.writer.write_all(chunk).is_err() {
+                                                                break;
+                                                            }
+                                                            let _ = p.writer.flush();
+                                                        }
+                                                        // Unlike Cmd+V there
+                                                        // is no OS-level
+                                                        // feedback, so confirm
+                                                        // even a single line.
+                                                        reload_note =
+                                                            Some(paste_note(&text, bracketed));
+                                                    }
+                                                    reload_note_anchor = anchor;
+                                                    reload_note_until =
+                                                        Some(Instant::now() + NOTE_LINGER);
+                                                    dirty = true;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 Cmd::None => {}
@@ -5527,6 +5622,27 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     crate::reap::reap_all();
     restore_terminal(&mut stdout, kitty_keyboard);
     Ok(())
+}
+
+/// The toast shown after an explicit `⌥+v` paste. A one-line paste still
+/// confirms: unlike Cmd+V there is no OS-level feedback, so silence would
+/// read as "nothing happened".
+///
+/// A multi-line paste is the case that used to run each line as its own
+/// command, so gwae says what it delivered. When the child never asked for
+/// bracketed paste (`bracketed` false) those newlines genuinely are Returns —
+/// nothing can prevent that, it is what the program asked for — so the toast
+/// says so rather than letting the user infer safety from silence.
+fn paste_note(text: &str, bracketed: bool) -> String {
+    let lines = text.lines().count();
+    if lines <= 1 {
+        return "pasted 1 line".to_string();
+    }
+    if bracketed {
+        format!("pasted {lines} lines")
+    } else {
+        format!("pasted {lines} lines · no bracket, newlines run")
+    }
 }
 
 /// Pick the pane a smart-jump (`⌥+g`) should land on: the next pane, in
@@ -8045,6 +8161,7 @@ mod tests {
                 Effect::SmartJump => Cmd::SmartJump,
                 Effect::ThemePick => Cmd::ThemePick(0),
                 Effect::DirPick => Cmd::DirPick,
+                Effect::Paste => Cmd::Paste,
                 Effect::ToggleHud => Cmd::ToggleHud,
                 Effect::ToggleKeepAwake => Cmd::ToggleKeepAwake,
                 Effect::Quit => Cmd::Quit,
@@ -8160,6 +8277,33 @@ mod tests {
             matches!(handle_key(&bare), Some(Cmd::Input(_))),
             "bare w must reach the pane"
         );
+    }
+
+    #[test]
+    fn option_v_is_a_paste_command_never_pane_input() {
+        // `⌥+v` must decode as `Cmd::Paste` on both input paths so the main
+        // loop can bracket-write the clipboard into a plain shell pane.
+        // Forwarding `ESC+v` instead would hit fish's `edit_command_buffer`
+        // (the "external editor requested" error), never a paste.
+        let meta = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT);
+        assert_eq!(handle_key(&meta), Some(Cmd::Paste));
+        let glyph = KeyEvent::new(KeyCode::Char('\u{221a}'), KeyModifiers::NONE);
+        assert_eq!(handle_key(&glyph), Some(Cmd::Paste));
+        // ...while a bare `v` still types into the pane.
+        let bare = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE);
+        assert!(
+            matches!(handle_key(&bare), Some(Cmd::Input(_))),
+            "bare v must reach the pane"
+        );
+    }
+
+    #[test]
+    fn paste_note_confirms_single_line_and_warns_without_bracket() {
+        // The explicit `⌥+v` route confirms even a single line (no OS-level
+        // feedback), and says when newlines genuinely run as Returns.
+        assert_eq!(paste_note("ls -la", true), "pasted 1 line");
+        assert_eq!(paste_note("a\nb\nc", true), "pasted 3 lines");
+        assert!(paste_note("a\nb\nc", false).contains("newlines run"));
     }
 
     #[test]
