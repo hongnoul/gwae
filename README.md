@@ -14,36 +14,44 @@
 
 Not sped up - you can go much faster than demo
 
-```bash
-curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
-```
-
 [Website](https://hongnoul.github.io/gwae/) · [Docs](docs/) · [Releases](https://github.com/hongnoul/gwae/releases)
 
 </div>
 
 ## Install
 
+### macOS
+
+```bash
+brew install hongnoul/tap/gwae
+```
+
+### Linux
+
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
-Installs to `~/.local/bin` and adds it to your shell PATH, so `gwae` works in
-a fresh terminal. Override with `GWAE_INSTALL_DIR`; `GWAE_NO_MODIFY_PATH=1`
-skips the PATH change.
+The script also works on macOS. It installs to `~/.local/bin` and adds it
+to your shell PATH, so `gwae` works in a fresh terminal. Override with
+`GWAE_INSTALL_DIR`; `GWAE_NO_MODIFY_PATH=1` skips the PATH change.
+
+### Windows
+
+```powershell
+irm https://hongnoul.github.io/gwae/install.ps1 | iex
+```
+
+Installs to `~/bin` and adds it to your user PATH.
 
 <details>
 <summary>Other install methods</summary>
 
 ```bash
-brew install hongnoul/tap/gwae
 cargo install gwae
 ```
 
-Windows:
-
 ```powershell
-irm https://hongnoul.github.io/gwae/install.ps1 | iex
 scoop bucket add gwae https://github.com/hongnoul/scoop-bucket; scoop install gwae
 ```
 
