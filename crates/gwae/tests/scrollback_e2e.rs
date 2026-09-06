@@ -55,9 +55,17 @@ impl Session {
         // `read`/`printf` loop, not `cat`: libc block-buffers `cat` to a
         // file, so a few bytes would sit in the buffer past the test window,
         // while each `printf >>` lands in the file synchronously.
+        //
+        // `#!/bin/bash`, not `sh`: the loop needs `read -n1`, which dash
+        // (Ubuntu's `/bin/sh`) rejects, killing the child on Linux while
+        // macOS's bash happily runs it. READY is written to the log file as
+        // well as to stdout, so the test waits on the file: gwae repaints
+        // incrementally, and a full clear (overlay dismiss) can wipe folded
+        // output from the reconstructed grid that is still on the real
+        // screen, which reads as "harness never started" on slow machines.
         std::fs::write(
             bin.join(harness),
-            "#!/bin/sh\nprintf 'HARNESS-READY\\n'\nwhile IFS= read -r -n1 c; do printf '%s' \"$c\" >> \"$HARNESS_LOG\"; done\n",
+            "#!/bin/bash\nprintf 'HARNESS-READY\\n'\nprintf 'HARNESS-READY\\n' >> \"$HARNESS_LOG\"\nwhile IFS= read -r -n1 c; do printf '%s' \"$c\" >> \"$HARNESS_LOG\"; done\n",
         )
         .expect("write stub");
         #[cfg(unix)]
@@ -572,16 +580,21 @@ fn ctrl_shift_jk_reaches_a_harness_pane_instead_of_scrolling_gwae() {
     s.settle(3.0);
     s.send(b"\r");
     s.settle(2.5);
-    // `settle` already folded the stream into the grid: assert on the
-    // screen, not on a fresh read of a consumed channel. Re-poll with new
-    // settles until the harness line paints.
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline && !s.render().contains("HARNESS-READY") {
-        s.settle(1.0);
+    // Wait on the log *file*, not on the reconstructed grid: the stub
+    // writes READY there at startup, and a file cannot be clobbered by a
+    // repaint the way folded grid cells can (see the stub comment).
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut logged = String::new();
+    while Instant::now() < deadline {
+        logged = std::fs::read_to_string(&log).unwrap_or_default();
+        if logged.contains("HARNESS-READY") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
     }
     assert!(
-        s.render().contains("HARNESS-READY"),
-        "fake harness never started; got:\n{}",
+        logged.contains("HARNESS-READY"),
+        "fake harness never started; log was {logged:?}\n{}",
         s.render()
     );
 

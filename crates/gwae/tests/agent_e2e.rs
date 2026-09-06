@@ -727,7 +727,10 @@ fn typing_an_unlisted_command_works_and_is_saved() {
     sb.write_config("onboarded = true\n");
     stub(&sb.bin, "zz");
     let mut p = sb.spawn(&[]);
-    let seen = p.wait_for("Which agent");
+    // Both strings, not just the first: the prompt paints across several
+    // writes, and asserting the footer on the read that saw the header is a
+    // race slow CI machines lose.
+    let seen = p.wait_for_all(&["Which agent", "Type the command"]);
     assert!(
         seen.contains("Type the command"),
         "the option must be advertised; got:\n{seen}"
