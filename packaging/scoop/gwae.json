@@ -6,7 +6,7 @@
   "architecture": {
     "64bit": {
       "url": "https://github.com/hongnoul/gwae/releases/download/v1.3.0/gwae-x86_64-pc-windows-msvc.zip",
-      "hash": "1d8540573362c09fb09759ccff3dff57c0020d11ed27927cd9606acd7f2083ce",
+      "hash": "e0d54a2cc119c0ccbf97d9112b14ecdc309e95910b2c5b9408c873ef3d3d9474",
       "extract_dir": ""
     }
   },
