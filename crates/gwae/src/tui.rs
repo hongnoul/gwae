@@ -2003,27 +2003,42 @@ fn age_label(d: Duration) -> String {
     }
 }
 
-/// Readable ink for text painted *on* `bg`.
-///
-/// Tiles used to hardcode `Idx(231)` (near-white), which is invisible on the
-/// light themes' status tints. Indexed and default colors carry no components
-/// to measure, so they keep the old near-white assumption; RGB tints pick dark
-/// ink on a light tile and light ink on a dark one, from the palette itself.
-fn contrast_fg(bg: CColor, pal: &Palette) -> CColor {
-    let luma = |c: CColor| match c {
-        CColor::Rgb(r, g, b) => {
-            Some((0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0)
+/// WCAG relative luminance, with sRGB channels linearized before weighting.
+fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+    let linear = |v: u8| {
+        let v = f64::from(v) / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
         }
-        _ => None,
     };
-    match luma(bg) {
-        Some(l) if l > 0.55 => match luma(pal.base) {
-            // The theme's own darkest surface, when it is actually dark.
-            Some(bl) if bl < 0.4 => pal.base,
-            _ => CColor::Rgb(0x11, 0x11, 0x14),
-        },
-        Some(_) => CColor::Rgb(0xf5, 0xf5, 0xf5),
-        None => CColor::Idx(231),
+    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+}
+
+/// Choose the higher-contrast black/white ink for a known RGB background.
+/// Unknown terminal colors must use the neutral tile fallback instead.
+fn contrast_fg(bg: CColor, _pal: &Palette) -> CColor {
+    match bg {
+        CColor::Rgb(r, g, b) => {
+            let l = relative_luminance(r, g, b);
+            if (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) {
+                CColor::Rgb(0, 0, 0)
+            } else {
+                CColor::Rgb(255, 255, 255)
+            }
+        }
+        _ => CColor::Default,
+    }
+}
+
+/// ANSI indices are user-remappable, so never guess their brightness.
+/// Keep addresses on the terminal's own foreground/background pair. Status
+/// glyphs and focus markers still carry color, without a saturated text fill.
+fn tile_colors(bg: CColor, pal: &Palette) -> (CColor, CColor) {
+    match bg {
+        CColor::Rgb(..) => (contrast_fg(bg, pal), bg),
+        _ => (CColor::Default, CColor::Default),
     }
 }
 
@@ -2472,7 +2487,8 @@ fn paint_center_minimap(
         } else {
             bgc
         };
-        let fg = contrast_fg(bgc, pal);
+        let neutral = !matches!(bgc, CColor::Rgb(..));
+        let (fg, bgc) = tile_colors(bgc, pal);
         let gy = plan.row_y[tile.y as usize] as usize;
         let glyph = status_glyph(tile.status);
         let target = facts.jump_target == Some(tile.pane);
@@ -2490,7 +2506,18 @@ fn paint_center_minimap(
             // eye lands on when scanning a row of abutting tiles, and it is
             // what the `⌥+<n>` keys act on.
             let sig = dx <= addr.chars().count();
-            put(out, x as u16, gy as u16, ch, fg, bgc, sig);
+            let ink = if neutral && ch == glyph {
+                status_fg(tile.status)
+            } else {
+                fg
+            };
+            put(out, x as u16, gy as u16, ch, ink, bgc, sig);
+            if neutral {
+                if let Some(cell) = out.get_mut(gy * cols as usize + x) {
+                    cell.style.underline =
+                        tile.focus_col || (facts.pending_jump.is_some() && addressed);
+                }
+            }
         }
     }
     // Viewport ruler: which columns of each strip are actually on screen.
@@ -3312,7 +3339,8 @@ fn draw_minimap(
         } else {
             status_bg(tile.status)
         };
-        let fg = CColor::Idx(231);
+        let neutral = !matches!(bg, CColor::Rgb(..));
+        let (fg, bg) = tile_colors(bg, pal);
         let y = oy + tile.y;
         let glyph = status_glyph(tile.status);
         for dx in 0..tile.w {
@@ -3331,7 +3359,25 @@ fn draw_minimap(
             } else {
                 ' '
             };
-            put(out, x, y, ch, fg, bg, dx == 0 && tile.pane_idx == 0);
+            let ink = if neutral && ch == glyph {
+                status_fg(tile.status)
+            } else {
+                fg
+            };
+            put(
+                out,
+                x,
+                y,
+                ch,
+                ink,
+                bg,
+                tile.focus_col || (dx == 0 && tile.pane_idx == 0),
+            );
+            if neutral {
+                if let Some(cell) = out.get_mut(y as usize * cols as usize + x as usize) {
+                    cell.style.underline = tile.focus_col;
+                }
+            }
         }
         // Focused strip: a chevron in the gutter just left of the map row.
         if tile.focus_row && tile.x == 0 && ox > 0 {
@@ -7155,9 +7201,17 @@ mod tests {
         // Two strips -> map height 2, width 32 (default max). Bottom-right:
         // ox = 40-32 = 8, oy = 8-2 = 6.
         let cell = |x: usize, y: usize| out[y * 40 + x];
-        // Focused pane tile (row 0, col 0) is painted with the accent.
+        // An unknown indexed accent uses neutral fill and an underline.
         let focus = cell(8, 6);
-        assert_eq!(focus.style.bg, accent, "focused tile uses the focus color");
+        assert_eq!(
+            focus.style.bg,
+            CColor::Default,
+            "unknown accent uses neutral fill"
+        );
+        assert!(
+            focus.style.underline,
+            "focus remains visible without a fill"
+        );
         // The tile carries its column digit (column 0 -> '1').
         assert_eq!(focus.ch, '1', "tile shows the ⌥+digit column address");
         // The non-focused strip's tile is a status tint, not the accent.
@@ -7254,7 +7308,8 @@ mod tests {
         let cell = |x: usize, y: usize| out[y * cols + x];
         // Map: ox=8, oy=6. Strip 1 has 4 tiles of 8 cells each.
         let (ox, y) = (8usize, 6usize);
-        assert_eq!(cell(ox, y).style.bg, accent, "tile 1 focused");
+        assert_eq!(cell(ox, y).style.bg, CColor::Default, "tile 1 neutral");
+        assert!(cell(ox, y).style.underline, "tile 1 focused");
         assert_eq!(
             cell(ox + 8, y).style.bg,
             CColor::Rgb(0x63, 0x88, 0x60),
@@ -8938,10 +8993,99 @@ mod tests {
         // hardcoded near-white was invisible on Latte's status colors.
         assert!(luma(contrast_fg(CColor::Rgb(0xef, 0xf1, 0xf5), &light)) < 0.4);
         assert!(luma(contrast_fg(CColor::Rgb(0x1e, 0x1e, 0x2e), &dark)) > 0.6);
-        // An indexed or default tint has no components to measure, so the
-        // near-white assumption is kept rather than guessed at.
-        assert_eq!(contrast_fg(CColor::Idx(4), &dark), CColor::Idx(231));
-        assert_eq!(contrast_fg(CColor::Default, &dark), CColor::Idx(231));
+        // Unknown colors defer to terminal defaults rather than guessing white ink.
+        assert_eq!(contrast_fg(CColor::Idx(4), &dark), CColor::Default);
+        assert_eq!(contrast_fg(CColor::Default, &dark), CColor::Default);
+    }
+
+    #[test]
+    fn rgb_tile_text_meets_contrast_target() {
+        // Sample the RGB cube, including the midtones the old heuristic missed.
+        for r in (0..=255).step_by(17) {
+            for g in (0..=255).step_by(17) {
+                for b in (0..=255).step_by(17) {
+                    let bg = CColor::Rgb(r, g, b);
+                    let (fg, actual_bg) = tile_colors(bg, &Palette::default());
+                    assert_eq!(actual_bg, bg);
+                    let CColor::Rgb(fr, fg, fb) = fg else {
+                        panic!("RGB ink")
+                    };
+                    let a = relative_luminance(r, g, b);
+                    let b = relative_luminance(fr, fg, fb);
+                    assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_tile_colors_never_guess_white_on_yellow() {
+        for idx in 0..=255 {
+            assert_eq!(
+                tile_colors(CColor::Idx(idx), &Palette::TERMINAL),
+                (CColor::Default, CColor::Default)
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_dashboard_keeps_addresses_neutral_and_focus_visible() {
+        let (mut layout, ids) = dashboard_layout(4);
+        for (id, status) in ids.iter().zip([
+            PaneStatus::Idle,
+            PaneStatus::Running,
+            PaneStatus::Done,
+            PaneStatus::Failed,
+        ]) {
+            layout.panes.get_mut(id).unwrap().status = status;
+        }
+        let plan =
+            plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default()).unwrap();
+        for pending_jump in [None, Some(3)] {
+            let mut out = vec![Cell::default(); 100 * 24];
+            paint_center_minimap(
+                &mut out,
+                100,
+                24,
+                &layout,
+                &plan,
+                &Palette::TERMINAL,
+                &HudFacts {
+                    pending_jump,
+                    ..HudFacts::default()
+                },
+            );
+            for tile in &plan.map.cells {
+                let y = plan.row_y[tile.y as usize] as usize;
+                let cells = &out[y * 100 + (plan.map_ox + tile.x) as usize..][..tile.w as usize];
+                assert!(cells.iter().all(|c| c.style.bg == CColor::Default));
+                for c in cells.iter().filter(|c| c.ch.is_ascii_digit()) {
+                    assert_eq!(c.style.fg, CColor::Default);
+                    assert_eq!(
+                        c.style.underline,
+                        tile.focus_col || pending_jump == Some(tile.column + 1)
+                    );
+                }
+            }
+        }
+        let mut out = vec![Cell::default(); 100 * 24];
+        draw_minimap(
+            &mut out,
+            100,
+            24,
+            &layout,
+            &crate::config::Minimap::default(),
+            &Palette::TERMINAL,
+        );
+        let digits: Vec<_> = out[23 * 100..]
+            .iter()
+            .filter(|c| c.ch.is_ascii_digit())
+            .collect();
+        assert!(!digits.is_empty());
+        assert!(digits
+            .iter()
+            .all(|c| c.style.bg == CColor::Default && c.style.fg == CColor::Default));
+        assert!(digits.iter().any(|c| c.style.underline));
     }
 
     #[test]

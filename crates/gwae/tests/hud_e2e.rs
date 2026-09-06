@@ -238,3 +238,51 @@ fn typing_a_column_number_previews_it_on_the_dashboard() {
     );
     s.kill();
 }
+
+/// Drive the real binary through the modifier reveal and inspect rendered cells,
+/// not just palette constants. No OSC color-query response is provided by this PTY.
+#[test]
+fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
+    use gwae_term::{CColor, Size, TermGrid, Vt100Grid};
+    let mut s = Session::start("theme = \"terminal\"\n[cowsay]\nenabled = false\n");
+    let _ = s.drain();
+    widen(&mut s, 3);
+    s.send(&alt(b'h'));
+    let raw = s.peek(100);
+    s.kill();
+    assert!(
+        visible(&raw).contains("attention"),
+        "dashboard must actually appear"
+    );
+    let mut grid = Vt100Grid::new(Size {
+        cols: 140,
+        rows: 30,
+    });
+    grid.feed(raw.as_bytes());
+    let mut addresses = 0;
+    let mut focused = 0;
+    for y in 0..30 {
+        // The focused tile identifies the map row, excluding the tally footer.
+        if !(0..140).any(|x| grid.cell(x, y).style.underline) {
+            continue;
+        }
+        for x in 0..140 {
+            let c = grid.cell(x, y);
+            // The dashboard's address signature is a status glyph + digit.
+            if c.ch.is_ascii_digit()
+                && x > 0
+                && matches!(grid.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
+            {
+                addresses += 1;
+                assert_eq!(c.style.fg, CColor::Default, "address ink");
+                assert_eq!(c.style.bg, CColor::Default, "no yellow or other ANSI fill");
+                focused += usize::from(c.style.underline);
+            }
+        }
+    }
+    assert!(
+        addresses >= 2,
+        "must inspect real minimap addresses, got {addresses}"
+    );
+    assert!(focused > 0, "neutral focus must retain its underline");
+}

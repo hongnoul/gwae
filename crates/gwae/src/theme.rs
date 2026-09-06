@@ -169,15 +169,15 @@ impl Palette {
     ///
     /// Nothing is hardcoded to an RGB value, so gwae inherits whatever the
     /// terminal is already themed as: change your terminal's scheme and
-    /// gwae follows. `base` stays [`CColor::Default`] so the terminal's
-    /// real background shows through rather than being repainted as ANSI
-    /// black (which is wrong on light themes).
+    /// gwae follows. `base`, `surface`, and `text` use [`CColor::Default`],
+    /// preserving the terminal's native foreground/background pair rather
+    /// than assuming ANSI black and white are its default colors.
     pub const TERMINAL: Palette = Palette {
         base: CColor::Default,
-        surface: CColor::Idx(0),
+        surface: CColor::Default,
         overlay: CColor::Idx(8),
         accent: CColor::Idx(6),
-        text: CColor::Idx(7),
+        text: CColor::Default,
         label: CColor::Idx(8),
         running: CColor::Idx(12),
         idle: CColor::Idx(11),
@@ -537,12 +537,14 @@ mod tests {
     }
 
     #[test]
-    fn terminal_preset_is_entirely_indexed() {
+    fn terminal_preset_uses_native_surfaces_and_indexed_accents() {
         let p = Palette::TERMINAL;
+        assert_eq!(p.surface, CColor::Default);
+        assert_eq!(p.text, CColor::Default);
         // Nothing may be a hardcoded RGB, or it would not follow the host
         // terminal's scheme.
         for c in [
-            p.surface, p.overlay, p.accent, p.text, p.label, p.running, p.idle, p.done, p.failed,
+            p.overlay, p.accent, p.label, p.running, p.idle, p.done, p.failed,
         ] {
             assert!(matches!(c, CColor::Idx(_)), "{c:?} is not an ANSI index");
         }

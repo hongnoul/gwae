@@ -246,3 +246,18 @@ is nothing to triage, so the hold shows the key hints alone.
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.
+### Terminal-theme readability
+
+`theme = "terminal"` uses the terminal's default foreground and background for
+HUD panels and text. ANSI colors remain on status glyphs and focus borders.
+Minimap tiles with indexed/default colors use neutral backgrounds and default
+text, with underlines marking the focused column and pending jump target.
+This avoids assuming a remappable ANSI color (such as bright yellow) is dark.
+The terminal's own default foreground/background should be a readable pair.
+
+Explicit RGB tile backgrounds retain their fill, with black or white text
+chosen by WCAG relative luminance for at least 4.5:1 contrast. This applies to
+both minimaps, including focused and pending-jump tiles. ANSI palette queries
+are not required, so the fallback also works on terminals without OSC color
+query support. Colored status glyphs still depend on the host ANSI palette,
+and their shapes distinguish status without relying on color alone.
