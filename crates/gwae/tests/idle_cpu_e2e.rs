@@ -3,13 +3,13 @@
 //! The bug this locks down was invisible on screen and obvious on a laptop:
 //! an idle mux sat at roughly 3.5% of a core *forever*, fans up and chassis
 //! warm, for a screen that was not changing. Two things in the render loop
-//! ran unconditionally at the input poll rate (500 iterations/second at the
-//! default `input_poll_ms = 2`):
+//! ran unconditionally at the input poll rate (1000 iterations/second at the
+//! default `input_poll_ms = 1`):
 //!
 //! 1. `refresh_size` — a `TIOCGWINSZ` that crossterm implements on macOS by
-//!    opening and closing `/dev/tty`, so ~500 `open`/`close` syscall pairs a
+//!    opening and closing `/dev/tty`, so ~1000 `open`/`close` syscall pairs a
 //!    second. This dominated the profile.
-//! 2. the 2 ms `event::poll` itself, waking the process 500x a second to
+//! 2. the 1 ms `event::poll` itself, waking the process 1000x a second to
 //!    find an empty queue.
 //!
 //! Unit tests cover the poll arithmetic. This file is the acceptance check:
@@ -63,7 +63,7 @@ impl Idle {
         std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
         // An explicit config so the default poll rate is what is measured
         // and no first-run onboarding flow can appear instead of the mux.
-        std::fs::write(dir.join("gwae/gwae.toml"), "input_poll_ms = 2\n").expect("write config");
+        std::fs::write(dir.join("gwae/gwae.toml"), "input_poll_ms = 1\n").expect("write config");
 
         let pair = native_pty_system()
             .openpty(PtySize {

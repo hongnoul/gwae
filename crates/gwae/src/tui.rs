@@ -4044,7 +4044,7 @@ const BINARY_SETTLE: Duration = Duration::from_millis(300);
 /// `Event::Resize`; the event path already handles every resize the host does
 /// report, and it stays instant. Running the backstop on every loop iteration
 /// meant a `TIOCGWINSZ` — which on macOS opens and closes `/dev/tty` — at the
-/// input poll rate (500/s at the default `input_poll_ms = 2`). That syscall
+/// input poll rate (1000/s at the default `input_poll_ms = 1`). That syscall
 /// storm was the bulk of gwae's idle CPU: a completely idle mux sat at ~3.5%
 /// of a core forever, which on a laptop is a warm chassis and a spinning fan
 /// for no work at all. A quarter second is far below human resize perception
@@ -4063,7 +4063,7 @@ const IDLE_POLL_MS: u64 = 30;
 /// timeout never costs keystroke latency; all it delays is the loop's own
 /// periodic work. So: run at the configured (tight) rate while anything is
 /// happening, and back off once every pane and the keyboard have been silent
-/// for `IDLE_AFTER`. At the default 2 ms the idle mux woke 500x a second
+/// for `IDLE_AFTER`. At the default 1 ms the loop would wake 1000x a second
 /// forever to find nothing, which on a laptop is a warm chassis for a screen
 /// that is not changing. The relaxed ceiling still repaints within one frame
 /// at 30 fps, and the very first byte of output or keystroke snaps the rate
@@ -6249,8 +6249,8 @@ mod tests {
         }
     }
 
-    /// The bug this guards: at the default 2 ms the loop woke 500x a second
-    /// forever, burning ~3% of a core on a mux nobody was touching. Once the
+    /// The bug this guards: at the default 1 ms the loop would wake 1000x a
+    /// second forever, burning CPU on a mux nobody was touching. Once the
     /// screen is quiet the wakeups must drop by more than an order of
     /// magnitude.
     #[test]

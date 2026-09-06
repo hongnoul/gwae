@@ -20,7 +20,7 @@ use std::path::PathBuf;
 pub use crate::theme::Color as Background;
 
 fn default_input_poll_ms() -> u64 {
-    2
+    1
 }
 
 /// The resolved view of the config file, with defaults filled in.
@@ -109,9 +109,10 @@ pub struct Config {
     pub cell_labels: bool,
     /// Milliseconds to wait in `event::poll` before checking PTY output and
     /// repainting. Lower values reduce perceived typing and backspace latency
-    /// at the cost of more frequent wakeups. Default is 2ms (from 10ms) for
-    /// low latency with modest CPU cost. Valid range 1..50. Use 1 for minimum
-    /// possible input latency (backspace/delete will feel instant).
+    /// at the cost of more frequent wakeups. Default is 1ms for minimum
+    /// input latency (backspace/delete feels instant); the loop backs off to
+    /// 30ms once the screen has been quiet for 750ms, so an idle session stays
+    /// cheap. Valid range 1..50.
     #[serde(default = "default_input_poll_ms")]
     pub input_poll_ms: u64,
     /// Hold a macOS `caffeinate` assertion while gwae runs, so idle and

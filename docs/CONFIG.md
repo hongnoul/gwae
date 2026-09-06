@@ -34,7 +34,7 @@ theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-la
 # background = "#1e1e2e"     # -> theme.base
 # focus_color = "#74c7ec"    # -> theme.accent
 # skeleton_color = "#6c7086" # -> theme.overlay
-input_poll_ms = 2            # applied silently by setup; 1 is the recommended value
+input_poll_ms = 1            # event-loop poll; 30ms backoff once the screen is quiet
 keep_awake = false           # macOS only: hold idle/display sleep via caffeinate
 
 [minimap]
@@ -109,8 +109,7 @@ still running in the morning. `gwae doctor` reports the effective state.
 
 Everything else here is hand-edit only, deliberately:
 
-* `input_poll_ms` has exactly one right answer, so setup **applies it
-  silently** before the first question rather than asking. Settings that only
+* `input_poll_ms` defaults to `1`, so there is nothing to set up: settings that only
   you can change (kitty, macOS) are reported once on the summary screen.
 * `[minimap]` geometry and `scroll_margin` are niche tastes; a
   setup flow long enough to cover them is one nobody finishes.
@@ -210,7 +209,7 @@ and a config file that is not being applied at all points at the syntax error:
 | `background` | color | preset `base` | **Legacy alias for `theme.base`**. When set it overrides the resolved theme's `base`, so existing configs with `background = "#1e1e2e"` keep behaving as before. New configs should use `theme` / `[theme]`. |
 | `focus_color` | color | preset `accent` | **Legacy alias for `theme.accent`**. Overrides the theme's `accent`; use `[theme] accent = ...` for new configs. |
 | `skeleton_color` | color | preset `overlay` | **Legacy alias for `theme.overlay`**. Overrides the theme's `overlay`; use `[theme] overlay = ...` for new configs. |
-| `input_poll_ms` | integer | `2` | Set to `1` **silently by `gwae init`**, before the first question: it has exactly one right answer, so it is not worth a question. Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. gwae sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. `1` is the recommended value; run `gwae tune` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
+| `input_poll_ms` | integer | `1` | Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. gwae sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. The loop backs off to 30ms once the screen has been quiet for 750ms, so an idle session stays cheap. Run `gwae tune` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
 | `keep_awake` | bool | `false` | macOS-only: hold a `caffeinate` assertion (idle/display sleep) while gwae runs, so agents keep working with the display asleep. Asked last by `gwae init` on macOS; hand-editable everywhere. Does **not** defeat lid-close sleep outside clamshell mode (power + external display + input) or `sudo pmset disablesleep 1`. Applies live on save. `GWAE_NO_KEEP_AWAKE=1` forces it off. |
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit (the same digit `⌥+1..9` jumps to). Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
 | `minimap.mode` | string | `"off"` | Chrome presentation: `off` (no persistent row; `⌥`/Alt reveals centered HUD + minimap), `overlay` (bottom-right corner), `edge_ticks` (frame ticks). Legacy `reserved` / `reserved_quasimode` parse as `off` (no bottom row). |
