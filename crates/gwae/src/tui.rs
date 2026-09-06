@@ -4363,11 +4363,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // Whether the update notice still has to be shown. Latched false after
     // one showing so a user who dismissed it is not told again this session.
     let mut update_note_pending = true;
-    // A large `⌥+v` awaiting confirmation: the text, and the deadline by which
-    // a second `⌥+v` commits it. Pasting a whole file into an agent's prompt
-    // is expensive and irreversible from gwae's side (the child has it the
-    // instant it is written), so the big ones ask first. Same grammar as the
-    // `⌥+Shift+q` confirmation: repeat the chord to mean it.
     // Theme picker (⌥+t): Some(index into Palette::NAMES) while open. The
     // selection previews live, so the whole screen is the preview and the
     // picker itself only needs to show the name.
@@ -4616,7 +4611,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // read) so the notice is shown exactly once per session, and only
         // when the screen is not already saying something else: an upgrade
         // hint is the least urgent thing gwae ever has to say, so it yields
-        // to a config error or a copy confirmation rather than stomping it.
+        // to a config error or a paste note rather than stomping it.
         if update_note_pending && reload_note.is_none() {
             if let Some(text) = update_slot.lock().ok().and_then(|mut g| g.take()) {
                 update_note_pending = false;
@@ -8346,6 +8341,10 @@ mod tests {
             matches!(handle_key(&bare), Some(Cmd::Input(_))),
             "bare v must reach the pane"
         );
+        // The agent-pane forward path writes exactly what the chord would
+        // have been as pane input (`ESC+v`): that is what the inner jcode
+        // decodes back into its own smart paste.
+        assert_eq!(key_bytes(&meta), b"\x1bv".to_vec());
     }
 
     #[test]
