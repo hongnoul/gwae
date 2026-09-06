@@ -1,6 +1,9 @@
-# gwae Windows installer: downloads the latest release to a bin dir on PATH.
+# gwae Windows installer: downloads the latest release, puts it in a bin dir,
+# and adds that dir to PATH, so `gwae` works in a fresh terminal right after.
 #   irm https://hongnoul.github.io/gwae/install.ps1 | iex
 # Requires PowerShell 5+ / pwsh. Falls back to cargo install if checks fail.
+# Set $env:GWAE_NO_MODIFY_PATH=1 to only print the PATH instructions (CI,
+# scripted setups) instead of changing the machine.
 $ErrorActionPreference = 'Stop'
 $Repo = 'hongnoul/gwae'
 $InstallDir = if ($env:GWAE_INSTALL_DIR) { $env:GWAE_INSTALL_DIR } else { Join-Path $env:USERPROFILE 'bin' }
@@ -33,10 +36,32 @@ try {
   Write-Host "gwae: installed $Ver to $InstallDir\gwae.exe"
 
   $OnPath = ($env:PATH -split ';') -contains $InstallDir
-  if (-not $OnPath) {
+  if ($OnPath) {
+    Write-Host "gwae: $InstallDir is already on PATH."
+  } elseif (-not [string]::IsNullOrEmpty($env:GWAE_NO_MODIFY_PATH)) {
     Write-Host "gwae: $InstallDir is not on PATH. Add it:"
     Write-Host "  `$env:PATH += `";$InstallDir`"  # current session"
     Write-Host "  [Environment]::SetEnvironmentVariable('Path', `$env:PATH + `";$InstallDir`", 'User')"
+  } else {
+    # Current session first, so `gwae` works immediately in this terminal.
+    if (($env:PATH -split ';') -notcontains $InstallDir) {
+      $env:PATH = "$InstallDir;$env:PATH"
+    }
+    # Then persist for fresh terminals: append to the User PATH (registry)
+    # only when it is not already there, so re-runs never stack duplicates.
+    try {
+      $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+      if (($UserPath -split ';' | Where-Object { $_ -ne '' }) -notcontains $InstallDir) {
+        $NewUserPath = if ([string]::IsNullOrEmpty($UserPath)) { $InstallDir } else { "$UserPath;$InstallDir" }
+        [Environment]::SetEnvironmentVariable('Path', $NewUserPath, 'User')
+        Write-Host "gwae: added $InstallDir to your user PATH (this terminal already has it)."
+      } else {
+        Write-Host "gwae: added $InstallDir to PATH for this terminal (already in your saved user PATH)."
+      }
+    } catch {
+      Write-Host "gwae: $InstallDir is on PATH for this terminal, but saving it failed ($_) — add it by hand:"
+      Write-Host "  [Environment]::SetEnvironmentVariable('Path', `$env:PATH + `";$InstallDir`", 'User')"
+    }
   }
   Write-Host "gwae: run 'gwae' to start, or 'gwae init' for guided setup."
 } finally {

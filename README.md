@@ -28,7 +28,9 @@ curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
-Installs to `~/.local/bin`. Override with `GWAE_INSTALL_DIR`.
+Installs to `~/.local/bin` and adds it to your shell PATH, so `gwae` works in
+a fresh terminal. Override with `GWAE_INSTALL_DIR`; `GWAE_NO_MODIFY_PATH=1`
+skips the PATH change.
 
 <details>
 <summary>Other install methods</summary>

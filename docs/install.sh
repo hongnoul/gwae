@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# gwae installer: downloads the latest release binary to a bin dir on PATH.
+# gwae installer: downloads the latest release binary to a bin dir and adds it
+# to PATH, so `gwae` works in a fresh terminal right after install.
 #   curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 # Fallback: https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh
 set -euo pipefail
@@ -87,13 +88,87 @@ version = "${version##* }"
 EOF
 fi
 
-case ":$PATH:" in
-  *":$INSTALL_DIR:"*) ;;
-  *)
+# --- PATH ----------------------------------------------------------------------
+# The install dir means nothing until a new shell can find it, so add it to
+# the shell's startup file now instead of printing an export line to copy by
+# hand. `GWAE_NO_MODIFY_PATH=1` opts out (CI, scripted setups) and restores
+# the old print-the-instructions behavior.
+#
+# The snippet is guarded on `$PATH`, so sourcing it twice (login + interactive
+# files both loading, reinstalls, `gwae upgrade` re-running this script) never
+# stacks duplicate entries. Reinstalls rewrite only lines we own (marked
+# "added by gwae installer"), so a moved install dir relocates instead of
+# duplicating, and anything another tool or a hand edit wrote is left alone.
+add_to_path() {
+  case ":$PATH:" in
+    *":$INSTALL_DIR:"*) return 0 ;;
+  esac
+  if [ -n "${GWAE_NO_MODIFY_PATH:-}" ]; then
     say "${INSTALL_DIR} is not on your PATH. Add it to your shell profile:"
     say "  export PATH=\"${INSTALL_DIR}:\$PATH\""
-    ;;
-esac
+    return 0
+  fi
+
+  own_mark="added by gwae installer"
+  # Escape for embedding inside a double-quoted shell string.
+  esc_dir="$(printf '%s' "$INSTALL_DIR" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\$/\\$/g' -e 's/`/\\`/g')"
+  snippet="case \":\$PATH:\" in *\":$esc_dir:\"*) ;; *) export PATH=\"$esc_dir:\$PATH\" ;; esac  # $own_mark"
+
+  ensure_block() {
+    f="$1"
+    [ -n "$f" ] && [ -d "$(dirname "$f")" ] || return 0
+    touch "$f" 2>/dev/null || return 0
+    # Drop lines from a previous run of this installer; keep everything else.
+    if grep -q "$own_mark" "$f" 2>/dev/null; then
+      grep -v "$own_mark" "$f" > "$f.gwae-tmp" 2>/dev/null && mv "$f.gwae-tmp" "$f"
+    fi
+    # Already covered another way (brew/cargo shim, hand edit): leave it.
+    if grep -qF "$INSTALL_DIR" "$f" 2>/dev/null; then
+      touched="$touched $f(already)"
+      return 0
+    fi
+    printf '\n# %s\n%s\n' "$own_mark" "$snippet" >> "$f"
+    touched="$touched $f"
+  }
+
+  touched=""
+  shell_name="$(basename "${SHELL:-sh}")"
+  case "$shell_name" in
+    *fish*) : ;;
+    *zsh*) ensure_block "$HOME/.zshrc" ;;
+    *bash*)
+      # Bash's split personality needs both: login shells read .bash_profile,
+      # interactive non-login shells read .bashrc. The guard makes both safe.
+      ensure_block "$HOME/.bashrc"
+      ensure_block "$HOME/.bash_profile"
+      ;;
+    *) ensure_block "$HOME/.profile" ;;
+  esac
+  # fish_add_path is idempotent and this is our own file in conf.d (never
+  # config.fish itself). Written whenever fish is the current shell or is
+  # installed — a fish user installing from bash, or switching shells later,
+  # is covered — but never creating fish config dirs for users without fish.
+  fish_shell=0
+  case "$shell_name" in *fish*) fish_shell=1 ;; esac
+  if [ "$fish_shell" = 1 ] || command -v fish >/dev/null 2>&1; then
+    if mkdir -p "$HOME/.config/fish/conf.d" 2>/dev/null; then
+      printf '# %s\nfish_add_path "%s"\n' "$own_mark" "$INSTALL_DIR" \
+        > "$HOME/.config/fish/conf.d/gwae.fish"
+      touched="$touched $HOME/.config/fish/conf.d/gwae.fish"
+    fi
+  fi
+
+  export PATH="$INSTALL_DIR:$PATH"
+  if [ -n "$touched" ]; then
+    say "added ${INSTALL_DIR} to PATH in:${touched} — restart your terminal to use it"
+    say "(this shell already has it for now)"
+  else
+    say "${INSTALL_DIR} is not on your PATH and no shell profile was writable. Add it by hand:"
+    say "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+  fi
+}
+
+add_to_path
 
 say "run 'gwae' to start, or 'gwae init' for the guided setup."
 say "later: 'gwae upgrade' moves you to the next release the same way."
