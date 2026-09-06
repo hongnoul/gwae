@@ -3813,7 +3813,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             's' => Some(Action::SplitBelow),
             'r' => Some(Action::CycleWidth),
             'f' => Some(Action::ToggleFullWidth),
-            'z' => Some(Action::CycleWidth),
             'q' => {
                 if shift {
                     return Some(Cmd::Quit);
