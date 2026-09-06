@@ -4739,6 +4739,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             let alt = ke.modifiers.contains(KeyModifiers::ALT);
                             let mut chosen: Option<(std::path::PathBuf, bool)> = None;
                             let mut close = false;
+                            // `⌥+v` pastes the clipboard into the filter (a
+                            // pasted `~/` path must land here, not in the pane
+                            // underneath). Single-line: directory paths never
+                            // span lines, so keep the first line and strip
+                            // newlines. Like the old `Event::Paste` arm.
+                            let mut pasted: Option<String> = None;
                             match ke.code {
                                 KeyCode::Up => pick.step(-1),
                                 KeyCode::Down => pick.step(1),
@@ -4768,6 +4774,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     }
                                     close = true;
                                 }
+                                KeyCode::Char('v') if alt => {
+                                    pasted = crate::select::read_clipboard();
+                                }
+                                // √ is what macOS sends for ⌥+v when Option is
+                                // not mapped to Meta.
+                                KeyCode::Char('\u{221a}') => {
+                                    pasted = crate::select::read_clipboard();
+                                }
                                 KeyCode::Char(c)
                                     if !alt && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
@@ -4775,6 +4789,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     pick.sel = 0;
                                 }
                                 _ => {}
+                            }
+                            if let Some(text) = pasted {
+                                let mut t = text.trim().to_string();
+                                if let Some(first) = t.lines().next() {
+                                    t = first.to_string();
+                                }
+                                t.retain(|c| c != '\r' && c != '\n');
+                                if !t.is_empty() {
+                                    pick.query.push_str(&t);
+                                    pick.sel = 0;
+                                }
                             }
                             // The picker's harness decides which config key `save` writes.
                             // Read it before we clear `dir_pick`.
