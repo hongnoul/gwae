@@ -165,6 +165,20 @@ impl Palette {
         failed: rgb(0xff5555),
     };
 
+    /// White phosphor CRT: soft white chrome on true black, grayscale status.
+    pub const WHITE_PHOSPHOR: Palette = Palette {
+        base: rgb(0x000000),
+        surface: rgb(0x000000),
+        overlay: rgb(0x50504c),
+        accent: rgb(0xd8d8d0),
+        text: rgb(0xd8d8d0),
+        label: rgb(0x808078),
+        running: rgb(0x909090),
+        idle: rgb(0xd8d8d8),
+        done: rgb(0xb0b0b0),
+        failed: rgb(0xffffff),
+    };
+
     /// The host terminal's own ANSI 0-15 colors.
     ///
     /// Nothing is hardcoded to an RGB value, so gwae inherits whatever the
@@ -202,6 +216,7 @@ impl Palette {
             "nord" => Palette::NORD,
             "rosepine" | "rosépine" => Palette::ROSE_PINE,
             "dracula" => Palette::DRACULA,
+            "whitephosphor" | "monochrome" => Palette::WHITE_PHOSPHOR,
             "terminal" | "ansi" | "ansi16" => Palette::TERMINAL,
             _ => return None,
         })
@@ -218,6 +233,7 @@ impl Palette {
         "rose-pine",
         "dracula",
         "terminal",
+        "white-phosphor",
     ];
 
     /// The tint used for minimap tiles: the status color at 60% intensity, so

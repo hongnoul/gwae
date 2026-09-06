@@ -324,3 +324,11 @@ fn the_shipped_default_draws_the_inset_frames() {
         fgs_in(&painted)
     );
 }
+
+#[test]
+fn white_phosphor_preset_paints_monochrome_chrome() {
+    let painted = paint_with_config("theme = \"white-phosphor\"\n");
+    assert!(painted.contains(&fg_seq(0xd8, 0xd8, 0xd0)));
+    assert!(painted.contains(&fg_seq(0x50, 0x50, 0x4c)));
+    assert!(!painted.contains(&fg_seq(0x74, 0xc7, 0xec)));
+}

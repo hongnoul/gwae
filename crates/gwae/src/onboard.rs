@@ -240,6 +240,11 @@ pub fn questions_with(extra: &[String]) -> Vec<Question> {
                     value: "\"terminal\"",
                     blurb: "inherit your terminal's own ANSI palette",
                 },
+                Opt {
+                    label: "white-phosphor",
+                    value: "\"white-phosphor\"",
+                    blurb: "monochrome CRT on true black",
+                },
             ],
             default: 0,
             swatch: true,
@@ -1629,8 +1634,12 @@ mod tests {
             step(q, 0, Key::Digit(3)),
             Step::Done(Answer::Set("\"tokyo-night\"".into()))
         );
-        // ...and a digit past the end does nothing at all.
-        assert_eq!(step(q, 0, Key::Digit(9)), Step::Ignore);
+        // The ninth choice is white phosphor; an out-of-range choice is ignored.
+        assert_eq!(
+            step(q, 0, Key::Digit(9)),
+            Step::Done(Answer::Set("\"white-phosphor\"".into()))
+        );
+        assert_eq!(step(q, 0, Key::Digit(10)), Step::Ignore);
         assert_eq!(step(q, 0, Key::Other), Step::Ignore);
         assert_eq!(step(q, 0, Key::Skip), Step::Done(Answer::Skip));
         assert_eq!(step(q, 0, Key::Rest), Step::Done(Answer::RestDefaults));

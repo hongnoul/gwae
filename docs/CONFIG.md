@@ -24,7 +24,7 @@ agent_dir = "~/git/gwae"          # directory new panes start in ("" = gwae's cw
 harness_dirs = { jcode = "~/git/gwae" } # per-harness override; key = default_agent, any harness works
 agent_dirs = ["~/notes"]          # always offered in the ⌥+d picker
 agent_dir_roots = ["~/work"]      # where ⌥+d looks for projects (default: your home dir)
-theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal
+theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal, white-phosphor
 # or per-key overrides on top of a preset:
 # [theme]
 # preset = "nord"
@@ -173,7 +173,7 @@ A typo'd theme name is called out along with the valid names:
 
 ```
   theme: UNKNOWN "tokyonight-storm" -> falling back to catppuccin-mocha
-    available: catppuccin-mocha, catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal
+    available: catppuccin-mocha, catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal, white-phosphor
 ```
 
 and a config file that is not being applied at all points at the syntax error:
@@ -260,3 +260,12 @@ both minimaps, including focused and pending-jump tiles. ANSI palette queries
 are not required, so the fallback also works on terminals without OSC color
 query support. Colored status glyphs still depend on the host ANSI palette,
 and their shapes distinguish status without relying on color alone.
+
+## White phosphor CRT
+
+Set `theme = "white-phosphor"` (alias `monochrome`) for soft-white focus
+frames and HUD text on true black, subdued gray borders, and grayscale status
+tints. Status glyphs distinguish pane states without relying on color. Bright
+HUD tiles use contrast-selected dark text rather than white-on-white. This
+only themes gwae chrome, not programs inside panes. The keep-awake indicator
+still takes precedence with a red focus ring when enabled.
