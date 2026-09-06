@@ -1046,7 +1046,6 @@ fn focused_pane_views_with_chrome(
         let is_neighbor = ci == focused.saturating_add(1) || (focused > 0 && ci + 1 == focused);
         // Never peek for the focused column itself.
         let is_focused_col = ci == focused;
-        let full_w = (ce - cs) as u16;
         // Unclamped logical width for overflow detection: rightmost columns
         // extend past the viewport and ce is already clamped, so raw==full
         // would hide the squish. Compare against the true column width.
@@ -1069,10 +1068,15 @@ fn focused_pane_views_with_chrome(
         } else {
             (raw_wv, false)
         };
-        // The emulator matches the pane's content area exactly (the column
-        // width minus any frame inset) unless an explicit content_width
-        // extends the logical width for horizontal scrolling.
-        let grid_cols = full_w.max(content_width);
+        // The emulator matches the pane's *logical* column width (the full
+        // column minus any frame inset) unless an explicit content_width
+        // extends the logical width for horizontal scrolling. Use the
+        // unclamped width: the last column's right frame pulls in by one to
+        // stay on screen, but its content must not shrink with it. Clamping
+        // here is what made a widened pane 4 shrink instead of overflowing
+        // like pane 1 does.
+        let logical_w = (e - cs).max(0) as u16;
+        let grid_cols = logical_w.max(content_width);
         let col_x0 = (left as i32 - sx).max(0) as u16; // grid col at `left`
         let p = col.panes.len().max(1);
         let gap = 1u16;
@@ -6818,6 +6822,48 @@ mod tests {
     }
 
     #[test]
+    fn widened_last_pane_overflows_instead_of_shrinking() {
+        // Widening pane 1 to half keeps its 40-cell grid (the frame shares
+        // the boundary with pane 2, so content overflows past the edge).
+        // Widening pane 4 must behave the same: its grid keeps the full
+        // logical width even though its right frame pulls in by one to stay
+        // on screen. Before the fix the grid was clamped to the visible
+        // rect, so pane 4 shrank while pane 1 overflowed.
+        use gwae_layout::{Preset, Width};
+        let panes = HashMap::new();
+        let cols: u16 = 80;
+        let rows: u16 = 10;
+        let mut widths = HashMap::new();
+        for focus_col in [0usize, 3usize] {
+            let mut layout = Layout::new(1);
+            if let Some(r) = layout.row_mut(layout.focus.row) {
+                r.columns.clear();
+            }
+            let row = layout.focus.row;
+            for _ in 0..4 {
+                let p = layout.alloc_pane();
+                layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
+            }
+            layout.focus.column = focus_col;
+            // Widen the focused column to half (quarter -> third -> half).
+            let vp = gwae_layout::Viewport::new(cols);
+            for _ in 0..2 {
+                let _ = layout.apply(gwae_layout::Action::CycleWidth, vp, FollowScroll::default());
+            }
+            let views = focused_pane_views(&layout, cols, rows, 0, &panes, true);
+            let v = views.iter().find(|v| v.col == focus_col).unwrap();
+            widths.insert(focus_col, v.grid_cols);
+        }
+        assert_eq!(
+            widths[&0], widths[&3],
+            "pane 1 and pane 4 must keep the same grid width when widened"
+        );
+        // Half of 80 is 40; minus the 1-cell left frame inset (the right
+        // frame is shared with the neighbour, so content runs up to it).
+        assert_eq!(widths[&3], 40 - 1, "widened pane keeps its logical width");
+    }
+
+    #[test]
     fn peek_sliver_replaces_squished_neighbour_with_a_faded_hint() {
         use gwae_layout::{Preset, Viewport, Width};
         // Force a sliver by placing scroll between stops: immediate neighbour
@@ -7591,8 +7637,12 @@ mod tests {
             assert_eq!(v.rect.x + v.rect.w, frame_x, "content ends inside frame");
             assert_eq!(v.rect.y, 1, "content below the top frame row");
             assert_eq!(v.rect.y + v.rect.h, rows - 1, "content above bottom row");
-            // Emulator geometry matches the inset rect exactly.
-            assert_eq!(v.grid_cols, v.rect.w);
+            // Emulator geometry matches the logical column width: every
+            // column but the last shows its whole grid, while the last
+            // column's grid extends one cell past the screen edge (its right
+            // frame pulls in, but its content overflows like pane 1 does).
+            let logical_w = (*e as i32 - (*s as i32 + 1)).max(0) as u16;
+            assert_eq!(v.grid_cols, logical_w);
             assert_eq!(v.grid_rows, v.rect.h);
         }
         // Full-bleed mode is unchanged: rects span the whole column and strip.
