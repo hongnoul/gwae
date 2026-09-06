@@ -27,6 +27,12 @@ impl Session {
     /// `clipboard_text`. Returns the session plus the temp dir (kept alive
     /// by the struct so the stub stays on disk).
     fn start(clipboard_text: &str) -> Session {
+        Self::start_with(clipboard_text, "cat")
+    }
+
+    /// Same as [`Session::start`], but run `pane_cmd` in the pane instead
+    /// of `cat` (e.g. a real `fish` for the acceptance test).
+    fn start_with(clipboard_text: &str, pane_cmd: &str) -> Session {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
             "gwae-paste-e2e-{}-{}",
@@ -79,7 +85,7 @@ impl Session {
         // `cat` never enables bracketed paste (no DECSET 2004), so the pane
         // gets the payload verbatim — the right expectation for a child
         // that did not ask.
-        cmd.arg("cat");
+        cmd.arg(pane_cmd);
         let child = pair.slave.spawn_command(cmd).expect("spawn gwae");
         drop(pair.slave);
 
@@ -206,7 +212,7 @@ fn option_v_pastes_the_clipboard_into_a_plain_pane() {
 #[test]
 #[cfg(target_os = "macos")]
 fn option_v_multiline_paste_arrives_as_one_block() {
-    // A multi-line payloadRS through `cat` must echo back joined: gwae
+    // A multi-line payload through `cat` must echo back joined: gwae
     // normalizes newlines to `\r` (what a PTY delivers for Return), so the
     // child sees line breaks, not one long line and not literal `\n` text.
     let mut s = Session::start("one\\ntwo");
@@ -223,6 +229,62 @@ fn option_v_multiline_paste_arrives_as_one_block() {
     assert!(
         shown.contains("pasted 1 line") || shown.contains("pasted 2 lines"),
         "the paste toast must confirm; got:\n{shown:?}"
+    );
+    s.kill();
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn option_v_in_a_real_fish_pane_pastes_instead_of_opening_an_editor() {
+    // Acceptance for the original report: a plain fish pane with no
+    // $VISUAL/$EDITOR. Before the fix, `⌥+v` arrived as `ESC+v`, which fish
+    // binds to `edit_command_buffer` — printing "External editor requested
+    // but $VISUAL or $EDITOR not set." Now gwae bracket-writes the
+    // clipboard, and fish (which enables bracketed paste) buffers it on the
+    // command line instead of running it.
+    //
+    // The fish binary must exist; skip otherwise (Linux CI has no fish).
+    let fish = [
+        "/opt/homebrew/bin/fish",
+        "/usr/local/bin/fish",
+        "/usr/bin/fish",
+    ]
+    .into_iter()
+    .find(|p| std::path::Path::new(p).exists());
+    let Some(fish) = fish else {
+        eprintln!("skipping: no fish binary found");
+        return;
+    };
+    // The pasted text must appear on fish's command line without
+    // executing on its own.
+    let mut s = Session::start_with("echo PASTED_MARKER", fish);
+    std::thread::sleep(Duration::from_millis(2000));
+    let _ = s.drain();
+
+    s.send(OPT_V);
+    std::thread::sleep(Duration::from_millis(1000));
+    let out = s.drain();
+    let shown = visible(&out);
+    assert!(
+        !shown.contains("External editor"),
+        "fish must not open its external editor; got:\n{shown:?}"
+    );
+    // The 100-column frame wraps the prompt line across pane borders, so
+    // `echo PASTED_MARKER` may arrive split around box-drawing cells.
+    // Collapse everything that is not a letter to compare the content.
+    let squashed: String = shown.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+    assert!(
+        squashed.contains("echoPASTEDMARKER"),
+        "the pasted command must sit on fish's command line; got:\n{shown:?}"
+    );
+    // Fish buffers a bracketed paste without executing: the marker text
+    // appears exactly once (on the prompt line). Running the command
+    // would print a second bare `PASTED_MARKER` output line. Count on the
+    // squashed text so frame wrapping cannot hide or fake an occurrence.
+    let marker_count = squashed.matches("PASTEDMARKER").count();
+    assert!(
+        marker_count == 1,
+        "paste must buffer (1 occurrence), not execute ({marker_count}); got:\n{shown:?}"
     );
     s.kill();
 }

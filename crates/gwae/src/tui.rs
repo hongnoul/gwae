@@ -8358,6 +8358,23 @@ mod tests {
     }
 
     #[test]
+    fn paste_row_renders_in_hud_and_cow() {
+        // Both public surfaces render from BINDS: the HUD grid lists the
+        // panes group, the cow hints name every binding. A paste row that
+        // dispatches but never renders would leave users discovering `⌥+v`
+        // by accident.
+        let hints = crate::binds::cowsay_hints();
+        assert!(
+            hints.iter().any(|h| h.contains("pastes the clipboard")),
+            "cow hints must name the paste binding: {hints:?}"
+        );
+        assert!(
+            crate::binds::group(crate::binds::Group::Panes).any(|b| b.desc == "paste"),
+            "HUD panes group must list the paste row"
+        );
+    }
+
+    #[test]
     fn paste_route_sends_agent_panes_to_the_harness() {
         // `⌥+v` in an agent pane must forward to the inner jcode (its own
         // smart paste); in a plain pane gwae bracket-writes the clipboard.
