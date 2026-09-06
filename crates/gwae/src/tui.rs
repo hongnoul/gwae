@@ -4791,11 +4791,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 _ => {}
                             }
                             if let Some(text) = pasted {
-                                let mut t = text.trim().to_string();
-                                if let Some(first) = t.lines().next() {
-                                    t = first.to_string();
-                                }
-                                t.retain(|c| c != '\r' && c != '\n');
+                                let t = picker_paste_query(&text);
                                 if !t.is_empty() {
                                     pick.query.push_str(&t);
                                     pick.sel = 0;
@@ -5139,32 +5135,25 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 }
                                 Cmd::Paste => {
                                     // `⌥+v` smart paste. The focused child
-                                    // decides who pastes:
-                                    //
-                                    // * Agent pane: forward the chord to the
-                                    //   inner jcode untouched (`ESC+v`), so
-                                    //   its own smart paste (text vs image vs
-                                    //   dictation) stays the authority. gwae
-                                    //   claiming it would double-paste or lose
-                                    //   the image path.
-                                    // * Plain pane: read the system clipboard
-                                    //   here and bracket-write it. fish binds
-                                    //   `ESC+v` to `edit_command_buffer`,
-                                    //   which errors without $VISUAL/$EDITOR,
-                                    //   so forwarding is never a paste there.
-                                    let is_agent = focused_pane(&layout)
-                                        .is_some_and(|pid| agent_panes.contains(&pid));
-                                    if is_agent {
-                                        if let Some(pid) = focused_pane(&layout) {
-                                            if let Some(p) = panes.get_mut(&pid) {
-                                                if p.grid.scroll_to_bottom() {
-                                                    dirty = true;
+                                    // decides who pastes (see
+                                    // `paste_route`): agent panes forward the
+                                    // chord to the inner jcode untouched, plain
+                                    // panes get gwae's bracketed write.
+                                    match paste_route(&layout, &agent_panes) {
+                                        PasteRoute::ForwardAgent => {
+                                            if let Some(pid) = focused_pane(&layout) {
+                                                if let Some(p) = panes.get_mut(&pid) {
+                                                    if p.grid.scroll_to_bottom() {
+                                                        dirty = true;
+                                                    }
+                                                    let _ = p.writer.write_all(&key_bytes(&ke));
+                                                    let _ = p.writer.flush();
                                                 }
-                                                let _ = p.writer.write_all(&key_bytes(&ke));
-                                                let _ = p.writer.flush();
                                             }
+                                            continue;
                                         }
-                                        continue;
+                                        PasteRoute::WritePlain => {}
+                                        PasteRoute::NoFocus => {}
                                     }
                                     let anchor = focused_pane_views_with_chrome(
                                         &layout,
@@ -5647,6 +5636,43 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     crate::reap::reap_all();
     restore_terminal(&mut stdout, kitty_keyboard);
     Ok(())
+}
+
+/// Who pastes for `⌥+v`: the inner harness or gwae itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasteRoute {
+    /// Agent pane: forward the chord to the inner jcode untouched (`ESC+v`),
+    /// so its own smart paste (text vs image vs dictation) stays the
+    /// authority. gwae claiming it would double-paste or lose the image path.
+    ForwardAgent,
+    /// Plain pane: gwae reads the system clipboard and bracket-writes it.
+    /// fish binds `ESC+v` to `edit_command_buffer`, which errors without
+    /// $VISUAL/$EDITOR, so forwarding is never a paste there.
+    WritePlain,
+    /// Nothing focused: the write arm reports it.
+    NoFocus,
+}
+
+/// Decide who pastes for `⌥+v` from the focused pane. Kept free of terminal
+/// types so the routing is unit testable; the main loop owns the I/O.
+fn paste_route(layout: &Layout, agent_panes: &HashSet<PaneId>) -> PasteRoute {
+    match focused_pane(layout) {
+        None => PasteRoute::NoFocus,
+        Some(pid) if agent_panes.contains(&pid) => PasteRoute::ForwardAgent,
+        Some(_) => PasteRoute::WritePlain,
+    }
+}
+
+/// Trim clipboard text for the spawn-dir filter: directory paths are
+/// single-line, so keep the first line and strip newlines. Empty in, empty
+/// out: the caller decides whether to touch the filter.
+fn picker_paste_query(text: &str) -> String {
+    let mut t = text.trim().to_string();
+    if let Some(first) = t.lines().next() {
+        t = first.to_string();
+    }
+    t.retain(|c| c != '\r' && c != '\n');
+    t
 }
 
 /// The toast shown after an explicit `⌥+v` paste. A one-line paste still
@@ -8329,6 +8355,28 @@ mod tests {
         assert_eq!(paste_note("ls -la", true), "pasted 1 line");
         assert_eq!(paste_note("a\nb\nc", true), "pasted 3 lines");
         assert!(paste_note("a\nb\nc", false).contains("newlines run"));
+    }
+
+    #[test]
+    fn paste_route_sends_agent_panes_to_the_harness() {
+        // `⌥+v` in an agent pane must forward to the inner jcode (its own
+        // smart paste); in a plain pane gwae bracket-writes the clipboard.
+        let layout = Layout::new(1);
+        let focused = focused_pane(&layout).expect("one pane is focused");
+        let empty: HashSet<PaneId> = HashSet::new();
+        assert_eq!(paste_route(&layout, &empty), PasteRoute::WritePlain);
+        let agents: HashSet<PaneId> = [focused].into_iter().collect();
+        assert_eq!(paste_route(&layout, &agents), PasteRoute::ForwardAgent);
+    }
+
+    #[test]
+    fn picker_paste_query_keeps_a_single_clean_path() {
+        // Pasted `~/` paths land in the filter; multi-line payloads and
+        // carriage returns are trimmed to the first line.
+        assert_eq!(picker_paste_query("  ~/git/gwae  "), "~/git/gwae");
+        assert_eq!(picker_paste_query("~/a\n~/b\n"), "~/a");
+        assert_eq!(picker_paste_query("a\rb\n",), "ab");
+        assert!(picker_paste_query("  \n  ").is_empty());
     }
 
     #[test]
