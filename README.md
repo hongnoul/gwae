@@ -109,6 +109,7 @@ click          focus pane
 drag           select and copy
 wheel          scroll this pane's history (child TUIs keep their own)
 Ctrl+Shift+J/K scroll this pane's history a line, like jcode (in an agent pane the harness keeps the chord for its own transcript)
+Ctrl+J/K       always reach the pane (jcode: prompt jump); gwae never claims them
 ```
 
 Full list: [docs/KEYBINDS.md](docs/KEYBINDS.md)

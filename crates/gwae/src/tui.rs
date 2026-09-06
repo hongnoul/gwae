@@ -5855,6 +5855,49 @@ mod tests {
     }
 
     #[test]
+    fn plain_ctrl_jk_always_reaches_the_pane_as_prompt_jump_bytes() {
+        // The harness contract: plain Ctrl+J / Ctrl+K carry no Shift
+        // information in any terminal encoding, so they can never be a
+        // scroll chord. gwae must forward them as the legacy control byte
+        // (0x0A / 0x0B) in every pane, and must never claim them for its
+        // own scrollback or any layout action. This is the regression test
+        // the Sept-4 scroll claim lacked: it pinned the shifted chord but
+        // left the unshifted one to drift.
+        for (c, byte) in [('j', 0x0au8), ('k', 0x0bu8)] {
+            let ev = KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+            assert_eq!(
+                handle_key(&ev),
+                Some(Cmd::Input(vec![byte])),
+                "plain Ctrl+{c} must forward 0x{byte:02X}, jcode's prompt jump"
+            );
+            // The chord is shift-free by construction: the harness predicate
+            // must reject it, so the agent-pane fast-path can never divert
+            // it away from the child either.
+            assert!(
+                !is_harness_scroll_chord(&ev),
+                "plain Ctrl+{c} must not count as the harness scroll chord"
+            );
+            // Caps Lock must not promote it either: Ctrl+CapsLock+K is the
+            // same legacy byte, not a scroll.
+            let caps = KeyEvent::new_with_kind_and_state(
+                KeyCode::Char(c.to_ascii_uppercase()),
+                KeyModifiers::CONTROL,
+                KeyEventKind::Press,
+                KeyEventState::CAPS_LOCK,
+            );
+            assert_eq!(
+                handle_key(&caps),
+                Some(Cmd::Input(vec![byte])),
+                "Ctrl+CapsLock+{c} must forward 0x{byte:02X} like plain Ctrl+{c}"
+            );
+            assert!(
+                !is_harness_scroll_chord(&caps),
+                "Ctrl+CapsLock+{c} must not count as the harness scroll chord"
+            );
+        }
+    }
+
+    #[test]
     fn ctrl_shift_jk_scroll_scrollback_a_line_like_jcode() {
         // jcode's transcript: Ctrl+Shift+K scrolls up a line, Ctrl+Shift+J
         // scrolls down a line. Plain Ctrl+J / Ctrl+K stay with the pane
