@@ -2137,7 +2137,7 @@ struct HudPlan {
     inner_ox: usize,
     /// Screen y of the tally row and of the key-hint row.
     tally_y: Option<u16>,
-    hint_y: u16,
+    hint_y: Option<u16>,
 }
 
 /// The status tally shown in the dashboard footer: the pane count, then one
@@ -2173,6 +2173,7 @@ fn plan_center_minimap(
     rows: u16,
     layout: &Layout,
     mm: &crate::config::Minimap,
+    show_hints: bool,
 ) -> Option<HudPlan> {
     use gwae_layout::minimap;
     if !mm.show || cols < 20 || rows < 8 {
@@ -2182,6 +2183,9 @@ fn plan_center_minimap(
     // *something*: silence taught first-run users that ⌥ does nothing at all.
     // Fall back to the key hints alone.
     let single = layout.panes.len() <= 1 && layout.rows.len() <= 1;
+    if single && !show_hints {
+        return None;
+    }
 
     // Strip gutter: just the strip number.
     let gutter: Vec<String> = layout
@@ -2245,7 +2249,7 @@ fn plan_center_minimap(
         shown_rows as usize + ruler_rows + usize::from(hidden > 0)
     };
     let has_summary = mm.show_counts && !single;
-    let footer_rows = usize::from(has_summary) + 1; // tallies + key hints
+    let footer_rows = usize::from(has_summary) + usize::from(show_hints);
 
     let map_row_w = (gutter_w + u16::from(gutter_w > 0) + map.width) as usize;
     let tally_w: usize = status_tally(layout)
@@ -2253,7 +2257,11 @@ fn plan_center_minimap(
         .map(|(t, _)| t.chars().count())
         .sum();
     let inner_w = map_row_w
-        .max(hud_hint().chars().count())
+        .max(if show_hints {
+            hud_hint().chars().count()
+        } else {
+            0
+        })
         .max(if has_summary { tally_w } else { 0 });
     let bw = inner_w + 2;
     let bh = body_rows + footer_rows + 2;
@@ -2300,7 +2308,7 @@ fn plan_center_minimap(
         inner_w,
         inner_ox,
         tally_y,
-        hint_y: fy as u16,
+        hint_y: show_hints.then_some(fy as u16),
     })
 }
 
@@ -2369,7 +2377,7 @@ fn draw_center_minimap(
     pal: &Palette,
     facts: &HudFacts,
 ) {
-    if let Some(plan) = plan_center_minimap(cols, rows, layout, mm) {
+    if let Some(plan) = plan_center_minimap(cols, rows, layout, mm, true) {
         paint_center_minimap(out, cols, rows, layout, &plan, pal, facts);
     }
 }
@@ -2559,7 +2567,10 @@ fn paint_center_minimap(
         write(
             out,
             inner_ox,
-            plan.tally_y.unwrap_or(plan.hint_y) as usize - 1,
+            plan.tally_y
+                .or(plan.hint_y)
+                .unwrap_or(plan.rect.y + plan.rect.h - 1) as usize
+                - 1,
             &more,
             Palette::muted(pal.text),
             false,
@@ -2577,11 +2588,11 @@ fn paint_center_minimap(
         }
     }
     let hint_len = hint.chars().count();
-    if hint_len <= plan.inner_w {
+    if let Some(hint_y) = plan.hint_y.filter(|_| hint_len <= plan.inner_w) {
         write(
             out,
             inner_ox + (plan.inner_w - hint_len) / 2,
-            plan.hint_y as usize,
+            hint_y as usize,
             &hint,
             Palette::muted(pal.text),
             false,
@@ -5593,7 +5604,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // the same plan, so a click can never land on a tile the paint put
         // somewhere else.
         hud_plan = (show_center_minimap && !show_hud)
-            .then(|| plan_center_minimap(cols, rows, &layout, &cfg.minimap))
+            .then(|| plan_center_minimap(cols, rows, &layout, &cfg.minimap, cfg.cowsay.enabled))
             .flatten();
         if dirty {
             // While the keep-awake assertion is held the focus ring paints
@@ -8863,6 +8874,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn center_minimap_respects_disabled_keybinding_hints() {
+        let layout = Layout::default();
+        for show_counts in [true, false] {
+            let mm = crate::config::Minimap {
+                show_counts,
+                ..Default::default()
+            };
+            let enabled = plan_center_minimap(100, 24, &layout, &mm, true).unwrap();
+            let disabled = plan_center_minimap(100, 24, &layout, &mm, false).unwrap();
+            assert!(disabled.hint_y.is_none());
+            assert_eq!(disabled.rect.h + 1, enabled.rect.h);
+            assert!(disabled.rect.w <= enabled.rect.w);
+            assert_eq!(disabled.tally_y.is_some(), show_counts);
+            for (plan, expected) in [(&enabled, true), (&disabled, false)] {
+                let mut out = vec![Cell::default(); 100 * 24];
+                paint_center_minimap(
+                    &mut out,
+                    100,
+                    24,
+                    &layout,
+                    plan,
+                    &Palette::default(),
+                    &HudFacts::default(),
+                );
+                let text: String = out.iter().map(|c| c.ch).collect();
+                assert_eq!(text.contains(&hud_hint()), expected);
+                assert!(text.contains('╭'), "map remains visible without hints");
+            }
+        }
+        let single = Layout::new(1);
+        let mm = crate::config::Minimap::default();
+        assert!(plan_center_minimap(100, 24, &single, &mm, false).is_none());
+        assert!(plan_center_minimap(100, 24, &single, &mm, true).is_some());
+    }
+
     /// A wide grid whose columns overflow the viewport, so the dashboard has
     /// something to say about titles, ages, jumps and the visible span.
     /// Returns the layout and its pane ids in column order.
@@ -9039,8 +9086,8 @@ mod tests {
         ]) {
             layout.panes.get_mut(id).unwrap().status = status;
         }
-        let plan =
-            plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default()).unwrap();
+        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
+            .unwrap();
         for pending_jump in [None, Some(3)] {
             let mut out = vec![Cell::default(); 100 * 24];
             paint_center_minimap(
@@ -9120,7 +9167,7 @@ mod tests {
         // Eight quarter-width columns: only four fit, so the strip scrolls
         // and the map has something to point at.
         let (mut layout, _) = dashboard_layout(8);
-        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
+        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
             .expect("dashboard fits");
         assert_eq!(plan.rulers.len(), 1, "one strip");
         let (first, last) = plan.rulers[0].expect("an overflowing strip gets a ruler");
@@ -9131,7 +9178,7 @@ mod tests {
         for _ in 0..5 {
             let _ = layout.apply(Action::FocusRight, v, f);
         }
-        let plan2 = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
+        let plan2 = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
             .expect("dashboard fits");
         let (f2, l2) = plan2.rulers[0].expect("still overflowing");
         assert!(
@@ -9140,7 +9187,7 @@ mod tests {
         );
         // A strip that fits entirely has nothing to point out.
         let (small, _) = dashboard_layout(2);
-        let plan3 = plan_center_minimap(100, 24, &small, &crate::config::Minimap::default())
+        let plan3 = plan_center_minimap(100, 24, &small, &crate::config::Minimap::default(), true)
             .expect("dashboard fits");
         assert_eq!(plan3.rulers[0], None, "no ruler when the strip fits");
     }
@@ -9153,7 +9200,7 @@ mod tests {
             pending_jump: Some(3),
             ..HudFacts::default()
         };
-        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
+        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
             .expect("dashboard fits");
         let mut out = vec![Cell::default(); 100 * 24];
         paint_center_minimap(&mut out, 100, 24, &layout, &plan, &pal, &facts);
@@ -9194,7 +9241,7 @@ mod tests {
     #[test]
     fn clicking_a_tile_resolves_to_the_pane_it_draws() {
         let (layout, ids) = dashboard_layout(4);
-        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
+        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
             .expect("dashboard fits");
         let y = plan.row_y[0];
         // Every cell of a tile belongs to that tile's pane, so a click
@@ -9212,7 +9259,11 @@ mod tests {
         assert_eq!(hud_pane_at(&plan, plan.map_ox, y), Some(ids[0]));
         // The frame and the footer are not tiles.
         assert_eq!(hud_pane_at(&plan, plan.rect.x, y), None, "frame");
-        assert_eq!(hud_pane_at(&plan, plan.map_ox, plan.hint_y), None, "footer");
+        assert_eq!(
+            hud_pane_at(&plan, plan.map_ox, plan.hint_y.unwrap()),
+            None,
+            "footer"
+        );
     }
 
     #[test]
@@ -9227,7 +9278,7 @@ mod tests {
             max_rows: 3,
             ..Default::default()
         };
-        let plan = plan_center_minimap(100, 24, &layout, &mm).expect("dashboard fits");
+        let plan = plan_center_minimap(100, 24, &layout, &mm, true).expect("dashboard fits");
         assert_eq!(plan.row_y.len(), 3, "capped at max_rows");
         assert_eq!(plan.hidden, 7, "the rest are counted, not forgotten");
         let mut out = vec![Cell::default(); 100 * 24];
@@ -9253,7 +9304,7 @@ mod tests {
         let r3 = layout.new_row();
         let p2 = layout.alloc_pane();
         layout.add_column(r3, gwae_layout::Width::Cells(20), vec![p2]);
-        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
+        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
             .expect("dashboard fits");
         assert_eq!(plan.gutter[1], "2");
         assert_eq!(plan.gutter[2], "3");
@@ -9275,7 +9326,7 @@ mod tests {
                 &pal_accent(CColor::Idx(36)),
                 &HudFacts::default(),
             );
-            let plan = plan_center_minimap(cols, rows, &layout, &mm);
+            let plan = plan_center_minimap(cols, rows, &layout, &mm, true);
             let r = plan.as_ref().map(|p| p.rect).unwrap_or(Rect {
                 x: 0,
                 y: 0,

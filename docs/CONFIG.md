@@ -238,7 +238,9 @@ questions you actually hold the modifier to ask, and carries more per tile:
 Tiles degrade gracefully as they narrow: the status glyph and the column digit
 always survive, the title is dropped before the age (a name cut to two letters
 says nothing; how long a pane has waited is the news). With a single pane there
-is nothing to triage, so the hold shows the key hints alone.
+is nothing to triage, so the hold shows the key hints alone. Disabling
+`cowsay.enabled` also removes the dashboard key-hint footer and suppresses
+the hints-only panel for a single pane.
 | `cowsay.enabled` | bool | `true` | Draw a small cowsay under the block-font identifier in empty placeholder boxes, so an empty grid documents itself. On by default: an empty grid documents itself; set `false` for a bare skeleton. The cow is skipped when the box is too small for it to fit whole (under 23 cells wide, or too short for label + art), so the identifier is never crowded out. |
 | `cell_labels` | bool | `true` | Draw the big block-font `strip.pane` identifier in empty placeholder boxes. On by default; set `false` for a bare skeleton. |
 | `cowsay.messages` | array of strings | keybinding hints (OS-aware: `⌥+g` on macOS, `Alt+g` elsewhere) | The pool each empty box draws its line from. Which box says what is chosen by hashing the cell's position, never randomly, so a given box always says the same thing and idle gwae does not repaint. An empty list disables the cow just like `enabled = false`. |
