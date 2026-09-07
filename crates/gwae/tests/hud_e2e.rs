@@ -168,7 +168,7 @@ fn visible(raw: &str) -> String {
 fn holding_the_modifier_reveals_a_dashboard_that_names_its_panes() {
     // Spatial-only: the panel shows geometry (color + address + marker), not
     // titles. Titles live in pane chrome; the HUD stays uncluttered.
-    let mut s = Session::start("[cowsay]\nenabled = false\n");
+    let mut s = Session::start("[cowsay]\nenabled = true\nmessages = []\n");
     let _ = s.drain();
     widen(&mut s, 3);
 
@@ -203,7 +203,7 @@ fn a_lone_pane_still_answers_the_hold() {
     // Regression: with one pane the panel used to draw nothing at all, which
     // taught first-run users that holding ⌥ was broken. It now degrades to
     // the key hints, which is exactly what a new user needs.
-    let mut s = Session::start("[cowsay]\nenabled = false\nstartup_panes = 1\n");
+    let mut s = Session::start("startup_panes = 1\n[cowsay]\nenabled = true\nmessages = []\n");
     let _ = s.drain();
 
     s.send(&alt(b'h'));
@@ -219,7 +219,7 @@ fn a_lone_pane_still_answers_the_hold() {
 fn typing_a_column_number_previews_it_on_the_dashboard() {
     // A multi-digit jump is typed blind: the map is the only place that can
     // show which column the number currently addresses.
-    let mut s = Session::start("[cowsay]\nenabled = false\n");
+    let mut s = Session::start("[cowsay]\nenabled = true\nmessages = []\n");
     let _ = s.drain();
     widen(&mut s, 3);
 
@@ -239,13 +239,36 @@ fn typing_a_column_number_previews_it_on_the_dashboard() {
     s.kill();
 }
 
+#[test]
+fn disabled_keybinding_hints_remove_the_dashboard_footer() {
+    let mut s = Session::start("[cowsay]\nenabled = false\n");
+    let _ = s.drain();
+    widen(&mut s, 3);
+    s.send(&alt(b'h'));
+    let shown = visible(&s.peek(150));
+    s.kill();
+    assert!(shown.contains('╭'), "dashboard still appears: {shown:?}");
+    assert!(
+        shown.contains('»') || shown.contains('!'),
+        "tiles remain: {shown:?}"
+    );
+    assert!(
+        !shown.contains("attention"),
+        "hint footer is hidden: {shown:?}"
+    );
+    assert!(
+        !shown.contains("1-9 col"),
+        "column hint is hidden: {shown:?}"
+    );
+}
+
 /// Drive the real binary through the modifier reveal and inspect rendered cells,
 /// not just palette constants. No OSC color-query response is provided by this PTY.
 #[test]
 fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     use gwae_term::{CColor, Size, TermGrid, Vt100Grid};
     let mut s = Session::start(
-        "[theme]\npreset = \"terminal\"\naccent = 11\nrunning = 11\n[cowsay]\nenabled = false\n",
+        "[theme]\npreset = \"terminal\"\naccent = 11\nrunning = 11\n[cowsay]\nenabled = true\nmessages = []\n",
     );
     let _ = s.drain();
     widen(&mut s, 3);
