@@ -3741,6 +3741,27 @@ fn key_bytes(ev: &KeyEvent) -> Vec<u8> {
         KeyCode::PageDown => out.extend_from_slice(b"\x1b[6~"),
         KeyCode::Delete => out.extend_from_slice(b"\x1b[3~"),
         KeyCode::Insert => out.extend_from_slice(b"\x1b[2~"),
+        // Function keys use the standard xterm sequences so full-screen
+        // children (nvim, htop, …) receive them. Before this they fell into
+        // the catch-all below and produced zero bytes: silently swallowed.
+        KeyCode::F(n) => {
+            let seq: &[u8] = match n {
+                1 => b"\x1bOP",
+                2 => b"\x1bOQ",
+                3 => b"\x1bOR",
+                4 => b"\x1bOS",
+                5 => b"\x1b[15~",
+                6 => b"\x1b[17~",
+                7 => b"\x1b[18~",
+                8 => b"\x1b[19~",
+                9 => b"\x1b[20~",
+                10 => b"\x1b[21~",
+                11 => b"\x1b[23~",
+                12 => b"\x1b[24~",
+                _ => b"",
+            };
+            out.extend_from_slice(seq);
+        }
         // Crossterm can deliver the legacy BackTab (Shift+Tab) code; forward it
         // with the same Meta prefix convention.
         KeyCode::BackTab => out.extend_from_slice(b"\x1b[Z"),
@@ -3803,10 +3824,10 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         }
     }
     if !alt {
-        // Escape must be a chord preamble only; forward everything else.
-        if ev.code == Esc {
-            return Some(Cmd::None);
-        }
+        // No gwae chord starts with Escape, so a bare Esc belongs to the
+        // focused pane (vim/nvim insert-mode exit, picker cancel, …).
+        // The generic fallthrough at the end of this arm forwards it as
+        // 0x1b via key_bytes.
         // Ctrl+Shift+J / Ctrl+Shift+K scroll the focused pane's history line
         // by line, like jcode's transcript scroll. Plain Ctrl+J / Ctrl+K
         // belong to the pane (jcode uses them for prompt jump), so only the
@@ -8756,6 +8777,36 @@ mod tests {
         // Plain `/` stays pane input.
         let ev = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
         assert!(matches!(handle_key(&ev), Some(Cmd::Input(_))));
+    }
+
+    #[test]
+    fn bare_escape_reaches_the_pane() {
+        // No gwae chord starts with Escape: a bare Esc must forward as 0x1b
+        // so vim/nvim can leave insert mode (previously swallowed as None).
+        let ev = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(handle_key(&ev), Some(Cmd::Input(vec![0x1b])));
+    }
+
+    #[test]
+    fn function_keys_encode_xterm_sequences() {
+        // F-keys previously fell into the catch-all and produced zero bytes.
+        for (n, want) in [
+            (1u8, b"\x1bOP".as_slice()),
+            (2, b"\x1bOQ"),
+            (3, b"\x1bOR"),
+            (4, b"\x1bOS"),
+            (5, b"\x1b[15~"),
+            (6, b"\x1b[17~"),
+            (7, b"\x1b[18~"),
+            (8, b"\x1b[19~"),
+            (9, b"\x1b[20~"),
+            (10, b"\x1b[21~"),
+            (11, b"\x1b[23~"),
+            (12, b"\x1b[24~"),
+        ] {
+            let ev = KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE);
+            assert_eq!(handle_key(&ev), Some(Cmd::Input(want.to_vec())), "F{n}");
+        }
     }
 
     #[test]
