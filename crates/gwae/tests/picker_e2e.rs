@@ -157,7 +157,7 @@ fn stepping_wraps_backwards_to_the_last_theme() {
     s.send(LEFT);
     let out = s.drain();
     assert!(
-        out.contains("terminal"),
+        out.contains("white-phosphor"),
         "stepping back from the first preset should wrap to the last; got:\n{out:?}"
     );
     s.kill();
