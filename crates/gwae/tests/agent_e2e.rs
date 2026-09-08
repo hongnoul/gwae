@@ -949,12 +949,14 @@ fn the_summary_screen_reports_what_landed_in_the_file() {
         "Color theme",
         "Scrolling style",
         "Width of a new column",
-        "catppuccin-mocha",
+        "white-phosphor",
     ] {
         assert!(seen.contains(line), "summary omits {line:?}; got:\n{seen}");
     }
     // And it names the file it wrote, which is the thing to edit next.
     assert!(seen.contains("gwae.toml"), "got:\n{seen}");
+    let cfg = sb.read_config();
+    assert!(cfg.contains("theme = \"white-phosphor\""), "got:\n{cfg}");
     p.press_done();
     p.wait_for("AGENT-RAN:claude");
     p.kill();
@@ -1009,7 +1011,8 @@ fn first_run_configures_the_whole_terminal_not_just_the_agent() {
     p.wait_for("Agent harness");
     p.send("\r");
     p.wait_for("Color theme");
-    p.send("jjjj\r");
+    // From white phosphor (option 9), four steps up selects Nord (option 5).
+    p.send("kkkk\r");
     // Everything else: defaults, then dismiss the summary.
     p.send("q");
 

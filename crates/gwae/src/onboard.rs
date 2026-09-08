@@ -179,9 +179,10 @@ pub fn harness_question() -> Question {
 /// Every question, in the order they are asked.
 ///
 /// Ordering is "biggest visible effect first": a user who bails after two
-/// questions has still picked their harness and their colors. Defaults are
-/// exactly [`crate::config::Config::default`], so accepting every default is a
-/// no-op on behavior.
+/// questions has still picked their harness and their colors. Appearance and
+/// layout defaults match [`crate::config::Config::default`], except the theme:
+/// fresh onboarding recommends white phosphor, while configs without a theme
+/// retain the existing Catppuccin Mocha fallback.
 ///
 /// Deliberately *not* asked: anything with one right answer
 /// (`input_poll_ms`, applied silently), and anything that is a niche taste
@@ -203,7 +204,7 @@ pub fn questions_with(extra: &[String]) -> Vec<Question> {
                 Opt {
                     label: "catppuccin-mocha",
                     value: "\"catppuccin-mocha\"",
-                    blurb: "dark, muted purple-blue (default)",
+                    blurb: "dark, muted purple-blue",
                 },
                 Opt {
                     label: "catppuccin-latte",
@@ -243,10 +244,10 @@ pub fn questions_with(extra: &[String]) -> Vec<Question> {
                 Opt {
                     label: "white-phosphor",
                     value: "\"white-phosphor\"",
-                    blurb: "monochrome CRT on true black",
+                    blurb: "monochrome CRT on true black (default)",
                 },
             ],
-            default: 0,
+            default: 8,
             swatch: true,
             keep_existing: false,
         },
@@ -1031,9 +1032,14 @@ fn draw(s: &str) {
     let _ = out.flush();
 }
 
-/// Draw the animated banner plus `body` as one screen.
-fn draw_with_banner(banner_step: usize, pal: &Palette, cols: u16, body: &str) {
+/// Draw the animated banner plus `body` as one screen. On short terminals,
+/// omit the decoration rather than scrolling the question off the screen.
+fn draw_with_banner(banner_step: usize, pal: &Palette, cols: u16, rows: u16, body: &str) {
     let banner = crate::splash::banner(banner_step, pal, cols);
+    if banner.lines().count() + body.lines().count() > rows as usize {
+        draw(body);
+        return;
+    }
     let mut s = String::with_capacity(banner.len() + body.len());
     s.push_str(&banner);
     s.push_str(body);
@@ -1098,8 +1104,8 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
             let body = summary_cache.as_ref().unwrap().0.clone();
             let shown = answered(&qs, &chosen);
             let pal = palette_from_pairs(&shown, &base_palette);
-            let (cols, _) = term_size();
-            draw_with_banner(banner_step, &pal, cols, &body);
+            let (cols, rows) = term_size();
+            draw_with_banner(banner_step, &pal, cols, rows, &body);
             // Animated wait: repaint banner every TICK even without input.
             let mut go_back = false;
             let mut done = false;
@@ -1150,7 +1156,7 @@ pub fn run(cfg_path: &Path, input_poll_ms: u64) -> Vec<(String, String)> {
         let h = crate::preview::fits(cols, rows, chrome);
         let body = render_sized(q, at, total, cursors[at], &so_far, h);
         let pal = banner_palette(&so_far, q, cursors[at], &base_palette);
-        draw_with_banner(banner_step, &pal, cols, &body);
+        draw_with_banner(banner_step, &pal, cols, rows, &body);
         match event::poll(crate::splash::TICK) {
             Ok(true) => {
                 let raw_key = match event::read() {
@@ -1423,9 +1429,9 @@ mod tests {
     }
 
     #[test]
-    fn accepting_every_default_changes_nothing() {
-        // Defaults must equal Config::default(), or "just hit Enter" would
-        // silently reconfigure someone's terminal.
+    fn accepting_every_default_uses_white_phosphor_and_the_usual_layout() {
+        // Fresh setup recommends white phosphor without changing the runtime
+        // fallback for existing configs that never named a theme.
         let answers: Vec<(String, String)> = all()
             .iter()
             .map(|q| (q.key.to_string(), q.default_value().to_string()))
@@ -1438,8 +1444,36 @@ mod tests {
         assert_eq!(cfg.content_width, d.content_width);
         assert_eq!(cfg.cell_labels, d.cell_labels);
         assert_eq!(cfg.cowsay.enabled, d.cowsay.enabled);
-        assert_eq!(cfg.palette(), d.palette());
+        assert_eq!(cfg.theme_name(), "white-phosphor");
+        assert_eq!(cfg.palette(), Palette::WHITE_PHOSPHOR);
+        assert_eq!(d.palette(), Palette::CATPPUCCIN_MOCHA);
         assert_eq!(cfg.default_column_width, d.default_column_width);
+    }
+
+    #[test]
+    fn fresh_theme_default_is_highlighted_previewed_and_saved() {
+        let qs = with_existing(all(), "");
+        let q = qs.iter().find(|q| q.key == "theme").unwrap();
+        assert_eq!(q.default_value(), "\"white-phosphor\"");
+        assert_eq!(
+            step(q, q.default, Key::Next),
+            Step::Done(Answer::Set("\"white-phosphor\"".into()))
+        );
+        let shown = render_question(q, 1, qs.len(), q.default);
+        assert!(shown.contains(&format!("❯* {CYAN}{BOLD}white-phosphor{RESET}")));
+        assert!(!shown.contains("dark, muted purple-blue (default)"));
+        assert_eq!(
+            banner_palette(&[], q, q.default, &Palette::default()),
+            Palette::WHITE_PHOSPHOR
+        );
+
+        // Esc from the first question must choose the same theme, even when
+        // the user never visits the theme picker.
+        let mut chosen = vec![None; qs.len()];
+        fill_defaults(&qs, &mut chosen, 0);
+        let text = apply_answers("", &answered(&qs, &chosen));
+        let cfg: Config = toml::from_str(&text).expect("default answers parse");
+        assert_eq!(cfg.palette(), Palette::WHITE_PHOSPHOR);
     }
 
     #[test]
@@ -1621,7 +1655,7 @@ mod tests {
         let qs = questions();
         let q = qs.iter().find(|q| q.key == "theme").unwrap();
         assert_eq!(
-            step(q, 0, Key::Next),
+            step(q, q.default, Key::Next),
             Step::Done(Answer::Set(q.default_value().into()))
         );
         assert_eq!(

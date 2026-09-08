@@ -343,7 +343,7 @@ fn moving_the_highlight_repaints_the_mockup_in_the_new_theme() {
     // (which theme does not affect) stays put.
     let before = s.screen();
     let before_shape = mockup(&s.plain());
-    s.press("\x1b[B"); // down: catppuccin-latte
+    s.press("\x1b[B"); // down wraps from white-phosphor to catppuccin-mocha
     let after = s.screen();
     let after_shape = mockup(&s.plain());
 
@@ -430,7 +430,7 @@ fn the_question_is_never_pushed_off_screen_by_its_own_mockup() {
             "{cols}x{rows}: the question header is missing:\n{plain}"
         );
         assert!(
-            plain.contains("catppuccin-mocha") && plain.contains("terminal"),
+            plain.contains("catppuccin-mocha") && plain.contains("❯* white-phosphor"),
             "{cols}x{rows}: options were pushed off screen:\n{plain}"
         );
         assert!(
@@ -438,10 +438,10 @@ fn the_question_is_never_pushed_off_screen_by_its_own_mockup() {
             "{cols}x{rows}: the key hints were pushed off screen:\n{plain}"
         );
         // Whatever is drawn must fit the terminal it was drawn for.
-        let painted = plain.lines().filter(|l| !l.trim().is_empty()).count();
+        let painted = plain.lines().count();
         assert!(
             painted <= rows as usize,
-            "{cols}x{rows}: painted {painted} non-blank lines into {rows} rows:\n{plain}"
+            "{cols}x{rows}: painted {painted} lines into {rows} rows:\n{plain}"
         );
     }
 }
@@ -465,6 +465,61 @@ fn a_small_terminal_shrinks_the_mockup_rather_than_breaking_the_flow() {
         small < big,
         "a 22-row terminal drew the same {big}-row mockup as a 40-row one"
     );
+}
+
+#[test]
+fn fresh_onboarding_accepts_white_phosphor_with_enter_or_rest_defaults() {
+    for key in ["\r", "\x1b"] {
+        let sb = Sandbox::new("");
+        let mut s = Session::start(&sb, 100, 40);
+        to_first_question(&mut s);
+        let plain = s.plain();
+        assert!(
+            plain.contains("❯* white-phosphor"),
+            "fresh setup did not highlight white phosphor:\n{plain}"
+        );
+
+        s.press(key);
+        if key == "\r" {
+            s.wait_for_question(2);
+            s.press("\x1b");
+        }
+        s.wait_for("the summary", |t| t.contains("gwae is configured"));
+        let cfg: toml::Value = toml::from_str(&sb.config()).expect("saved config parses");
+        assert_eq!(cfg["theme"].as_str(), Some("white-phosphor"));
+        assert_eq!(cfg["onboarded"].as_bool(), Some(true));
+        s.press("\r");
+    }
+}
+
+#[test]
+fn rerunning_onboarding_preserves_saved_presets_and_custom_theme_tables() {
+    for theme in [
+        "theme = \"catppuccin-mocha\"\n",
+        "[theme]\npreset = \"nord\"\naccent = \"#ff0000\"\n",
+    ] {
+        let before = format!("# my theme\nonboarded = true\n{theme}");
+        let sb = Sandbox::new(&before);
+        let mut s = Session::start(&sb, 100, 40);
+        to_first_question(&mut s);
+        let plain = s.plain();
+        if theme.starts_with("theme =") {
+            assert!(plain.contains("❯* catppuccin-mocha"), "{plain}");
+        } else {
+            assert!(plain.contains("keep your current setting"), "{plain}");
+        }
+
+        s.press("\r");
+        s.wait_for_question(2);
+        s.press("\x1b");
+        s.wait_for("the summary", |t| t.contains("gwae is configured"));
+        let text = sb.config();
+        let saved: toml::Value = toml::from_str(&text).expect("saved config parses");
+        let original: toml::Value = toml::from_str(&before).unwrap();
+        assert_eq!(saved["theme"], original["theme"]);
+        assert!(text.contains("# my theme"), "{text}");
+        s.press("\r");
+    }
 }
 
 #[test]

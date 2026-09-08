@@ -6,6 +6,12 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **Onboarding defaults to White Phosphor.** Fresh setup highlights the monochrome CRT theme on true black. Existing saved themes remain selected on re-runs, and configs without a theme keep the Catppuccin Mocha fallback.
+
+### Fixed
+- Onboarding omits the decorative banner when it cannot fit above the question, keeping the selected theme and key hints visible in short terminals.
+
 ## [1.3.0] - 2026-09-06
 
 ### Added

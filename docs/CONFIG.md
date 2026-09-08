@@ -85,6 +85,12 @@ to the last question) do anything. It asks about `theme`,
 `default_column_width`, `center_focus`, `cell_labels`, `cowsay.enabled`,
 and (macOS only) `keep_awake`.
 
+Fresh setup highlights `white-phosphor` as the default color theme, a
+monochrome CRT palette on true black. Enter accepts it, and `esc` uses it
+when taking defaults for unanswered questions. Re-running setup preserves
+your saved theme, including custom `[theme]` tables. Outside setup,
+configs with no theme still fall back to `catppuccin-mocha`.
+
 ## Keeping the Mac awake (`keep_awake`)
 
 gwae is a single process with no daemon: when macOS sleeps, every pane (and
