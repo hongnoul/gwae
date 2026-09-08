@@ -61,11 +61,13 @@ pub struct Config {
     /// Directories always offered in the `⌥+d` spawn-directory picker, on top
     /// of the ones found by scanning `agent_dir_roots`.
     pub agent_dirs: Vec<String>,
-    /// Where the `⌥+d` picker looks for projects. Default: your home
+    /// Where the `⌥+d` picker looks for projects and directories. Default: your home
     /// directory. gwae finds projects by looking for `.git`/`.hg`/`.jj`
     /// markers rather than by directory name, so it works whatever your
     /// layout is; set this to narrow (or widen) the search, e.g.
     /// `["~/work", "/srv/checkouts"]`. Roots that do not exist are skipped.
+    /// Typing also searches ordinary directories, including inside repos and
+    /// near the session's spawn directory, without requiring a project marker.
     pub agent_dir_roots: Vec<String>,
     /// Extra agent commands to offer in the `;` picker, on top of the ones
     /// gwae knows and the ones it finds by scanning `PATH`. Use this to

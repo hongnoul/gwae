@@ -2706,9 +2706,11 @@ fn draw_dir_picker(out: &mut [Cell], cols: u16, rows: u16, pick: &DirPicker, pal
         .map(|c| c.label.chars().count() + c.origin.chars().count() + 4)
         .max()
         .unwrap_or(0);
-    let bw = widest.max(title.chars().count()).max(help.chars().count()) + 2;
+    // A long discovered or typed path must not make the whole picker vanish.
+    let bw = (widest.max(title.chars().count()).max(help.chars().count()) + 2)
+        .min((cols as usize).saturating_sub(2));
     let bh = rows_shown + 4;
-    if (cols as usize) < bw + 2 || (rows as usize) < bh + 2 {
+    if bw < 6 || (rows as usize) < bh + 2 {
         return;
     }
     let ox = ((cols as usize) - bw) / 2;
@@ -2824,9 +2826,26 @@ fn draw_dir_picker(out: &mut [Cell], cols: u16, rows: u16, pick: &DirPicker, pal
                 }
             }
         }
-        text(out, cols, lim, y, ox + 2, &c.label, fg, bg, selected);
         let ow = c.origin.chars().count();
         let at = ox + bw - 2 - ow.min(bw.saturating_sub(4));
+        // Reserve the origin column and keep the end of the path, where the
+        // directory name lives. Only the display is shortened, never c.path.
+        let label_width = at.saturating_sub(ox + 3);
+        let label_len = c.label.chars().count();
+        let label = if label_width == 0 {
+            String::new()
+        } else if label_len > label_width {
+            format!(
+                "…{}",
+                c.label
+                    .chars()
+                    .skip(label_len - label_width + 1)
+                    .collect::<String>()
+            )
+        } else {
+            c.label.clone()
+        };
+        text(out, cols, lim, y, ox + 2, &label, fg, bg, selected);
         let ofg = if selected { fg } else { pal.overlay };
         text(out, cols, lim, y, at, c.origin, ofg, bg, false);
     }
@@ -8480,6 +8499,41 @@ mod tests {
         assert_eq!(picker_paste_query("~/a\n~/b\n"), "~/a");
         assert_eq!(picker_paste_query("a\rb\n",), "ab");
         assert!(picker_paste_query("  \n  ").is_empty());
+    }
+
+    #[test]
+    fn dir_picker_keeps_long_directory_matches_visible() {
+        let label = format!("~/work/{}/fresh-scaffold", "long-parent-".repeat(10));
+        let pick = DirPicker {
+            all: vec![crate::spawndir::Candidate {
+                path: std::path::PathBuf::from(&label),
+                label,
+                origin: "directory",
+            }],
+            query: "fresh-scaffold".into(),
+            sel: 0,
+            harness_label: String::new(),
+        };
+        for cols in [60, 80, 100] {
+            let rows = 24;
+            let mut out = vec![Cell::default(); cols as usize * rows as usize];
+            draw_dir_picker(&mut out, cols, rows, &pick, &Palette::default());
+            let lines: Vec<String> = out
+                .chunks(cols as usize)
+                .map(|row| row.iter().map(|cell| cell.ch).collect())
+                .collect();
+            assert!(
+                lines.iter().any(|line| line.contains("spawn dir:")),
+                "{cols}: {lines:?}"
+            );
+            assert!(
+                lines.iter().any(|line| line.contains("…")
+                    && line.contains("fresh-scaffold")
+                    && line.contains("directory")),
+                "keep the basename and origin visible at {cols} columns: {lines:?}"
+            );
+            assert_eq!(pick.current().unwrap().path, pick.all[0].path);
+        }
     }
 
     #[test]

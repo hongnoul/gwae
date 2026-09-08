@@ -10,6 +10,7 @@ changelog, updated per PR). The format is based on
 - **Onboarding defaults to White Phosphor.** Fresh setup highlights the monochrome CRT theme on true black. Existing saved themes remain selected on re-runs, and configs without a theme keep the Catppuccin Mocha fallback.
 
 ### Fixed
+- `⌥+d` directory-name search finds fresh agent-scaffolded folders without project markers, including inside existing repos and under the session's spawn directory outside the configured search roots. Discovery refreshes on every open while the initial project suggestions stay uncluttered.
 - Onboarding omits the decorative banner when it cannot fit above the question, keeping the selected theme and key hints visible in short terminals.
 
 ## [1.3.0] - 2026-09-06

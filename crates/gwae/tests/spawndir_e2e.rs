@@ -54,6 +54,9 @@ impl Session {
         // The picker's candidate scan and `~` expansion both key off HOME;
         // pointing it at the temp tree keeps the test off the real machine.
         cmd.env("HOME", root);
+        cmd.env("XDG_DATA_HOME", root.join("data"));
+        cmd.env("SHELL", "/bin/sh");
+        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.cwd(cwd);
         for a in args {
             cmd.arg(a);
@@ -136,7 +139,13 @@ impl Session {
         String::from_utf8_lossy(&out).into_owned()
     }
 
-    fn kill(mut self) {
+    fn kill(self) {
+        drop(self);
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.home);
@@ -300,7 +309,13 @@ fn the_picker_finds_projects_by_marker_whatever_the_layout() {
     );
     assert!(
         !out.contains("plain-dir"),
-        "a directory with no project marker is not a candidate; got:\n{out}"
+        "a directory with no project marker is not an initial suggestion; got:\n{out}"
+    );
+    s.send(b"plain-dir");
+    let filtered = s.drain_until("~/wherever/plain-dir", Duration::from_secs(8));
+    assert!(
+        filtered.contains("~/wherever/plain-dir"),
+        "ordinary directories should be searchable by name; got:\n{filtered}"
     );
     s.kill();
 }
@@ -337,6 +352,72 @@ fn picking_a_directory_moves_the_next_pane_there() {
     assert!(
         got.ends_with("picked-proj"),
         "panes spawned after the pick should start there; got {got:?}"
+    );
+    s.kill();
+}
+
+#[test]
+fn the_picker_finds_a_directory_scaffolded_by_an_agent_in_the_same_session() {
+    assert_same_session_scaffold_is_pickable("fresh-scaffold", "~/workspace/fresh-scaffold");
+}
+
+#[test]
+fn the_picker_keeps_long_scaffold_paths_visible_and_spawns_in_the_full_path() {
+    assert_same_session_scaffold_is_pickable(
+        &format!("{}/fresh-scaffold", "long-parent-".repeat(10)),
+        "/fresh-scaffold",
+    );
+}
+
+fn assert_same_session_scaffold_is_pickable(relative: &str, visible_label: &str) {
+    let root = temp_root();
+    std::fs::create_dir_all(root.join("workspace/.git")).unwrap();
+    std::fs::create_dir_all(root.join("search-elsewhere")).unwrap();
+    let mut s = Session::start(
+        &root,
+        "default_agent = \"/bin/sh\"\nagent_dir = \"~/workspace\"\nagent_dir_roots = [\"~/search-elsewhere\"]\n",
+        "sleep 60",
+        &root,
+        &[],
+    );
+    let _ = s.drain();
+    // Open once before scaffolding, so this also pins same-session freshness.
+    s.send(OPT_D);
+    assert!(s
+        .drain_until("spawn dir", Duration::from_secs(8))
+        .contains("spawn dir"));
+    s.send(b"\x1b");
+    let _ = s.drain();
+
+    // Use the real spawn-agent path. A shell stands in for the harness and
+    // creates a plain directory inside its repo, without initializing Git.
+    s.send(b"\x1b;");
+    let _ = s.drain();
+    s.send(
+        format!("mkdir -p '{relative}' && printf ready > \"$HOME/scaffold-ready\"\r").as_bytes(),
+    );
+    assert_eq!(probe_result(&root, "scaffold-ready"), "ready");
+    let scaffold = root.join("workspace").join(relative);
+    assert!(scaffold.is_dir());
+
+    s.send(OPT_D);
+    let _ = s.drain_until("spawn dir", Duration::from_secs(8));
+    s.send(b"fresh-scaffold");
+    let out = s.drain_until(visible_label, Duration::from_secs(8));
+    assert!(
+        out.contains(visible_label),
+        "a scaffold created by this session's agent must be searchable by name; got:\n{out}"
+    );
+    s.send(ENTER);
+    let _ = s.drain();
+    s.send(b"\x1b\r");
+    let _ = s.drain();
+    s.send(b"pwd > \"$HOME/after-scaffold\"\r");
+    let got = probe_result(&root, "after-scaffold");
+    assert_eq!(
+        PathBuf::from(got),
+        scaffold.canonicalize().unwrap(),
+        "the next pane must actually start in the scaffolded directory"
     );
     s.kill();
 }

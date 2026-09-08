@@ -19,11 +19,12 @@ Three layers, cheapest first, each one able to stand alone:
 2. **CLI** — `gwae run --dir <path>` (and `gwae --dir`) overrides it for one
    session. This is what a shell alias or a project-local script uses.
 3. **Keybind** — `⌥+d` opens a directory picker: type to filter, `↵` to use
-   it for the rest of the session, `s` to write it back to `gwae.toml`.
+   it for the rest of the session, `⌥+s` to write it back to `gwae.toml`.
    Same interaction grammar as the `⌥+t` theme picker, so it costs the user
    no new muscle memory.
 
-The picker's candidate list is discovered, not typed.
+The picker discovers suggestions and searches directory names as you type.
+An existing literal path can also be typed or pasted and takes the top spot.
 
 ## Per-harness default
 
@@ -72,10 +73,25 @@ So discovery keys off things that mean the same thing on every machine:
   source there is: the directories this person actually visits, including
   ones outside `$HOME` that no scan would reach. Absent zoxide contributes
   nothing and is not an error.
+* **Directory-name search**: typing also matches ordinary directories, even
+  without a project marker and inside existing repos. A separate bounded walk
+  searches the current spawn directory, gwae's cwd, configured/pinned/recent
+  places, and the search roots. It uses the same depth-4 / 4000-directory
+  limits and hidden/dependency exclusions, but does not stop at project
+  markers. These entries stay hidden when the query is empty so the initial
+  suggestions remain useful.
 
-Both are free of assumptions about layout, so `⌥+d` is useful on a machine
+These sources make no assumptions about layout, so `⌥+d` is useful on a machine
 gwae has never seen, with no configuration. `agent_dir_roots` remains for
 people who want to narrow or widen the search (`["~/work", "/srv"]`).
+
+Discovery is rebuilt every time `⌥+d` opens. A folder scaffolded by an agent
+in the running session is searchable on the next open, without restarting
+gwae or running `git init`. The spawn directory is itself a search root, so
+its children can be found even outside `$HOME` or the configured roots.
+For paths beyond the scan limits or excluded trees, type the full existing
+path instead. Long labels are shortened from the front to fit the terminal;
+selecting one still uses the full directory path.
 
 ## Precedence
 

@@ -23,7 +23,7 @@ agents = ["my-agent-wrapper"]     # extra names for the selector
 agent_dir = "~/git/gwae"          # directory new panes start in ("" = gwae's cwd)
 harness_dirs = { jcode = "~/git/gwae" } # per-harness override; key = default_agent, any harness works
 agent_dirs = ["~/notes"]          # always offered in the ⌥+d picker
-agent_dir_roots = ["~/work"]      # where ⌥+d looks for projects (default: your home dir)
+agent_dir_roots = ["~/work"]      # where ⌥+d searches projects/directories (default: home)
 theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal, white-phosphor
 # or per-key overrides on top of a preset:
 # [theme]

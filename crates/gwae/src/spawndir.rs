@@ -67,8 +67,8 @@ const SKIP_DIRS: &[&str] = &[
 /// How deep below a search root the scan descends. Four levels reaches
 /// `~/work/client/team/repo` while keeping the walk to a few dozen
 /// `readdir`s on a normal machine (measured: ~35 repos in about 2ms on the
-/// author's `$HOME`). The scan also stops descending as soon as it finds a
-/// project, so a big monorepo costs one entry, not thousands.
+/// author's `$HOME`). The project-suggestion scan stops at a project, while
+/// directory-name search also visits its children within the same limits.
 const MAX_DEPTH: usize = 4;
 
 /// Hard ceiling on directories examined, so a pathological tree (a network
@@ -222,6 +222,17 @@ fn descendable(name: &str) -> bool {
 /// submodules and vendored checkouts inside a repo are noise in a list whose
 /// job is to name the repo.
 pub fn scan(roots: &[PathBuf], max_depth: usize, budget: usize) -> Vec<PathBuf> {
+    walk(roots, max_depth, budget, true)
+}
+
+/// Searchable directories, including unversioned scaffolds and repo children.
+/// Unlike project suggestions, these are only shown once the user types.
+fn scan_directories(roots: &[PathBuf], max_depth: usize, budget: usize) -> Vec<PathBuf> {
+    walk(roots, max_depth, budget, false)
+}
+
+/// Both discovery passes share depth/budget limits, exclusions and cycle checks.
+fn walk(roots: &[PathBuf], max_depth: usize, budget: usize, projects_only: bool) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = Vec::new();
     let mut queue: std::collections::VecDeque<(PathBuf, usize)> = roots
         .iter()
@@ -241,9 +252,11 @@ pub fn scan(roots: &[PathBuf], max_depth: usize, budget: usize) -> Vec<PathBuf> 
             continue;
         }
         scanned += 1;
-        if is_project(&dir) {
-            found.push(dir);
-            continue;
+        if !projects_only || is_project(&dir) {
+            found.push(dir.clone());
+            if projects_only {
+                continue;
+            }
         }
         if depth >= max_depth {
             continue;
@@ -327,6 +340,7 @@ pub struct Candidate {
     /// Short label (`~/git/gwae`), so the picker fits in a narrow panel.
     pub label: String,
     /// Why it is on the list (`current`, `recent`, `project`), shown dimmed.
+    /// `directory` entries are searchable but hidden until a query is typed.
     pub origin: &'static str,
 }
 
@@ -387,8 +401,8 @@ pub fn tilde(p: &Path) -> String {
 /// Order is deliberate, most-likely first: what you are using now, what you
 /// configured, your pins, the directories zoxide says you actually visit,
 /// then every project found under the search roots, then the roots and
-/// `$HOME` as an escape hatch. `current` leads so `⌥+d ↵` is a no-op rather
-/// than a surprise.
+/// `$HOME` as an escape hatch. Other directories are included for name search
+/// only, so `current` still leads and `⌥+d ↵` remains a no-op.
 ///
 /// Nothing here is keyed off a directory *name*, which is the point: the
 /// same code finds `~/git/gwae`, `~/Documents/work/thing`, and `/srv/app`
@@ -455,18 +469,30 @@ pub fn candidates_for_harness(
     for d in zoxide_dirs(ZOXIDE_LIMIT) {
         push(&mut out, &mut seen, d, "recent");
     }
+    // Search near this session first, including when --dir or a harness puts
+    // it outside HOME/configured roots or deeper than the home scan can reach.
+    // Snapshot these explicit/recent places before adding global suggestions.
+    let mut directory_roots: Vec<PathBuf> = out.iter().map(|c| c.path.clone()).collect();
+    let search_roots = search_roots(roots);
+    directory_roots.extend(search_roots.iter().cloned());
     // Then everything that looks like a project under the search roots,
     // found by marker rather than by directory name.
-    for p in scan(&search_roots(roots), MAX_DEPTH, MAX_SCAN) {
+    for p in scan(&search_roots, MAX_DEPTH, MAX_SCAN) {
         push(&mut out, &mut seen, p, "project");
     }
     // The roots themselves, and $HOME, as the always-available escape hatch
     // for a directory that is not a project at all.
-    for r in search_roots(roots) {
+    for r in search_roots {
         push(&mut out, &mut seen, r, "root");
     }
     if let Some(home) = std::env::var_os("HOME") {
         push(&mut out, &mut seen, PathBuf::from(home), "home");
+    }
+    // Rebuilt on every picker open, not cached for the session: a running
+    // agent can scaffold a directory without initializing any VCS marker.
+    // Keep these after suggestions so dedup preserves their stronger origins.
+    for p in scan_directories(&directory_roots, MAX_DEPTH, MAX_SCAN) {
+        push(&mut out, &mut seen, p, "directory");
     }
     out
 }
@@ -474,11 +500,16 @@ pub fn candidates_for_harness(
 /// Filter candidates by a typed query: a subsequence match on the label,
 /// case-insensitive, like every fuzzy finder. Exact substring matches sort
 /// first so typing a full repo name lands on it rather than on a longer path
-/// that merely contains the letters.
+/// that merely contains the letters. With no query, show only the curated
+/// project/current/config/history suggestions, not every ordinary directory.
 pub fn filter(cands: &[Candidate], query: &str) -> Vec<Candidate> {
     let q = query.trim().to_ascii_lowercase();
     if q.is_empty() {
-        return cands.to_vec();
+        return cands
+            .iter()
+            .filter(|c| c.origin != "directory")
+            .cloned()
+            .collect();
     }
     let mut exact: Vec<Candidate> = Vec::new();
     let mut fuzzy: Vec<Candidate> = Vec::new();
@@ -617,6 +648,49 @@ mod tests {
     }
 
     #[test]
+    fn reopening_finds_unversioned_scaffolds_under_the_current_spawn_directory() {
+        let root = tree("scaffold", &["workspace/.git", "search-elsewhere"]);
+        let current = root.join("workspace");
+        // The spawn directory need not be inside the configured search roots.
+        let roots = vec![root.join("search-elsewhere").to_string_lossy().into_owned()];
+        let before = candidates(Some(&current), "", &[], &roots);
+        assert!(filter(&before, "fresh-scaffold").is_empty());
+
+        let scaffold = current.join("fresh-scaffold");
+        std::fs::create_dir_all(&scaffold).unwrap();
+        let after = candidates(Some(&current), "", &[], &roots);
+        let matches = filter(&after, "fresh-scaffold");
+        assert_eq!(matches.len(), 1, "new plain directories must be searchable");
+        assert_eq!(matches[0].path, scaffold.canonicalize().unwrap());
+        assert!(
+            !filter(&after, "").iter().any(|c| c.path == matches[0].path),
+            "plain directories must not clutter the initial project suggestions"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn directory_search_reaches_inside_other_projects_and_keeps_skipping_dependencies() {
+        let root = tree(
+            "search-nested",
+            &[
+                "other/.git",
+                "other/apps/fresh-scaffold",
+                "other/node_modules/noisy-scaffold",
+                "other/target/noisy-scaffold",
+                "other/.cache/noisy-scaffold",
+                "plain-scaffold",
+            ],
+        );
+        let all = candidates(None, "", &[], &[root.to_string_lossy().into_owned()]);
+        for query in ["fresh-scaffold", "plain-scaffold"] {
+            assert_eq!(filter(&all, query).len(), 1, "missing {query}");
+        }
+        assert!(filter(&all, "noisy-scaffold").is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn depth_and_budget_bound_the_walk() {
         let root = tree("deep", &["a/b/c/d/e/deep-one/.git", "top/.git"]);
         // Too deep to reach at depth 2, so it is simply not offered; the
@@ -630,6 +704,34 @@ mod tests {
         assert!(!names.contains(&"deep-one".to_string()), "{names:?}");
         // A budget of zero yields nothing and, crucially, returns.
         assert!(scan(std::slice::from_ref(&root), 9, 0).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn directory_search_is_bounded_and_deduplicates_overlapping_roots() {
+        let root = tree("directory-bounds", &["a/child", "b/child"]);
+        let roots = vec![root.join("a"), root.clone(), root.join("a")];
+        let shallow = scan_directories(&roots, 1, 1000);
+        assert!(shallow.contains(&root.join("a/child")));
+        assert!(!shallow.contains(&root.join("b/child")));
+        assert_eq!(shallow.iter().filter(|p| **p == root.join("a")).count(), 1);
+        assert!(scan_directories(&roots, 9, 0).is_empty());
+        assert_eq!(scan_directories(&roots, 9, 2).len(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn directory_search_does_not_follow_child_symlinks_or_repeat_alias_roots() {
+        let root = tree("directory-links", &["workspace/scaffold", "outside"]);
+        std::os::unix::fs::symlink(root.join("workspace"), root.join("alias")).unwrap();
+        std::os::unix::fs::symlink(root.join("outside"), root.join("workspace/link")).unwrap();
+        let roots = vec![root.join("workspace"), root.join("alias")];
+        let got = scan_directories(&roots, 4, 1000);
+        assert_eq!(
+            got,
+            vec![root.join("workspace"), root.join("workspace/scaffold")]
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -650,11 +752,15 @@ mod tests {
         // picker feels broken. This runs against the actual machine, which
         // is the only place the bound is meaningful.
         let t = std::time::Instant::now();
-        let found = scan(&search_roots(&[]), MAX_DEPTH, MAX_SCAN);
+        let found = candidates(inherited().as_deref(), "", &[], &[]);
         let dt = t.elapsed();
         assert!(
             dt < std::time::Duration::from_millis(750),
-            "scan took {dt:?} and found {} projects; ⌥+d must not stall",
+            "discovery took {dt:?} and found {} candidates; ⌥+d must not stall",
+            found.len()
+        );
+        eprintln!(
+            "spawn-directory discovery: {} candidates in {dt:?}",
             found.len()
         );
     }
