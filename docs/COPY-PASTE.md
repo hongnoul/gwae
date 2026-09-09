@@ -1,9 +1,22 @@
-# Clipboard — paste only
+# Clipboard: drag to copy, paste with `⌥+v`
 
-gwae pastes text; it does not manage copy. Drag selection highlight remains
-for visual feedback, but gwae does not write to the system clipboard. Use
-your terminal's native selection/copy (or `pbcopy`/`wl-copy`/`xclip` directly
-from the shell) if you need the host clipboard.
+- **Copy:** left-drag inside a pane, then release. gwae copies the highlighted
+  text and shows a `copied …` confirmation. Plain clicks and blank selections
+  do not replace the clipboard. Dragging beyond the pane clamps to its edges,
+  not neighboring panes. Unicode is preserved and grid padding is trimmed.
+- **Mouse-aware programs:** vim, jcode, and other children requesting mouse
+  reporting own ordinary drags. Hold **Shift** when starting a drag to select
+  with gwae instead. Once that drag starts, releasing Shift before the mouse
+  does not lose the selection. If the host terminal intercepts Shift-drag,
+  its own native selection/copy behavior applies instead.
+- **Clipboard transport:** native `pbcopy` (macOS), `wl-copy` / `xclip` / `xsel`
+  (Linux), or `clip` (Windows) is preferred. Helpers have a bounded wait. Over
+  SSH, or if native helpers fail, gwae sends an OSC 52 request to the host
+  terminal. The toast says `copy sent to terminal`, not `copied`, because the
+  terminal may reject clipboard writes. Enable OSC 52 in the host if necessary.
+  Terminal-output failures show `clipboard unavailable`.
+- **Copy shortcuts:** `⌥+c` and image-copy shortcuts remain removed. This
+  restores drag-to-copy only. Native terminal copy remains available too.
 
 - **Paste (`⌥+v`):** gwae reads the system clipboard itself (`pbpaste` on
   macOS, `wl-paste`/`xclip`/`xsel` on Linux) and bracket-writes it to the
@@ -19,4 +32,3 @@ from the shell) if you need the host clipboard.
   the focused pane.
 - **Images:** the `image_clipboard` / `⌥+Shift+c` (PNG) flow remains removed.
   Capture screenshots with the OS or terminal, not gwae.
-

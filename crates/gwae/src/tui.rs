@@ -4506,7 +4506,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // is up. Quitting kills every pane's process, so the chord arms this
     // overlay and a second deliberate keystroke commits.
     let mut quit_confirm = false;
-    // Pane selection (visual highlight only; clipboard is host-native).
+    // Pane selection: highlight while dragging, copy on release.
     let mut selection: Option<Selection<PaneId>> = None;
 
     'main: loop {
@@ -5443,7 +5443,21 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 .get(&pid)
                                 .map(|p| p.grid.wants_mouse())
                                 .unwrap_or(false);
-                            match mouse_role(me.kind, me.modifiers, child_wants_mouse) {
+                            // Once gwae owns a drag, releasing Shift before the
+                            // mouse must not strand it or leak its tail to a child.
+                            let continuing_selection = selection
+                                .is_some_and(|s| s.dragging && s.pane == pid)
+                                && matches!(
+                                    me.kind,
+                                    MouseEventKind::Drag(MouseButton::Left)
+                                        | MouseEventKind::Up(MouseButton::Left)
+                                );
+                            let role = if continuing_selection {
+                                MouseRole::Select
+                            } else {
+                                mouse_role(me.kind, me.modifiers, child_wants_mouse)
+                            };
+                            match role {
                                 MouseRole::Wheel => {
                                     // The wheel scrolls the pane under the
                                     // cursor, not just the focused one: with
@@ -5499,24 +5513,34 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             }
                                         }
                                         MouseEventKind::Up(MouseButton::Left) => {
-                                            if let Some(s) = selection.as_mut() {
-                                                s.cursor = point;
-                                                s.dragging = false;
-                                            }
+                                            let Some(s) = selection.as_mut().filter(|s| s.dragging)
+                                            else {
+                                                // No live drag: never recopy a stale selection.
+                                                continue;
+                                            };
+                                            s.cursor = point;
+                                            s.dragging = false;
                                             // A press+release without movement is a
                                             // plain click, not a selection: drop it so
-                                            // no stray highlight lingers and nothing
+                                            // no stray highlight lingers and nothing is copied.
                                             let done = selection.filter(|s| !s.is_empty());
                                             match done {
                                                 Some(s) => {
-                                                    // Selection is kept for visual highlight; clipboard
-                                                    // is now host-native — no auto-copy.
+                                                    let text = panes
+                                                        .get(&s.pane)
+                                                        .map(|p| select::selected_text(&p.grid, &s))
+                                                        .unwrap_or_default();
+                                                    let outcome = select::copy_to_clipboard(
+                                                        &text,
+                                                        &mut stdout,
+                                                    );
                                                     reload_note_anchor = views
                                                         .iter()
                                                         .find(|v| v.pid == s.pane)
                                                         .map(|v| v.rect);
-                                                    reload_note = None;
-                                                    reload_note_until = None;
+                                                    reload_note = Some(outcome.note(&text));
+                                                    reload_note_until =
+                                                        Some(Instant::now() + NOTE_LINGER);
                                                 }
                                                 None => selection = None,
                                             }

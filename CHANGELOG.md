@@ -6,6 +6,9 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- **PTY drag-to-copy works again.** Releasing a selection copies its text to the clipboard with a confirmation. Mouse-aware children retain ordinary drags; Shift-drag selects through gwae, even if Shift is released first. Plain clicks, blank selections, and stray releases do not overwrite the clipboard. Native helpers have a bounded wait, with an explicitly unconfirmed OSC 52 fallback for remote terminals. Real PTY regressions cover selected-text paste, Unicode, pane-edge clamping, and helper failures.
+
 ## [1.3.2] - 2026-09-09
 
 ### Changed

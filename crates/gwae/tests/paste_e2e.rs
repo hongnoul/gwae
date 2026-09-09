@@ -4,8 +4,8 @@
 //! a stub `pbpaste` reading exact fixture bytes. Readiness and completion are
 //! observable terminal/file states, never a quiet interval in the output stream.
 //! Fish execution is checked with a file sentinel, not repaint-sensitive counts.
-//! Drag selection is also exercised here to prove its highlight does not replace
-//! the clipboard subsequently pasted with `⌥+v`.
+//! Drag selection must copy the highlighted text on release, then `⌥+v` must
+//! paste those exact bytes. Clipboard helpers are isolated from the user's OS.
 //!
 //! macOS-only because the clipboard helper table differs on other platforms.
 #![cfg(target_os = "macos")]
@@ -80,6 +80,20 @@ impl Session {
         .expect("write config");
         std::fs::write(dir.join("clipboard"), clipboard_text).expect("write clipboard bytes");
         std::fs::write(dir.join("plain-helper.sh"), PLAIN_HELPER).expect("write plain helper");
+        std::fs::write(
+            dir.join("selection-helper.sh"),
+            "#!/bin/sh\nstty -echo -icanon min 1 time 0\n\
+             printf 'ROW_ONE 日本語 é\r\nROW_TWO 끝\r\n'\n\
+             exec /usr/bin/tee received-paste\n",
+        )
+        .expect("write Unicode helper");
+        std::fs::write(
+            dir.join("mouse-helper.sh"),
+            "#!/bin/sh\nstty -echo -icanon min 1 time 0\n\
+             printf '\x1b[?1000h\x1b[?1006hMOUSE_READY\r\n'\n\
+             exec /usr/bin/tee received-paste\n",
+        )
+        .expect("write mouse-reporting helper");
         std::fs::write(dir.join("fish-init.fish"), FISH_INIT).expect("write fish init");
 
         // Read a data file rather than interpolating clipboard text into shell
@@ -94,8 +108,8 @@ impl Session {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(bin.join("pbpaste"), std::fs::Permissions::from_mode(0o755))
             .expect("chmod stub pbpaste");
-        // A regression must never overwrite the user's real clipboard. If copy
-        // returns, record the call and redirect it to the isolated clipboard.
+        // A regression must never overwrite the user's real clipboard. Record
+        // every native copy and redirect it to the isolated clipboard.
         std::fs::write(
             bin.join("pbcopy"),
             "#!/bin/sh\nprintf x >> \"$GWAE_TEST_CLIPBOARD.calls\"\nexec /bin/cat > \"$GWAE_TEST_CLIPBOARD\"\n",
@@ -112,7 +126,9 @@ impl Session {
                 pixel_height: 0,
             })
             .expect("openpty");
-        let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
+        let binary =
+            std::env::var_os("GWAE_E2E_BIN").unwrap_or_else(|| env!("CARGO_BIN_EXE_gwae").into());
+        let mut cmd = CommandBuilder::new(binary);
         // No user shell/editor/history, debug logging, reload handover, terminal
         // identity, or clipboard overrides may leak into this test.
         cmd.env_clear();
@@ -176,6 +192,22 @@ impl Session {
         std::fs::read(self.dir.join(name)).unwrap_or_default()
     }
 
+    fn find_text(&self, text: &str) -> (u16, u16) {
+        (0..HOST.rows)
+            .flat_map(|y| (0..=HOST.cols - text.chars().count() as u16).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                text.chars()
+                    .enumerate()
+                    .all(|(i, ch)| self.screen.cell(x + i as u16, y).ch == ch)
+            })
+            .unwrap_or_else(|| panic!("missing {text:?} in:\n{}", self.shown()))
+    }
+
+    fn mouse(&mut self, button: u8, x: u16, y: u16, release: bool) {
+        let end = if release { 'm' } else { 'M' };
+        self.send(format!("\x1b[<{button};{};{}{end}", x + 1, y + 1).as_bytes());
+    }
+
     fn wait_for(&mut self, label: &str, ready: impl Fn(&Self) -> bool) {
         let deadline = Instant::now() + TIMEOUT;
         while Instant::now() < deadline {
@@ -188,17 +220,19 @@ impl Session {
             }
         }
         panic!(
-            "{label}: deadline expired\nreceived paste: {:?}\nexecutions: {:?}\nbarrier: {:?}\nhost screen:\n{}",
+            "{label}: deadline expired\nreceived paste: {:?}\nexecutions: {:?}\nbarrier: {:?}\nclipboard: {:?}\ncopy calls: {:?}\nhost screen:\n{}",
             self.file("received-paste"),
             self.file("paste-executions"),
             self.file("paste-barrier"),
+            self.file("clipboard"),
+            self.file("clipboard.calls"),
             self.shown()
         );
     }
 }
 
 #[test]
-fn drag_highlights_without_replacing_the_clipboard_then_option_v_pastes_original_text() {
+fn drag_copies_on_release_then_option_v_pastes_selected_text() {
     let clipboard = "clipboard-before-drag";
     let mut s = Session::start(clipboard);
     let label = "PLAIN_READY";
@@ -233,11 +267,20 @@ fn drag_highlights_without_replacing_the_clipboard_then_option_v_pastes_original
     s.wait_for("forward drag highlights only cells 1 through 4", |s| {
         highlighted(s, 1..=4)
     });
+    assert_eq!(
+        s.file("clipboard"),
+        clipboard.as_bytes(),
+        "not before release"
+    );
+    assert!(!s.dir.join("clipboard.calls").exists());
     s.send(mouse(0, 6, 'm').as_bytes());
-    s.wait_for("release extends the highlight through cell 6", |s| {
+    s.wait_for("release highlights and copies cells 1 through 6", |s| {
         highlighted(s, 1..=6)
+            && s.file("clipboard") == b"LAIN_R"
+            && s.shown().contains("copied 1 line")
     });
-    eprintln!("observed forward drag highlight 1..=4, release highlight 1..=6");
+    assert_eq!(s.file("clipboard.calls"), b"x");
+    eprintln!("observed forward release copied LAIN_R and confirmed it in the pane");
 
     s.send(mouse(0, 8, 'M').as_bytes());
     s.send(mouse(0, 8, 'm').as_bytes());
@@ -247,6 +290,7 @@ fn drag_highlights_without_replacing_the_clipboard_then_option_v_pastes_original
             .enumerate()
             .all(|(i, style)| s.screen.cell(x + i as u16, y).style == *style)
     });
+    assert_eq!(s.file("clipboard"), b"LAIN_R", "plain click must not copy");
 
     s.send(mouse(0, 6, 'M').as_bytes());
     s.send(mouse(32, 3, 'M').as_bytes());
@@ -254,33 +298,140 @@ fn drag_highlights_without_replacing_the_clipboard_then_option_v_pastes_original
         highlighted(s, 3..=6)
     });
     s.send(mouse(0, 0, 'm').as_bytes());
-    s.wait_for("backward release extends through cell 0", |s| {
-        highlighted(s, 0..=6)
-    });
-    eprintln!("observed click clears selection, backward drag 3..=6, release 0..=6");
+    s.wait_for(
+        "backward release highlights and copies through cell 0",
+        |s| highlighted(s, 0..=6) && s.file("clipboard") == b"PLAIN_R",
+    );
+    eprintln!("observed plain click preserves clipboard, backward release copied PLAIN_R");
 
-    // The child receiving this paste is an event-processing barrier after both
-    // releases. It also demonstrates the user's symptom: selection is visible,
-    // but the next paste contains the old clipboard, not the selected text.
+    // A duplicate release without a live drag must not recopy a stale range.
+    s.send(mouse(0, 8, 'm').as_bytes());
+    // The received paste is an input-processing barrier after the releases.
     s.send(OPT_V);
     s.wait_for(
-        "paste after selection still delivers the original clipboard",
-        |s| {
-            s.file("received-paste") == clipboard.as_bytes()
-                && s.shown().contains(clipboard)
-                && s.shown().contains("pasted 1 line")
-        },
+        "paste after selection delivers exactly the selected text",
+        |s| s.file("received-paste") == b"PLAIN_R" && s.shown().contains("pasted 1 line"),
     );
-    assert_eq!(s.file("clipboard"), clipboard.as_bytes());
-    assert!(
-        !s.dir.join("clipboard.calls").exists(),
-        "pbcopy was invoked"
-    );
+    assert_eq!(s.file("clipboard"), b"PLAIN_R");
+    assert_eq!(s.file("clipboard.calls"), b"xx", "one copy per real drag");
     assert!(
         !s.raw.windows(5).any(|w| w == b"\x1b]52;") && !s.raw.windows(4).any(|w| w == b"\x9d52;"),
-        "drag must not emit an OSC 52 clipboard write"
+        "a successful native copy must not also emit OSC 52"
     );
-    eprintln!("observed original clipboard pasted intact, no pbcopy call or OSC 52 write");
+    eprintln!("observed selected text pasted intact and exactly two native copy calls");
+}
+
+#[test]
+fn drag_copies_multiline_unicode_without_padding_or_duplicate_wide_cells() {
+    let mut s = Session::start_with("old", "/bin/sh selection-helper.sh", "ROW_TWO");
+    let (x, y) = s.find_text("ROW_ONE");
+    let (end_x, end_y) = s.find_text("ROW_TWO");
+    s.mouse(0, x, y, false);
+    s.mouse(32, end_x + 9, end_y, false);
+    s.mouse(0, end_x + 9, end_y, true);
+    let expected = "ROW_ONE 日本語 é\nROW_TWO 끝";
+    s.wait_for(
+        "multiline Unicode copied exactly once without grid padding",
+        |s| s.file("clipboard") == expected.as_bytes() && s.shown().contains("copied 2 lines"),
+    );
+    s.send(OPT_V);
+    s.wait_for(
+        "Unicode clipboard round trips through the real child PTY",
+        |s| s.file("received-paste") == expected.as_bytes(),
+    );
+    assert_eq!(s.file("clipboard.calls"), b"x");
+}
+
+#[test]
+fn drag_outside_the_pane_copies_to_its_edge_not_the_neighbor() {
+    let mut s = Session::start("old");
+    let (x, y) = s.find_text("PLAIN_READY");
+    s.mouse(0, x + 2, y, false);
+    s.mouse(32, HOST.cols - 1, y, false);
+    s.mouse(0, HOST.cols - 1, y, true);
+    s.wait_for("off-pane release clamps to the owning pane", |s| {
+        s.file("clipboard") == b"AIN_READY" && s.shown().contains("copied 1 line")
+    });
+    assert_eq!(s.file("clipboard.calls"), b"x");
+}
+
+#[test]
+fn empty_drag_does_not_replace_the_clipboard() {
+    let mut s = Session::start("keep-this");
+    let (x, y) = s.find_text("PLAIN_READY");
+    s.mouse(0, x, y + 3, false);
+    s.mouse(32, x + 5, y + 3, false);
+    s.mouse(0, x + 5, y + 3, true);
+    s.wait_for("blank selection reports nothing to copy", |s| {
+        s.shown().contains("nothing to copy")
+    });
+    s.send(OPT_V);
+    s.wait_for("blank selection leaves the old clipboard usable", |s| {
+        s.file("received-paste") == b"keep-this"
+    });
+    assert!(!s.dir.join("clipboard.calls").exists());
+    assert!(!s.raw.windows(5).any(|w| w == b"\x1b]52;"));
+}
+
+#[test]
+fn child_owns_plain_drag_but_shift_drag_copies_even_if_shift_is_released_first() {
+    let mut s = Session::start_with("old", "/bin/sh mouse-helper.sh", "MOUSE_READY");
+    let (x, y) = s.find_text("MOUSE_READY");
+    s.mouse(0, x, y, false);
+    s.mouse(32, x + 4, y, false);
+    s.mouse(0, x + 4, y, true);
+    let forwarded = b"\x1b[<0;1;1M\x1b[<32;5;1M\x1b[<0;5;1m";
+    s.wait_for(
+        "mouse-reporting child receives all unmodified drag events",
+        |s| s.file("received-paste") == forwarded,
+    );
+    assert_eq!(s.file("clipboard"), b"old");
+    assert!(!s.dir.join("clipboard.calls").exists());
+
+    s.mouse(4, x, y, false); // Shift+press gives this drag to gwae.
+    s.mouse(36, x + 4, y, false);
+    s.mouse(0, x + 6, y, true); // Shift released before mouse-up.
+    s.wait_for("gwae completes and copies its captured Shift drag", |s| {
+        s.file("clipboard") == b"MOUSE_R" && s.shown().contains("copied 1 line")
+    });
+    s.send(b"!");
+    let mut expected = forwarded.to_vec();
+    expected.push(b'!');
+    s.wait_for("captured Shift drag never leaks a tail to the child", |s| {
+        s.file("received-paste") == expected
+    });
+    assert_eq!(s.file("clipboard.calls"), b"x");
+}
+
+#[test]
+fn failed_or_stalled_native_copy_falls_back_without_claiming_confirmed_success() {
+    for script in ["#!/bin/sh\nexit 1\n", "#!/bin/sh\nexec /bin/sleep 30\n"] {
+        let mut s = Session::start("old");
+        std::fs::write(s.dir.join("bin/pbcopy"), script).expect("replace isolated helper");
+        let (x, y) = s.find_text("PLAIN_READY");
+        let started = Instant::now();
+        s.mouse(0, x, y, false);
+        s.mouse(32, x + 4, y, false);
+        s.mouse(0, x + 4, y, true);
+        let sequence = b"\x1b]52;c;UExBSU4=\x07"; // PLAIN
+        s.wait_for(
+            "failed helper emits exact OSC 52 and unconfirmed feedback",
+            |s| {
+                s.raw.windows(sequence.len()).any(|w| w == sequence)
+                    && s.shown().contains("copy sent to terminal")
+            },
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "stalled helper blocked the UI"
+        );
+        assert!(!s.shown().contains("copied 1 line"));
+        assert_eq!(s.file("clipboard"), b"old");
+        s.send(b"still-responsive");
+        s.wait_for("pane input resumes after native-copy failure", |s| {
+            s.file("received-paste") == b"still-responsive"
+        });
+    }
 }
 
 impl Drop for Session {
