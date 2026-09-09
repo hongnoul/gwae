@@ -5,6 +5,7 @@
 //! portable_pty is the host terminal, not a mocked layout or resize callback.
 //! The primary-screen case deliberately does NOT redraw on SIGWINCH, so it
 //! separately exercises emulator reflow rather than a cooperative TUI.
+//! Set `GWAE_E2E_BIN` to replay against a release or pre-fix executable.
 #![cfg(unix)]
 
 use gwae_term::{Size, TermGrid, Vt100Grid};
@@ -103,7 +104,10 @@ impl Session {
         let pair = native_pty_system()
             .openpty(pty_size(HOST))
             .expect("open host PTY");
-        let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
+        let executable =
+            std::env::var_os("GWAE_E2E_BIN").unwrap_or_else(|| env!("CARGO_BIN_EXE_gwae").into());
+        eprintln!("resize acceptance executable: {executable:?}");
+        let mut cmd = CommandBuilder::new(executable);
         // Developer logging/reload overrides and the user's terminal identity
         // must not leak into this deterministic, headless host terminal.
         cmd.env_clear();
@@ -250,6 +254,7 @@ impl Session {
                 && s.row(3, visible_cols) == ruler
                 && s.row(size.rows, bottom.len() as u16) == bottom
         });
+        eprintln!("{label}: observed header {header:?}, {visible_cols}-column ruler and {bottom:?} on bottom row {}", size.rows);
     }
 
     fn cycle(&mut self, divisor: u16, label: &str) {
@@ -296,6 +301,7 @@ impl Session {
                 })
             })
         });
+        eprintln!("{label}: observed expected viewport for {} characters in {} soft-wrapped rows at {} columns, followed by HARD-END, without child redraw", text.len(), lines.len(), size.cols);
     }
 }
 
@@ -378,6 +384,21 @@ fn primary_output_reflows_across_width_cycles_without_child_redraw() {
         let label = format!("primary fullscreen round trip, width 1/{divisor}");
         s.send(ALT_F);
         let size = inner(HOST, divisor);
+        s.wait_event("WINCH", size, &label);
+        s.assert_reflow(&text, size, &label);
+    }
+    for host in [
+        Size { rows: 24, cols: 96 },
+        Size {
+            rows: 36,
+            cols: 144,
+        },
+        HOST,
+    ] {
+        let label = format!("primary host resize {host:?}");
+        s.master.resize(pty_size(host)).expect("resize host PTY");
+        s.screen.resize(host);
+        let size = inner(host, 4);
         s.wait_event("WINCH", size, &label);
         s.assert_reflow(&text, size, &label);
     }

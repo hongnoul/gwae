@@ -9,7 +9,9 @@
 //! the frames it paints, because gwae repaints *incrementally*: the bytes
 //! for one frame carry only the cells that changed, so asserting on the raw
 //! stream would be asserting on a diff rather than on what a user sees.
+//! Set `GWAE_E2E_BIN` to replay against a release or pre-fix executable.
 
+use gwae_term::{Size, TermGrid, Vt100Grid};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,15 +25,20 @@ const COLS: u16 = 100;
 const ALT_UP: &[u8] = b"\x1b[1;3A";
 const ALT_DOWN: &[u8] = b"\x1b[1;3B";
 
+fn executable() -> std::ffi::OsString {
+    let path =
+        std::env::var_os("GWAE_E2E_BIN").unwrap_or_else(|| env!("CARGO_BIN_EXE_gwae").into());
+    eprintln!("scroll acceptance executable: {path:?}");
+    path
+}
+
 struct Session {
     rx: Receiver<Vec<u8>>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
-    /// The reconstructed screen: `ROWS` rows of `COLS` chars.
-    grid: Vec<Vec<char>>,
-    cx: usize,
-    cy: usize,
+    /// Stateful decoding preserves escape sequences and UTF-8 split across reads.
+    screen: Vt100Grid,
 }
 
 impl Session {
@@ -91,7 +98,7 @@ impl Session {
                 pixel_height: 0,
             })
             .expect("openpty");
-        let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
+        let mut cmd = CommandBuilder::new(executable());
         cmd.env("XDG_CONFIG_HOME", &dir);
         cmd.env("TERM", "xterm-256color");
         cmd.env("GWAE_NO_INSTALL", "1");
@@ -118,9 +125,10 @@ impl Session {
                 writer,
                 child,
                 _master: pair.master,
-                grid: vec![vec![' '; COLS as usize]; ROWS as usize],
-                cx: 0,
-                cy: 0,
+                screen: Vt100Grid::new(Size {
+                    rows: ROWS,
+                    cols: COLS,
+                }),
             },
             log,
         )
@@ -151,7 +159,7 @@ impl Session {
                 pixel_height: 0,
             })
             .expect("openpty");
-        let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
+        let mut cmd = CommandBuilder::new(executable());
         cmd.env("XDG_CONFIG_HOME", &dir);
         cmd.env("TERM", "xterm-256color");
         // Setup must not run, and must never install anything.
@@ -177,9 +185,10 @@ impl Session {
             writer,
             child,
             _master: pair.master,
-            grid: vec![vec![' '; COLS as usize]; ROWS as usize],
-            cx: 0,
-            cy: 0,
+            screen: Vt100Grid::new(Size {
+                rows: ROWS,
+                cols: COLS,
+            }),
         }
     }
 
@@ -194,102 +203,18 @@ impl Session {
         while Instant::now() < deadline {
             match self.rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(b) => {
-                    let s = String::from_utf8_lossy(&b).into_owned();
-                    self.apply(&s);
+                    self.screen.feed(&b);
                 }
                 Err(_) => continue,
             }
         }
     }
 
-    /// Fold one chunk of output into the screen.
-    ///
-    /// Only the subset of ANSI gwae actually paints with: absolute cursor
-    /// positioning, erase-in-display, newlines, and printable text. Anything
-    /// else (SGR colors, synchronized-update markers, OSC titles) is skipped,
-    /// since this suite asserts on *glyphs*, not on styling.
-    fn apply(&mut self, s: &str) {
-        let mut it = s.chars().peekable();
-        while let Some(c) = it.next() {
-            match c {
-                '\x1b' => match it.next() {
-                    Some('[') => {
-                        let mut params = String::new();
-                        let mut final_byte = ' ';
-                        for c in it.by_ref() {
-                            if c.is_ascii_alphabetic() {
-                                final_byte = c;
-                                break;
-                            }
-                            params.push(c);
-                        }
-                        self.csi(&params, final_byte);
-                    }
-                    Some(']') => {
-                        // OSC: runs to BEL or ST.
-                        while let Some(c) = it.next() {
-                            if c == '\x07' {
-                                break;
-                            }
-                            if c == '\x1b' && it.peek() == Some(&'\\') {
-                                it.next();
-                                break;
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                '\r' => self.cx = 0,
-                '\n' => {
-                    self.cy = (self.cy + 1).min(ROWS as usize - 1);
-                    self.cx = 0;
-                }
-                c if (c as u32) >= 0x20 => {
-                    if self.cy < ROWS as usize && self.cx < COLS as usize {
-                        self.grid[self.cy][self.cx] = c;
-                    }
-                    self.cx += 1;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn csi(&mut self, params: &str, final_byte: char) {
-        let nums: Vec<usize> = params
-            .trim_start_matches('?')
-            .split(';')
-            .map(|p| p.parse().unwrap_or(0))
-            .collect();
-        match final_byte {
-            'H' => {
-                self.cy = nums.first().copied().unwrap_or(1).max(1) - 1;
-                self.cx = nums.get(1).copied().unwrap_or(1).max(1) - 1;
-                self.cy = self.cy.min(ROWS as usize - 1);
-                self.cx = self.cx.min(COLS as usize - 1);
-            }
-            'J' => {
-                // Erase in display; gwae uses this on entering the alt
-                // screen, so treat every form as "clear it all".
-                self.grid = vec![vec![' '; COLS as usize]; ROWS as usize];
-                self.cx = 0;
-                self.cy = 0;
-            }
-            'K' => {
-                for x in self.cx..COLS as usize {
-                    self.grid[self.cy][x] = ' ';
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Every `LINE-<n>` currently on screen.
     fn visible_lines(&self) -> Vec<u32> {
         let mut v = Vec::new();
-        for row in &self.grid {
-            let text: String = row.iter().collect();
-            let mut rest = text.as_str();
+        for text in self.screen.visible_text().lines() {
+            let mut rest = text;
             while let Some(at) = rest.find("LINE-") {
                 rest = &rest[at + 5..];
                 let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -315,11 +240,7 @@ impl Session {
 
     /// The screen as text, for failure messages.
     fn render(&self) -> String {
-        self.grid
-            .iter()
-            .map(|r| r.iter().collect::<String>().trim_end().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
+        self.screen.visible_text()
     }
 
     /// Fill the pane's scrollback with numbered lines.
@@ -333,7 +254,13 @@ impl Session {
         self.settle(2.5);
     }
 
-    fn kill(mut self) {
+    fn kill(self) {
+        drop(self);
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -547,6 +474,10 @@ fn ctrl_shift_jk_scrolls_history_three_lines_at_a_time_like_jcode() {
     s.send(b"\x1b[107;6u");
     s.settle(1.0);
     let back = s.span();
+    eprintln!(
+        "observed Ctrl+Shift+K: live {live:?} -> {back:?}, {} lines backward",
+        live.0 - back.0
+    );
     assert_eq!(
         back.0,
         live.0 - 3,
@@ -561,11 +492,13 @@ fn ctrl_shift_jk_scrolls_history_three_lines_at_a_time_like_jcode() {
         std::thread::sleep(Duration::from_millis(60));
     }
     s.settle(1.0);
+    eprintln!("observed three Ctrl+Shift+K presses: {:?}", s.span());
     assert_eq!(s.span().0, live.0 - 9, "{}", s.render());
 
     s.send(b"\x1b[106;6u");
     s.settle(1.0);
     let fwd = s.span();
+    eprintln!("observed Ctrl+Shift+J: {fwd:?}, six lines behind live");
     assert_eq!(
         fwd.0,
         live.0 - 6,
@@ -578,6 +511,10 @@ fn ctrl_shift_jk_scrolls_history_three_lines_at_a_time_like_jcode() {
     }
     s.settle(1.0);
     assert_eq!(s.span(), live, "must return to live\n{}", s.render());
+    eprintln!(
+        "observed three Ctrl+Shift+J presses: {:?}, restored live span exactly",
+        s.span()
+    );
     s.kill();
 }
 
