@@ -4,6 +4,8 @@
 //! a stub `pbpaste` reading exact fixture bytes. Readiness and completion are
 //! observable terminal/file states, never a quiet interval in the output stream.
 //! Fish execution is checked with a file sentinel, not repaint-sensitive counts.
+//! Drag selection is also exercised here to prove its highlight does not replace
+//! the clipboard subsequently pasted with `⌥+v`.
 //!
 //! macOS-only because the clipboard helper table differs on other platforms.
 #![cfg(target_os = "macos")]
@@ -48,6 +50,7 @@ struct Session {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
     screen: Vt100Grid,
+    raw: Vec<u8>,
     dir: PathBuf,
 }
 
@@ -91,6 +94,15 @@ impl Session {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(bin.join("pbpaste"), std::fs::Permissions::from_mode(0o755))
             .expect("chmod stub pbpaste");
+        // A regression must never overwrite the user's real clipboard. If copy
+        // returns, record the call and redirect it to the isolated clipboard.
+        std::fs::write(
+            bin.join("pbcopy"),
+            "#!/bin/sh\nprintf x >> \"$GWAE_TEST_CLIPBOARD.calls\"\nexec /bin/cat > \"$GWAE_TEST_CLIPBOARD\"\n",
+        )
+        .expect("write stub pbcopy");
+        std::fs::set_permissions(bin.join("pbcopy"), std::fs::Permissions::from_mode(0o755))
+            .expect("chmod stub pbcopy");
 
         let pair = native_pty_system()
             .openpty(PtySize {
@@ -144,6 +156,7 @@ impl Session {
             child,
             _master: pair.master,
             screen: Vt100Grid::new(HOST),
+            raw: Vec::new(),
             dir,
         };
         s.wait_for("child prompt/readiness", |s| s.shown().contains(ready));
@@ -170,6 +183,7 @@ impl Session {
                 return;
             }
             if let Ok(bytes) = self.rx.recv_timeout(Duration::from_millis(20)) {
+                self.raw.extend_from_slice(&bytes);
                 self.screen.feed(&bytes);
             }
         }
@@ -181,6 +195,92 @@ impl Session {
             self.shown()
         );
     }
+}
+
+#[test]
+fn drag_highlights_without_replacing_the_clipboard_then_option_v_pastes_original_text() {
+    let clipboard = "clipboard-before-drag";
+    let mut s = Session::start(clipboard);
+    let label = "PLAIN_READY";
+    let (x, y) = (0..HOST.rows)
+        .flat_map(|y| (0..=HOST.cols - label.len() as u16).map(move |x| (x, y)))
+        .find(|&(x, y)| {
+            label
+                .chars()
+                .enumerate()
+                .all(|(i, ch)| s.screen.cell(x + i as u16, y).ch == ch)
+        })
+        .expect("locate actual child text rather than assuming pane coordinates");
+    let baseline: Vec<_> = (0..label.len() as u16)
+        .map(|i| s.screen.cell(x + i, y).style)
+        .collect();
+    let highlighted = |s: &Session, range: std::ops::RangeInclusive<usize>| {
+        baseline.iter().enumerate().all(|(i, style)| {
+            let mut expected = *style;
+            if range.contains(&i) {
+                expected.inverse = !expected.inverse;
+            }
+            s.screen.cell(x + i as u16, y).style == expected
+        })
+    };
+    let mouse = |button, dx, end| format!("\x1b[<{button};{};{}{end}", x + dx + 1, y + 1);
+
+    // Real SGR mouse input traverses crossterm, hit-testing, selection state,
+    // painting, and the host terminal parser. Release deliberately extends the
+    // range so a stale drag frame cannot satisfy the release assertion.
+    s.send(mouse(0, 1, 'M').as_bytes());
+    s.send(mouse(32, 4, 'M').as_bytes());
+    s.wait_for("forward drag highlights only cells 1 through 4", |s| {
+        highlighted(s, 1..=4)
+    });
+    s.send(mouse(0, 6, 'm').as_bytes());
+    s.wait_for("release extends the highlight through cell 6", |s| {
+        highlighted(s, 1..=6)
+    });
+    eprintln!("observed forward drag highlight 1..=4, release highlight 1..=6");
+
+    s.send(mouse(0, 8, 'M').as_bytes());
+    s.send(mouse(0, 8, 'm').as_bytes());
+    s.wait_for("a plain click clears the completed selection", |s| {
+        baseline
+            .iter()
+            .enumerate()
+            .all(|(i, style)| s.screen.cell(x + i as u16, y).style == *style)
+    });
+
+    s.send(mouse(0, 6, 'M').as_bytes());
+    s.send(mouse(32, 3, 'M').as_bytes());
+    s.wait_for("backward drag highlights cells 3 through 6", |s| {
+        highlighted(s, 3..=6)
+    });
+    s.send(mouse(0, 0, 'm').as_bytes());
+    s.wait_for("backward release extends through cell 0", |s| {
+        highlighted(s, 0..=6)
+    });
+    eprintln!("observed click clears selection, backward drag 3..=6, release 0..=6");
+
+    // The child receiving this paste is an event-processing barrier after both
+    // releases. It also demonstrates the user's symptom: selection is visible,
+    // but the next paste contains the old clipboard, not the selected text.
+    s.send(OPT_V);
+    s.wait_for(
+        "paste after selection still delivers the original clipboard",
+        |s| {
+            s.file("received-paste") == clipboard.as_bytes()
+                && s.shown().contains(clipboard)
+                && s.shown().contains("pasted 1 line")
+        },
+    );
+    assert_eq!(s.file("clipboard"), clipboard.as_bytes());
+    assert!(
+        !s.dir.join("clipboard.calls").exists(),
+        "pbcopy was invoked"
+    );
+    assert!(
+        !s.raw.windows(5).any(|w| w == b"\x1b]52;") && !s.raw.windows(4).any(|w| w == b"\x9d52;"),
+        "drag must not emit an OSC 52 clipboard write"
+    );
+    eprintln!("observed original clipboard pasted intact, no pbcopy call or OSC 52 write");
 }
 
 impl Drop for Session {
