@@ -10,13 +10,13 @@
 
 Make **“add more panes without making them smaller”** the thing people remember and share. Lead with the layout difference, demonstrate it immediately, and use parallel coding agents as the main example. Do not reposition gwae as another all-in-one agent orchestrator.
 
-The next work should be:
+The next three work packages, in execution order, are:
 
-1. **Gate the launch on release behavior, then finish the current README/site improvements.** A real-PTY follow-up found a primary-screen reflow failure in v1.3.1 that the current development build passes. Verify the next distributed artifact before drawing broad traffic. Do not restart the redesign.
-2. **Create one short, unmistakable no-shrink demonstration** and reuse its visual story in the GitHub social preview.
-3. **Give interested visitors two actions:** try it now, or star it to save it for later. Installation should not be a prerequisite for expressing interest.
-4. **Add two genuinely useful workflow recipes and a fair comparison**, then use those as reasons to share the project with relevant communities.
-5. **Measure reach separately from interest.** The observed traffic sample is too small to justify headline A/B testing or numerical uplift predictions.
+1. **Correctness and first-run package:** finish the existing README/site edits, reconcile support/persistence claims in the comparison docs, and verify the exact release artifact and newcomer trial. A real-PTY follow-up found a primary-screen reflow failure in v1.3.1 that the development build passes. Drafting can proceed now, but broad promotion waits for a distributed fix to pass. Do not restart the redesign.
+2. **Visual proof package:** create one short, unmistakable no-shrink demonstration and reuse its story in the GitHub social preview. Record from the verified release, not an unreleased build presented as current.
+3. **Useful discovery package:** add the two workflow recipes, finish the share kit, and place one low-pressure star/save prompt alongside the try path. Installation should not be a prerequisite for expressing interest. Share only after the first two packages pass.
+
+These packages group the individual rows in section 5. **Measure reach separately from interest** throughout. The observed traffic sample is too small to justify headline A/B testing or numerical uplift predictions.
 
 Documentation can improve the likelihood that a visitor understands and stars gwae. It cannot manufacture an audience. Once the first-run and comprehension gates pass, spend the next effort on getting the demonstration in front of relevant people, not another round of adjective changes.
 
@@ -160,7 +160,7 @@ Effort ranges are planning estimates for one maintainer, not measured durations.
 | Priority | Change and files/surface | Effort | Acceptance gate |
 |---|---|---:|---|
 | P0 | Verify a distributed artifact containing the current reflow fix before a broad docs launch. | Release-owner dependent | Run `resize_e2e` against that exact downloaded binary. All three tests must pass, including primary-screen reflow. Passing only the development build is insufficient. |
-| P0 | Reconcile first-run copy and finish existing `README.md` / `docs/index.html` work. | 1–3 h plus platform testing | Exact release commands work with a clean config and no agent. A newcomer can explain the layout and find the next step. Live content matches approved copy. |
+| P0 | Reconcile first-run copy and finish existing `README.md` / `docs/index.html` work. | 1–3 h plus platform testing | Pass the five-person comprehension and trial protocol in section 6, including both supported operating systems. Exact release commands work with a clean config and no agent. Live content matches approved copy. |
 | P0 | Correct persistence, Windows maturity, and overbroad comparison claims in `COMPARISON.md`, `WHY.md`, and relevant card text. | 1–2 h | No page equates conversation resume with process survival. Support claims agree across entry points. |
 | P0 | Produce the focused demo and card in `docs/assets/`. Upload the card as the GitHub social preview after review. | 3–6 h | Demo proves unchanged width. Both site and repository unfurls communicate the same promise. GitHub reports a custom preview after the settings change. |
 | P1 | Put one save-for-later star prompt next to the demo/try path. Preserve the site's already-drafted GitHub CTA. | 30–60 min | Links go to the real repository. No duplicated pleading, auto-starring, fake count, or suggestion that a star subscribes to releases. |
@@ -201,6 +201,16 @@ These are conceptual paths, not individually tracked users. GitHub does not prov
 | First useful experience | Observe five clean-config trials on documented supported setups. | Proposed gate: four of five complete the post-install no-agent path without help. Testers must be told they need not star the project. |
 | Trial failure themes | User feedback and issues that include OS, terminal, release, and failing step. | Helps identify support friction. A falling issue count by itself is not proof of success. |
 
+### Concrete P0 acceptance protocol for the implementing maintainer
+
+The docs maintainer owns this check and the release maintainer supplies the exact artifact. Recruit five target readers, ideally three parallel-agent users and two general terminal users. This is a proposed qualitative test, not a completed study.
+
+1. Show the opening for ten seconds, then hide it. Ask: what does this do, what happens when another pane is added, must you replace your terminal, and what would you click next? Record anonymous answers before explaining anything. Pass if at least four of five correctly describe scrolling without shrinking and can choose a sensible next step.
+2. Observe five clean-config trials using the documented install method, recording OS, terminal/version, release, install route, elapsed time after installation, and the first confusing step. Include at least two macOS trials in different terminals and two Linux trials in different terminals. Use the fifth trial to repeat the riskiest combination. Do not claim a terminal-specific compatibility result without testing it.
+3. Follow only the published instructions: launch the explicit shell, add enough panes to cross the edge, navigate back, use help, and exit all disposable shells. Pass if four of five finish unaided **and** each promoted OS/terminal combination has a successful full trial. An overall four-of-five result must not conceal a broken platform. Test the proposed command once more with an existing agent configured to ensure the shell path does not launch it.
+4. Record PATH problems and Option/Alt misconfiguration as trial failures, then improve the relevant instructions and repeat the failing case. Do not call it a “30-second” trial until the post-install observations support that wording. Windows remains explicitly experimental and is not inferred from the macOS/Linux results.
+5. Ask permission before recording screens, avoid credentials/private work, and tell participants they do not need to star the project. Keep detailed participant records private. Publish only the support claims and examples that these observations justify.
+
 GitHub's traffic retention and update behavior are documented in [S6]. If using `net new stars / unique visitors` over the **same** period, label it a rough period ratio, not conversion probability. Stars can come from outside the measured visit path, and readers may return before starring. Clones and release downloads are not verified installs or active users. The unusually different clone/view totals seen in the audit should not be treated as adoption evidence.
 
 ### Lightweight experiment sequence
@@ -229,30 +239,9 @@ Performed: local documentation/source audit, live site fetch, read-only GitHub m
 
 Not performed: clean-machine installs, human comprehension sessions, a fully rendered GitHub/mobile layout audit, new demo recording, public posting, repository-settings changes, or deployment. Recommendations above are hypotheses grounded in observed friction, not measured growth outcomes.
 
-### Acceptance follow-up: observed behavior, not just inspection
+**Acceptance finding:** the official v1.3.1 macOS binary passed two of three real-PTY resize tests, but failed primary-screen text reflow. The current development build passed all three. This changed the plan: verify a distributed fix before broad promotion, and omit resizing from the minimal trial until that gate passes. The complete default-configuration newcomer trial remains unverified.
 
-The follow-up downloaded the official **v1.3.1 aarch64 macOS archive** into scratch storage and checked it against its published SHA-256 sidecar. Archive digest: `338f81179bf3e8c7dc235e0ae32a58e904a7d78d710d8c233b9d943f6d805139`. The extracted executable reported `gwae 1.3.1`. No installed binary or user configuration was replaced.
-
-| Requirement or risk | Real interface exercised | Observed result and implication |
-|---|---|---|
-| The plan must be readable as repository documentation. | GitHub's `POST /markdown` endpoint, GFM mode with repository context. | GitHub rendered all six tables, nine level-two headings, 18 links, and all six pinned peer links. This checks the actual Markdown renderer, not full GitHub-page styling or mobile appearance. |
-| The proposed explicit command must exist in the release, not only in source. | Verified release: `gwae run --help`, with isolated HOME/config and a PATH without agents. | Exit 0. Usage is `gwae run [OPTIONS] [COMMAND]`, with the command replacing the first-pane shell. |
-| A no-agent gateway must not be mistaken for an immediate shell. | Verified release: `gwae agent --print`, under the same isolated environment. | Exit 0. It reports no harness on PATH and explicitly says **“Enter alone opens a shell.”** This supports documenting the gateway step rather than silently treating it as a plain shell. It does not establish the complete default-launch interaction. |
-| Width changes must reach real shell/TUI processes. | Repository `resize_e2e` suite with `GWAE_E2E_BIN` set to the downloaded release. | Width/fullscreen cycling and host-resize tests passed. Inner PTY columns changed 29 → 39 → 59 → 29, full width reached 119, and actual WINCH/redraw behavior was observed. Host sizes included 96×24, 120×30, and 144×36. |
-| Shell text must remain usable after a resize. | The same release suite's `primary_output_reflows_across_width_cycles_without_child_redraw`. | **Failed. Overall release result: 2 passed, 1 failed.** The shell received the new width, but existing primary-screen text retained stale wrapping after 29 → 39 columns. Do not interpret the passing resize-delivery tests as complete resize correctness. |
-| Determine whether this needs a new implementation or release follow-through. | Same repository suite against the current development executable, at HEAD `9bdfd76`. | **All 3 passed.** Existing concurrent implementation work fixes this tested path. This plan's task did not modify runtime code. The remaining gate is checking a published artifact containing the fix, not claiming the release already includes it. |
-
-Reproduce the release check with the actual extracted artifact path:
-
-```sh
-GWAE_E2E_BIN=/absolute/path/to/downloaded/gwae cargo test -p gwae --test resize_e2e -- --nocapture
-```
-
-For the development comparison, omit `GWAE_E2E_BIN`. These are the project's existing tests driving the real executable, shell, inner/outer PTYs, terminal resize events, and rendered output. The shell redraw fixture is controlled, so these checks still do not substitute for a human trying an ordinary terminal or an installed agent.
-
-**Blocked or incomplete checks:** browser status reported ready, but opening both the generated local document and the public GitHub repository returned an unexpected error. Visual/mobile acceptance is therefore blocked, not passed. An additional scratch-only Python PTY replay stalled, was stopped, and yielded no valid first-run result. It is not counted as evidence of either product success or failure. macOS testing does not validate Linux or Windows installation, package-manager behavior, or physical Option/Alt handling.
-
-**Concrete improvement from the feedback loop:** the plan now adds an artifact-specific release gate, removes resizing from the minimal trial until that gate passes, and distinguishes CLI grammar/gateway evidence from the still-unverified newcomer experience. Increased comprehension and star growth remain unmeasured. Proving those requires the proposed human feedback and post-deployment observation, neither of which can honestly be replaced by automated checks.
+Detailed public-interface results, limitations, and requirement-to-evidence mapping are in [the validation appendix](DOCS-GROWTH-VALIDATION.md). Keeping the test record there preserves an auditable plan without making execution depend on reading test internals.
 
 ### Sources
 
