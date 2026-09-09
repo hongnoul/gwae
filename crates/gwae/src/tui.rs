@@ -1080,7 +1080,9 @@ fn focused_pane_views_with_chrome(
         // in by one to stay on screen, but its content must not shrink with
         // it. Clamping here is what made a widened pane 4 shrink instead of
         // overflowing like pane 1 does.
-        let grid_cols = full_unclamped.max(content_width);
+        // The reflowing core requires two columns to represent wide glyphs.
+        // Keep the child PTY at that same minimum while clipping tiny views.
+        let grid_cols = full_unclamped.max(content_width).max(2);
         let col_x0 = (left as i32 - sx).max(0) as u16; // grid col at `left`
         let p = col.panes.len().max(1);
         let gap = 1u16;
@@ -7889,6 +7891,21 @@ mod tests {
             red,
             "unsplit column rings accent"
         );
+    }
+
+    #[test]
+    fn tiny_pane_pty_geometry_matches_the_emulator_minimum() {
+        let layout = Layout::new(1);
+        let views = focused_pane_views(&layout, 8, 6, 0, &HashMap::new(), true);
+        assert_eq!(views.len(), 1);
+        let v = &views[0];
+        assert_eq!(v.rect.w, 1, "only one cell fits between the frames");
+        assert_eq!(v.grid_cols, 2, "PTY keeps room for a wide glyph");
+        let size = GridSize {
+            cols: v.grid_cols,
+            rows: v.grid_rows,
+        };
+        assert_eq!(Vt100Grid::new(size).size(), size);
     }
 
     #[test]

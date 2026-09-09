@@ -1,8 +1,10 @@
 //! gwae-term: the emulator facade.
 //!
 //! Isolates the terminal-emulation crate behind a single `TermGrid` trait so
-//! swapping the backend touches exactly one crate. M0/M1 uses `vt100` for the
-//! hosted grid (ADR-004 remains open for `alacritty_terminal` vs `wezterm-term`).
+//! swapping the backend touches exactly one crate. The Alacritty core reflows
+//! primary-screen text and scrollback when pane widths change.
+
+mod compat;
 
 /// A terminal color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -36,8 +38,8 @@ pub struct Style {
 /// variation selectors, and Kitty image-placeholder diacritics), NUL-padded.
 /// Dropping them breaks composed text (é as e+U+0301) and completely breaks
 /// Kitty Unicode-placeholder images, whose row/column addressing lives in
-/// combining diacritics after U+10EEEE. Capacity matches vt100's six
-/// codepoints per cell (one base + five combining).
+/// combining diacritics after U+10EEEE. The facade retains one base and up to
+/// five combining codepoints per cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
     pub ch: char,
@@ -46,7 +48,7 @@ pub struct Cell {
     pub width: u8,
 }
 
-/// Maximum combining codepoints stored per cell (vt100 keeps 6 total).
+/// Maximum combining codepoints stored per facade cell.
 pub const MAX_COMBINING: usize = 5;
 
 /// A `combining` array holding no codepoints.
@@ -134,264 +136,272 @@ pub trait TermGrid {
     }
 }
 
-// --- vt100-backed grid (M0/M1 implementation) ---
+// --- Reflowing Alacritty-backed grid ---
 
-/// Map a vt100 color into our own.
-fn map_color(c: vt100::Color) -> CColor {
-    match c {
-        vt100::Color::Default => CColor::Default,
-        vt100::Color::Idx(i) => CColor::Idx(i),
-        vt100::Color::Rgb(r, g, b) => CColor::Rgb(r, g, b),
+use alacritty_terminal::{
+    event::{Event, EventListener},
+    grid::{Dimensions, Scroll},
+    index::{Column, Line, Point},
+    term::{cell::Flags, Config, Term, TermMode},
+    vte::ansi::{Color, NamedColor, Processor},
+};
+use std::sync::mpsc;
+
+impl Dimensions for Size {
+    fn total_lines(&self) -> usize {
+        self.rows as usize
+    }
+
+    fn screen_lines(&self) -> usize {
+        self.rows as usize
+    }
+
+    fn columns(&self) -> usize {
+        self.cols as usize
     }
 }
 
-/// A `TermGrid` backed by the `vt100` parser.
-pub struct Vt100Grid {
-    parser: vt100::Parser,
-    rows: u16,
-    cols: u16,
-    /// How many scrollback rows are currently scrolled into view.
-    scrollback_offset: usize,
+/// Keep title events inside the facade. The host still owns PTY query replies,
+/// clipboard access, and graphics passthrough, just as with the previous core.
+struct TitleListener(mpsc::Sender<String>);
+
+impl EventListener for TitleListener {
+    fn send_event(&self, event: Event) {
+        let title = match event {
+            Event::Title(title) => title,
+            Event::ResetTitle => String::new(),
+            _ => return,
+        };
+        let _ = self.0.send(title);
+    }
 }
 
-impl Vt100Grid {
+fn map_color(c: Color) -> CColor {
+    match c {
+        Color::Indexed(i) => CColor::Idx(i),
+        Color::Spec(rgb) => CColor::Rgb(rgb.r, rgb.g, rgb.b),
+        Color::Named(named) => {
+            let n = named as u16;
+            if n <= NamedColor::BrightWhite as u16 {
+                CColor::Idx(n as u8)
+            } else if (NamedColor::DimBlack as u16..=NamedColor::DimWhite as u16).contains(&n) {
+                CColor::Idx((n - NamedColor::DimBlack as u16) as u8)
+            } else {
+                CColor::Default
+            }
+        }
+    }
+}
+
+fn map_cell(c: &alacritty_terminal::term::cell::Cell) -> Cell {
+    let mut combining = NO_COMBINING;
+    for (slot, &cp) in combining.iter_mut().zip(c.zerowidth().unwrap_or_default()) {
+        *slot = cp;
+    }
+    Cell {
+        ch: c.c,
+        combining,
+        style: Style {
+            fg: map_color(c.fg),
+            bg: map_color(c.bg),
+            bold: c.flags.contains(Flags::BOLD),
+            underline: c.flags.intersects(Flags::ALL_UNDERLINES),
+            inverse: c.flags.contains(Flags::INVERSE),
+        },
+        width: if c.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            0
+        } else if c.flags.contains(Flags::WIDE_CHAR) {
+            2
+        } else {
+            1
+        },
+    }
+}
+
+/// A terminal grid with primary-screen reflow and 10,000 rows of scrollback.
+/// Full-screen applications retain the standard non-reflowing alternate screen
+/// and redraw for the new PTY dimensions on SIGWINCH.
+pub struct TerminalGrid {
+    term: Term<TitleListener>,
+    parser: Processor,
+    legacy_modes: compat::LegacyCsiNormalizer,
+    titles: mpsc::Receiver<String>,
+    title: String,
+    size: Size,
+}
+
+/// Source-compatible name for callers of the original facade implementation.
+pub type Vt100Grid = TerminalGrid;
+
+impl TerminalGrid {
     pub fn new(size: Size) -> Self {
-        let parser = vt100::Parser::new(size.rows, size.cols, 10_000);
-        Vt100Grid {
-            parser,
-            rows: size.rows,
-            cols: size.cols,
-            scrollback_offset: 0,
+        let size = Self::nonzero_size(size);
+        let (tx, titles) = mpsc::channel();
+        Self {
+            term: Term::new(Config::default(), &size, TitleListener(tx)),
+            parser: Processor::new(),
+            legacy_modes: compat::LegacyCsiNormalizer::default(),
+            titles,
+            title: String::new(),
+            size,
         }
     }
 
-    /// True when the child has taken over the alternate screen (a full-screen
-    /// app like vim or less). Such apps own scrolling themselves and keep no
-    /// scrollback of ours, so a scroll request is translated into the arrow
-    /// keys they expect rather than moving a buffer that does not exist.
-    pub fn alternate_screen(&self) -> bool {
-        self.parser.screen().alternate_screen()
+    fn nonzero_size(size: Size) -> Size {
+        // A wide glyph needs two columns. Reflowing it into a one-column
+        // Alacritty grid cannot make progress, so retain a safe logical size
+        // even if the host can show only a clipped sliver of the pane.
+        Size {
+            cols: size.cols.max(2),
+            rows: size.rows.max(1),
+        }
     }
 
-    /// True when the child asked for mouse reporting (any xterm mouse mode).
+    /// Full-screen apps own their scrolling instead of using our history.
+    pub fn alternate_screen(&self) -> bool {
+        self.term.mode().contains(TermMode::ALT_SCREEN)
+    }
+
+    /// True when the child asked for any xterm mouse reporting mode.
     pub fn wants_mouse(&self) -> bool {
-        self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None
+        self.term.mode().intersects(TermMode::MOUSE_MODE)
     }
 
     /// True when the child enabled bracketed paste (`DECSET 2004`).
-    ///
-    /// A child that asked for it wants pasted text delimited by
-    /// `ESC[200~`/`ESC[201~` so it can tell a paste from typing: shells use it
-    /// to keep a multi-line paste on one editing line instead of running each
-    /// line, and agent harnesses use it to buffer a long prompt rather than
-    /// submitting the first line. gwae strips the host's markers when it
-    /// decodes a paste, so it has to re-emit them here or the child sees N
-    /// separate Enters.
     pub fn wants_bracketed_paste(&self) -> bool {
-        self.parser.screen().bracketed_paste()
+        self.term.mode().contains(TermMode::BRACKETED_PASTE)
     }
 
-    /// The number of scrollback rows currently scrolled into view.
     pub fn scrollback_offset(&self) -> usize {
-        self.scrollback_offset
+        self.term.grid().display_offset()
     }
 
-    /// Scroll the view by `delta` rows (positive = back into history).
-    /// Returns true when the visible offset actually changed.
-    ///
-    /// The offset is clamped to the visible row count: vt100 0.15's
-    /// `visible_rows` underflows (`scrollback_len - offset`, `rows_len -
-    /// offset) when the offset exceeds the row count, which panics the
-    /// render loop and kills the session. Deep history stays reachable
-    /// one screen at a time rather than in a single jump.
+    /// Scroll by rows (positive = into history), clamping only at history bounds.
+    /// Unlike the old parser, deep scrollback is safe beyond one screenful.
     pub fn scroll_by(&mut self, delta: i32) -> bool {
-        let max = self.rows as usize;
-        let want = ((self.scrollback_offset as i64 + delta as i64).max(0) as usize).min(max);
-        self.parser.set_scrollback(want);
-        let now = self.parser.screen().scrollback();
-        let changed = now != self.scrollback_offset;
-        self.scrollback_offset = now;
-        changed
+        let before = self.scrollback_offset();
+        // The core adds delta in i32 before clamping. Bound the request first
+        // so even an extreme jump cannot overflow when already in history.
+        let remaining = self.term.grid().history_size() - before;
+        let delta = delta.clamp(-(before as i32), remaining as i32);
+        self.term.scroll_display(Scroll::Delta(delta));
+        self.scrollback_offset() != before
     }
 
-    /// Jump back to the live bottom of the buffer.
     pub fn scroll_to_bottom(&mut self) -> bool {
-        if self.scrollback_offset == 0 {
-            return false;
-        }
-        self.parser.set_scrollback(0);
-        self.scrollback_offset = 0;
-        true
+        let before = self.scrollback_offset();
+        self.term.scroll_display(Scroll::Bottom);
+        before != 0
     }
 }
 
-impl TermGrid for Vt100Grid {
+impl TermGrid for TerminalGrid {
     fn size(&self) -> Size {
-        Size {
-            cols: self.cols,
-            rows: self.rows,
-        }
+        self.size
     }
 
     fn resize(&mut self, size: Size) {
-        self.parser.set_size(size.rows, size.cols);
-        self.rows = size.rows;
-        self.cols = size.cols;
-        // Shrinking the grid can strand the offset above the row count, the
-        // same vt100 0.15 `visible_rows` underflow `scroll_by` guards
-        // against. Re-clamp here so a resize mid-scrollback cannot panic the
-        // next paint.
-        let max = self.rows as usize;
-        if self.scrollback_offset > max {
-            self.parser.set_scrollback(max);
-            self.scrollback_offset = self.parser.screen().scrollback();
+        let size = Self::nonzero_size(size);
+        let history_before = self.term.grid().history_size();
+        let reflow = size.cols != self.size.cols && !self.alternate_screen();
+        // Resize the retained grid itself, including history and the inactive
+        // primary screen. Replaying output would lose cursor edits and modes.
+        self.term.resize(size);
+        if reflow {
+            // The core anchors the bottom of the grid, even when the rows below
+            // the cursor are unused. Don't hide newly wrapped text in history
+            // while there's room to show it. Drop only default rows below the
+            // cursor, then grow back to pull that text into the viewport. Work
+            // on the active grid so the alternate screen isn't resized twice.
+            let grid = self.term.grid_mut();
+            let added_history = grid.history_size().saturating_sub(history_before);
+            let blank = alacritty_terminal::term::cell::Cell::default();
+            let spare_rows = ((grid.cursor.point.line.0 + 1)..size.rows as i32)
+                .rev()
+                .take_while(|&y| {
+                    (0..size.cols as usize).all(|x| grid[Point::new(Line(y), Column(x))] == blank)
+                })
+                .count();
+            let pull = added_history.min(spare_rows);
+            if pull > 0 {
+                grid.resize::<Color>(true, size.rows as usize - pull, size.cols as usize);
+                grid.resize::<Color>(true, size.rows as usize, size.cols as usize);
+            }
         }
+        self.size = size;
     }
 
     fn feed(&mut self, bytes: &[u8]) -> Vec<Damage> {
-        // vt100 does not report incremental damage, so we re-render the whole grid.
-        self.parser.process(bytes);
-        // vt100 shifts the scrollback offset itself when new lines scroll the
-        // buffer (so a scrolled-back view stays pinned to the same content);
-        // adopt its value so our cached offset never drifts. Clamp to the row
-        // count for the same underflow reason as `scroll_by`/`resize`.
-        self.scrollback_offset = self.parser.screen().scrollback().min(self.rows as usize);
+        let bytes = self.legacy_modes.feed(bytes);
+        self.parser.advance(&mut self.term, &bytes);
+        // The compositor owns synchronized host frames. Do not retain an
+        // inner child's DECSET 2026 buffer: an interrupted frame could otherwise
+        // freeze its pane forever since we don't run Alacritty's timeout loop.
+        // stop_sync uses the same parser, preserving partial UTF-8/CSI state.
+        self.parser.stop_sync(&mut self.term);
+        for title in self.titles.try_iter() {
+            self.title = title;
+        }
+        // The renderer diffs cells, so keep the existing whole-grid damage API.
         vec![Damage {
             x: 0,
             y: 0,
-            w: self.cols,
-            h: self.rows,
+            w: self.size.cols,
+            h: self.size.rows,
         }]
     }
 
     fn cell(&self, x: u16, y: u16) -> Cell {
-        match self.parser.screen().cell(y, x) {
-            Some(c) => {
-                // vt100 hands back the whole cluster; the first codepoint is
-                // the base glyph and the rest are combining marks (accents,
-                // variation selectors, Kitty placeholder diacritics) that must
-                // be carried through or composed text and Kitty images break.
-                let contents = c.contents();
-                let mut cps = contents.chars();
-                let ch = cps.next().unwrap_or(' ');
-                let mut combining = NO_COMBINING;
-                for (slot, cp) in combining.iter_mut().zip(cps) {
-                    *slot = cp;
-                }
-                let style = Style {
-                    fg: map_color(c.fgcolor()),
-                    bg: map_color(c.bgcolor()),
-                    bold: c.bold(),
-                    underline: c.underline(),
-                    inverse: c.inverse(),
-                };
-                let width = if c.is_wide() {
-                    2
-                } else if c.is_wide_continuation() {
-                    0
-                } else {
-                    1
-                };
-                Cell {
-                    ch,
-                    combining,
-                    style,
-                    width,
-                }
-            }
-            None => Cell::default(),
+        if x >= self.size.cols || y >= self.size.rows {
+            return Cell::default();
         }
+        let line = Line(y as i32 - self.scrollback_offset() as i32);
+        map_cell(&self.term.grid()[Point::new(line, Column(x as usize))])
     }
 
     fn title(&self) -> &str {
-        self.parser.screen().title()
+        &self.title
     }
 
     fn cursor_position(&self) -> (u16, u16) {
-        self.parser.screen().cursor_position()
+        let cursor = self.term.grid().cursor.point;
+        (cursor.line.0 as u16, cursor.column.0 as u16)
     }
 
     fn hide_cursor(&self) -> bool {
-        self.parser.screen().hide_cursor()
+        !self.term.mode().contains(TermMode::SHOW_CURSOR)
     }
 
     fn scrollback_offset(&self) -> usize {
-        self.scrollback_offset
+        self.scrollback_offset()
     }
 
     fn session_text(&mut self) -> String {
-        let saved = self.scrollback_offset;
-        self.parser.set_scrollback(100_000);
-        let total = self.parser.screen().scrollback();
-        if total == 0 {
-            let out = self.parser.screen().contents();
-            self.parser.set_scrollback(saved);
-            self.scrollback_offset = self.parser.screen().scrollback();
-            return out.trim_end_matches('\n').to_string();
-        }
-        // vt100 0.15 visible_rows panics when scrollback_offset > rows
-        // (scrollback_len - offset underflows). Walk only offsets that keep
-        // offset <= rows, and stitch via contents() which is safe there; for
-        // deeper history fall back to incremental line collection via cells.
-        let rows = self.rows as usize;
-        if total <= rows {
-            self.parser.set_scrollback(total);
-            let dump = self.parser.screen().contents();
-            let live = {
-                self.parser.set_scrollback(0);
-                self.parser.screen().contents()
-            };
-            let s: Vec<&str> = dump.lines().collect();
-            let l: Vec<&str> = live.lines().collect();
-            let overlap = l.len().min(rows);
-            let out = if l.len() > overlap {
-                let mut m = s.clone();
-                m.extend_from_slice(&l[l.len() - overlap..]);
-                m.join("\n")
-            } else {
-                live
-            };
-            self.parser.set_scrollback(saved);
-            self.scrollback_offset = self.parser.screen().scrollback();
-            return out.trim_end_matches('\n').to_string();
-        }
-        // Deep scrollback: vt100 0.15 panics on contents() when offset > rows
-        // and is !UnwindSafe, so we cannot catch_unwind around &mut self.
-        // Instead avoid calling contents() at unsafe offsets and reconstruct
-        // those windows cell-by-cell; only call contents() where offset is safe.
-        let mut lines: Vec<String> = Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for off in (0..=total).step_by(rows.max(1)) {
-            self.parser.set_scrollback(off);
-            let chunk = if off <= rows {
-                self.parser.screen().contents()
-            } else {
-                // Fallback: at offsets > rows, even cell() panics via visible_row
-                // in 0.15, so guard with scrollback_offset <= rows and only use
-                // contents() in safe range; for unsafe range, skip content
-                // collection at that window (will be covered by nearer windows
-                // and live tail dedup). This avoids the panic without needing
-                // catch_unwind on !UnwindSafe parser.
-                continue;
-            };
-            for ln in chunk.lines() {
-                let trimmed = ln.to_string();
-                // Dedup preserves first occurrence order; collect all
-                if seen.insert(trimmed.clone()) {
-                    lines.push(trimmed);
+        // Read history directly without moving the viewport. Preserve repeated
+        // lines and hard breaks, joining only terminal-generated soft wraps.
+        let grid = self.term.grid();
+        let mut out = String::new();
+        for y in -(grid.history_size() as i32)..self.size.rows as i32 {
+            let mut line = String::new();
+            for x in 0..self.size.cols as usize {
+                let c = &grid[Point::new(Line(y), Column(x))];
+                if !c
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    line.push(c.c);
+                    line.extend(c.zerowidth().unwrap_or_default());
                 }
             }
-        }
-        self.parser.set_scrollback(0);
-        let live = self.parser.screen().contents();
-        for ln in live.lines() {
-            if seen.insert(ln.to_string()) {
-                lines.push(ln.to_string());
+            let last = &grid[Point::new(Line(y), Column(self.size.cols as usize - 1))];
+            if last.flags.contains(Flags::WRAPLINE) {
+                out.push_str(&line);
+            } else {
+                out.push_str(line.trim_end());
+                out.push('\n');
             }
         }
-        self.parser.set_scrollback(saved);
-        self.scrollback_offset = self.parser.screen().scrollback();
-        lines.join("\n").trim_end_matches('\n').to_string()
+        out.trim_end_matches('\n').to_string()
     }
 }
 
@@ -404,7 +414,7 @@ pub struct NullGrid {
 
 /// Streaming extractor for Kitty graphics APC sequences (`ESC _ G ... ESC \`).
 ///
-/// vt100 (like every cell-grid emulator) parses and *drops* APC sequences, so
+/// The terminal core parses and *drops* APC sequences, so
 /// a child's Kitty image transmissions die inside the mux and panes show
 /// nothing where an image should be. The fix is passthrough: gwae scans
 /// each pane's raw PTY output and forwards complete graphics sequences
@@ -611,6 +621,157 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pane_text_reflows_losslessly_across_width_cycles() {
+        let mut g = Vt100Grid::new(Size { cols: 20, rows: 8 });
+        g.feed(b"abcdefghijklmnopqr");
+        for _ in 0..3 {
+            g.resize(Size { cols: 10, rows: 8 });
+            assert_eq!(g.visible_text(), "abcdefghij\nklmnopqr");
+            g.resize(Size { cols: 20, rows: 8 });
+            assert_eq!(g.visible_text(), "abcdefghijklmnopqr");
+        }
+        g.feed(b"st");
+        assert_eq!(g.visible_text(), "abcdefghijklmnopqrst");
+    }
+
+    #[test]
+    fn reflow_preserves_hard_breaks_unicode_styles_and_cursor_edits() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 8 });
+        g.feed("\x1b[1;4;7;31;44mabcd你e\u{0301}fghijklmnop\x1b[0m\r\nsecond".as_bytes());
+        let original = g.session_text();
+        for cols in [5, 9, 30, 6, 20] {
+            g.resize(Size { cols, rows: 8 });
+            assert_eq!(g.session_text(), original, "width {cols}");
+        }
+        assert_eq!(g.visible_text(), original);
+        assert_eq!(g.cell(4, 0).ch, '你');
+        assert_eq!(g.cell(4, 0).width, 2);
+        assert_eq!(g.cell(5, 0).width, 0);
+        assert_eq!(g.cell(6, 0).combining[0], '\u{0301}');
+        assert_eq!(
+            g.cell(0, 0).style,
+            Style {
+                fg: CColor::Idx(1),
+                bg: CColor::Idx(4),
+                bold: true,
+                underline: true,
+                inverse: true,
+            }
+        );
+        // Cursor remains attached to the last hard line, not an old grid cell.
+        g.feed(b"\x1b[3DXYZ");
+        assert!(g.session_text().ends_with("secXYZ"));
+    }
+
+    #[test]
+    fn deep_history_and_repeated_lines_survive_width_and_height_cycles() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 6 });
+        let mut expected = Vec::new();
+        for i in 0..40 {
+            let line = if i % 3 == 0 {
+                "repeated".into()
+            } else {
+                format!("row{i:02}: abcdefghijk")
+            };
+            g.feed(format!("{line}\r\n").as_bytes());
+            expected.push(line);
+        }
+        let expected = expected.join("\n");
+        assert_eq!(g.session_text(), expected);
+        for size in [
+            Size { cols: 7, rows: 3 },
+            Size { cols: 40, rows: 10 },
+            Size { cols: 20, rows: 6 },
+        ] {
+            g.resize(size);
+            assert_eq!(g.session_text(), expected, "size {size:?}");
+            g.scroll_by(i32::MAX);
+            assert!(g.scrollback_offset() > size.rows as usize);
+            assert!(g.visible_text().starts_with("repeate"));
+            let offset = g.scrollback_offset();
+            assert_eq!(g.session_text(), expected);
+            assert_eq!(
+                g.scrollback_offset(),
+                offset,
+                "export must not move viewport"
+            );
+            g.scroll_to_bottom();
+        }
+    }
+
+    #[test]
+    fn alternate_screen_redraw_does_not_replace_primary_history() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 8 });
+        g.feed(b"abcdefghijklmnopqr\r\nprimary");
+        let primary = g.session_text();
+        g.feed(b"\x1b[?1049h\x1b[?25l\x1b[2JALT OLD FRAME");
+        g.resize(Size { cols: 10, rows: 4 });
+        assert!(g.alternate_screen());
+        assert!(g.hide_cursor());
+        assert_eq!(g.scrollback_offset(), 0);
+        assert!(!g.scroll_by(99));
+        // A full-screen child redraws in response to the new PTY dimensions.
+        g.feed(b"\x1b[2J\x1b[HNEW\x1b[4;10HX");
+        assert_eq!(g.cell(9, 3).ch, 'X');
+        g.feed(b"\x1b[?1049l\x1b[?25h");
+        assert!(!g.alternate_screen());
+        assert!(!g.hide_cursor());
+        assert_eq!(g.session_text(), primary);
+        g.resize(Size { cols: 20, rows: 8 });
+        assert_eq!(g.session_text(), primary);
+        g.feed(b"!");
+        assert_eq!(g.session_text(), format!("{primary}!"));
+    }
+
+    #[test]
+    fn resize_keeps_partial_escape_sequences_and_truecolor() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 8 });
+        g.feed(b"\x1b[38;2;10;");
+        g.resize(Size { cols: 10, rows: 4 });
+        g.feed(b"20;30mhello");
+        assert_eq!(g.visible_text(), "hello");
+        assert_eq!(g.cell(0, 0).style.fg, CColor::Rgb(10, 20, 30));
+        assert_eq!(g.cell(10, 0), Cell::default());
+        assert_eq!(g.cell(0, 4), Cell::default());
+    }
+
+    #[test]
+    fn child_sync_markers_cannot_stall_the_hosted_grid() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+        g.feed(b"before\x1b[?2026h after");
+        assert_eq!(g.visible_text(), "before after");
+        // An interrupted child can leave sync enabled forever. Later output,
+        // including a resize, must not wait for its missing end marker.
+        g.resize(Size { cols: 10, rows: 5 });
+        g.feed(b"!");
+        assert_eq!(g.session_text(), "before after!");
+
+        // Flushing at feed boundaries must keep partial UTF-8/CSI/OSC state.
+        let frame = "\x1b[?2026h\x1b[31m你e\u{0301}\x1b]2;frame\x07\x1b[?2026l";
+        for cut in 0..=frame.len() {
+            let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+            g.feed(&frame.as_bytes()[..cut]);
+            g.feed(&frame.as_bytes()[cut..]);
+            assert_eq!(g.visible_text(), "你e\u{0301}", "chunk at byte {cut}");
+            assert_eq!(g.title(), "frame");
+            assert_eq!(g.cell(0, 0).style.fg, CColor::Idx(1));
+        }
+    }
+
+    #[test]
+    fn tiny_dimensions_are_normalized_and_wide_text_survives() {
+        let mut g = TerminalGrid::new(Size::default());
+        assert_eq!(g.size(), Size { cols: 2, rows: 1 });
+        g.resize(Size { cols: 10, rows: 4 });
+        g.feed("a你bc".as_bytes());
+        g.resize(Size { cols: 1, rows: 4 });
+        assert_eq!(g.size(), Size { cols: 2, rows: 4 });
+        assert_eq!(g.session_text(), "a你bc");
+        g.resize(Size { cols: 10, rows: 4 });
+        assert_eq!(g.visible_text(), "a你bc");
+    }
+
+    #[test]
     fn scrollback_moves_view_and_returns() {
         let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
         for i in 0..10 {
@@ -631,11 +792,24 @@ mod tests {
     }
 
     #[test]
-    fn scrollback_offset_never_exceeds_visible_rows() {
-        // vt100 0.15's `visible_rows` underflows when the scrollback offset
-        // exceeds the row count, panicking the render loop and killing the
-        // session. Ten fast wheel notches (3 rows each) against a 3-row grid
-        // used to do exactly that; the offset must clamp at the row count.
+    fn new_output_keeps_a_scrolled_view_pinned_after_resize() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+        for i in 0..30 {
+            g.feed(format!("row{i:02}: abcdefghijk\r\n").as_bytes());
+        }
+        g.scroll_by(12);
+        g.resize(Size { cols: 10, rows: 4 });
+        let view = g.visible_text();
+        let before = g.scrollback_offset();
+        g.feed(b"new output\r\n");
+        assert!(g.scrollback_offset() > before);
+        assert_eq!(g.visible_text(), view);
+        assert!(g.scroll_to_bottom());
+        assert!(g.visible_text().contains("new output"));
+    }
+
+    #[test]
+    fn deep_scrollback_is_reachable_and_clamped_to_history() {
         let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
         for i in 0..10 {
             g.feed(format!("line{i}\r\n").as_bytes());
@@ -643,34 +817,28 @@ mod tests {
         for _ in 0..10 {
             g.scroll_by(3);
         }
-        assert!(
-            g.scrollback_offset() <= 3,
-            "offset {} exceeds visible rows",
-            g.scrollback_offset()
-        );
-        // And the clamped view still renders without panicking.
-        let _: String = (0..6).map(|x| g.cell(x, 0).ch).collect();
+        assert_eq!(g.scrollback_offset(), 8);
+        assert_eq!(g.visible_text(), "line0\nline1\nline2");
+        assert!(!g.scroll_by(i32::MAX));
+        assert!(g.scroll_by(i32::MIN));
+        assert_eq!(g.scrollback_offset(), 0);
     }
 
     #[test]
-    fn shrinking_the_grid_reclamps_a_stranded_offset() {
-        // Scroll deep on a tall grid, then shrink below the offset: without
-        // a re-clamp the next paint underflows vt100's `visible_rows` and
-        // kills the session. A terminal resize mid-scrollback is the way
-        // this happens outside the test.
+    fn shrinking_the_grid_keeps_deep_scrollback_anchored() {
         let mut g = Vt100Grid::new(Size { cols: 10, rows: 10 });
         for i in 0..20 {
             g.feed(format!("line{i}\r\n").as_bytes());
         }
         g.scroll_by(8);
         assert_eq!(g.scrollback_offset(), 8);
+        let top: String = (0..6).map(|x| g.cell(x, 0).ch).collect();
         g.resize(Size { cols: 10, rows: 3 });
-        assert!(
-            g.scrollback_offset() <= 3,
-            "resize stranded offset {}",
-            g.scrollback_offset()
-        );
-        let _: String = (0..6).map(|x| g.cell(x, 0).ch).collect();
+        assert_eq!(g.scrollback_offset(), 15);
+        assert_eq!((0..6).map(|x| g.cell(x, 0).ch).collect::<String>(), top);
+        g.resize(Size { cols: 10, rows: 10 });
+        assert_eq!(g.scrollback_offset(), 8);
+        assert_eq!((0..6).map(|x| g.cell(x, 0).ch).collect::<String>(), top);
     }
 
     #[test]
@@ -697,6 +865,24 @@ mod tests {
         g.feed(b"\x1b[?1000l\x1b[?1049l");
         assert!(!g.alternate_screen());
         assert!(!g.wants_mouse());
+    }
+
+    #[test]
+    fn legacy_modes_keep_child_output_off_the_primary_screen() {
+        let enter = b"MAIN\x1b[?47;9;25h\x1b[2J\x1b[HALT";
+        for cut in 0..=enter.len() {
+            let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+            g.feed(&enter[..cut]);
+            g.feed(&enter[cut..]);
+            assert!(g.alternate_screen(), "chunk at byte {cut}");
+            assert!(g.wants_mouse());
+            assert_eq!(g.visible_text(), "ALT");
+            g.resize(Size { cols: 10, rows: 5 });
+            g.feed(b"\x1b[?47;9l");
+            assert!(!g.alternate_screen());
+            assert!(!g.wants_mouse());
+            assert_eq!(g.visible_text(), "MAIN");
+        }
     }
 
     #[test]

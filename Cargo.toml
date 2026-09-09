@@ -22,10 +22,8 @@ portable-pty = "0.9"
 # --- Terminal I/O + input decode. crossterm is the default; termwiz may win ADR-004. ---
 crossterm = "0.28"
 
-# --- Emulator crate (ADR-004). Decided in M0; one of these wins the `TermGrid` trait.
-#    Left commented until the prototype. Do NOT add both to the graph. ---
-# alacritty_terminal = "0.25"
-# wezterm-term = "0.31"
+# --- Emulator: primary-screen reflow and bounded scrollback (ADR-004). ---
+alacritty_terminal = { version = "0.25.1", default-features = false }
 
 # --- Width oracle: detect host/emulator disagreement on glyph width. ---
 unicode-width = "0.2"

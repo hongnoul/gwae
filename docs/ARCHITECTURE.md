@@ -25,8 +25,8 @@ gwae (one process)
 | `gwae-testkit` | lib | fake PTYs, scripted terminals, snapshot harness |
 
 `gwae-layout` depends only on `std` + `serde`. `gwae-term` isolates the
-emulator-crate choice behind `TermGrid`; swapping `alacritty_terminal` <-> `wezterm-term`
-touches one crate.
+`alacritty_terminal` core behind `TermGrid`. Its `TerminalGrid` implementation
+also keeps the original `Vt100Grid` type name as a source-compatible alias.
 
 ## Rendering pipeline
 
@@ -45,6 +45,20 @@ Panes have a **logical size** (cols x rows) set by their column width and strip
 height. This is the size reported to the PTY (`TIOCSWINSZ`), so full-screen apps
 lay out at logical size. The viewport crops, never resizes: a column wider than
 the viewport is panned, and app inside is unaffected.
+
+When the **logical size changes**, the emulator and child PTY both resize.
+Primary-screen output and up to 10,000 retained history rows reflow at soft
+wraps, preserving hard line breaks, cell styles, wide glyphs, and combining
+marks. Newly wrapped rows stay visible when unused rows below the cursor can
+accommodate them. Full-screen applications use the non-reflowing alternate
+screen and redraw after the PTY's `SIGWINCH`. Tiny views clip a logical grid of
+at least two columns, the minimum needed to represent a wide glyph safely.
+
+Scrollback can traverse the whole retained history, not just one screenful.
+Session text exports read that history without moving the viewport or
+deduplicating repeated lines. `tests/resize_e2e.rs` verifies repeated width
+cycles, fullscreen transitions, host row/column changes, actual child geometry
+and resize signals, and primary output reflow without a child redraw.
 
 ## Hot reload (dev): new code, same panes
 
@@ -158,7 +172,17 @@ updates, kitty keyboard protocol, mouse SGR (passed through). `⌥` (the Option
 key on macOS, Alt elsewhere) is the universal `$mod` (ADR-014); macOS may add an
 optional `Cmd+hjkl` snippet via `gwae setup`.
 
-## Open questions
+## Emulator decision (ADR-004)
 
-- ADR-004: which emulator crate (`alacritty_terminal` vs `wezterm-term`) wins
-  the `TermGrid` trait. Decide in the M0 spike by prototyping both.
+The initial `vt100` prototype truncated cell tails on narrowing instead of
+reflowing them, so widening could not recover the text. `alacritty_terminal`
+0.25 replaces it behind the facade, providing primary-screen and history
+reflow while retaining the workspace's Rust 1.85 minimum. Host-owned terminal
+query replies, clipboard handling, and Kitty graphics passthrough are unchanged.
+Child synchronized-update buffers are flushed after each feed because the
+compositor owns host frame synchronization, so an interrupted child frame cannot
+freeze the pane. Legacy `DECSET 47` is normalized to `1049` to protect the primary
+screen (including `1049`'s clear-on-entry behavior, not persistent legacy alternate
+contents). Legacy mouse mode `9` maps to `1000` for the facade's existing boolean
+mouse-routing contract. The streaming compatibility adapter leaves control-string
+payloads untouched.

@@ -11,4 +11,4 @@ description = "gwae emulator facade: TermGrid trait isolating the grid crate cho
 name = "gwae_term"
 
 [dependencies]
-vt100 = "0.15"
+alacritty_terminal.workspace = true
