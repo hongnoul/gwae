@@ -985,6 +985,39 @@ fn focused_pane_views(
     focused_pane_views_with_chrome(layout, cols, rows, content_width, panes, inset, 0)
 }
 
+/// Logical dimensions depend on the column and terminal, never on focus or
+/// viewport clipping. Rounded screen boundaries can give a column one fewer
+/// visible cell at a different scroll stop. Resizing its PTY for that would
+/// send SIGWINCH, whose redraw looks like fresh work to the activity heuristic.
+fn column_grid_sizes(
+    width: Width,
+    pane_count: usize,
+    viewport: GridSize,
+    content_width: u16,
+    inset: bool,
+    chrome_rows: u16,
+) -> impl Iterator<Item = GridSize> {
+    let b = u16::from(inset);
+    let cols = width
+        .cells(viewport.cols)
+        .saturating_sub(b)
+        .max(content_width)
+        .max(2);
+    let inner_h = viewport
+        .rows
+        .saturating_sub(chrome_rows)
+        .saturating_sub(2 * b)
+        .max(1);
+    let count = pane_count.max(1);
+    // One shared divider between panes. Give remainder rows to the top panes,
+    // matching the visible stack without leaving unassigned rows at the bottom.
+    let avail = (inner_h as usize).saturating_sub(count - 1);
+    (0..pane_count).map(move |i| GridSize {
+        cols,
+        rows: (avail / count + usize::from(i < avail % count)) as u16,
+    })
+}
+
 fn focused_pane_views_with_chrome(
     layout: &Layout,
     cols: u16,
@@ -994,7 +1027,6 @@ fn focused_pane_views_with_chrome(
     inset: bool,
     chrome_rows: u16,
 ) -> Vec<PaneView> {
-    let strip_h = rows.saturating_sub(chrome_rows).max(1);
     let b: i32 = if inset { 1 } else { 0 }; // border thickness
     let abs_ranges = layout
         .column_x_ranges(layout.focus.row, cols)
@@ -1077,37 +1109,23 @@ fn focused_pane_views_with_chrome(
         } else {
             (raw_wv, false)
         };
-        // The emulator matches the pane's *logical* column width (the full
-        // column minus any frame inset) unless an explicit content_width
-        // extends the logical width for horizontal scrolling. This is the
-        // same unclamped width as above: the last column's right frame pulls
-        // in by one to stay on screen, but its content must not shrink with
-        // it. Clamping here is what made a widened pane 4 shrink instead of
-        // overflowing like pane 1 does.
-        // The reflowing core requires two columns to represent wide glyphs.
-        // Keep the child PTY at that same minimum while clipping tiny views.
-        let grid_cols = full_unclamped.max(content_width).max(2);
+        // The PTY keeps the stable logical width even when boundary rounding
+        // or the last column's right frame clips a cell from the visible view.
         let col_x0 = (left as i32 - sx).max(0) as u16; // grid col at `left`
-        let p = col.panes.len().max(1);
         let gap = 1u16;
-        // Vertical content area: the strip minus the top/bottom frame rows.
-        let inner_top = b as u16;
-        let inner_h = ((strip_h as i32) - 2 * b).max(1) as u16;
-        let inner_bottom = inner_top + inner_h;
-        // Split the inner height across the stack *exactly*: floor division
-        // alone strands `avail % p` rows at the bottom of the column, which
-        // paint as unassigned background (visible from 7 panes down on a
-        // typical strip). Hand the remainder out one row at a time to the
-        // top panes so the stack always tiles the full strip.
-        let avail = (inner_h as i32 - (p as i32 - 1) * gap as i32).max(0);
-        let base = avail / p as i32;
-        let rem = avail % p as i32;
-        let mut y = inner_top;
-        for (pi, pid) in col.panes.iter().enumerate() {
-            let want = (base + ((pi as i32) < rem) as i32).max(0) as u16;
+        let mut y = b as u16;
+        let sizes = column_grid_sizes(
+            col.width,
+            col.panes.len(),
+            GridSize { cols, rows },
+            content_width,
+            inset,
+            chrome_rows,
+        );
+        for (pid, size) in col.panes.iter().zip(sizes) {
+            let h = size.rows;
             let row_y = y;
-            y = y.saturating_add(want).saturating_add(gap);
-            let h = want.min(inner_bottom.saturating_sub(row_y));
+            y = y.saturating_add(h).saturating_add(gap);
             if h == 0 {
                 continue;
             }
@@ -1123,8 +1141,8 @@ fn focused_pane_views_with_chrome(
                 },
                 col_x0,
                 h_scroll,
-                grid_cols,
-                grid_rows: h,
+                grid_cols: size.cols,
+                grid_rows: size.rows,
                 peek: peek_col,
             });
         }
@@ -5561,31 +5579,32 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
         }
 
-        // Resize grids & PTYs to match current geometry.
+        // Size all panes, including hidden columns/strips, from logical
+        // geometry. Deferring hidden panes until focus reveals them would
+        // provoke a SIGWINCH redraw and falsely turn an idle `!` into `»`.
         let chrome = chrome_rows(&cfg);
-        for v in focused_pane_views_with_chrome(
-            &layout,
-            cols,
-            rows,
-            cfg.content_width,
-            &panes,
-            true,
-            chrome,
-        ) {
-            let pid = v.pid;
-            if let Some(p) = panes.get_mut(&pid) {
-                if p.grid.size()
-                    != (GridSize {
-                        cols: v.grid_cols,
-                        rows: v.grid_rows,
-                    })
-                {
-                    p.grid.resize(GridSize {
-                        cols: v.grid_cols,
-                        rows: v.grid_rows,
-                    });
-                    let _ = p.master.resize(v.grid_cols, v.grid_rows);
-                    dirty = true;
+        for col in layout.rows.iter().flat_map(|r| &r.columns) {
+            let sizes = column_grid_sizes(
+                col.width,
+                col.panes.len(),
+                GridSize { cols, rows },
+                cfg.content_width,
+                true,
+                chrome,
+            );
+            for (pid, size) in col.panes.iter().zip(sizes) {
+                // Zero-height stacks have no drawable view. Keep the emulator
+                // and kernel at their one-row minimum until space is available.
+                let size = GridSize {
+                    rows: size.rows.max(1),
+                    ..size
+                };
+                if let Some(p) = panes.get_mut(pid) {
+                    if p.grid.size() != size {
+                        p.grid.resize(size);
+                        let _ = p.master.resize(size.cols, size.rows);
+                        dirty = true;
+                    }
                 }
             }
         }
@@ -7910,6 +7929,98 @@ mod tests {
             red,
             "unsplit column rings accent"
         );
+    }
+
+    #[test]
+    fn logical_pane_sizes_do_not_change_with_focus_or_scroll() {
+        // Exercise both rounding phases, mixed widths, clipped neighbours,
+        // content-width overrides and the unframed renderer.
+        for cols in [80, 141, 142, 143, 342] {
+            for inset in [false, true] {
+                for content_width in [0, 120] {
+                    let mut layout = Layout::new(8);
+                    layout.rows[0].columns[2].width = Width::Preset(gwae_layout::Preset::Third);
+                    layout.rows[0].columns[4].width = Width::Cells(47);
+                    let panes = HashMap::new();
+                    let mut sizes = HashMap::new();
+                    let mut stops = HashSet::new();
+                    for action in std::iter::repeat_n(Action::FocusRight, 7)
+                        .chain(std::iter::repeat_n(Action::FocusLeft, 7))
+                    {
+                        layout
+                            .apply(action, Viewport::new(cols), FollowScroll::default())
+                            .unwrap();
+                        stops.insert(layout.focused_row().unwrap().scroll_x);
+                        for v in focused_pane_views_with_chrome(
+                            &layout,
+                            cols,
+                            30,
+                            content_width,
+                            &panes,
+                            inset,
+                            2,
+                        ) {
+                            let size = (v.grid_cols, v.grid_rows);
+                            if let Some(previous) = sizes.insert(v.pid, size) {
+                                assert_eq!(
+                                    size, previous,
+                                    "pane {} resized on focus at {cols} cols",
+                                    v.pid
+                                );
+                            }
+                            assert!(v.grid_cols >= content_width.max(2));
+                            assert!(v.grid_cols >= v.col_x0 + v.rect.w);
+                        }
+                    }
+                    assert_eq!(sizes.len(), 8, "visit every pane");
+                    assert!(stops.len() > 1, "exercise real scroll changes");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn logical_sizes_follow_real_geometry_and_tile_split_heights() {
+        let sizes = |width, count, cols, rows, content| {
+            column_grid_sizes(width, count, GridSize { cols, rows }, content, true, 2)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            sizes(Width::DEFAULT, 1, 142, 30, 0),
+            vec![GridSize { cols: 35, rows: 26 }]
+        );
+        assert_eq!(
+            sizes(Width::DEFAULT, 1, 160, 30, 0),
+            vec![GridSize { cols: 39, rows: 26 }]
+        );
+        assert_eq!(
+            sizes(Width::Cells(50), 1, 142, 30, 0),
+            vec![GridSize { cols: 49, rows: 26 }]
+        );
+        assert_eq!(
+            sizes(Width::DEFAULT, 1, 142, 30, 120),
+            vec![GridSize {
+                cols: 120,
+                rows: 26
+            }]
+        );
+        assert_eq!(
+            sizes(Width::DEFAULT, 1, 1, 1, 0),
+            vec![GridSize { cols: 2, rows: 1 }]
+        );
+        for count in 1..=26 {
+            let split = sizes(Width::DEFAULT, count, 142, 30, 0);
+            assert_eq!(
+                split.iter().map(|s| s.rows as usize).sum::<usize>() + count - 1,
+                26
+            );
+            assert!(split
+                .windows(2)
+                .all(|s| s[0].rows >= s[1].rows && s[0].rows - s[1].rows <= 1));
+        }
+        assert!(sizes(Width::DEFAULT, 30, 142, 30, 0)
+            .iter()
+            .all(|s| s.rows == 0));
     }
 
     #[test]

@@ -18,10 +18,20 @@ struct Session {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
     screen: Vt100Grid,
+    dir: std::path::PathBuf,
 }
 
 impl Session {
     fn start(config: &str) -> Session {
+        Self::start_with_helper(
+            config,
+            "#!/bin/sh\nprintf '\\033]0;watchdog\\007'\nexec sleep 60\n",
+            140,
+            false,
+        )
+    }
+
+    fn start_with_helper(config: &str, helper: &str, cols: u16, all_panes: bool) -> Session {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::var_os("JCODE_SCRATCH_DIR")
             .map(std::path::PathBuf::from)
@@ -33,21 +43,26 @@ impl Session {
         ));
         std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
         std::fs::write(dir.join("gwae/gwae.toml"), config).expect("write config");
-        std::fs::write(
-            dir.join("hud-helper.sh"),
-            "#!/bin/sh\nprintf '\\033]0;watchdog\\007'\nexec sleep 60\n",
-        )
-        .expect("write pane helper");
+        let helper_path = dir.join("hud-helper.sh");
+        std::fs::write(&helper_path, helper).expect("write pane helper");
+        #[cfg(unix)]
+        if all_panes {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&helper_path, std::fs::Permissions::from_mode(0o700))
+                .expect("executable helper shell");
+        }
 
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: 30,
-                cols: 140,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
             .expect("openpty");
-        let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
+        let executable =
+            std::env::var_os("GWAE_E2E_BIN").unwrap_or_else(|| env!("CARGO_BIN_EXE_gwae").into());
+        let mut cmd = CommandBuilder::new(executable);
         cmd.env_clear();
         cmd.cwd(&dir);
         cmd.env("HOME", &dir);
@@ -55,7 +70,14 @@ impl Session {
         cmd.env("XDG_CACHE_HOME", dir.join("cache"));
         cmd.env("XDG_DATA_HOME", dir.join("data"));
         cmd.env("TERM", "xterm-256color");
-        cmd.env("SHELL", "/bin/sh");
+        cmd.env(
+            "SHELL",
+            if all_panes {
+                helper_path.as_os_str()
+            } else {
+                "/bin/sh".as_ref()
+            },
+        );
         cmd.env("PATH", "/usr/bin:/bin");
         cmd.env("ENV", "/dev/null");
         cmd.env("GWAE_NO_INSTALL", "1");
@@ -88,10 +110,8 @@ impl Session {
             writer,
             child,
             _master: pair.master,
-            screen: Vt100Grid::new(Size {
-                rows: 30,
-                cols: 140,
-            }),
+            screen: Vt100Grid::new(Size { rows: 30, cols }),
+            dir,
         }
     }
 
@@ -138,9 +158,16 @@ impl Session {
         String::from_utf8_lossy(&out).into_owned()
     }
 
-    fn kill(mut self) {
+    fn kill(self) {
+        // Drop also tears down sessions when an assertion panics.
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
@@ -149,6 +176,94 @@ fn alt(key: u8) -> Vec<u8> {
     vec![0x1b, key]
 }
 const ALT_ENTER: &[u8] = b"\x1b\r";
+
+/// A quiet TUI without OSC 133. Redraw only for real SIGWINCH or input, and
+/// log signals independently so the test cannot pass by hiding status changes.
+#[cfg(unix)]
+const RESIZE_HELPER: &str = r#"#!/bin/sh
+stty -echo
+printf '\033]2;pane-%s\007' "$GWAE_PANE"
+redraw() {
+    printf '\033[2J\033[HREADY %s' "$GWAE_PANE"
+}
+trap 'printf "%s\n" "$GWAE_PANE" >> winch.log; redraw' WINCH
+trap 'exit 0' HUP TERM
+redraw
+while :; do
+    if read -r key; then
+        printf '\033[2;1HWORK %s' "$GWAE_PANE"
+    fi
+done
+"#;
+
+#[cfg(unix)]
+#[test]
+fn focusing_attention_panes_never_turns_redraws_into_work() {
+    // Fractional quarter widths reproduce the one-cell rounding-phase resize.
+    // Eight panes also leave startup panes offscreen until first visited.
+    let mut s = Session::start_with_helper(
+        "startup_panes = 8\ncontent_width = 0\ncenter_focus = false\n\
+         [cowsay]\nenabled = true\nmessages = []\n",
+        RESIZE_HELPER,
+        142,
+        true,
+    );
+    // Hold the modifier via Kitty key reporting, independently of the user's
+    // keyboard. This keeps the dashboard visible even on a slow test runner.
+    s.send(b"\x1b[57443;3u");
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        s.peek(50);
+        let text = s.screen.visible_text();
+        if (1..=8).all(|n| text.contains(&format!("!{n}"))) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "panes never became idle: {text}"
+        );
+    }
+    let before = std::fs::read_to_string(s.dir.join("winch.log")).unwrap_or_default();
+    // Both directions, including the first focus of previously hidden panes.
+    for (key, pane) in (1..8)
+        .map(|p| (b'l', p))
+        .chain((0..7).rev().map(|p| (b'h', p)))
+    {
+        s.send(&alt(key));
+        let painted = s.peek(250);
+        assert_eq!(
+            s.screen.title(),
+            format!("pane-{pane}"),
+            "focus must actually move"
+        );
+        assert!(
+            s.screen.visible_text().contains("attention"),
+            "HUD must be visible"
+        );
+        assert!(
+            s.screen.visible_text().contains("!1"),
+            "idle pane tiles must be visible"
+        );
+        assert!(
+            !visible(&painted).contains('»'),
+            "focus alone must never paint a running status: {}",
+            s.screen.visible_text()
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(s.dir.join("winch.log")).unwrap_or_default(),
+        before,
+        "navigation must not send SIGWINCH to idle children"
+    );
+    // Genuine output still promotes a pane immediately, not after a debounce.
+    s.send(b"work\r");
+    s.peek(250);
+    assert!(
+        s.screen.visible_text().contains("»1"),
+        "real work must still be running: {}",
+        s.screen.visible_text()
+    );
+}
 
 /// Add `n` columns to the focused strip, letting each PTY settle.
 fn widen(s: &mut Session, n: usize) {

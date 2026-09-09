@@ -46,6 +46,11 @@ height. This is the size reported to the PTY (`TIOCSWINSZ`), so full-screen apps
 lay out at logical size. The viewport crops, never resizes: a column wider than
 the viewport is panned, and app inside is unaffected.
 
+Fractional logical widths round up independently of the viewport's cumulative
+boundary rounding. A scroll stop may clip one more cell, but must not change a
+child's size. Hidden columns and strips are sized eagerly too, so revealing an
+idle pane does not send `SIGWINCH` and mistake its redraw for fresh activity.
+
 When the **logical size changes**, the emulator and child PTY both resize.
 Primary-screen output and up to 10,000 retained history rows reflow at soft
 wraps, preserving hard line breaks, cell styles, wide glyphs, and combining
