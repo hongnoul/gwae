@@ -104,6 +104,11 @@ fn is_wheel(kind: MouseEventKind) -> bool {
 /// transcript, not a page jump. Small enough to keep precise positioning.
 const WHEEL_SCROLL_LINES: i32 = 3;
 
+/// Ctrl+Shift+J/K step in plain panes, matching jcode's default
+/// `keybindings.scroll_lines` (3). Keep independent of wheel tuning, and
+/// leave agent panes to the harness's own configured speed at dispatch.
+const KEYBOARD_SCROLL_LINES: i32 = 3;
+
 /// The scrollback delta for one wheel notch: up/left goes back into history,
 /// down/right comes forward. Horizontal flicks scroll history too when no
 /// reporting child owns them; a reporting child keeps all of its own wheel
@@ -174,13 +179,13 @@ fn logical_char(ev: &KeyEvent) -> Option<char> {
 }
 
 /// True when this event is the jcode-style transcript-scroll chord
-/// (Ctrl+Shift+J/K) that gwae otherwise claims for its own history line
-/// scroll (see `handle_key`).
+/// (Ctrl+Shift+J/K) that gwae otherwise claims for its own incremental
+/// history scroll (see `handle_key`).
 ///
 /// The dispatch site uses this to prefer the harness: when the focused pane
 /// is an agent pane, the chord is forwarded to the child untouched so an
 /// inner jcode keeps its native scroll. Everywhere else gwae keeps the
-/// chord, so plain shells still scroll a line via keyboard.
+/// chord, so plain shells scroll three lines per key press.
 fn is_harness_scroll_chord(ev: &KeyEvent) -> bool {
     if ev.modifiers.contains(KeyModifiers::ALT) {
         return false;
@@ -3847,8 +3852,8 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         // focused pane (vim/nvim insert-mode exit, picker cancel, …).
         // The generic fallthrough at the end of this arm forwards it as
         // 0x1b via key_bytes.
-        // Ctrl+Shift+J / Ctrl+Shift+K scroll the focused pane's history line
-        // by line, like jcode's transcript scroll. Plain Ctrl+J / Ctrl+K
+        // Ctrl+Shift+J / Ctrl+Shift+K scroll the focused pane's history three
+        // lines per press, like jcode's default. Plain Ctrl+J / Ctrl+K
         // belong to the pane (jcode uses them for prompt jump), so only the
         // shifted form is claimed here. `physical_shift` covers Kitty's
         // shifted-codepoint form (Ctrl+Shift+J arriving as Char('J')).
@@ -3863,8 +3868,8 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         // `advertised_bindings_match_the_dispatcher` cross-check honest.
         if ctrl && shift {
             match logical_char(ev) {
-                Some('k') => return Some(Cmd::ScrollBack(1)),
-                Some('j') => return Some(Cmd::ScrollBack(-1)),
+                Some('k') => return Some(Cmd::ScrollBack(KEYBOARD_SCROLL_LINES)),
+                Some('j') => return Some(Cmd::ScrollBack(-KEYBOARD_SCROLL_LINES)),
                 _ => {}
             }
         }
@@ -3951,8 +3956,8 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     }
     // Up/Down move the focused pane's scrollback: the wheel joins them as
     // a per-notch line step (see the mouse arm), and Ctrl+Shift+J/K match
-    // jcode's transcript scroll one line at a time. Shift (and
-    // PageUp/PageDown) move by a screenful-ish jump rather than a line.
+    // jcode's default three-line transcript scroll. Shift (and
+    // PageUp/PageDown) move by a screenful-ish jump rather than a small step.
     if matches!(ev.code, Up | Down | PageUp | PageDown) {
         let step = if shift || matches!(ev.code, PageUp | PageDown) {
             20
@@ -4985,7 +4990,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         // Ctrl+Shift+J/K natively, so when it is focused the
                         // chord is forwarded to the child untouched instead of
                         // scrolling gwae's history. Plain shells keep the gwae
-                        // line scroll. `key_bytes` emits kitty CSI-u for the
+                        // three-line scroll. `key_bytes` emits kitty CSI-u for the
                         // chord so a kitty-aware child decodes CONTROL|SHIFT.
                         if is_harness_scroll_chord(&ke)
                             && focused_pane(&layout).is_some_and(|pid| agent_panes.contains(&pid))
@@ -6159,34 +6164,39 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_shift_jk_scroll_scrollback_a_line_like_jcode() {
-        // jcode's transcript: Ctrl+Shift+K scrolls up a line, Ctrl+Shift+J
-        // scrolls down a line. Plain Ctrl+J / Ctrl+K stay with the pane
+    fn ctrl_shift_jk_scroll_scrollback_three_lines_like_jcode() {
+        // jcode's default: Ctrl+Shift+K scrolls up three lines, Ctrl+Shift+J
+        // scrolls down three lines. Plain Ctrl+J / Ctrl+K stay with the pane
         // (jcode uses them for prompt jump), so only the shifted form is
         // claimed here.
         let shift_ctrl = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
         assert_eq!(
             handle_key(&KeyEvent::new(KeyCode::Char('k'), shift_ctrl)),
-            Some(Cmd::ScrollBack(1)),
-            "Ctrl+Shift+K should scroll back one line"
+            Some(Cmd::ScrollBack(3)),
+            "Ctrl+Shift+K should scroll back three lines"
         );
         assert_eq!(
             handle_key(&KeyEvent::new(KeyCode::Char('j'), shift_ctrl)),
-            Some(Cmd::ScrollBack(-1)),
-            "Ctrl+Shift+J should scroll forward one line"
+            Some(Cmd::ScrollBack(-3)),
+            "Ctrl+Shift+J should scroll forward three lines"
         );
         // Kitty's shifted-codepoint form (Shift reported as uppercase with
         // the SHIFT bit cleared) counts too: `physical_shift` sees the 'K'.
         assert_eq!(
             handle_key(&KeyEvent::new(KeyCode::Char('K'), KeyModifiers::CONTROL)),
-            Some(Cmd::ScrollBack(1)),
-            "Kitty-form Ctrl+Shift+K should scroll back one line"
+            Some(Cmd::ScrollBack(3)),
+            "Kitty-form Ctrl+Shift+K should scroll back three lines"
         );
         assert_eq!(
             handle_key(&KeyEvent::new(KeyCode::Char('J'), KeyModifiers::CONTROL)),
-            Some(Cmd::ScrollBack(-1)),
-            "Kitty-form Ctrl+Shift+J should scroll forward one line"
+            Some(Cmd::ScrollBack(-3)),
+            "Kitty-form Ctrl+Shift+J should scroll forward three lines"
         );
+        // Holding the chord keeps the same stride for every repeat event.
+        for (c, delta) in [('k', 3), ('j', -3)] {
+            let ev = KeyEvent::new_with_kind(KeyCode::Char(c), shift_ctrl, KeyEventKind::Repeat);
+            assert_eq!(handle_key(&ev), Some(Cmd::ScrollBack(delta)));
+        }
         // Unshifted Ctrl+J / Ctrl+K reach the child untouched.
         for c in ['j', 'k'] {
             assert!(

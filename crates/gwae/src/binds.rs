@@ -231,19 +231,19 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::CtrlShift('K'),
-        hint: "scrolls this pane's history up like jcode's transcript (an agent pane keeps it instead)",
+        hint: "scrolls this pane's history up three lines like jcode's default (an agent pane keeps it instead)",
         glyph: None,
         group: Group::Navigate,
         desc: "scroll up",
-        effect: Effect::ScrollBack(1),
+        effect: Effect::ScrollBack(3),
     },
     Bind {
         trigger: Trigger::CtrlShift('J'),
-        hint: "scrolls this pane's history down like jcode's transcript (an agent pane keeps it instead)",
+        hint: "scrolls this pane's history down three lines like jcode's default (an agent pane keeps it instead)",
         glyph: None,
         group: Group::Navigate,
         desc: "scroll down",
-        effect: Effect::ScrollBack(-1),
+        effect: Effect::ScrollBack(-3),
     },
     Bind {
         trigger: Trigger::ModProse("←/→"),

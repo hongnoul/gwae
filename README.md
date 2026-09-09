@@ -108,7 +108,7 @@ All chords use `⌥` on macOS, `Alt` elsewhere. Other keys go to the focused pan
 click          focus pane
 drag           select and copy
 wheel          scroll this pane's history (child TUIs keep their own)
-Ctrl+Shift+J/K scroll this pane's history a line, like jcode (in an agent pane the harness keeps the chord for its own transcript)
+Ctrl+Shift+J/K scroll this pane's history three lines, like jcode's default (in an agent pane the harness keeps the chord and its own speed)
 Ctrl+J/K       always reach the pane (jcode: prompt jump); gwae never claims them
 ```
 

@@ -2,7 +2,7 @@
 //!
 //! Three routes reach it, all asserted here against the shipped binary: the
 //! long-standing `⌥+↑`/`⌥+↓` chords, the jcode-style `Ctrl+Shift+J`/`K`
-//! line scroll, and the mouse wheel over the pane (which scrolls gwae's
+//! three-line scroll, and the mouse wheel over the pane (which scrolls gwae's
 //! history for a plain shell, exactly like jcode's transcript).
 //!
 //! It drives the real binary through a PTY and reconstructs the screen from
@@ -534,38 +534,50 @@ fn the_wheel_reaches_a_child_that_asked_for_mouse_reporting() {
 }
 
 #[test]
-fn ctrl_shift_jk_scrolls_history_a_line_at_a_time_like_jcode() {
-    // The keyboard twin of the wheel: Ctrl+Shift+K steps one line back into
-    // history, Ctrl+Shift+J steps one line forward. Sent as Kitty CSI-u
+fn ctrl_shift_jk_scrolls_history_three_lines_at_a_time_like_jcode() {
+    // Match jcode's default keybindings.scroll_lines = 3, not just a
+    // nonzero movement: Ctrl+Shift+K steps three lines back into history,
+    // Ctrl+Shift+J steps three lines forward. Sent as Kitty CSI-u
     // (`ESC[107;6u` / `ESC[106;6u`), the wire form a Kitty-aware terminal
     // produces for the chord.
     let mut s = Session::start();
     s.emit_history();
     let live = s.span();
 
-    for _ in 0..8 {
-        s.send(b"\x1b[107;6u");
-        std::thread::sleep(Duration::from_millis(60));
-    }
-    s.settle(2.0);
+    s.send(b"\x1b[107;6u");
+    s.settle(1.0);
     let back = s.span();
-    assert!(
-        back.0 < live.0 && back.1 < live.1,
-        "Ctrl+Shift+K did not scroll back: was {live:?}, now {back:?}\n{}",
+    assert_eq!(
+        back.0,
+        live.0 - 3,
+        "one Ctrl+Shift+K must scroll back exactly three lines: was {live:?}, now {back:?}\n{}",
         s.render()
     );
 
-    for _ in 0..8 {
+    // Repeated presses accumulate, without relying on the backend's history
+    // clamp. Nine rows stays comfortably below this pane's screen height.
+    for _ in 0..2 {
+        s.send(b"\x1b[107;6u");
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    s.settle(1.0);
+    assert_eq!(s.span().0, live.0 - 9, "{}", s.render());
+
+    s.send(b"\x1b[106;6u");
+    s.settle(1.0);
+    let fwd = s.span();
+    assert_eq!(
+        fwd.0,
+        live.0 - 6,
+        "one Ctrl+Shift+J must scroll forward exactly three lines: now {fwd:?}\n{}",
+        s.render()
+    );
+    for _ in 0..2 {
         s.send(b"\x1b[106;6u");
         std::thread::sleep(Duration::from_millis(60));
     }
-    s.settle(2.0);
-    let fwd = s.span();
-    assert!(
-        fwd.0 > back.0 && fwd.1 > back.1,
-        "Ctrl+Shift+J did not scroll forward: was {back:?}, now {fwd:?}\n{}",
-        s.render()
-    );
+    s.settle(1.0);
+    assert_eq!(s.span(), live, "must return to live\n{}", s.render());
     s.kill();
 }
 
@@ -599,14 +611,18 @@ fn ctrl_shift_jk_reaches_a_harness_pane_instead_of_scrolling_gwae() {
     );
 
     s.send(b"\x1b[107;6u");
+    s.send(b"\x1b[106;6u");
     s.settle(2.0);
     // gwae forwards the chord's kitty CSI-u form (see `key_bytes`), which
     // the shell loop logs byte for byte into the file.
     let logged = std::fs::read_to_string(&log).unwrap_or_default();
-    assert!(
-        logged.contains("\x1b[107;6u"),
-        "Ctrl+Shift+K never reached the harness child; log was {logged:?}\n{}",
-        s.render()
-    );
+    for chord in ["\x1b[107;6u", "\x1b[106;6u"] {
+        assert_eq!(
+            logged.matches(chord).count(),
+            1,
+            "{chord:?} must reach the harness exactly once, without local scroll expansion; log was {logged:?}\n{}",
+            s.render()
+        );
+    }
     s.kill();
 }
