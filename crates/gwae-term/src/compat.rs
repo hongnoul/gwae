@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn does_not_rewrite_osc_dcs_apc_or_other_control_strings() {
-        for start in [b']', b'P', b'_', b'^', b'X'] {
+        for start in *b"]P_^X" {
             let mut input = vec![0x1b, start];
             input.extend_from_slice(b"payload\x1b[?47;9h\x1b[?9l\x1b\\");
             let mut expected = input.clone();
@@ -188,7 +188,7 @@ mod tests {
             b"\x1b]2;title\x1b[?47h\x07\x1b[?1000h",
         );
         // BEL terminates OSC, but must not end DCS/APC/SOS/PM protection.
-        for start in [b'P', b'_', b'^', b'X'] {
+        for start in *b"P_^X" {
             let mut input = vec![0x1b, start];
             input.extend_from_slice(b"data\x07\x1b[?47h\x1b\\");
             assert_stream(&input, &input);
