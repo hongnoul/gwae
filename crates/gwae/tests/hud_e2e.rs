@@ -5,6 +5,7 @@
 //! its disappearance are all products of key *timing* in the real event loop.
 //! These tests therefore run the actual binary and read the bytes it paints.
 
+use gwae_term::{Size, TermGrid, Vt100Grid};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,18 +17,27 @@ struct Session {
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
+    screen: Vt100Grid,
 }
 
 impl Session {
     fn start(config: &str) -> Session {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!(
+        let root = std::env::var_os("JCODE_SCRATCH_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let dir = root.join(format!(
             "gwae-hud-e2e-{}-{}",
             std::process::id(),
             NEXT_ID.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
         std::fs::write(dir.join("gwae/gwae.toml"), config).expect("write config");
+        std::fs::write(
+            dir.join("hud-helper.sh"),
+            "#!/bin/sh\nprintf '\\033]0;watchdog\\007'\nexec sleep 60\n",
+        )
+        .expect("write pane helper");
 
         let pair = native_pty_system()
             .openpty(PtySize {
@@ -38,14 +48,27 @@ impl Session {
             })
             .expect("openpty");
         let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
+        cmd.env_clear();
+        cmd.cwd(&dir);
+        cmd.env("HOME", &dir);
         cmd.env("XDG_CONFIG_HOME", &dir);
+        cmd.env("XDG_CACHE_HOME", dir.join("cache"));
+        cmd.env("XDG_DATA_HOME", dir.join("data"));
         cmd.env("TERM", "xterm-256color");
+        cmd.env("SHELL", "/bin/sh");
+        cmd.env("PATH", "/usr/bin:/bin");
+        cmd.env("ENV", "/dev/null");
+        cmd.env("GWAE_NO_INSTALL", "1");
+        cmd.env("GWAE_NO_UPDATE_CHECK", "1");
+        cmd.env("GWAE_NO_KEEP_AWAKE", "1");
+        cmd.env("GWAE_LOG", "off");
+        // The fixture exercises protocol chords, not the user's live keyboard.
+        cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
         cmd.arg("run");
         // A pane that sets its own window title, so the dashboard has a real
         // OSC 0/2 name to show rather than a fixture we injected ourselves.
-        // `run` splits its argument itself (it does not go through a shell),
-        // so the shell is named explicitly.
-        cmd.arg("sh -c \"printf '\\033]0;watchdog\\007'; sleep 60\"");
+        // A file avoids relying on `run` to preserve nested shell quoting.
+        cmd.arg("/bin/sh hud-helper.sh");
         let child = pair.slave.spawn_command(cmd).expect("spawn gwae");
         drop(pair.slave);
 
@@ -65,6 +88,10 @@ impl Session {
             writer,
             child,
             _master: pair.master,
+            screen: Vt100Grid::new(Size {
+                rows: 30,
+                cols: 140,
+            }),
         }
     }
 
@@ -74,13 +101,14 @@ impl Session {
     }
 
     /// Read until output goes quiet, and return it.
-    fn drain(&self) -> String {
+    fn drain(&mut self) -> String {
         let mut out = Vec::new();
         let mut idle = 0;
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         while std::time::Instant::now() < deadline {
             match self.rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(b) => {
+                    self.screen.feed(&b);
                     out.extend_from_slice(&b);
                     idle = 0;
                 }
@@ -98,11 +126,12 @@ impl Session {
     /// Read for a fixed short window, without waiting for quiet. The panel is
     /// up for ~180ms after a chord on a terminal with no release reporting, so
     /// `drain` (which waits for silence) would always miss it.
-    fn peek(&self, ms: u64) -> String {
+    fn peek(&mut self, ms: u64) -> String {
         let mut out = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_millis(ms);
         while std::time::Instant::now() < deadline {
             if let Ok(b) = self.rx.recv_timeout(Duration::from_millis(20)) {
+                self.screen.feed(&b);
                 out.extend_from_slice(&b);
             }
         }
@@ -190,7 +219,11 @@ fn holding_the_modifier_reveals_a_dashboard_that_names_its_panes() {
     // The panel is transient: once the hold lapses it must clean up after
     // itself rather than leaving a box painted over live panes.
     std::thread::sleep(Duration::from_millis(400));
-    let after = visible(&s.drain());
+    // A queued held-frame may arrive after peek's deadline. It is legitimate
+    // as long as the later erase removes it from the final displayed screen.
+    // Concatenating repaint bytes would falsely keep that old footer forever.
+    let _ = s.drain();
+    let after = s.screen.visible_text();
     assert!(
         !after.contains("attention"),
         "the panel must not outlive the hold; got:\n{after:?}"

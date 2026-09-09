@@ -452,6 +452,10 @@ fn is_ghostty() -> bool {
         .contains("ghostty")
 }
 
+fn native_modifier_poll_enabled(disable: Option<&str>) -> bool {
+    disable != Some("1")
+}
+
 /// Whether the macOS Option key (⌥, reported as Alternate/Alt) is physically
 /// held, via a native CoreGraphics poll.
 ///
@@ -4388,6 +4392,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut last: Vec<Cell> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
     let mut dirty = true;
+    // Headless PTY tests must not inherit a real Option key held in another
+    // terminal. Protocol key events still work when this explicit opt-out is
+    // set; normal interactive sessions retain native polling by default.
+    let native_modifiers =
+        native_modifier_poll_enabled(std::env::var("GWAE_NO_NATIVE_MODIFIERS").ok().as_deref());
     let mut bare_alt_held = false;
     let mut chord_alt_until: Option<Instant> = None;
     // Digits of an in-flight `⌥+<number>` column jump. See `JumpAccum`.
@@ -5625,7 +5634,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // without breaking Hangul IME. Keep the chord timer path as well — it
         // is still the portable/Linux fallback and the way to keep the HUD up
         // briefly after a chord on terminals that never send release events.
-        let effective_alt_held = bare_alt_held || chord_alt_held || macos_option_held();
+        let effective_alt_held =
+            bare_alt_held || chord_alt_held || (native_modifiers && macos_option_held());
         let cur_has_attention = has_attention(&layout);
         if cur_has_attention != last_has_attention || effective_alt_held != last_alt_held {
             dirty = true;
@@ -6163,6 +6173,15 @@ mod tests {
                 "Ctrl+CapsLock+{c} must not count as the harness scroll chord"
             );
         }
+    }
+
+    #[test]
+    fn native_modifier_poll_requires_an_explicit_opt_out() {
+        assert!(native_modifier_poll_enabled(None));
+        for value in ["", "0", "false"] {
+            assert!(native_modifier_poll_enabled(Some(value)));
+        }
+        assert!(!native_modifier_poll_enabled(Some("1")));
     }
 
     #[test]
