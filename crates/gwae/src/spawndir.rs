@@ -682,7 +682,13 @@ mod tests {
                 "plain-scaffold",
             ],
         );
-        let all = candidates(None, "", &[], &[root.to_string_lossy().into_owned()]);
+        // Candidate discovery also includes cwd/recent directories, which may
+        // contain another concurrently running test's temporary tree.
+        let canonical_root = root.canonicalize().unwrap();
+        let all: Vec<_> = candidates(None, "", &[], &[root.to_string_lossy().into_owned()])
+            .into_iter()
+            .filter(|candidate| candidate.path.starts_with(&canonical_root))
+            .collect();
         for query in ["fresh-scaffold", "plain-scaffold"] {
             assert_eq!(filter(&all, query).len(), 1, "missing {query}");
         }

@@ -32,22 +32,26 @@ const HELPER: &str = r#"#!/bin/sh
 stty -echo
 seq=0
 report() {
+    # WINCH can interrupt START inside stty. Keep recursive trap invocations
+    # from overwriting the outer report's reason, dimensions and sequence.
+    local event rows cols n stamp
     event=$1
     seq=$((seq + 1))
+    stamp=$seq
     set -- $(stty size < /dev/tty)
     rows=$1
     cols=$2
     if [ -z "$GWAE_RESIZE_TEXT" ]; then
-        printf '\033[2J\033[H%03d %s %sx%s' "$seq" "$event" "$rows" "$cols"
+        printf '\033[2J\033[H%03d %s %sx%s' "$stamp" "$event" "$rows" "$cols"
         printf '\033[3;1H'
         n=2
         while [ "$n" -lt "$cols" ]; do printf '.'; n=$((n + 1)); done
         printf 'WX'
-        printf '\033[%s;1HBOTTOM %03d' "$rows" "$seq"
+        printf '\033[%s;1HBOTTOM %03d' "$rows" "$stamp"
     elif [ "$event" = START ]; then
         printf '\033[2J\033[H%s\r\nHARD-END\r\n' "$GWAE_RESIZE_TEXT"
     fi
-    printf '%s %s %s %s\n' "$seq" "$event" "$rows" "$cols" >> "$GWAE_RESIZE_LOG"
+    printf '%s %s %s %s\n' "$stamp" "$event" "$rows" "$cols" >> "$GWAE_RESIZE_LOG"
 }
 trap 'report WINCH' WINCH
 trap 'exit 0' HUP TERM
