@@ -291,7 +291,7 @@ fn the_card_renders_inside_a_gwae_pane() {
     let inner = format!("{} init", env!("CARGO_BIN_EXE_gwae"));
     let out = capture_no_hud(&sb, &["run", &inner], 200, 50, |s| {
         let p = strip_ansi(s);
-        p.matches(INK).count() > 40 && p.contains("catppuccin-mocha")
+        p.matches(INK).count() > 40 && p.contains("Agent harness")
     });
     let plain = strip_ansi(&out);
     assert!(
@@ -306,8 +306,8 @@ fn the_card_renders_inside_a_gwae_pane() {
     assert!(frames > 3, "pane only repainted {frames} times");
     // ...and the flow still gets to its questions inside the pane.
     assert!(
-        plain.contains("catppuccin-mocha"),
-        "onboarding never reached the theme question inside the pane"
+        plain.contains("Agent harness"),
+        "onboarding never reached the first harness question inside the pane"
     );
 }
 
