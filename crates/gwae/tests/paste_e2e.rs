@@ -1,46 +1,67 @@
-//! End-to-end: `⌥+v` pastes the system clipboard into a plain PTY pane.
+//! End-to-end: `⌥+v` claims the clipboard chord in plain and real fish panes.
 //!
-//! The regression this guards: fish binds `ESC+v` to `edit_command_buffer`,
-//! which prints "External editor requested but $VISUAL or $EDITOR not set."
-//! when no editor is configured. gwae must claim the chord itself — read the
-//! clipboard and bracket-write it — rather than forwarding it to the shell.
-//! These tests drive the real binary through a real PTY with a stub `pbpaste`
-//! on PATH, so the clipboard read is hermetic.
-
-//! macOS-only: the stubs fake `pbpaste`, and the helper table differs on
-//! other platforms (wl-paste/xclip). Faking the whole table is not worth
-//! the flake surface, so the entire file — helpers included, which keeps
-//! `clippy -D warnings` green on Linux — compiles out elsewhere.
+//! The real executable runs under a host PTY with an isolated HOME/config and
+//! a stub `pbpaste` reading exact fixture bytes. Readiness and completion are
+//! observable terminal/file states, never a quiet interval in the output stream.
+//! Fish execution is checked with a file sentinel, not repaint-sensitive counts.
+//!
+//! macOS-only because the clipboard helper table differs on other platforms.
 #![cfg(target_os = "macos")]
 
+use gwae_term::{Size, TermGrid, Vt100Grid};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const HOST: Size = Size {
+    rows: 24,
+    cols: 120,
+};
+const TIMEOUT: Duration = Duration::from_secs(15);
+const OPT_V: &[u8] = b"\x1bv";
+const FISH_BARRIER: &[u8] = b"\x07";
+
+// Noncanonical input makes every pasted byte reach tee immediately. Retaining
+// ICRNL/ONLCR lets the terminal show newlines normally, without duplicate echo.
+// tee never enables bracketed paste, and captures any unwanted escape markers.
+const PLAIN_HELPER: &str = "#!/bin/sh\n\
+    stty -echo -icanon min 1 time 0\n\
+    printf 'PLAIN_READY\\r\\n'\n\
+    exec /usr/bin/tee received-paste\n";
+
+// This binding is an input-processing barrier. Once its sentinel advances,
+// fish has processed everything preceding Ctrl+G, including the paste's closing
+// bracket. It does not execute or alter the command buffer.
+const FISH_INIT: &str = "set -g fish_greeting\n\
+    set -g fish_autosuggestion_enabled 0\n\
+    function fish_prompt\n    printf 'FISH_READY> '\nend\n\
+    function fish_right_prompt\nend\n\
+    function paste_probe\n    printf 'EXECUTED\\n' >> paste-executions\nend\n\
+    bind \\cg 'printf x >> paste-barrier'\n";
 
 struct Session {
     rx: Receiver<Vec<u8>>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     _master: Box<dyn portable_pty::MasterPty + Send>,
-    _dir: std::path::PathBuf,
+    screen: Vt100Grid,
+    dir: PathBuf,
 }
 
 impl Session {
-    /// Start gwae with `startup_panes = 1` running `cat`, and a `bin`
-    /// directory at the front of PATH holding a stub `pbpaste` that prints
-    /// `clipboard_text`. Returns the session plus the temp dir (kept alive
-    /// by the struct so the stub stays on disk).
     fn start(clipboard_text: &str) -> Session {
-        Self::start_with(clipboard_text, "cat")
+        Self::start_with(clipboard_text, "/bin/sh plain-helper.sh", "PLAIN_READY")
     }
 
-    /// Same as [`Session::start`], but run `pane_cmd` in the pane instead
-    /// of `cat` (e.g. a real `fish` for the acceptance test).
-    fn start_with(clipboard_text: &str, pane_cmd: &str) -> Session {
+    fn start_with(clipboard_text: &str, pane_cmd: &str, ready: &str) -> Session {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!(
+        let root = std::env::var_os("JCODE_SCRATCH_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let dir = root.join(format!(
             "gwae-paste-e2e-{}-{}",
             std::process::id(),
             NEXT_ID.fetch_add(1, Ordering::Relaxed)
@@ -48,56 +69,67 @@ impl Session {
         std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
         std::fs::write(
             dir.join("gwae/gwae.toml"),
-            "[cowsay]\nenabled = false\nstartup_panes = 1\n",
+            "startup_panes = 1\ndefault_column_width = \"quarter\"\ncontent_width = 0\n\
+             center_focus = false\nkeep_awake = false\ncell_labels = false\n\
+             [minimap]\nshow = false\n[cowsay]\nenabled = false\n\
+             [update]\ncheck = false\n",
         )
         .expect("write config");
+        std::fs::write(dir.join("clipboard"), clipboard_text).expect("write clipboard bytes");
+        std::fs::write(dir.join("plain-helper.sh"), PLAIN_HELPER).expect("write plain helper");
+        std::fs::write(dir.join("fish-init.fish"), FISH_INIT).expect("write fish init");
 
-        // Hermetic clipboard: a stub pbpaste (macOS helper) printing fixed
-        // text. `read_clipboard` tries it first on macOS, so PATH order is
-        // enough to control the test on this platform. Skipped on other
-        // platforms: the helper table differs there (wl-paste/xclip),
-        // and faking the whole table is not worth the flake surface.
+        // Read a data file rather than interpolating clipboard text into shell
+        // syntax. Quotes, actual newlines, and literal backslashes stay exact.
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).expect("temp bin dir");
         std::fs::write(
             bin.join("pbpaste"),
-            ["#!/bin/sh\nprintf '%s' '", clipboard_text, "'"].concat(),
+            "#!/bin/sh\nexec /bin/cat \"$GWAE_TEST_CLIPBOARD\"\n",
         )
         .expect("write stub pbpaste");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(bin.join("pbpaste"), std::fs::Permissions::from_mode(0o755))
-                .expect("chmod stub pbpaste");
-        }
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(bin.join("pbpaste"), std::fs::Permissions::from_mode(0o755))
+            .expect("chmod stub pbpaste");
 
         let pair = native_pty_system()
             .openpty(PtySize {
-                rows: 24,
-                cols: 100,
+                rows: HOST.rows,
+                cols: HOST.cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
             .expect("openpty");
         let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
+        // No user shell/editor/history, debug logging, reload handover, terminal
+        // identity, or clipboard overrides may leak into this test.
+        cmd.env_clear();
+        cmd.cwd(&dir);
+        cmd.env("HOME", &dir);
         cmd.env("XDG_CONFIG_HOME", &dir);
+        cmd.env("XDG_CACHE_HOME", dir.join("cache"));
+        cmd.env("XDG_DATA_HOME", dir.join("data"));
         cmd.env("TERM", "xterm-256color");
-        // PATH first so the stub wins; keep a usable base for sh/cat.
-        let path = format!("{}:/usr/bin:/bin:/opt/homebrew/bin", bin.to_string_lossy());
-        cmd.env("PATH", &path);
+        cmd.env("SHELL", "/bin/sh");
+        cmd.env("ENV", "/dev/null");
+        cmd.env("BASH_ENV", "/dev/null");
+        cmd.env("LC_ALL", "C");
+        cmd.env("GWAE_LOG", "off");
+        cmd.env("GWAE_KITTY_KEYBOARD", "0");
+        cmd.env("GWAE_KITTY_GRAPHICS", "0");
+        cmd.env("GWAE_NO_INSTALL", "1");
+        cmd.env("GWAE_NO_UPDATE_CHECK", "1");
+        cmd.env("GWAE_NO_KEEP_AWAKE", "1");
+        cmd.env("GWAE_TEST_CLIPBOARD", dir.join("clipboard"));
+        cmd.env("PATH", format!("{}:/usr/bin:/bin", bin.display()));
         cmd.arg("run");
-        // `cat` echoes whatever gwae writes to the pane, bracket markers
-        // included, so the test can assert on the exact pasted bytes.
-        // `cat` never enables bracketed paste (no DECSET 2004), so the pane
-        // gets the payload verbatim — the right expectation for a child
-        // that did not ask.
         cmd.arg(pane_cmd);
-        let child = pair.slave.spawn_command(cmd).expect("spawn gwae");
+        let child = pair.slave.spawn_command(cmd).expect("spawn actual gwae");
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().expect("reader");
         let writer = pair.master.take_writer().expect("writer");
-        let (tx, rx) = channel::<Vec<u8>>();
+        let (tx, rx) = channel();
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             while let Ok(n) = reader.read(&mut buf) {
@@ -106,13 +138,16 @@ impl Session {
                 }
             }
         });
-        Session {
+        let mut s = Session {
             rx,
             writer,
             child,
             _master: pair.master,
-            _dir: dir,
-        }
+            screen: Vt100Grid::new(HOST),
+            dir,
+        };
+        s.wait_for("child prompt/readiness", |s| s.shown().contains(ready));
+        s
     }
 
     fn send(&mut self, bytes: &[u8]) {
@@ -120,177 +155,118 @@ impl Session {
         self.writer.flush().expect("flush");
     }
 
-    /// Read until output goes quiet, and return it.
-    fn drain(&self) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut idle = 0;
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        while std::time::Instant::now() < deadline {
-            match self.rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(b) => {
-                    out.extend_from_slice(&b);
-                    idle = 0;
-                }
-                Err(_) => {
-                    idle += 1;
-                    if idle >= 3 {
-                        break;
-                    }
-                }
-            }
-        }
-        out
+    fn shown(&self) -> String {
+        self.screen.visible_text()
     }
 
-    fn kill(mut self) {
+    fn file(&self, name: &str) -> Vec<u8> {
+        std::fs::read(self.dir.join(name)).unwrap_or_default()
+    }
+
+    fn wait_for(&mut self, label: &str, ready: impl Fn(&Self) -> bool) {
+        let deadline = Instant::now() + TIMEOUT;
+        while Instant::now() < deadline {
+            if ready(self) {
+                return;
+            }
+            if let Ok(bytes) = self.rx.recv_timeout(Duration::from_millis(20)) {
+                self.screen.feed(&bytes);
+            }
+        }
+        panic!(
+            "{label}: deadline expired\nreceived paste: {:?}\nexecutions: {:?}\nbarrier: {:?}\nhost screen:\n{}",
+            self.file("received-paste"),
+            self.file("paste-executions"),
+            self.file("paste-barrier"),
+            self.shown()
+        );
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
-}
-
-/// Option+v as a terminal that maps Option to Meta sends it: ESC + v.
-const OPT_V: &[u8] = b"\x1bv";
-
-/// Strip SGR/CSI escapes so assertions read the text the user sees.
-fn visible(raw: &[u8]) -> String {
-    let s = String::from_utf8_lossy(raw);
-    let mut out = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\u{1b}' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('[') => {
-                for c in chars.by_ref() {
-                    if ('\u{40}'..='\u{7e}').contains(&c) {
-                        break;
-                    }
-                }
-            }
-            Some(']') => {
-                for c in chars.by_ref() {
-                    if c == '\u{7}' || c == '\u{1b}' {
-                        break;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    out
 }
 
 #[test]
-#[cfg(target_os = "macos")]
 fn option_v_pastes_the_clipboard_into_a_plain_pane() {
-    // `cat` echoes the pasted bytes back through the pane, and gwae toasts
-    // a confirmation. Neither happens if the chord were forwarded as
-    // `ESC+v` input: `cat` would echo exactly `\x1bv` and nothing more.
     let mut s = Session::start("hello-paste");
-    // Settle: wait until the frame is up so the chord is not swallowed by
-    // startup (the HUD flash / first paint).
-    std::thread::sleep(Duration::from_millis(1500));
-    let _ = s.drain();
-
     s.send(OPT_V);
-    let out = s.drain();
-    let shown = visible(&out);
-    assert!(
-        shown.contains("hello-paste"),
-        "the clipboard text must reach the pane; got:\n{shown:?}"
+    s.wait_for(
+        "plain clipboard bytes, rendered text, and confirmation",
+        |s| {
+            let shown = s.shown();
+            s.file("received-paste") == b"hello-paste"
+                && shown.contains("hello-paste")
+                && shown.contains("pasted 1 line")
+        },
     );
-    assert!(
-        shown.contains("pasted 1 line"),
-        "the paste toast must confirm; got:\n{shown:?}"
-    );
-    // The failure mode this replaces: fish's external-editor error. `cat`
-    // cannot print that string itself, so its absence proves gwae claimed
-    // the chord rather than forwarding it.
-    assert!(
-        !shown.contains("External editor"),
-        "the chord must not reach the child as input; got:\n{shown:?}"
-    );
-    s.kill();
 }
 
 #[test]
-#[cfg(target_os = "macos")]
 fn option_v_multiline_paste_arrives_as_one_block() {
-    // A multi-line payload through `cat` must echo back joined: gwae
-    // normalizes newlines to `\r` (what a PTY delivers for Return), so the
-    // child sees line breaks, not one long line and not literal `\n` text.
-    let mut s = Session::start("one\\ntwo");
-    std::thread::sleep(Duration::from_millis(1500));
-    let _ = s.drain();
-
+    // Actual newline, not the old literal backslash-n fixture. tee's exact
+    // captured bytes also reject unwanted bracket markers or dropped lines.
+    let mut s = Session::start("one\ntwo");
     s.send(OPT_V);
-    let out = s.drain();
-    let shown = visible(&out);
-    assert!(
-        shown.contains("one") && shown.contains("two"),
-        "both pasted lines must reach the pane; got:\n{shown:?}"
-    );
-    assert!(
-        shown.contains("pasted 1 line") || shown.contains("pasted 2 lines"),
-        "the paste toast must confirm; got:\n{shown:?}"
-    );
-    s.kill();
+    s.wait_for("both clipboard lines and multiline confirmation", |s| {
+        let shown = s.shown();
+        s.file("received-paste") == b"one\ntwo"
+            && shown.contains("one")
+            && shown.contains("two")
+            && shown.contains("pasted 2 lines")
+    });
 }
 
 #[test]
-#[cfg(target_os = "macos")]
 fn option_v_in_a_real_fish_pane_pastes_instead_of_opening_an_editor() {
-    // Acceptance for the original report: a plain fish pane with no
-    // $VISUAL/$EDITOR. Before the fix, `⌥+v` arrived as `ESC+v`, which fish
-    // binds to `edit_command_buffer` — printing "External editor requested
-    // but $VISUAL or $EDITOR not set." Now gwae bracket-writes the
-    // clipboard, and fish (which enables bracketed paste) buffers it on the
-    // command line instead of running it.
-    //
-    // The fish binary must exist; skip otherwise (Linux CI has no fish).
     let fish = [
         "/opt/homebrew/bin/fish",
         "/usr/local/bin/fish",
         "/usr/bin/fish",
     ]
     .into_iter()
-    .find(|p| std::path::Path::new(p).exists());
+    .find(|p| Path::new(p).is_file());
     let Some(fish) = fish else {
         eprintln!("skipping: no fish binary found");
         return;
     };
-    // The pasted text must appear on fish's command line without
-    // executing on its own.
-    let mut s = Session::start_with("echo PASTED_MARKER", fish);
-    std::thread::sleep(Duration::from_millis(2000));
-    let _ = s.drain();
-
+    let pane_cmd = format!(
+        "{fish} --no-config --private --interactive --init-command 'source fish-init.fish'"
+    );
+    // A trailing newline would execute this if pasted without brackets. The
+    // sentinel proves actual execution, independently of shell/TUI repaints.
+    let command = "paste_probe";
+    let mut s = Session::start_with(&format!("{command}\n"), &pane_cmd, "FISH_READY> ");
     s.send(OPT_V);
-    std::thread::sleep(Duration::from_millis(1000));
-    let out = s.drain();
-    let shown = visible(&out);
+    s.wait_for("fish buffers the clipboard on its command line", |s| {
+        s.shown().contains(&format!("FISH_READY> {command}"))
+    });
+    s.send(FISH_BARRIER);
+    s.wait_for("fish processed the complete paste without executing", |s| {
+        s.file("paste-barrier") == b"x"
+    });
     assert!(
-        !shown.contains("External editor"),
-        "fish must not open its external editor; got:\n{shown:?}"
+        !s.dir.join("paste-executions").exists(),
+        "paste must not execute before Enter: {:?}\n{}",
+        s.file("paste-executions"),
+        s.shown()
     );
-    // The 100-column frame wraps the prompt line across pane borders, so
-    // `echo PASTED_MARKER` may arrive split around box-drawing cells.
-    // Collapse everything that is not a letter to compare the content.
-    let squashed: String = shown.chars().filter(|c| c.is_ascii_alphabetic()).collect();
-    assert!(
-        squashed.contains("echoPASTEDMARKER"),
-        "the pasted command must sit on fish's command line; got:\n{shown:?}"
+    assert!(!s.shown().contains("External editor"), "{}", s.shown());
+
+    s.send(b"\r");
+    s.send(FISH_BARRIER);
+    s.wait_for(
+        "Enter executes once and fish returns to reading input",
+        |s| s.file("paste-barrier") == b"xx",
     );
-    // Fish buffers a bracketed paste without executing: the marker text
-    // appears exactly once (on the prompt line). Running the command
-    // would print a second bare `PASTED_MARKER` output line. Count on the
-    // squashed text so frame wrapping cannot hide or fake an occurrence.
-    let marker_count = squashed.matches("PASTEDMARKER").count();
-    assert!(
-        marker_count == 1,
-        "paste must buffer (1 occurrence), not execute ({marker_count}); got:\n{shown:?}"
+    assert_eq!(
+        s.file("paste-executions"),
+        b"EXECUTED\n",
+        "Enter must execute the pasted command exactly once\n{}",
+        s.shown()
     );
-    s.kill();
 }
