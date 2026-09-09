@@ -6,6 +6,8 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-09-09
+
 ### Changed
 - **Faster keyboard scrollback.** `Ctrl+Shift+J/K` now moves plain-pane history three lines per press, matching jcode's default `keybindings.scroll_lines = 3`. Agent panes still forward the chord to their harness, and mouse-wheel scrolling is unchanged.
 - **Onboarding defaults to White Phosphor.** Fresh setup highlights the monochrome CRT theme on true black. Existing saved themes remain selected on re-runs, and configs without a theme keep the Catppuccin Mocha fallback.
