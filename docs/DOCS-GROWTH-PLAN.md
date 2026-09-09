@@ -12,7 +12,7 @@ Make **“add more panes without making them smaller”** the thing people remem
 
 The next work should be:
 
-1. **Finish and verify the current README/site improvements**, especially the first-run instructions. Do not restart the redesign.
+1. **Gate the launch on release behavior, then finish the current README/site improvements.** A real-PTY follow-up found a primary-screen reflow failure in v1.3.1 that the current development build passes. Verify the next distributed artifact before drawing broad traffic. Do not restart the redesign.
 2. **Create one short, unmistakable no-shrink demonstration** and reuse its visual story in the GitHub social preview.
 3. **Give interested visitors two actions:** try it now, or star it to save it for later. Installation should not be a prerequisite for expressing interest.
 4. **Add two genuinely useful workflow recipes and a fair comparison**, then use those as reasons to share the project with relevant communities.
@@ -117,9 +117,9 @@ Keep detailed config, all keybindings, architecture, benchmark methodology, and 
 
 ### First-run copy to validate, not publish blindly
 
-For the **macOS/Linux no-agent demo**, propose `gwae run /bin/sh`, which explicitly selects a shell rather than the agent gateway. Then add columns with `Alt+Enter` until one falls beyond the edge, move with `Alt+h` / `Alt+l`, resize deliberately with `Alt+r`, and exit the disposable shells with `exit`. Explain Option versus Alt nearby.
+For the **macOS/Linux no-agent demo**, propose `gwae run /bin/sh`, which explicitly selects a shell rather than the agent gateway. Then add columns with `Alt+Enter` until one falls beyond the edge, move with `Alt+h` / `Alt+l`, and exit the disposable shells with `exit`. Explain Option versus Alt nearby. Keep deliberate resizing with `Alt+r` out of this minimal recipe until the distributed release passes the primary-screen reflow check documented in section 8.
 
-The syntax is supported by source inspection, but this research did **not** run clean-machine installation or interactive acceptance tests. Before advertising “30 seconds,” time the path **after installation**, with default configuration and no installed agent. Test a returning user's configured-agent setup too. Keep Windows separately labeled experimental rather than presenting `/bin/sh` as a universal command.
+The syntax is supported by source inspection and the released CLI's `run --help`. The project's real-PTY suite also successfully launches an explicit shell command, but it uses a test configuration, not the complete newcomer path. This research did **not** complete clean-machine installation or the default-configuration five-pane trial. Before advertising “30 seconds,” time the path **after installation**, with default configuration and no installed agent. Test a returning user's configured-agent setup too. Keep Windows separately labeled experimental rather than presenting `/bin/sh` as a universal command.
 
 For agent users, preserve `gwae run "claude"` and `gwae run "codex"`. Explain that these are alternative launches, not a command block to execute sequentially inside nested gwae sessions. Document how `Alt+;` chooses the next agent and state that multiple agents editing one checkout are **not automatically isolated**.
 
@@ -159,6 +159,7 @@ Effort ranges are planning estimates for one maintainer, not measured durations.
 
 | Priority | Change and files/surface | Effort | Acceptance gate |
 |---|---|---:|---|
+| P0 | Verify a distributed artifact containing the current reflow fix before a broad docs launch. | Release-owner dependent | Run `resize_e2e` against that exact downloaded binary. All three tests must pass, including primary-screen reflow. Passing only the development build is insufficient. |
 | P0 | Reconcile first-run copy and finish existing `README.md` / `docs/index.html` work. | 1–3 h plus platform testing | Exact release commands work with a clean config and no agent. A newcomer can explain the layout and find the next step. Live content matches approved copy. |
 | P0 | Correct persistence, Windows maturity, and overbroad comparison claims in `COMPARISON.md`, `WHY.md`, and relevant card text. | 1–2 h | No page equates conversation resume with process survival. Support claims agree across entry points. |
 | P0 | Produce the focused demo and card in `docs/assets/`. Upload the card as the GitHub social preview after review. | 3–6 h | Demo proves unchanged width. Both site and repository unfurls communicate the same promise. GitHub reports a custom preview after the settings change. |
@@ -226,7 +227,32 @@ Do not run a conventional README A/B test now. One canonical README is not natur
 
 Performed: local documentation/source audit, live site fetch, read-only GitHub metadata/traffic/social-preview inspection, six peer README reviews, and primary-source research on README guidance and starring practices. Peer links below are pinned to the revisions observed during research. Public star counts are timestamped snapshots, not immutable properties of those commits.
 
-Not performed: clean-machine installs, human comprehension sessions, a fully rendered GitHub/mobile layout audit, new demo recording, public posting, repository-settings changes, or deployment. The browser bridge did not yield a usable browsing session, so visual acceptance remains an explicit implementation gate. Recommendations above are hypotheses grounded in observed friction, not measured growth outcomes.
+Not performed: clean-machine installs, human comprehension sessions, a fully rendered GitHub/mobile layout audit, new demo recording, public posting, repository-settings changes, or deployment. Recommendations above are hypotheses grounded in observed friction, not measured growth outcomes.
+
+### Acceptance follow-up: observed behavior, not just inspection
+
+The follow-up downloaded the official **v1.3.1 aarch64 macOS archive** into scratch storage and checked it against its published SHA-256 sidecar. Archive digest: `338f81179bf3e8c7dc235e0ae32a58e904a7d78d710d8c233b9d943f6d805139`. The extracted executable reported `gwae 1.3.1`. No installed binary or user configuration was replaced.
+
+| Requirement or risk | Real interface exercised | Observed result and implication |
+|---|---|---|
+| The plan must be readable as repository documentation. | GitHub's `POST /markdown` endpoint, GFM mode with repository context. | GitHub rendered all six tables, nine level-two headings, 18 links, and all six pinned peer links. This checks the actual Markdown renderer, not full GitHub-page styling or mobile appearance. |
+| The proposed explicit command must exist in the release, not only in source. | Verified release: `gwae run --help`, with isolated HOME/config and a PATH without agents. | Exit 0. Usage is `gwae run [OPTIONS] [COMMAND]`, with the command replacing the first-pane shell. |
+| A no-agent gateway must not be mistaken for an immediate shell. | Verified release: `gwae agent --print`, under the same isolated environment. | Exit 0. It reports no harness on PATH and explicitly says **“Enter alone opens a shell.”** This supports documenting the gateway step rather than silently treating it as a plain shell. It does not establish the complete default-launch interaction. |
+| Width changes must reach real shell/TUI processes. | Repository `resize_e2e` suite with `GWAE_E2E_BIN` set to the downloaded release. | Width/fullscreen cycling and host-resize tests passed. Inner PTY columns changed 29 → 39 → 59 → 29, full width reached 119, and actual WINCH/redraw behavior was observed. Host sizes included 96×24, 120×30, and 144×36. |
+| Shell text must remain usable after a resize. | The same release suite's `primary_output_reflows_across_width_cycles_without_child_redraw`. | **Failed. Overall release result: 2 passed, 1 failed.** The shell received the new width, but existing primary-screen text retained stale wrapping after 29 → 39 columns. Do not interpret the passing resize-delivery tests as complete resize correctness. |
+| Determine whether this needs a new implementation or release follow-through. | Same repository suite against the current development executable, at HEAD `9bdfd76`. | **All 3 passed.** Existing concurrent implementation work fixes this tested path. This plan's task did not modify runtime code. The remaining gate is checking a published artifact containing the fix, not claiming the release already includes it. |
+
+Reproduce the release check with the actual extracted artifact path:
+
+```sh
+GWAE_E2E_BIN=/absolute/path/to/downloaded/gwae cargo test -p gwae --test resize_e2e -- --nocapture
+```
+
+For the development comparison, omit `GWAE_E2E_BIN`. These are the project's existing tests driving the real executable, shell, inner/outer PTYs, terminal resize events, and rendered output. The shell redraw fixture is controlled, so these checks still do not substitute for a human trying an ordinary terminal or an installed agent.
+
+**Blocked or incomplete checks:** browser status reported ready, but opening both the generated local document and the public GitHub repository returned an unexpected error. Visual/mobile acceptance is therefore blocked, not passed. An additional scratch-only Python PTY replay stalled, was stopped, and yielded no valid first-run result. It is not counted as evidence of either product success or failure. macOS testing does not validate Linux or Windows installation, package-manager behavior, or physical Option/Alt handling.
+
+**Concrete improvement from the feedback loop:** the plan now adds an artifact-specific release gate, removes resizing from the minimal trial until that gate passes, and distinguishes CLI grammar/gateway evidence from the still-unverified newcomer experience. Increased comprehension and star growth remain unmeasured. Proving those requires the proposed human feedback and post-deployment observation, neither of which can honestly be replaced by automated checks.
 
 ### Sources
 
