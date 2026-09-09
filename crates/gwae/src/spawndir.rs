@@ -688,6 +688,17 @@ mod tests {
         let all: Vec<_> = candidates(None, "", &[], &[root.to_string_lossy().into_owned()])
             .into_iter()
             .filter(|candidate| candidate.path.starts_with(&canonical_root))
+            .map(|mut candidate| {
+                // Random macOS temp prefixes can themselves fuzzy-match the
+                // query. Test discovery using stable fixture-relative labels.
+                candidate.label = candidate
+                    .path
+                    .strip_prefix(&canonical_root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                candidate
+            })
             .collect();
         for query in ["fresh-scaffold", "plain-scaffold"] {
             assert_eq!(filter(&all, query).len(), 1, "missing {query}");
