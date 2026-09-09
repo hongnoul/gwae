@@ -68,17 +68,17 @@
       a:focus-visible, button:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
       .hero {
         margin-top: 0;
-        padding-top: 3rem;
+        padding-top: 1.5rem;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
         text-align: center;
       }
-      .hero .card { width: 76px; height: auto; margin-bottom: 1.25rem; border-radius: 6px; }
-      .hero h1 { font-size: 2.5rem; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
+      .hero .card { width: 48px; height: auto; margin-bottom: 0.5rem; border-radius: 6px; }
+      .hero h1 { font-size: 2rem; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
       .hero .tagline { color: var(--ink); margin: 0.75rem 0; }
-      .hero .intro { color: var(--muted); max-width: 660px; margin: 0 0 1.5rem; }
+      .hero .intro { color: var(--muted); max-width: 660px; margin: 0 0 1rem; }
       .install {
         display: inline-flex;
         max-width: 100%;
@@ -107,9 +107,9 @@
       }
       .install button:hover { color: var(--ink); }
       .copy-status { min-height: 1.5em; margin: 0.25rem 0 0; font-size: 0.8rem; color: var(--muted); }
-      .links { color: var(--muted); font-size: 0.9rem; margin-top: 1.25rem; }
+      .links { color: var(--muted); font-size: 0.9rem; margin-top: 0.75rem; }
       .star-link { font-weight: 700; }
-      .demo { margin-top: 2rem; width: 100%; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
+      .demo { margin-top: 1.25rem; width: 100%; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
       .demo img { display: block; width: 100%; height: auto; }
       .demo-caption { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; text-align: center; }
       .stats { display: flex; flex-wrap: wrap; gap: 1.75rem; justify-content: center; margin-top: 2.25rem; }
@@ -144,12 +144,8 @@
       .gif img, .gif video { display: block; width: 100%; height: auto; }
       footer { margin-top: 5rem; color: var(--faint); font-size: 0.85rem; text-align: center; }
       @media (max-width: 600px) {
-        .hero { padding-top: 1.5rem; }
-        .hero .card { width: 48px; margin-bottom: 0.5rem; }
-        .hero h1 { font-size: 2rem; }
         .hero .intro, .hero .tagline { font-size: 0.9rem; }
-        .links { font-size: 0.8rem; margin-top: 0.75rem; }
-        .demo { margin-top: 1.25rem; }
+        .links { font-size: 0.8rem; }
       }
     </style>
   </head>
