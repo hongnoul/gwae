@@ -5,16 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="gwae is scrolling tiling for the terminal where panes never shrink. Infinite 2D grid of strips. One process, no daemon."
+      content="A scrolling terminal multiplexer for coding agents, shells, and TUIs. Open more panes without shrinking them. Inspired by niri. Rust, MIT, no daemon."
     />
     <link rel="canonical" href="https://hongnoul.github.io/gwae/" />
     <meta
       property="og:title"
-      content="gwae: scrolling tiling for the terminal where panes never shrink"
+      content="gwae: a scrolling terminal multiplexer. Panes never shrink."
     />
     <meta
       property="og:description"
-      content="Infinite 2D grid of strips where panes never shrink. One process, no daemon."
+      content="Run coding agents, shells, and TUIs side by side. Open more panes and the viewport scrolls instead of squeezing them. Rust, MIT, no daemon."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://hongnoul.github.io/gwae/" />
@@ -35,13 +35,13 @@
     />
     <meta
       name="twitter:title"
-      content="gwae: scrolling tiling for the terminal"
+      content="gwae: a scrolling terminal multiplexer"
     />
     <meta
       name="twitter:description"
-      content="Infinite 2D grid of strips where panes never shrink. One process, no daemon."
+      content="Run coding agents, shells, and TUIs side by side. Open more panes and the viewport scrolls instead of squeezing them. Rust, MIT, no daemon."
     />
-    <title>gwae</title>
+    <title>gwae | Scrolling terminal multiplexer. Panes never shrink.</title>
     <style>
       :root {
         --ink: #111;
@@ -65,8 +65,10 @@
       main { max-width: 860px; margin: 0 auto; padding: 0 1.5rem 6rem; }
       a { color: var(--ink); }
       a:hover { color: var(--muted); }
+      a:focus-visible, button:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
       .hero {
-        min-height: 88vh;
+        margin-top: 0;
+        padding-top: 3rem;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -75,9 +77,11 @@
       }
       .hero .card { width: 76px; height: auto; margin-bottom: 1.25rem; border-radius: 6px; }
       .hero h1 { font-size: 2.5rem; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
-      .hero .tagline { color: var(--muted); margin: 0.75rem 0 2rem; }
+      .hero .tagline { color: var(--ink); margin: 0.75rem 0; }
+      .hero .intro { color: var(--muted); max-width: 660px; margin: 0 0 1.5rem; }
       .install {
         display: inline-flex;
+        max-width: 100%;
         align-items: center;
         gap: 0.75rem;
         background: var(--wash);
@@ -85,8 +89,13 @@
         border-radius: var(--radius);
         padding: 0.7rem 1rem;
         font-size: 0.9rem;
+        text-align: left;
       }
+      .install code { min-width: 0; overflow-wrap: anywhere; user-select: all; }
       .install button {
+        flex-shrink: 0;
+        min-width: 44px;
+        min-height: 44px;
         font: inherit;
         font-size: 0.8rem;
         border: 1px solid var(--rule);
@@ -97,7 +106,9 @@
         color: var(--muted);
       }
       .install button:hover { color: var(--ink); }
+      .copy-status { min-height: 1.5em; margin: 0.25rem 0 0; font-size: 0.8rem; color: var(--muted); }
       .links { color: var(--muted); font-size: 0.9rem; margin-top: 1.25rem; }
+      .star-link { font-weight: 700; }
       .demo { margin-top: 2rem; width: 100%; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
       .demo img { display: block; width: 100%; height: auto; }
       .demo-caption { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; text-align: center; }
@@ -124,7 +135,7 @@
         padding: 0.05rem 0.3rem;
         font-size: 0.85em;
       }
-      ul { padding-left: 1.2rem; }
+      ul, ol { padding-left: 1.2rem; }
       li { margin: 0.35rem 0; }
       details { margin-top: 0.75rem; }
       details summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
@@ -132,6 +143,14 @@
       .gif { width: 100%; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
       .gif img, .gif video { display: block; width: 100%; height: auto; }
       footer { margin-top: 5rem; color: var(--faint); font-size: 0.85rem; text-align: center; }
+      @media (max-width: 600px) {
+        .hero { padding-top: 1.5rem; }
+        .hero .card { width: 48px; margin-bottom: 0.5rem; }
+        .hero h1 { font-size: 2rem; }
+        .hero .intro, .hero .tagline { font-size: 0.9rem; }
+        .links { font-size: 0.8rem; margin-top: 0.75rem; }
+        .demo { margin-top: 1.25rem; }
+      }
     </style>
   </head>
   <body>
@@ -139,40 +158,63 @@
       <section class="hero">
         <img class="card" src="assets/gwae.svg" alt="gwae logo" width="76" height="76" />
         <h1>gwae</h1>
-        <p class="tagline">Scrolling tiling for the terminal.<br />Panes never shrink.</p>
+        <p class="tagline">A scrolling terminal multiplexer.<br /><strong>Panes never shrink.</strong></p>
+        <p class="intro">Run coding agents, shells, and TUIs side by side. Open more panes and the viewport scrolls instead of squeezing them. Inspired by niri's scrolling tiling.</p>
         <div class="install">
           <code id="install-cmd">curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash</code>
-          <button onclick="navigator.clipboard.writeText(document.getElementById('install-cmd').textContent.replace(/\s+/g,' ').trim());this.textContent='copied';setTimeout(()=>this.textContent='copy',1200)">copy</button>
+          <button id="install-copy" type="button" aria-label="Copy install command">copy</button>
         </div>
+        <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
         <p class="links">
-          <a href="https://github.com/hongnoul/gwae">GitHub</a> ·
+          <a href="#install">macOS / Linux / Windows</a> ·
+          <a href="#try">Try it in 30 seconds</a> ·
+          <a class="star-link" href="https://github.com/hongnoul/gwae">Star on GitHub</a> ·
           <a href="https://github.com/hongnoul/gwae/releases/latest">Releases</a> · MIT
         </p>
         <div class="demo">
-          <img src="assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" />
+          <img src="assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900" height="582" />
         </div>
-        <p class="demo-caption">Not sped up - you can go much faster than demo</p>
+        <p class="demo-caption">Add columns beyond the screen edge, then move between them without shrinking the panes.</p>
       </section>
 
-      <section>
+      <section id="install">
         <h2>Install</h2>
+        <p><strong>macOS</strong></p>
+        <pre><code>brew install hongnoul/tap/gwae</code></pre>
+        <p><strong>Linux</strong> (also works on macOS)</p>
         <pre><code>curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash</code></pre>
-        <p>Installs to <code>~/.local/bin</code> and adds it to your shell PATH. Override with <code>GWAE_INSTALL_DIR</code>.</p>
+        <p>Installs to <code>~/.local/bin</code> and adds it to your shell PATH. Override with <code>GWAE_INSTALL_DIR</code>, or set <code>GWAE_NO_MODIFY_PATH=1</code> to leave your shell config alone.</p>
+        <p><strong>Windows</strong> (experimental native build via ConPTY)</p>
+        <pre><code>irm https://hongnoul.github.io/gwae/install.ps1 | iex</code></pre>
         <details>
           <summary>Other methods</summary>
-          <pre><code>brew install hongnoul/tap/gwae
-cargo install gwae</code></pre>
-          <pre><code>irm https://hongnoul.github.io/gwae/install.ps1 | iex   # Windows</code></pre>
+          <pre><code>cargo install gwae</code></pre>
+          <p>Or download a binary from <a href="https://github.com/hongnoul/gwae/releases/latest">Releases</a>.</p>
         </details>
       </section>
 
-      <section>
-        <h2>Run</h2>
-        <pre><code>gwae                  # start
-gwae init             # theme and layout setup
-gwae run "claude"     # open agent in first column
+      <section id="try">
+        <h2>Try it in 30 seconds</h2>
+        <p>After installing, run <code>gwae</code>. On first launch, dismiss the help overlay with Escape and finish the setup in the first pane. No agent account needed: skip the agent choice for a shell-only test.</p>
+        <ol>
+          <li>Press <code>Alt+Enter</code> a few times to add shell panes. Keep going past the screen edge: the viewport scrolls, the panes keep their width.</li>
+          <li>Use <code>Alt+h</code> / <code>Alt+l</code> to move left / right. Press <code>Alt+r</code> to cycle the focused column's width.</li>
+          <li>Press <code>Alt+/</code> for help. Type <code>exit</code> in each shell when you're done.</li>
+        </ol>
+        <p>On macOS, use Option (<code>⌥</code>) instead of Alt. If it types special characters instead of triggering shortcuts, configure Option as Alt/Meta in your terminal's settings. <code>gwae doctor</code> checks gwae's configuration.</p>
+        <h3>Bring your agents</h3>
+        <p>Use an already-installed CLI agent, or run your usual shell tools:</p>
+        <pre><code>gwae init             # theme and layout setup
+gwae run "claude"     # start with Claude Code in the first pane
+gwae run "codex"      # or Codex CLI
 gwae doctor           # check config</code></pre>
-        <p>New columns open to the right of focus. <code>⌥+;</code> spawns an agent and focuses it.</p>
+        <p>New columns open to the right of focus. <code>⌥+;</code> spawns your configured agent, or offers a picker of installed agents when none is configured.</p>
+      </section>
+
+      <section>
+        <h2>Why not tmux?</h2>
+        <p>Choose gwae when you want readable panes that scroll beyond the screen, rather than more splits in the same space. Keep tmux when you need detach/attach or processes that survive a disconnected terminal. gwae has no session daemon, and an agent's <code>--resume</code> restores its conversation, not its running process.</p>
+        <p><a href="https://github.com/hongnoul/gwae/blob/main/docs/COMPARISON.md">Compare layouts and tradeoffs</a>.</p>
       </section>
 
       <section>
@@ -188,13 +230,13 @@ gwae doctor           # check config</code></pre>
 
       <section>
         <h2>Agent status</h2>
-        <p>Standard <a href="https://gitlab.freedesktop.org/terminal-wg/specifications/-/blob/master/docs/OSC-133.md">OSC 133</a>. No agent changes needed.</p>
+        <p>Reads standard <a href="https://gitlab.freedesktop.org/terminal-wg/specifications/-/blob/master/docs/OSC-133.md">OSC 133</a> markers when available. Otherwise, output activity and idle time provide a heuristic, not a guarantee that an agent needs input.</p>
         <pre><code>» working   ! needs input   ✓ done   ✗ failed</code></pre>
         <p>Hold <code>⌥</code> for dashboard. <code>⌥+g</code> jumps to the pane that needs you.</p>
         <div class="gif">
-          <img src="assets/gwae-attention.gif" alt="gwae Option-G smart-jump: hold Option to reveal the dashboard, tap Option-G to jump to the pane that needs attention" />
+          <img src="assets/gwae-attention.gif" loading="lazy" alt="gwae Option-G smart-jump: hold Option to reveal the dashboard, tap Option-G to jump to the pane that needs attention" />
         </div>
-        <video src="assets/gwae-attention.mp4" autoplay loop muted playsinline style="width:100%;margin-top:0.5rem;border:1px solid var(--rule);border-radius:var(--radius)"></video>
+        <p><a href="assets/gwae-attention.mp4">Watch the attention demo as MP4</a>.</p>
       </section>
 
       <section>
@@ -211,7 +253,7 @@ gwae doctor           # check config</code></pre>
 ⌥+q            kill pane
 click          focus pane
 drag           select and copy</code></pre>
-        <p>Full list: <a href="https://github.com/hongnoul/gwae/blob/main/docs/KEYBINDS.md">docs/KEYBINDS.md</a></p>
+        <p>Full key reference: press <code>⌥+/</code> in gwae. <a href="https://github.com/hongnoul/gwae/blob/main/docs/KEYBINDS.md">Keybinding design notes</a>.</p>
       </section>
 
       <section>
@@ -235,9 +277,22 @@ startup_panes = 1</code></pre>
       </section>
 
       <footer>
-        <p><a href="https://github.com/hongnoul/gwae">GitHub</a> · <a href="https://github.com/hongnoul/gwae/blob/main/LICENSE">MIT</a></p>
+        <p>If gwae fits your workflow, <a class="star-link" href="https://github.com/hongnoul/gwae">give it a star on GitHub</a>.</p>
+        <p><a href="https://github.com/hongnoul/gwae/issues/new/choose">Report a rough edge</a> · <a href="https://github.com/hongnoul/gwae/blob/main/LICENSE">MIT</a></p>
         <p>gwae. Panes never shrink.</p>
       </footer>
     </main>
+    <script>
+      document.getElementById('install-copy').addEventListener('click', async () => {
+        const command = document.getElementById('install-cmd').textContent.replace(/\s+/g, ' ').trim();
+        const status = document.getElementById('copy-status');
+        try {
+          await navigator.clipboard.writeText(command);
+          status.textContent = 'Copied.';
+        } catch {
+          status.textContent = 'Copy unavailable. Select the command above to copy it.';
+        }
+      });
+    </script>
   </body>
 </html>
