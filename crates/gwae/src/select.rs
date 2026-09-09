@@ -403,6 +403,14 @@ mod tests {
     }
 
     #[test]
+    fn empty_grid_dimensions_have_no_text_to_copy() {
+        for size in [Size { cols: 0, rows: 3 }, Size { cols: 3, rows: 0 }] {
+            let grid = gwae_testkit::FakeTerminal::new(size);
+            assert_eq!(selected_text(&grid, &sel((0, 0), (2, 2))), "");
+        }
+    }
+
+    #[test]
     fn absent_helper_sends_a_terminal_request_not_a_confirmed_copy() {
         let mut output = Vec::new();
         let outcome = copy_with_helpers(

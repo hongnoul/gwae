@@ -60,6 +60,15 @@ impl Session {
     }
 
     fn start_with(clipboard_text: &str, pane_cmd: &str, ready: &str) -> Session {
+        Self::start_with_env(clipboard_text, pane_cmd, ready, &[])
+    }
+
+    fn start_with_env(
+        clipboard_text: &str,
+        pane_cmd: &str,
+        ready: &str,
+        extra_env: &[(&str, &str)],
+    ) -> Session {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::var_os("JCODE_SCRATCH_DIR")
             .map(PathBuf::from)
@@ -150,6 +159,9 @@ impl Session {
         cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_TEST_CLIPBOARD", dir.join("clipboard"));
         cmd.env("PATH", format!("{}:/usr/bin:/bin", bin.display()));
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
         cmd.arg("run");
         cmd.arg(pane_cmd);
         let child = pair.slave.spawn_command(cmd).expect("spawn actual gwae");
@@ -431,6 +443,39 @@ fn failed_or_stalled_native_copy_falls_back_without_claiming_confirmed_success()
         s.wait_for("pane input resumes after native-copy failure", |s| {
             s.file("received-paste") == b"still-responsive"
         });
+    }
+}
+
+#[test]
+fn ssh_copy_targets_the_host_terminal_without_touching_the_remote_clipboard() {
+    for key in ["SSH_CONNECTION", "SSH_TTY"] {
+        let mut s = Session::start_with_env(
+            "remote-clipboard",
+            "/bin/sh plain-helper.sh",
+            "PLAIN_READY",
+            &[(key, "fixture-remote-session")],
+        );
+        let (x, y) = s.find_text("PLAIN_READY");
+        s.mouse(0, x, y, false);
+        s.mouse(32, x + 4, y, false);
+        s.mouse(0, x + 4, y, true);
+        let sequence = b"\x1b]52;c;UExBSU4=\x07";
+        s.wait_for(
+            "SSH selection requests the host clipboard instead of local helpers",
+            |s| {
+                s.raw.windows(sequence.len()).any(|w| w == sequence)
+                    && s.shown().contains("copy sent to terminal")
+            },
+        );
+        assert_eq!(s.file("clipboard"), b"remote-clipboard");
+        assert!(
+            !s.dir.join("clipboard.calls").exists(),
+            "{key} must bypass pbcopy"
+        );
+        assert!(!s.shown().contains("copied 1 line"));
+        eprintln!(
+            "observed {key}: exact host OSC 52 request, no remote helper or clipboard change"
+        );
     }
 }
 
