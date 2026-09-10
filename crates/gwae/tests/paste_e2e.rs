@@ -48,7 +48,7 @@ const FISH_INIT: &str = "set -g fish_greeting\n\
 const ZSH_INIT: &str = "PROMPT='ZSH_READY> '\nRPROMPT=''\nPROMPT_EOL_MARK=''\n\
     bindkey -e\n\
     paste_probe() { print -r -- EXECUTED >> paste-executions; }\n\
-    paste_barrier() { print -rn -- x >> paste-barrier; }\n\
+    paste_barrier() { print -rn -- \"$BUFFER\" > paste-buffer; print -rn -- x >> paste-barrier; }\n\
     zle -N paste_barrier\nbindkey '^G' paste_barrier\n";
 
 // Apple's bash 3.2 does not implement bracketed paste. Pin that limitation
@@ -703,12 +703,22 @@ fn native_paste_in_a_real_fish_pane_waits_for_enter() {
 #[test]
 fn native_paste_in_a_real_zsh_pane_waits_for_enter() {
     let mut s = Session::start_with("not used", "/bin/zsh -d -i", "ZSH_READY> ");
-    s.native_paste("paste_probe\n\npaste_probe\n");
+    let text = "paste_probe '日本語 é'\n\npaste_probe '끝'\n";
+    s.native_paste(text);
     s.send(FISH_BARRIER);
     s.wait_for("zsh has processed the entire paste", |s| {
         s.file("paste-barrier") == b"x"
     });
     s.report_executions("zsh Cmd+V", "before Enter");
+    eprintln!(
+        "observed zsh Cmd+V editable buffer: {:?}",
+        String::from_utf8(s.file("paste-buffer")).unwrap()
+    );
+    assert_eq!(
+        s.file("paste-buffer"),
+        text.as_bytes(),
+        "the actual zsh edit buffer must retain Unicode, blank lines, and the trailing newline"
+    );
     assert_eq!(
         s.file("paste-executions"),
         b"",
