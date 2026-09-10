@@ -27,7 +27,8 @@
   and this route also works over SSH without a remote clipboard helper.
 - **Programs without bracketed paste:** these receive plain text without
   escape markers. Their newlines can still execute commands, according to
-  the program's own input handling. Hosts must support bracketed paste too.
+  the program's own input handling. This includes macOS's bundled bash 3.2.
+  Hosts must support bracketed paste too.
 - **Pickers and confirmations:** native paste into the spawn-dir picker
   updates only its single-line filter. It cannot accept a picker or confirm
   a force quit. Pasting while the force-quit prompt is up cancels that prompt
@@ -47,5 +48,6 @@
 - **Images:** the `image_clipboard` / `⌥+Shift+c` (PNG) flow remains removed.
   Capture screenshots with the OS or terminal, not gwae.
 
-See [drag-copy acceptance evidence](DRAG-COPY-ACCEPTANCE.md) for the before/after
-replay, requirement-to-test mapping, observed results, and validation limits.
+See [native-paste acceptance evidence](NATIVE-PASTE-ACCEPTANCE.md) and
+[drag-copy acceptance evidence](DRAG-COPY-ACCEPTANCE.md) for before/after
+replays, requirement-to-test mappings, observed results, and validation limits.

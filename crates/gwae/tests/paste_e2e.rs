@@ -51,6 +51,12 @@ const ZSH_INIT: &str = "PROMPT='ZSH_READY> '\nRPROMPT=''\nPROMPT_EOL_MARK=''\n\
     paste_barrier() { print -rn -- x >> paste-barrier; }\n\
     zle -N paste_barrier\nbindkey '^G' paste_barrier\n";
 
+// Apple's bash 3.2 does not implement bracketed paste. Pin that limitation
+// rather than allowing successful zsh/fish tests to imply universal safety.
+const BASH_INIT: &str = "PS1='BASH_READY> '\nHISTFILE=/dev/null\n\
+    paste_probe() { printf 'EXECUTED\\n' >> paste-executions; }\n\
+    bind -x '\"\\C-g\":printf x >> paste-barrier'\n";
+
 struct Session {
     rx: Receiver<Vec<u8>>,
     writer: Box<dyn Write + Send>,
@@ -128,6 +134,7 @@ impl Session {
         .expect("write mouse-reporting helper");
         std::fs::write(dir.join("fish-init.fish"), FISH_INIT).expect("write fish init");
         std::fs::write(dir.join(".zshrc"), ZSH_INIT).expect("write isolated zsh init");
+        std::fs::write(dir.join("bash-init.bash"), BASH_INIT).expect("write isolated bash init");
 
         // Read a data file rather than interpolating clipboard text into shell
         // syntax. Quotes, actual newlines, and literal backslashes stay exact.
@@ -238,6 +245,16 @@ impl Session {
 
     fn file(&self, name: &str) -> Vec<u8> {
         std::fs::read(self.dir.join(name)).unwrap_or_default()
+    }
+
+    fn report_executions(&self, shell: &str, phase: &str) {
+        // Count only the dedicated file sentinel, never text in shell redraws.
+        let bytes = self.file("paste-executions");
+        let count = bytes.chunks_exact(b"EXECUTED\n".len()).count();
+        eprintln!(
+            "observed {shell} {phase}: executions={count}, barrier={:?}",
+            self.file("paste-barrier")
+        );
     }
 
     fn find_text(&self, text: &str) -> (u16, u16) {
@@ -691,6 +708,7 @@ fn native_paste_in_a_real_zsh_pane_waits_for_enter() {
     s.wait_for("zsh has processed the entire paste", |s| {
         s.file("paste-barrier") == b"x"
     });
+    s.report_executions("zsh Cmd+V", "before Enter");
     assert_eq!(
         s.file("paste-executions"),
         b"",
@@ -701,7 +719,28 @@ fn native_paste_in_a_real_zsh_pane_waits_for_enter() {
     s.wait_for("zsh has processed Enter", |s| {
         s.file("paste-barrier") == b"xx"
     });
+    s.report_executions("zsh Cmd+V", "after Enter");
     assert_eq!(s.file("paste-executions"), b"EXECUTED\nEXECUTED\n");
+}
+
+#[test]
+fn native_paste_in_a_real_macos_bash_keeps_its_unbracketed_behavior() {
+    let mut s = Session::start_with(
+        "not used",
+        "/bin/bash --noprofile --rcfile bash-init.bash -i",
+        "BASH_READY> ",
+    );
+    s.native_paste("paste_probe\n\npaste_probe\n");
+    s.send(FISH_BARRIER);
+    s.wait_for("bash has processed the entire paste", |s| {
+        s.file("paste-barrier") == b"x"
+    });
+    s.report_executions("macOS bash Cmd+V", "without Enter");
+    assert_eq!(
+        s.file("paste-executions"),
+        b"EXECUTED\nEXECUTED\n",
+        "a shell without bracketed paste still executes pasted newlines"
+    );
 }
 
 fn fish_paste_waits_for_enter(native: bool) {
@@ -732,6 +771,12 @@ fn fish_paste_waits_for_enter(native: bool) {
     s.wait_for("fish processed the complete paste without executing", |s| {
         s.file("paste-barrier") == b"x"
     });
+    let route = if native {
+        "fish Cmd+V"
+    } else {
+        "fish Option+V"
+    };
+    s.report_executions(route, "before Enter");
     assert!(
         !s.dir.join("paste-executions").exists(),
         "paste must not execute before Enter: {:?}\n{}",
@@ -746,6 +791,7 @@ fn fish_paste_waits_for_enter(native: bool) {
         "Enter executes once and fish returns to reading input",
         |s| s.file("paste-barrier") == b"xx",
     );
+    s.report_executions(route, "after Enter");
     assert_eq!(
         s.file("paste-executions"),
         b"EXECUTED\nEXECUTED\n",
