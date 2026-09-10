@@ -64,8 +64,6 @@ pub enum Effect {
     ThemePick,
     /// Open the spawn-directory picker.
     DirPick,
-    /// Paste the system clipboard into the focused pane.
-    Paste,
     /// Toggle the cheat-sheet HUD.
     ToggleHud,
     /// Toggle the macOS keep-awake assertion.
@@ -335,12 +333,14 @@ pub const BINDS: &[Bind] = &[
         effect: Effect::DirPick,
     },
     Bind {
-        trigger: Trigger::Chord('v'),
-        hint: "pastes the clipboard into this pane",
-        glyph: Some('\u{221a}'),
+        // Consumed by the host terminal and delivered as Event::Paste, not
+        // a key event that handle_key can decode.
+        trigger: Trigger::Prose(keys::paste_key()),
+        hint: "pastes with multiline handling for this pane",
+        glyph: None,
         group: Group::Panes,
         desc: "paste",
-        effect: Effect::Paste,
+        effect: Effect::Unverifiable,
     },
     Bind {
         trigger: Trigger::Chord('/'),

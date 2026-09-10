@@ -1,5 +1,7 @@
 # Drag-copy acceptance evidence
 
+Current paste round trips use the host-native paste action. The earlier replay used Option+V, which has since been removed from gwae. Selection/copy assertions are unchanged.
+
 Verified on macOS arm64 on 2026-09-09. Runtime fix: `262630f`.
 
 The requirement is functional copy on drag release, not just selection highlighting.
@@ -10,7 +12,7 @@ user's OS clipboard.
 
 ## Before and after
 
-The **same** `drag_copies_on_release_then_option_v_pastes_selected_text` assertion
+The **same** `drag_copies_on_release_then_native_paste_delivers_selected_text` assertion
 fails against the preserved pre-fix executable at `release highlights and copies
 cells 1 through 6`. The old executable displays the highlight but never replaces
 the clipboard. The restored executable and the installed local command pass:
@@ -32,11 +34,11 @@ Unit test names are in [`select.rs`](../crates/gwae/src/select.rs).
 
 | Requirement or changed output | Concrete check | Observed result |
 | --- | --- | --- |
-| Copy selected text only on release | `drag_copies_on_release_then_option_v_pastes_selected_text` | Clipboard unchanged during drag. Forward and reverse releases write the exact selected slices. |
+| Copy selected text only on release | `drag_copies_on_release_then_native_paste_delivers_selected_text` | Clipboard unchanged during drag. Forward and reverse releases write the exact selected slices. |
 | Keep highlight and clipboard endpoints consistent | Same real-PTY test | Release extends the highlighted range and copies the extended range, not the previous drag frame. |
 | `copied 1 line` confirmation | Same real-PTY test | Exact confirmation appears after a native helper succeeds. |
 | `copied 2 lines` confirmation and Unicode preservation | `drag_copies_multiline_unicode_without_padding_or_duplicate_wide_cells` | Clipboard equals `ROW_ONE 日本語 é\nROW_TWO 끝`, with combining marks, no duplicate wide cells, and no grid-padding spaces. Toast says `copied 2 lines`. Paste returns identical UTF-8 bytes. |
-| Plain clicks and duplicate releases must not overwrite the clipboard | `drag_copies_on_release_then_option_v_pastes_selected_text` | Plain click preserves `LAIN_R`. A stray release after the second drag causes no third helper call and no range change. |
+| Plain clicks and duplicate releases must not overwrite the clipboard | `drag_copies_on_release_then_native_paste_delivers_selected_text` | Plain click preserves `LAIN_R`. A stray release after the second drag causes no third helper call and no range change. |
 | Blank selections preserve clipboard and report `nothing to copy` | `empty_drag_does_not_replace_the_clipboard` and `blank_copy_leaves_all_clipboard_outputs_untouched` | No native helper or OSC 52 output. Original clipboard still pastes. Blank, newline-only, and whitespace-only strings are rejected. Exact toast is rendered. |
 | Zero-sized grids cannot produce spurious copied text | `empty_grid_dimensions_have_no_text_to_copy` | Zero columns and zero rows both extract an empty string. |
 | Dragging beyond a pane cannot copy a neighboring pane | `drag_outside_the_pane_copies_to_its_edge_not_the_neighbor` | Release at the far host edge copies only `AIN_READY` from the owning pane, once. |
@@ -61,7 +63,7 @@ GWAE_E2E_BIN="$(command -v gwae)" cargo test -p gwae --test paste_e2e -- --nocap
 ```
 
 To compare a retained old executable, set `GWAE_E2E_BIN` to that file and run
-`drag_copies_on_release_then_option_v_pastes_selected_text`. The pre-fix version
+`drag_copies_on_release_then_native_paste_delivers_selected_text`. The pre-fix version
 must fail at the clipboard-on-release assertion, not merely compile differently.
 
 Broader checks include `cargo test --workspace --no-fail-fast`,

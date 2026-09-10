@@ -1,6 +1,6 @@
 //! Platform-aware naming for the one modifier gwae uses.
 //!
-//! Every gwae binding is a chord on a single `$mod` key. That key is
+//! Most gwae bindings are chords on a single `$mod` key. That key is
 //! physically the same key everywhere, but its *name* is not: macOS keyboards
 //! label it `⌥` (Option) and users look for that glyph, while on Linux and
 //! Windows the same key is `Alt` and the `⌥` glyph is meaningless (and often
@@ -29,6 +29,16 @@ pub fn enter_key() -> &'static str {
         "↵"
     } else {
         "Enter"
+    }
+}
+
+/// The host terminal's normal paste shortcut, not an Option/Alt binding.
+/// The terminal emits a paste event; gwae never needs a second clipboard key.
+pub const fn paste_key() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+V"
+    } else {
+        "Ctrl+Shift+V"
     }
 }
 
@@ -82,10 +92,12 @@ mod tests {
             assert_eq!(mod_key(), "⌥");
             assert_eq!(chord("g"), "⌥+g");
             assert_eq!(ctrl_shift_chord("K"), "⌃+⇧+K");
+            assert_eq!(paste_key(), "Cmd+V");
         } else {
             assert_eq!(mod_key(), "Alt");
             assert_eq!(chord("g"), "Alt+g");
             assert_eq!(ctrl_shift_chord("K"), "Ctrl+Shift+K");
+            assert_eq!(paste_key(), "Ctrl+Shift+V");
         }
     }
 

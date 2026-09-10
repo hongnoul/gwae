@@ -1,7 +1,8 @@
 # Native multiline paste acceptance evidence
 
 Validated on macOS arm64 on 2026-09-09 (local time).
-Implementation: `7481d9e`. Baseline executable: `14c8761`.
+Original multiline fix: `7481d9e`. Baseline executable: `14c8761`.
+The later single-key consolidation is validated separately below.
 
 ## Measured improvement
 
@@ -45,7 +46,7 @@ command. The observed execution count at that point was zero. After Enter
 it was two. This directly checks that native paste leaves the complete
 multiline Unicode text editable inside a real shell.
 
-## Requirement-to-observation mapping
+## Original fix requirement-to-observation mapping
 
 | Requirement | Regression | Observed result |
 | --- | --- | --- |
@@ -59,7 +60,7 @@ multiline Unicode text editable inside a real shell.
 | Restore terminal state | `native_paste_mode_is_enabled_and_restored_on_exit` | Host mode is visibly enabled at startup and disabled on normal exit. |
 | Do not break optional paste, copy, or lifecycle behavior | Existing clipboard, hot-reload, and teardown suites | Existing Option+V, drag-copy, helper-failure, reload, and teardown tests pass. |
 
-## Final checks
+## Original fix checks, before single-key consolidation
 
 - 20 clipboard/paste PTY integration tests passed against `target/release/gwae`.
 - All three real-shell compatibility checks passed against the debug build.
@@ -84,6 +85,33 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 Set `GWAE_E2E_BIN` to a saved pre-fix executable to reproduce the baseline
 comparison without changing the checked-out source.
+
+## Single-key consolidation: whole-result verification
+
+Native paste is now the only gwae paste action. The separate Option+V
+command, clipboard readers, picker shortcut, and agent-specific shortcut
+routing are removed. The host sends the content once and the child owns
+content interpretation. This does not remap or remove a child's own keys.
+
+| Requirement | Check | Observed result on the final build |
+| --- | --- | --- |
+| One advertised shortcut | `native_paste_is_the_only_advertised_paste_shortcut`, `only_native_paste_is_advertised_in_hud_and_cow` | The rendered HUD contains Cmd+V and no Option+V paste entry. The binding table contains exactly one paste row, with the native label. |
+| No separate clipboard read | `option_v_is_no_longer_a_gwae_clipboard_shortcut` | ESC+v and literal `√` reach the child unchanged, with zero clipboard helper reads. The saved pre-consolidation executable fails this exact test by pasting the fixture clipboard twice instead. |
+| Native paste owns delivery feedback | `native_paste_confirms_delivery_into_a_plain_pane`, `native_multiline_paste_confirms_delivery_and_warns_without_brackets` | One-line paste is confirmed. CR-only multiline paste delivers all three lines, including the blank line, and reports the correct count plus the unsupported-child warning. |
+| Same route in agent panes | `native_paste_reaches_a_marked_agent_once_without_a_clipboard_read` | A marked fixture-agent pane receives exactly one native paste block, including the supplied image-path text, with zero clipboard reads. This tests gwae routing, not a real agent's image attachment behavior. |
+| Preserve native picker paste | `native_paste_puts_a_path_into_the_picker_filter`, `native_paste_in_directory_picker_only_updates_the_filter` | The first native-pasted path reaches the filter and subsequent pasted lines do not reach the child or accept the picker. No clipboard helper or global PATH mutation is needed. |
+| Keep the actual multiline shell outcome | Real fish/zsh tests above | Both still execute zero commands before Enter and two after. zsh's actual edit buffer exactly matches Unicode, blank lines, and trailing newline. Bash 3.2 retains its documented unbracketed behavior. |
+
+After all consolidation changes, `cargo test --workspace` passed **574 tests**.
+The release binary was rebuilt and all **22 paste/clipboard acceptance tests**
+passed against that artifact. Strict workspace/all-target Clippy and
+`git diff --check` also passed. Thus the completed acceptance loop was rerun
+over the entire final result, not only over the added checks.
+
+The marked-agent fixture never contacts a provider. Real Jcode source was
+inspected to confirm its native handler recognizes image file paths and image
+URLs, but no image-only desktop clipboard workflow is claimed. Ordinary
+terminal paste cannot transport arbitrary clipboard image bytes on its own.
 
 ## Validation boundaries
 

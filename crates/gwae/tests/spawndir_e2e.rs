@@ -493,46 +493,24 @@ fn escape_cancels_the_picker_without_changing_anything() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
-fn option_v_pastes_a_path_into_the_picker_filter() {
-    // `⌥+v` while the spawn-dir picker is open must land the clipboard in
-    // the filter (a pasted `~/` path), not in the pane underneath. The
-    // picker owns the keyboard, so the main-loop paste arm never fires
-    // there; this pins the picker's own claim on both input paths.
+fn native_paste_puts_a_path_into_the_picker_filter() {
     let root = temp_root();
     std::fs::create_dir_all(root.join("some/where/proj-alpha/.git")).unwrap();
-    // Hermetic clipboard: gwae reads `pbpaste` off PATH on macOS. The word
-    // is deliberately unlike any candidate name, so matching it proves the
-    // filter received the paste rather than a project listing.
-    let bin = root.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(bin.join("pbpaste"), "#!/bin/sh\nprintf '%s' 'zzclipword'")
-        .expect("write stub pbpaste");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(bin.join("pbpaste"), std::fs::Permissions::from_mode(0o755))
-            .expect("chmod stub pbpaste");
-    }
-    // The stub must be on the *gwae process's* PATH: gwae runs `pbpaste`
-    // itself at paste time, inheriting the environment from spawn. Set it
-    // on this test process before spawning, restore right after.
-    let old_path = std::env::var("PATH").unwrap_or_default();
-    unsafe {
-        std::env::set_var("PATH", format!("{}:{old_path}", bin.display()));
-    }
     let mut s = Session::start(&root, "", "sleep 60", &root, &[]);
-    unsafe {
-        std::env::set_var("PATH", &old_path);
-    }
     let _ = s.drain();
     s.send(OPT_D);
     let _ = s.drain_until("spawn dir", Duration::from_secs(8));
-    s.send(b"\x1bv");
-    let out = s.drain_until("zzclipword", Duration::from_secs(8));
+    // No clipboard helper or process-global PATH mutation: native paste is
+    // the same event on every host and the picker owns it, not the child.
+    s.send(b"\x1b[200~zznativeword\rignored-second-line\x1b[201~");
+    let out = s.drain_until("zznativeword", Duration::from_secs(8));
     assert!(
-        out.contains("zzclipword"),
-        "⌥+v should paste the clipboard into the filter; got:\n{out}"
+        out.contains("zznativeword"),
+        "native paste must update the filter: {out}"
+    );
+    assert!(
+        !out.contains("ignored-second-line"),
+        "only the first path belongs in the filter: {out}"
     );
     s.kill();
 }

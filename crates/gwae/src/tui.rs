@@ -3604,15 +3604,6 @@ enum Cmd {
     /// Open the spawn-directory picker (`⌥+d`): choose the directory new
     /// panes start in, for this session or written back to the config.
     DirPick,
-    /// Paste the system clipboard into the focused pane (`⌥+v`).
-    ///
-    /// The explicit route for shells that grabbed the key themselves: fish
-    /// binds `ESC+v` to `edit_command_buffer` (the "external editor"
-    /// error when `$VISUAL`/`$EDITOR` is unset), so a plain PTY pane can
-    /// never receive a paste that way. Resolved in the main loop, which
-    /// owns the clipboard read: agent panes forward the chord to the inner
-    /// jcode (its own smart paste), plain panes get gwae's bracketed write.
-    Paste,
     /// Toggle the centered cheat-sheet HUD (`⌥+/`), the same overlay shown
     /// once at startup. Any other key still dismisses it.
     ToggleHud,
@@ -3866,7 +3857,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
             Char('\u{2020}') => return Some(Cmd::ThemePick(0)),         // † (Option+t)
             Char('\u{2202}') => return Some(Cmd::DirPick),              // ∂ (Option+d)
-            Char('\u{221a}') => return Some(Cmd::Paste),                // √ (Option+v)
             Char('\u{2211}') => return Some(Cmd::ToggleKeepAwake),      // ∑ (Option+w)
             Char('\u{f7}') => return Some(Cmd::ToggleHud),              // ÷ (Option+/)
             _ => {}
@@ -3960,7 +3950,6 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             'g' => return Some(Cmd::SmartJump),
             't' => return Some(Cmd::ThemePick(0)),
             'd' => return Some(Cmd::DirPick),
-            'v' => return Some(Cmd::Paste),
             'w' => return Some(Cmd::ToggleKeepAwake),
             '/' | '?' => return Some(Cmd::ToggleHud),
             _ if c.is_ascii_digit() => {
@@ -4791,7 +4780,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     Ok(Event::Paste(text)) => {
                         // Native paste is data, never a sequence of keybinds.
                         // In particular, a pasted newline cannot confirm quit
-                        // or accept a picker, and √ cannot invoke Cmd::Paste.
+                        // or accept a picker, and Option glyphs stay text.
                         selection.take_if(|s| !s.dragging);
                         hud_active = false;
                         dirty = true;
@@ -4820,21 +4809,39 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             };
                             let _ = layout.apply(Action::JumpToColumn(n), v, f);
                         }
+                        let anchor = focused_pane_views_with_chrome(
+                            &layout,
+                            cols,
+                            rows,
+                            cfg.content_width,
+                            &panes,
+                            true,
+                            chrome_rows(&cfg),
+                        )
+                        .iter()
+                        .find(|v| focused_pane(&layout).is_some_and(|pid| v.pid == pid))
+                        .map(|v| v.rect);
                         if let Some(p) = focused_pane(&layout).and_then(|pid| panes.get_mut(&pid)) {
                             // Re-frame for this child's current DECSET 2004
                             // state. Agent panes receive the same text event,
                             // not a clipboard chord (which could paste twice).
-                            let bytes = select::paste_bytes(&text, p.grid.wants_bracketed_paste());
+                            let bracketed = p.grid.wants_bracketed_paste();
+                            let bytes = select::paste_bytes(&text, bracketed);
                             if !bytes.is_empty() {
                                 p.grid.scroll_to_bottom();
-                                for chunk in bytes.chunks(select::PASTE_CHUNK) {
-                                    if let Err(e) =
+                                let result =
+                                    bytes.chunks(select::PASTE_CHUNK).try_for_each(|chunk| {
                                         p.writer.write_all(chunk).and_then(|()| p.writer.flush())
-                                    {
+                                    });
+                                reload_note = Some(match result {
+                                    Ok(()) => paste_note(&text, bracketed),
+                                    Err(e) => {
                                         tracing::warn!("native paste: {e}");
-                                        break;
+                                        format!("paste failed: {e}")
                                     }
-                                }
+                                });
+                                reload_note_anchor = anchor;
+                                reload_note_until = Some(Instant::now() + NOTE_LINGER);
                             }
                         }
                     }
@@ -4878,7 +4885,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         | KeyCode::Char('\u{2026}')
                                         | KeyCode::Char('\u{153}')
                                         | KeyCode::Char('\u{a9}')
-                                        | KeyCode::Char('\u{221a}')
                                         | KeyCode::Char('\u{d3}')
                                         | KeyCode::Char('\u{d4}')
                                         | KeyCode::Char('\u{f8ff}')
@@ -4918,12 +4924,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             let alt = ke.modifiers.contains(KeyModifiers::ALT);
                             let mut chosen: Option<(std::path::PathBuf, bool)> = None;
                             let mut close = false;
-                            // `⌥+v` pastes the clipboard into the filter (a
-                            // pasted `~/` path must land here, not in the pane
-                            // underneath). Single-line: directory paths never
-                            // span lines, so keep the first line and strip
-                            // newlines, just like the native `Event::Paste` arm.
-                            let mut pasted: Option<String> = None;
                             match ke.code {
                                 KeyCode::Up => pick.step(-1),
                                 KeyCode::Down => pick.step(1),
@@ -4953,14 +4953,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     }
                                     close = true;
                                 }
-                                KeyCode::Char('v') if alt => {
-                                    pasted = crate::select::read_clipboard();
-                                }
-                                // √ is what macOS sends for ⌥+v when Option is
-                                // not mapped to Meta.
-                                KeyCode::Char('\u{221a}') => {
-                                    pasted = crate::select::read_clipboard();
-                                }
                                 KeyCode::Char(c)
                                     if !alt && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
                                 {
@@ -4968,13 +4960,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     pick.sel = 0;
                                 }
                                 _ => {}
-                            }
-                            if let Some(text) = pasted {
-                                let t = picker_paste_query(&text);
-                                if !t.is_empty() {
-                                    pick.query.push_str(&t);
-                                    pick.sel = 0;
-                                }
                             }
                             // The picker's harness decides which config key `save` writes.
                             // Read it before we clear `dir_pick`.
@@ -5310,82 +5295,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         };
                                         let _ = layout.apply(Action::FocusPane(target), v, f);
                                         dirty = true;
-                                    }
-                                }
-                                Cmd::Paste => {
-                                    // `⌥+v` smart paste. The focused child
-                                    // decides who pastes (see
-                                    // `paste_route`): agent panes forward the
-                                    // chord to the inner jcode untouched, plain
-                                    // panes get gwae's bracketed write.
-                                    match paste_route(&layout, &agent_panes) {
-                                        PasteRoute::ForwardAgent => {
-                                            if let Some(pid) = focused_pane(&layout) {
-                                                if let Some(p) = panes.get_mut(&pid) {
-                                                    if p.grid.scroll_to_bottom() {
-                                                        dirty = true;
-                                                    }
-                                                    let _ = p.writer.write_all(&key_bytes(&ke));
-                                                    let _ = p.writer.flush();
-                                                }
-                                            }
-                                            continue;
-                                        }
-                                        PasteRoute::WritePlain => {}
-                                        PasteRoute::NoFocus => {}
-                                    }
-                                    let anchor = focused_pane_views_with_chrome(
-                                        &layout,
-                                        cols,
-                                        rows,
-                                        cfg.content_width,
-                                        &panes,
-                                        true,
-                                        chrome_rows(&cfg),
-                                    )
-                                    .iter()
-                                    .find(|v| focused_pane(&layout).is_some_and(|pid| v.pid == pid))
-                                    .map(|v| v.rect);
-                                    match crate::select::read_clipboard() {
-                                        None => {
-                                            reload_note = Some("clipboard unreadable".to_string());
-                                            reload_note_anchor = anchor;
-                                            reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                        }
-                                        Some(text) => {
-                                            if let Some(pid) = focused_pane(&layout) {
-                                                if let Some(p) = panes.get_mut(&pid) {
-                                                    let bracketed = p.grid.wants_bracketed_paste();
-                                                    let bytes = crate::select::paste_bytes(
-                                                        &text, bracketed,
-                                                    );
-                                                    if bytes.is_empty() {
-                                                        reload_note =
-                                                            Some("nothing to paste".to_string());
-                                                    } else {
-                                                        p.grid.scroll_to_bottom();
-                                                        for chunk in
-                                                            bytes.chunks(crate::select::PASTE_CHUNK)
-                                                        {
-                                                            if p.writer.write_all(chunk).is_err() {
-                                                                break;
-                                                            }
-                                                            let _ = p.writer.flush();
-                                                        }
-                                                        // Unlike Cmd+V there
-                                                        // is no OS-level
-                                                        // feedback, so confirm
-                                                        // even a single line.
-                                                        reload_note =
-                                                            Some(paste_note(&text, bracketed));
-                                                    }
-                                                    reload_note_anchor = anchor;
-                                                    reload_note_until =
-                                                        Some(Instant::now() + NOTE_LINGER);
-                                                    dirty = true;
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                                 Cmd::None => {}
@@ -5805,7 +5714,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 );
             }
             if let Some(note) = &reload_note {
-                let ok = !note.contains("error") && !note.starts_with("unknown theme");
+                let ok = !note.contains("error")
+                    && !note.starts_with("unknown theme")
+                    && !note.starts_with("paste failed:");
                 draw_toast_at(&mut frame, cols, rows, note, &pal, ok, reload_note_anchor);
             }
             // Topmost: the destructive confirmation must never be obscured by
@@ -5843,31 +5754,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     Ok(())
 }
 
-/// Who pastes for `⌥+v`: the inner harness or gwae itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PasteRoute {
-    /// Agent pane: forward the chord to the inner jcode untouched (`ESC+v`),
-    /// so its own smart paste (text vs image vs dictation) stays the
-    /// authority. gwae claiming it would double-paste or lose the image path.
-    ForwardAgent,
-    /// Plain pane: gwae reads the system clipboard and bracket-writes it.
-    /// fish binds `ESC+v` to `edit_command_buffer`, which errors without
-    /// $VISUAL/$EDITOR, so forwarding is never a paste there.
-    WritePlain,
-    /// Nothing focused: the write arm reports it.
-    NoFocus,
-}
-
-/// Decide who pastes for `⌥+v` from the focused pane. Kept free of terminal
-/// types so the routing is unit testable; the main loop owns the I/O.
-fn paste_route(layout: &Layout, agent_panes: &HashSet<PaneId>) -> PasteRoute {
-    match focused_pane(layout) {
-        None => PasteRoute::NoFocus,
-        Some(pid) if agent_panes.contains(&pid) => PasteRoute::ForwardAgent,
-        Some(_) => PasteRoute::WritePlain,
-    }
-}
-
 /// Trim clipboard text for the spawn-dir filter: directory paths are
 /// single-line, so keep the first line and strip newlines. Empty in, empty
 /// out: the caller decides whether to touch the filter.
@@ -5881,9 +5767,7 @@ fn picker_paste_query(text: &str) -> String {
         .to_string()
 }
 
-/// The toast shown after an explicit `⌥+v` paste. A one-line paste still
-/// confirms: unlike Cmd+V there is no OS-level feedback, so silence would
-/// read as "nothing happened".
+/// Native paste is the single route for both delivery and confirmation.
 ///
 /// A multi-line paste is the case that used to run each line as its own
 /// command, so gwae says what it delivered. When the child never asked for
@@ -5891,14 +5775,19 @@ fn picker_paste_query(text: &str) -> String {
 /// nothing can prevent that, it is what the program asked for — so the toast
 /// says so rather than letting the user infer safety from silence.
 fn paste_note(text: &str, bracketed: bool) -> String {
-    let lines = text.lines().count();
-    if lines <= 1 {
-        return "pasted 1 line".to_string();
-    }
-    if bracketed {
-        format!("pasted {lines} lines")
+    // Native terminals often send CR-only text. Count the same logical
+    // lines for CR, LF, and CRLF, including preserved blank lines.
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let lines = normalized.lines().count().max(1);
+    let summary = if lines == 1 {
+        "pasted 1 line".to_string()
     } else {
-        format!("pasted {lines} lines · no bracket, newlines run")
+        format!("pasted {lines} lines")
+    };
+    if !bracketed && normalized.contains('\n') {
+        format!("{summary} · no bracket, newlines run")
+    } else {
+        summary
     }
 }
 
@@ -8548,7 +8437,6 @@ mod tests {
                 Effect::SmartJump => Cmd::SmartJump,
                 Effect::ThemePick => Cmd::ThemePick(0),
                 Effect::DirPick => Cmd::DirPick,
-                Effect::Paste => Cmd::Paste,
                 Effect::ToggleHud => Cmd::ToggleHud,
                 Effect::ToggleKeepAwake => Cmd::ToggleKeepAwake,
                 Effect::Quit => Cmd::Quit,
@@ -8667,63 +8555,56 @@ mod tests {
     }
 
     #[test]
-    fn option_v_is_a_paste_command_never_pane_input() {
-        // `⌥+v` must decode as `Cmd::Paste` on both input paths so the main
-        // loop can bracket-write the clipboard into a plain shell pane.
-        // Forwarding `ESC+v` instead would hit fish's `edit_command_buffer`
-        // (the "external editor requested" error), never a paste.
+    fn option_v_is_unbound_and_belongs_to_the_child() {
+        // Only the host's native paste event triggers gwae paste handling.
+        // Unbound chords and literal Unicode retain ordinary pane semantics.
         let meta = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT);
-        assert_eq!(handle_key(&meta), Some(Cmd::Paste));
+        assert_eq!(handle_key(&meta), Some(Cmd::Input(b"\x1bv".to_vec())));
         let glyph = KeyEvent::new(KeyCode::Char('\u{221a}'), KeyModifiers::NONE);
-        assert_eq!(handle_key(&glyph), Some(Cmd::Paste));
+        assert_eq!(
+            handle_key(&glyph),
+            Some(Cmd::Input("√".as_bytes().to_vec()))
+        );
         // ...while a bare `v` still types into the pane.
         let bare = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE);
         assert!(
             matches!(handle_key(&bare), Some(Cmd::Input(_))),
             "bare v must reach the pane"
         );
-        // The agent-pane forward path writes exactly what the chord would
-        // have been as pane input (`ESC+v`): that is what the inner jcode
-        // decodes back into its own smart paste.
         assert_eq!(key_bytes(&meta), b"\x1bv".to_vec());
     }
 
     #[test]
     fn paste_note_confirms_single_line_and_warns_without_bracket() {
-        // The explicit `⌥+v` route confirms even a single line (no OS-level
-        // feedback), and says when newlines genuinely run as Returns.
+        // The single native route reports completion and whether the child
+        // buffers newlines. Host CR-only text must not undercount the paste.
         assert_eq!(paste_note("ls -la", true), "pasted 1 line");
         assert_eq!(paste_note("a\nb\nc", true), "pasted 3 lines");
+        assert_eq!(paste_note("a\r\rb\r", true), "pasted 3 lines");
+        assert_eq!(paste_note("a\r\n\r\nb\r\n", true), "pasted 3 lines");
+        assert!(paste_note("a\rb\rc", false).contains("newlines run"));
         assert!(paste_note("a\nb\nc", false).contains("newlines run"));
+        assert!(paste_note("ls\r", false).contains("newlines run"));
+        assert_eq!(paste_note("ls", false), "pasted 1 line");
     }
 
     #[test]
-    fn paste_row_renders_in_hud_and_cow() {
-        // Both public surfaces render from BINDS: the HUD grid lists the
-        // panes group, the cow hints name every binding. A paste row that
-        // dispatches but never renders would leave users discovering `⌥+v`
-        // by accident.
+    fn only_native_paste_is_advertised_in_hud_and_cow() {
         let hints = crate::binds::cowsay_hints();
         assert!(
-            hints.iter().any(|h| h.contains("pastes the clipboard")),
-            "cow hints must name the paste binding: {hints:?}"
+            hints
+                .iter()
+                .any(|h| h.starts_with(crate::keys::paste_key())),
+            "cow hints must name native paste: {hints:?}"
         );
-        assert!(
-            crate::binds::group(crate::binds::Group::Panes).any(|b| b.desc == "paste"),
-            "HUD panes group must list the paste row"
-        );
-    }
-
-    #[test]
-    fn paste_route_sends_agent_panes_to_the_harness() {
-        // `⌥+v` in an agent pane must forward to the inner jcode (its own
-        // smart paste); in a plain pane gwae bracket-writes the clipboard.
-        let layout = Layout::new(1);
-        let focused = focused_pane(&layout).expect("one pane is focused");
-        let empty: HashSet<PaneId> = HashSet::new();
-        assert_eq!(paste_route(&layout, &empty), PasteRoute::WritePlain);
-        let agents: HashSet<PaneId> = [focused].into_iter().collect();
-        assert_eq!(paste_route(&layout, &agents), PasteRoute::ForwardAgent);
+        let rows: Vec<_> = crate::binds::group(crate::binds::Group::Panes)
+            .filter(|b| b.desc == "paste")
+            .collect();
+        assert_eq!(rows.len(), 1, "exactly one paste action is advertised");
+        assert_eq!(rows[0].label(), crate::keys::paste_key());
+        assert!(crate::binds::BINDS
+            .iter()
+            .all(|b| { b.trigger != crate::binds::Trigger::Chord('v') && b.glyph != Some('√') }));
     }
 
     #[test]

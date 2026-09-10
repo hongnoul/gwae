@@ -25,6 +25,11 @@
   such as fish and zsh, multiline input stays editable until you press Enter.
   Blank lines and Unicode are preserved. No special keybinding is required,
   and this route also works over SSH without a remote clipboard helper.
+- **One paste action:** multiline handling, pane-aware framing, and delivery
+  feedback all run on native paste. gwae's HUD and hints advertise only
+  `Cmd+V` (or the platform's native paste shortcut), not a second smart-paste
+  key. A confirmation reports the line count after delivery, with a warning
+  if the child does not support bracketed paste.
 - **Programs without bracketed paste:** these receive plain text without
   escape markers. Their newlines can still execute commands, according to
   the program's own input handling. This includes macOS's bundled bash 3.2.
@@ -33,18 +38,19 @@
   updates only its single-line filter. It cannot accept a picker or confirm
   a force quit. Pasting while the force-quit prompt is up cancels that prompt
   and discards the paste.
-- **Optional clipboard shortcut (`⌥+v`):** gwae reads the system clipboard
-  itself (`pbpaste` on macOS, `wl-paste`/`xclip`/`xsel` on Linux) and
-  bracket-writes it to the focused pane. This remains available alongside
-  native paste. gwae handles the chord in plain panes because fish binds
-  `ESC+v` to `edit_command_buffer` (the "external editor requested" error
-  when `$VISUAL`/`$EDITOR` is unset), not to paste.
-- **Agent panes keep their own paste:** when the focused pane is an agent
-  pane, `⌥+v` is forwarded to the inner jcode untouched (`ESC+v`), so its own
-  smart paste (text vs image vs dictation) stays the authority.
-- **Native paste in agent panes:** `Cmd+V` forwards the pasted text, not an
-  `⌥+v` chord or a second clipboard read. The agent receives one paste event
-  when it enables bracketed paste.
+- **`⌥+v` is no longer a gwae shortcut:** gwae does not read the clipboard
+  or synthesize a paste for it. Like any unbound chord, it belongs to the
+  child, which may have its own binding. A literal `√` remains text.
+- **Agent panes use the same native paste path:** `Cmd+V` forwards the
+  terminal's supplied content once, not a synthetic `⌥+v` chord or a second
+  clipboard read. The agent receives one paste event when it enables
+  bracketed paste. Content-aware behavior stays with the agent. For example,
+  Jcode's native paste handler can recognize image file paths and image URLs.
+  gwae must not replace pasted text by probing unrelated clipboard formats.
+- **Raw clipboard images:** ordinary terminal paste carries text or a file
+  path, not arbitrary image bytes. Image-only paste requires host/agent
+  support. Removing the extra gwae shortcut does not add a universal image
+  transport, change an agent's own shortcuts, or merge dictation into paste.
 - **Images:** the `image_clipboard` / `⌥+Shift+c` (PNG) flow remains removed.
   Capture screenshots with the OS or terminal, not gwae.
 

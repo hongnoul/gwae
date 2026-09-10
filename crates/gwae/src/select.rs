@@ -4,11 +4,9 @@
 //! child that asked for mouse reporting), which takes native selection away
 //! from the host terminal. A left drag copies the selected text on release.
 //! Native clipboard helpers are preferred, with OSC 52 for remote terminals.
-//! Text paste (`⌥+v`) is handled here: gwae reads the
-//! system clipboard itself and delivers it to the focused pane, bracketed the
-//! way that child expects. The host terminal's native paste (Cmd+V / Ctrl+V)
-//! still works for shells; `⌥+v` is the route that also works when the child
-//! grabbed the key (fish's `edit_command_buffer`, jcode's own smart paste).
+//! The host terminal owns clipboard reads. Native paste (Cmd+V or the host's
+//! equivalent) arrives as text, encoded here for the child's bracketed-paste
+//! mode. There is no separate Option+V shortcut or second clipboard read.
 
 use gwae_term::{Cell, TermGrid};
 
@@ -330,49 +328,6 @@ fn strip_marker(buf: &mut Vec<u8>, marker: &[u8]) {
         }
     }
     *buf = out;
-}
-
-/// Read the system clipboard (text only).
-///
-/// There is deliberately no OSC 52 *read* path: the terminal's reply would
-/// arrive on gwae's own stdin in the middle of a frame, and most terminals
-/// refuse clipboard reads anyway. Over SSH this returns `None` and the
-/// caller says so out loud.
-pub fn read_clipboard() -> Option<String> {
-    #[cfg(target_os = "macos")]
-    let helpers: &[(&str, &[&str])] = &[("pbpaste", &[])];
-    #[cfg(windows)]
-    let helpers: &[(&str, &[&str])] = &[(
-        "powershell",
-        &["-NoProfile", "-Command", "Get-Clipboard -Raw"],
-    )];
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let helpers: &[(&str, &[&str])] = &[
-        ("wl-paste", &["--no-newline"]),
-        ("xclip", &["-o", "-selection", "clipboard"]),
-        ("xsel", &["--clipboard", "--output"]),
-    ];
-    helpers
-        .iter()
-        .find_map(|(program, args)| spawn_paste(program, args))
-}
-
-/// Run a clipboard-read helper and capture its stdout.
-#[cfg_attr(test, allow(dead_code))]
-fn spawn_paste(program: &str, args: &[&str]) -> Option<String> {
-    use std::process::{Command, Stdio};
-
-    let out = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    (!text.is_empty()).then_some(text)
 }
 
 #[cfg(test)]

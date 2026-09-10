@@ -1,11 +1,11 @@
-//! End-to-end: native Cmd+V and optional `⌥+v` preserve pasted text in panes.
+//! End-to-end: native Cmd+V is gwae's single paste action.
 //!
 //! The real executable runs under a host PTY with an isolated HOME/config and
 //! a stub `pbpaste` reading exact fixture bytes. Readiness and completion are
 //! observable terminal/file states, never a quiet interval in the output stream.
 //! Fish execution is checked with a file sentinel, not repaint-sensitive counts.
-//! Drag selection must copy the highlighted text on release, then `⌥+v` must
-//! paste those exact bytes. Clipboard helpers are isolated from the user's OS.
+//! Drag selection must copy the highlighted text on release, then native paste
+//! must deliver those exact bytes. Clipboard helpers are isolated from the user's OS.
 //!
 //! macOS-only because the clipboard helper table differs on other platforms.
 #![cfg(target_os = "macos")]
@@ -94,7 +94,7 @@ impl Session {
         std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
         std::fs::write(
             dir.join("gwae/gwae.toml"),
-            "startup_panes = 1\ndefault_column_width = \"quarter\"\ncontent_width = 0\n\
+            "startup_panes = 1\ndefault_agent = \"jcode\"\ndefault_column_width = \"quarter\"\ncontent_width = 0\n\
              center_focus = false\nkeep_awake = false\ncell_labels = false\n\
              [minimap]\nshow = false\n[cowsay]\nenabled = false\n\
              [update]\ncheck = false\n",
@@ -142,12 +142,20 @@ impl Session {
         std::fs::create_dir_all(&bin).expect("temp bin dir");
         std::fs::write(
             bin.join("pbpaste"),
-            "#!/bin/sh\nexec /bin/cat \"$GWAE_TEST_CLIPBOARD\"\n",
+            "#!/bin/sh\nprintf x >> \"$GWAE_TEST_CLIPBOARD.reads\"\nexec /bin/cat \"$GWAE_TEST_CLIPBOARD\"\n",
         )
         .expect("write stub pbpaste");
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(bin.join("pbpaste"), std::fs::Permissions::from_mode(0o755))
             .expect("chmod stub pbpaste");
+        // Marked agent panes exercise native routing without contacting a provider.
+        std::fs::write(
+            bin.join("jcode"),
+            "#!/bin/sh\nexec /bin/sh \"$HOME/bracket-helper.sh\"\n",
+        )
+        .expect("write fake agent");
+        std::fs::set_permissions(bin.join("jcode"), std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake agent");
         // A regression must never overwrite the user's real clipboard. Record
         // every native copy and redirect it to the isolated clipboard.
         std::fs::write(
@@ -239,6 +247,12 @@ impl Session {
         }
     }
 
+    fn native_clipboard_paste(&mut self) {
+        // The host reads its clipboard, not gwae or a remote child process.
+        let text = String::from_utf8(self.file("clipboard")).expect("fixture text");
+        self.native_paste(&text);
+    }
+
     fn shown(&self) -> String {
         self.screen.visible_text()
     }
@@ -297,7 +311,7 @@ impl Session {
 }
 
 #[test]
-fn drag_copies_on_release_then_option_v_pastes_selected_text() {
+fn drag_copies_on_release_then_native_paste_delivers_selected_text() {
     let clipboard = "clipboard-before-drag";
     let mut s = Session::start(clipboard);
     let label = "PLAIN_READY";
@@ -372,7 +386,7 @@ fn drag_copies_on_release_then_option_v_pastes_selected_text() {
     // A duplicate release without a live drag must not recopy a stale range.
     s.send(mouse(0, 8, 'm').as_bytes());
     // The received paste is an input-processing barrier after the releases.
-    s.send(OPT_V);
+    s.native_clipboard_paste();
     s.wait_for(
         "paste after selection delivers exactly the selected text",
         |s| s.file("received-paste") == b"PLAIN_R" && s.shown().contains("pasted 1 line"),
@@ -399,7 +413,7 @@ fn drag_copies_multiline_unicode_without_padding_or_duplicate_wide_cells() {
         "multiline Unicode copied exactly once without grid padding",
         |s| s.file("clipboard") == expected.as_bytes() && s.shown().contains("copied 2 lines"),
     );
-    s.send(OPT_V);
+    s.native_clipboard_paste();
     s.wait_for(
         "Unicode clipboard round trips through the real child PTY",
         |s| s.file("received-paste") == expected.as_bytes(),
@@ -430,7 +444,7 @@ fn empty_drag_does_not_replace_the_clipboard() {
     s.wait_for("blank selection reports nothing to copy", |s| {
         s.shown().contains("nothing to copy")
     });
-    s.send(OPT_V);
+    s.native_clipboard_paste();
     s.wait_for("blank selection leaves the old clipboard usable", |s| {
         s.file("received-paste") == b"keep-this"
     });
@@ -661,9 +675,9 @@ fn native_paste_in_directory_picker_only_updates_the_filter() {
 }
 
 #[test]
-fn option_v_pastes_the_clipboard_into_a_plain_pane() {
+fn native_paste_confirms_delivery_into_a_plain_pane() {
     let mut s = Session::start("hello-paste");
-    s.send(OPT_V);
+    s.native_clipboard_paste();
     s.wait_for(
         "plain clipboard bytes, rendered text, and confirmation",
         |s| {
@@ -676,28 +690,67 @@ fn option_v_pastes_the_clipboard_into_a_plain_pane() {
 }
 
 #[test]
-fn option_v_multiline_paste_arrives_as_one_block() {
+fn native_multiline_paste_confirms_delivery_and_warns_without_brackets() {
     // Actual newline, not the old literal backslash-n fixture. tee's exact
     // captured bytes also reject unwanted bracket markers or dropped lines.
-    let mut s = Session::start("one\ntwo");
-    s.send(OPT_V);
+    let mut s = Session::start("one\n\ntwo");
+    s.native_clipboard_paste();
     s.wait_for("both clipboard lines and multiline confirmation", |s| {
         let shown = s.shown();
-        s.file("received-paste") == b"one\ntwo"
+        s.file("received-paste") == b"one\n\ntwo"
             && shown.contains("one")
             && shown.contains("two")
-            && shown.contains("pasted 2 lines")
+            && shown.contains("pasted 3 lines")
+            && shown.contains("newlines run")
     });
+    eprintln!("observed native paste: all 3 lines received, blank line preserved, unsupported-child warning shown");
 }
 
 #[test]
-fn option_v_in_a_real_fish_pane_pastes_instead_of_opening_an_editor() {
-    fish_paste_waits_for_enter(false);
+fn option_v_is_no_longer_a_gwae_clipboard_shortcut() {
+    let mut s = Session::start("MUST_NOT_PASTE");
+    s.send(OPT_V);
+    s.send("√PASTE_DONE".as_bytes());
+    s.wait_for("unbound keys delivered to child", |s| {
+        s.file("received-paste").ends_with(b"PASTE_DONE")
+    });
+    assert_eq!(s.file("received-paste"), "\x1bv√PASTE_DONE".as_bytes());
+    assert!(
+        s.file("clipboard.reads").is_empty(),
+        "gwae must not read the clipboard"
+    );
+    eprintln!("observed Option+V removal: ESC+v and literal √ reach the child, clipboard reads=0");
+}
+
+#[test]
+fn native_paste_is_the_only_advertised_paste_shortcut() {
+    let mut s = Session::start("");
+    s.wait_for("HUD advertises native paste", |s| {
+        s.shown().contains("Cmd+V")
+    });
+    assert!(!s.shown().contains("⌥+v"), "{}", s.shown());
+    eprintln!("observed paste UI: Cmd+V advertised, Option+V absent");
+}
+
+#[test]
+fn native_paste_reaches_a_marked_agent_once_without_a_clipboard_read() {
+    let mut s = Session::start_with("MUST_NOT_PASTE", "", "BRACKET_READY");
+    s.native_paste("/path/to/image.png\n\ntext");
+    s.send(b"PASTE_DONE");
+    s.wait_for("agent receives complete paste", |s| {
+        s.file("received-paste").ends_with(b"PASTE_DONE")
+    });
+    assert_eq!(
+        s.file("received-paste"),
+        b"\x1b[200~/path/to/image.png\r\rtext\x1b[201~PASTE_DONE"
+    );
+    assert!(s.file("clipboard.reads").is_empty());
+    eprintln!("observed marked-agent routing: one native paste block, clipboard reads=0");
 }
 
 #[test]
 fn native_paste_in_a_real_fish_pane_waits_for_enter() {
-    fish_paste_waits_for_enter(true);
+    fish_paste_waits_for_enter();
 }
 
 #[test]
@@ -753,7 +806,7 @@ fn native_paste_in_a_real_macos_bash_keeps_its_unbracketed_behavior() {
     );
 }
 
-fn fish_paste_waits_for_enter(native: bool) {
+fn fish_paste_waits_for_enter() {
     let fish = [
         "/opt/homebrew/bin/fish",
         "/usr/local/bin/fish",
@@ -772,20 +825,12 @@ fn fish_paste_waits_for_enter(native: bool) {
     // sentinel proves actual execution, independently of shell/TUI repaints.
     let command = "paste_probe\n\npaste_probe";
     let mut s = Session::start_with(&format!("{command}\n"), &pane_cmd, "FISH_READY> ");
-    if native {
-        s.native_paste(&format!("{command}\n"));
-    } else {
-        s.send(OPT_V);
-    }
+    s.native_paste(&format!("{command}\n"));
     s.send(FISH_BARRIER);
     s.wait_for("fish processed the complete paste without executing", |s| {
         s.file("paste-barrier") == b"x"
     });
-    let route = if native {
-        "fish Cmd+V"
-    } else {
-        "fish Option+V"
-    };
+    let route = "fish Cmd+V";
     s.report_executions(route, "before Enter");
     assert!(
         !s.dir.join("paste-executions").exists(),

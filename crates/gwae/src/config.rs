@@ -559,8 +559,8 @@ mod tests {
         // The hints are the only keybinding docs many users ever read, so they
         // must speak the local keyboard's vocabulary: `⌥` on macOS, `Alt`
         // elsewhere, never both and never the wrong one. The two Ctrl+Shift
-        // scroll hints are the exception: they are Control chords (not `$mod`
-        // chords), so they name the platform's Control key instead.
+        // scroll hints and the host's native paste are exceptions: they name
+        // their own platform-appropriate modifier instead of `$mod`.
         let cfg = parse("");
         let m = keys::mod_key();
         let ctrl = keys::ctrl_key();
@@ -578,7 +578,7 @@ mod tests {
             if msg.starts_with(['1', 'c', 'w', '←', '↵', '⇧', 'E', 'S']) {
                 continue;
             }
-            if msg.contains(ctrl) {
+            if msg.contains(ctrl) || msg.starts_with(keys::paste_key()) {
                 continue;
             }
             assert!(msg.contains(m), "hint {msg:?} does not mention {m:?}");
@@ -625,7 +625,10 @@ mod tests {
                 "hint {msg:?} omits the modifier"
             );
             assert!(
-                msg.contains(m) || msg.contains(ctrl) || msg.contains("click"),
+                msg.contains(m)
+                    || msg.contains(ctrl)
+                    || msg.starts_with(keys::paste_key())
+                    || msg.contains("click"),
                 "hint {msg:?} names no modifier and is not a mouse hint"
             );
         }

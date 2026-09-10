@@ -6,6 +6,9 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **One default paste action.** `Cmd+V` (the terminal's native paste shortcut) now owns pane-aware multiline handling and delivery feedback. The separate gwae `⌥+v` clipboard-reading shortcut is removed, including its picker handling and special agent routing. HUD/cow hints advertise native paste only. Unbound Option+V still belongs to the child, and native agent paste is delivered once for the agent to interpret.
+
 ### Fixed
 - **Native `Cmd+V` preserves multiline paste.** gwae requests bracketed paste from the host and re-emits delimiters according to the focused child's mode, so supporting shells buffer pasted commands until Enter without needing `⌥+v`. Consecutive blank lines are no longer collapsed. Pasted text cannot trigger gwae keybindings, confirm a force quit, or escape the directory-picker filter. The mode is restored on exit and re-enabled after a failed hot reload.
 - **PTY drag-to-copy works again.** Releasing a selection copies its text to the clipboard with a confirmation. Mouse-aware children retain ordinary drags; Shift-drag selects through gwae, even if Shift is released first. Plain clicks, blank selections, and stray releases do not overwrite the clipboard. Native helpers have a bounded wait, with an explicitly unconfirmed OSC 52 fallback for remote terminals. Real PTY regressions cover selected-text paste, Unicode, pane-edge clamping, and helper failures.
