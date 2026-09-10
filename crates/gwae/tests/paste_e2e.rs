@@ -1,4 +1,4 @@
-//! End-to-end: `⌥+v` claims the clipboard chord in plain and real fish panes.
+//! End-to-end: native Cmd+V and optional `⌥+v` preserve pasted text in panes.
 //!
 //! The real executable runs under a host PTY with an isolated HOME/config and
 //! a stub `pbpaste` reading exact fixture bytes. Readiness and completion are
@@ -24,6 +24,7 @@ const HOST: Size = Size {
 };
 const TIMEOUT: Duration = Duration::from_secs(15);
 const OPT_V: &[u8] = b"\x1bv";
+const OPT_Q: &[u8] = b"\x1bQ";
 const FISH_BARRIER: &[u8] = b"\x07";
 
 // Noncanonical input makes every pasted byte reach tee immediately. Retaining
@@ -43,6 +44,12 @@ const FISH_INIT: &str = "set -g fish_greeting\n\
     function fish_right_prompt\nend\n\
     function paste_probe\n    printf 'EXECUTED\\n' >> paste-executions\nend\n\
     bind \\cg 'printf x >> paste-barrier'\n";
+
+const ZSH_INIT: &str = "PROMPT='ZSH_READY> '\nRPROMPT=''\nPROMPT_EOL_MARK=''\n\
+    bindkey -e\n\
+    paste_probe() { print -r -- EXECUTED >> paste-executions; }\n\
+    paste_barrier() { print -rn -- x >> paste-barrier; }\n\
+    zle -N paste_barrier\nbindkey '^G' paste_barrier\n";
 
 struct Session {
     rx: Receiver<Vec<u8>>,
@@ -90,6 +97,22 @@ impl Session {
         std::fs::write(dir.join("clipboard"), clipboard_text).expect("write clipboard bytes");
         std::fs::write(dir.join("plain-helper.sh"), PLAIN_HELPER).expect("write plain helper");
         std::fs::write(
+            dir.join("bracket-helper.sh"),
+            "#!/bin/sh\nstty raw -echo\n\
+             printf '\x1b[?2004hBRACKET_READY\r\n'\n\
+             exec /usr/bin/tee received-paste\n",
+        )
+        .expect("write bracket-aware helper");
+        std::fs::write(
+            dir.join("mode-helper.sh"),
+            "#!/bin/sh\nstty raw -echo\n\
+             printf '\x1b[?2004hMODE_READY\r\n'\n\
+             dd bs=1 count=17 of=first-paste 2>/dev/null\n\
+             printf '\x1b[?2004lMODE_OFF\r\n'\n\
+             exec /usr/bin/tee received-paste\n",
+        )
+        .expect("write mode-changing helper");
+        std::fs::write(
             dir.join("selection-helper.sh"),
             "#!/bin/sh\nstty -echo -icanon min 1 time 0\n\
              printf 'ROW_ONE 日本語 é\r\nROW_TWO 끝\r\n'\n\
@@ -104,6 +127,7 @@ impl Session {
         )
         .expect("write mouse-reporting helper");
         std::fs::write(dir.join("fish-init.fish"), FISH_INIT).expect("write fish init");
+        std::fs::write(dir.join(".zshrc"), ZSH_INIT).expect("write isolated zsh init");
 
         // Read a data file rather than interpolating clipboard text into shell
         // syntax. Quotes, actual newlines, and literal backslashes stay exact.
@@ -157,6 +181,7 @@ impl Session {
         cmd.env("GWAE_NO_INSTALL", "1");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
         cmd.env("GWAE_NO_KEEP_AWAKE", "1");
+        cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
         cmd.env("GWAE_TEST_CLIPBOARD", dir.join("clipboard"));
         cmd.env("PATH", format!("{}:/usr/bin:/bin", bin.display()));
         for (key, value) in extra_env {
@@ -194,6 +219,17 @@ impl Session {
     fn send(&mut self, bytes: &[u8]) {
         self.writer.write_all(bytes).expect("write keys");
         self.writer.flush().expect("flush");
+    }
+
+    // Emulate the host terminal's Cmd+V, not the local clipboard shortcut.
+    // A real host only emits delimiters when gwae requests DECSET 2004.
+    fn native_paste(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\r").replace('\n', "\r");
+        if self.screen.wants_bracketed_paste() {
+            self.send(format!("\x1b[200~{text}\x1b[201~").as_bytes());
+        } else {
+            self.send(text.as_bytes());
+        }
     }
 
     fn shown(&self) -> String {
@@ -488,6 +524,126 @@ impl Drop for Session {
 }
 
 #[test]
+fn native_paste_mode_is_enabled_and_restored_on_exit() {
+    let mut s = Session::start("");
+    assert!(s.screen.wants_bracketed_paste(), "host must frame Cmd+V");
+    s.send(OPT_Q);
+    s.wait_for("quit confirmation", |s| {
+        s.shown().contains("force quit gwae?")
+    });
+    s.send(b"\r");
+    s.wait_for("bracketed paste disabled on exit", |s| {
+        s.raw.windows(8).any(|w| w == b"\x1b[?2004l")
+    });
+    assert!(!s.screen.wants_bracketed_paste());
+}
+
+#[test]
+fn native_paste_preserves_blank_lines_and_unicode_in_plain_panes() {
+    // Delimiters must not leak into a program that did not enable them.
+    let mut s = Session::start("not the host clipboard");
+    s.native_paste("one\n\n日本語 é\r\n끝\n\n");
+    s.send(b"PASTE_DONE");
+    s.wait_for("complete native paste", |s| {
+        s.file("received-paste").ends_with(b"PASTE_DONE")
+    });
+    assert_eq!(
+        s.file("received-paste"),
+        "one\n\n日本語 é\n끝\n\nPASTE_DONE".as_bytes()
+    );
+}
+
+#[test]
+fn native_paste_reframes_a_large_block_for_a_bracket_aware_child() {
+    let mut s = Session::start_with(
+        "wrong clipboard",
+        "/bin/sh bracket-helper.sh",
+        "BRACKET_READY",
+    );
+    // Larger than a PTY write chunk, with blank lines and literal Option-key
+    // glyphs. Pasted √ must be text, never dispatched as gwae's paste shortcut.
+    let text = format!("{}\n\n日本語 é √\r\n끝\n\n", "long row\n".repeat(600));
+    s.native_paste(&text);
+    s.send(b"PASTE_DONE");
+    s.wait_for("complete bracketed native paste", |s| {
+        s.file("received-paste").ends_with(b"PASTE_DONE")
+    });
+    let expected = format!(
+        "\x1b[200~{}\x1b[201~PASTE_DONE",
+        text.replace("\r\n", "\r").replace('\n', "\r")
+    );
+    assert_eq!(s.file("received-paste"), expected.as_bytes());
+}
+
+#[test]
+fn native_paste_lf_input_preserves_consecutive_blank_lines() {
+    let mut s = Session::start_with("", "/bin/sh bracket-helper.sh", "BRACKET_READY");
+    // Some hosts retain LF rather than converting it to CR. Exercise both.
+    s.send(b"\x1b[200~one\n\ntwo\r\n\n\x1b[201~PASTE_DONE");
+    s.wait_for("LF native paste", |s| {
+        s.file("received-paste").ends_with(b"PASTE_DONE")
+    });
+    assert_eq!(
+        s.file("received-paste"),
+        b"\x1b[200~one\r\rtwo\r\r\x1b[201~PASTE_DONE"
+    );
+}
+
+#[test]
+fn native_paste_tracks_child_mode_without_disabling_host_framing() {
+    let mut s = Session::start_with("", "/bin/sh mode-helper.sh", "MODE_READY");
+    s.native_paste("first");
+    s.wait_for("child disabled its paste mode", |s| {
+        s.shown().contains("MODE_OFF")
+    });
+    assert_eq!(s.file("first-paste"), b"\x1b[200~first\x1b[201~");
+    assert!(
+        s.screen.wants_bracketed_paste(),
+        "host framing stays enabled"
+    );
+    s.native_paste("second\n\nlast");
+    s.send(b"PASTE_DONE");
+    s.wait_for("unbracketed delivery after mode change", |s| {
+        s.file("received-paste").ends_with(b"PASTE_DONE")
+    });
+    assert_eq!(s.file("received-paste"), b"second\r\rlastPASTE_DONE");
+}
+
+#[test]
+fn native_paste_cannot_confirm_quit_or_leak_to_the_pane() {
+    let mut s = Session::start("");
+    s.send(OPT_Q);
+    s.wait_for("quit confirmation", |s| {
+        s.shown().contains("force quit gwae?")
+    });
+    s.native_paste("\nshould-not-reach-child\n");
+    s.send(b"PASTE_DONE");
+    s.wait_for("paste cancels quit and normal input still works", |s| {
+        s.file("received-paste").ends_with(b"PASTE_DONE")
+    });
+    assert_eq!(s.file("received-paste"), b"PASTE_DONE");
+}
+
+#[test]
+fn native_paste_in_directory_picker_only_updates_the_filter() {
+    let mut s = Session::start("");
+    s.send(b"\x1bd");
+    s.wait_for("directory picker", |s| s.shown().contains("spawn dir"));
+    s.native_paste("zznativepath\nnot-a-second-path\n");
+    s.wait_for("pasted directory filter", |s| {
+        s.shown().contains("zznativepath")
+    });
+    assert!(!s.shown().contains("not-a-second-path"));
+    s.send(b"\x1b");
+    s.wait_for("picker closed", |s| !s.shown().contains("zznativepath"));
+    s.send(b"PASTE_DONE");
+    s.wait_for("normal input after closing picker", |s| {
+        s.file("received-paste").ends_with(b"PASTE_DONE")
+    });
+    assert_eq!(s.file("received-paste"), b"PASTE_DONE");
+}
+
+#[test]
 fn option_v_pastes_the_clipboard_into_a_plain_pane() {
     let mut s = Session::start("hello-paste");
     s.send(OPT_V);
@@ -519,6 +675,36 @@ fn option_v_multiline_paste_arrives_as_one_block() {
 
 #[test]
 fn option_v_in_a_real_fish_pane_pastes_instead_of_opening_an_editor() {
+    fish_paste_waits_for_enter(false);
+}
+
+#[test]
+fn native_paste_in_a_real_fish_pane_waits_for_enter() {
+    fish_paste_waits_for_enter(true);
+}
+
+#[test]
+fn native_paste_in_a_real_zsh_pane_waits_for_enter() {
+    let mut s = Session::start_with("not used", "/bin/zsh -d -i", "ZSH_READY> ");
+    s.native_paste("paste_probe\n\npaste_probe\n");
+    s.send(FISH_BARRIER);
+    s.wait_for("zsh has processed the entire paste", |s| {
+        s.file("paste-barrier") == b"x"
+    });
+    assert_eq!(
+        s.file("paste-executions"),
+        b"",
+        "native paste must not execute before Enter"
+    );
+    s.send(b"\r");
+    s.send(FISH_BARRIER);
+    s.wait_for("zsh has processed Enter", |s| {
+        s.file("paste-barrier") == b"xx"
+    });
+    assert_eq!(s.file("paste-executions"), b"EXECUTED\nEXECUTED\n");
+}
+
+fn fish_paste_waits_for_enter(native: bool) {
     let fish = [
         "/opt/homebrew/bin/fish",
         "/usr/local/bin/fish",
@@ -535,12 +721,13 @@ fn option_v_in_a_real_fish_pane_pastes_instead_of_opening_an_editor() {
     );
     // A trailing newline would execute this if pasted without brackets. The
     // sentinel proves actual execution, independently of shell/TUI repaints.
-    let command = "paste_probe";
+    let command = "paste_probe\n\npaste_probe";
     let mut s = Session::start_with(&format!("{command}\n"), &pane_cmd, "FISH_READY> ");
-    s.send(OPT_V);
-    s.wait_for("fish buffers the clipboard on its command line", |s| {
-        s.shown().contains(&format!("FISH_READY> {command}"))
-    });
+    if native {
+        s.native_paste(&format!("{command}\n"));
+    } else {
+        s.send(OPT_V);
+    }
     s.send(FISH_BARRIER);
     s.wait_for("fish processed the complete paste without executing", |s| {
         s.file("paste-barrier") == b"x"
@@ -561,8 +748,8 @@ fn option_v_in_a_real_fish_pane_pastes_instead_of_opening_an_editor() {
     );
     assert_eq!(
         s.file("paste-executions"),
-        b"EXECUTED\n",
-        "Enter must execute the pasted command exactly once\n{}",
+        b"EXECUTED\nEXECUTED\n",
+        "Enter must execute each pasted command exactly once\n{}",
         s.shown()
     );
 }

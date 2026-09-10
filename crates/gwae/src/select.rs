@@ -290,11 +290,14 @@ pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
 /// Normalize newlines to `\r` and strip embedded paste-end markers.
 fn sanitize_paste(text: &str) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::with_capacity(text.len());
+    let mut previous_was_cr = false;
     for ch in text.chars() {
         match ch {
             '\n' => {
-                // \r\n already pushed the \r; don't double it.
-                if out.last() != Some(&b'\r') {
+                // Only an original CR forms a CRLF pair. Looking at `out`
+                // instead would mistake a normalized LF for CR and collapse
+                // consecutive blank lines (\n\n -> \r instead of \r\r).
+                if !previous_was_cr {
                     out.push(b'\r');
                 }
             }
@@ -304,6 +307,7 @@ fn sanitize_paste(text: &str) -> Vec<u8> {
                 out.extend_from_slice(ch.encode_utf8(&mut b).as_bytes());
             }
         }
+        previous_was_cr = ch == '\r';
     }
     strip_marker(&mut out, PASTE_END);
     strip_marker(&mut out, PASTE_START);
@@ -559,6 +563,14 @@ mod tests {
             paste_bytes("one\ntwo\nthree", true),
             b"\x1b[200~one\rtwo\rthree\x1b[201~"
         );
+    }
+
+    #[test]
+    fn blank_lines_survive_paste_normalization() {
+        for text in ["\n\na\n\nb\n\n", "\r\r\na\r\n\nb\r\r\n"] {
+            assert_eq!(paste_bytes(text, false), b"\r\ra\r\rb\r\r");
+            assert_eq!(paste_bytes(text, true), b"\x1b[200~\r\ra\r\rb\r\r\x1b[201~");
+        }
     }
 
     #[test]

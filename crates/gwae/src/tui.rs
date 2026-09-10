@@ -8,9 +8,10 @@ use std::time::{Duration, Instant};
 use crate::theme::Palette;
 use crossterm::cursor;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyEventState, KeyModifiers, KeyboardEnhancementFlags, ModifierKeyCode, MouseButton,
-    MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, KeyboardEnhancementFlags,
+    ModifierKeyCode, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -937,7 +938,7 @@ fn restore_terminal(stdout: &mut std::io::Stdout, kitty_keyboard: bool) {
     }
     let _ = stdout.write_all(b"\x1b[?7h");
     let _ = stdout.flush();
-    let _ = execute!(stdout, DisableMouseCapture);
+    let _ = execute!(stdout, DisableBracketedPaste, DisableMouseCapture);
     let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
     let _ = disable_raw_mode();
 }
@@ -952,7 +953,7 @@ fn re_enter_terminal(stdout: &mut std::io::Stdout) -> Result<(), String> {
     execute!(stdout, EnterAlternateScreen, cursor::Hide).map_err(|e| format!("alt screen: {e}"))?;
     let _ = stdout.write_all(b"\x1b[?7l");
     let _ = stdout.flush();
-    let _ = execute!(stdout, EnableMouseCapture);
+    let _ = execute!(stdout, EnableBracketedPaste, EnableMouseCapture);
     Ok(())
 }
 
@@ -4265,8 +4266,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // Capture the mouse so clicks and drags land here: focus follows a click,
     // a drag selects text, and a child that asked for mouse reporting gets the
     // event forwarded verbatim. gwae itself does nothing with the wheel.
-    if let Err(e) = execute!(stdout, EnableMouseCapture) {
-        tracing::warn!("enable mouse: {e}");
+    // The host must frame native Cmd+V/Ctrl+Shift+V as a paste event even
+    // when the focused child has not enabled the mode. Child mode changes
+    // live in its emulator, not the host. Without this request, newlines
+    // become Enter keys and pasted Option glyphs can trigger gwae commands.
+    if let Err(e) = execute!(stdout, EnableBracketedPaste, EnableMouseCapture) {
+        tracing::warn!("enable paste/mouse: {e}");
     }
     // Whether the *host* terminal understands the Kitty graphics protocol.
     // Gates APC passthrough: forwarding graphics sequences to a terminal that
@@ -4277,6 +4282,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     }
     let (cols, mut rows) = term_size().map_err(|e| {
         eprintln!("size: {e}");
+        restore_terminal(&mut stdout, kitty_keyboard);
         1
     })?;
     let mut cols = cols.max(1);
@@ -4398,10 +4404,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
             Err(e) => {
                 eprintln!("spawn: {e}");
-                let _ = stdout.write_all(b"\x1b[?7h");
-                let _ = execute!(stdout, DisableMouseCapture);
-                let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
-                let _ = disable_raw_mode();
+                restore_terminal(&mut stdout, kitty_keyboard);
                 return Err(1);
             }
         }
@@ -4785,6 +4788,56 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     break 'drain;
                 };
                 match ev {
+                    Ok(Event::Paste(text)) => {
+                        // Native paste is data, never a sequence of keybinds.
+                        // In particular, a pasted newline cannot confirm quit
+                        // or accept a picker, and √ cannot invoke Cmd::Paste.
+                        selection.take_if(|s| !s.dragging);
+                        hud_active = false;
+                        dirty = true;
+                        if quit_confirm {
+                            quit_confirm = false;
+                            continue;
+                        }
+                        if let Some(pick) = dir_pick.as_mut() {
+                            let query = picker_paste_query(&text);
+                            if !query.is_empty() {
+                                pick.query.push_str(&query);
+                                pick.sel = 0;
+                            }
+                            continue;
+                        }
+                        if theme_pick.is_some() {
+                            continue;
+                        }
+                        // Like typed input, finish any pending column jump
+                        // before selecting the paste destination.
+                        if let Some(n) = jump.take() {
+                            let v = Viewport::new(cols);
+                            let f = FollowScroll {
+                                margin: cfg.scroll_margin,
+                                center: cfg.center_focus,
+                            };
+                            let _ = layout.apply(Action::JumpToColumn(n), v, f);
+                        }
+                        if let Some(p) = focused_pane(&layout).and_then(|pid| panes.get_mut(&pid)) {
+                            // Re-frame for this child's current DECSET 2004
+                            // state. Agent panes receive the same text event,
+                            // not a clipboard chord (which could paste twice).
+                            let bytes = select::paste_bytes(&text, p.grid.wants_bracketed_paste());
+                            if !bytes.is_empty() {
+                                p.grid.scroll_to_bottom();
+                                for chunk in bytes.chunks(select::PASTE_CHUNK) {
+                                    if let Err(e) =
+                                        p.writer.write_all(chunk).and_then(|()| p.writer.flush())
+                                    {
+                                        tracing::warn!("native paste: {e}");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Ok(Event::Key(ke))
                         if matches!(ke.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                     {
@@ -4869,7 +4922,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             // pasted `~/` path must land here, not in the pane
                             // underneath). Single-line: directory paths never
                             // span lines, so keep the first line and strip
-                            // newlines. Like the old `Event::Paste` arm.
+                            // newlines, just like the native `Event::Paste` arm.
                             let mut pasted: Option<String> = None;
                             match ke.code {
                                 KeyCode::Up => pick.step(-1),
@@ -5819,12 +5872,13 @@ fn paste_route(layout: &Layout, agent_panes: &HashSet<PaneId>) -> PasteRoute {
 /// single-line, so keep the first line and strip newlines. Empty in, empty
 /// out: the caller decides whether to touch the filter.
 fn picker_paste_query(text: &str) -> String {
-    let mut t = text.trim().to_string();
-    if let Some(first) = t.lines().next() {
-        t = first.to_string();
-    }
-    t.retain(|c| c != '\r' && c != '\n');
-    t
+    // Native terminals often send CR-only lines, whereas clipboard helpers
+    // usually return LF or CRLF. str::lines() does not split a lone CR.
+    text.trim()
+        .split(['\r', '\n'])
+        .next()
+        .unwrap_or("")
+        .to_string()
 }
 
 /// The toast shown after an explicit `⌥+v` paste. A one-line paste still
@@ -8678,7 +8732,8 @@ mod tests {
         // carriage returns are trimmed to the first line.
         assert_eq!(picker_paste_query("  ~/git/gwae  "), "~/git/gwae");
         assert_eq!(picker_paste_query("~/a\n~/b\n"), "~/a");
-        assert_eq!(picker_paste_query("a\rb\n",), "ab");
+        assert_eq!(picker_paste_query("a\rb\n"), "a");
+        assert_eq!(picker_paste_query("~/a\r\n~/b\r\n"), "~/a");
         assert!(picker_paste_query("  \n  ").is_empty());
     }
 
