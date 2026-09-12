@@ -1,9 +1,15 @@
 # GWAE / tdf validation ledger
 
+This document records the **historical sizing-only repair and its negative
+graphics baseline**. The subsequent implementation and new real-application
+observations are in [the graphics validation ledger](GWAE-GRAPHICS-VALIDATION.md).
+The halfblock/hidden-zoom results below describe that earlier binary, not the
+new pane-local graphics path. The immediate-resize limitation remains separate.
+
 Validated on macOS ARM64 on 2026-09-12 with Ghostty, Yazi 26.8.15 and tdf
-0.5.0. The installed repair is commit `ccda77a`, release executable SHA-256
+0.5.0. The then-installed repair was commit `ccda77a`, release executable SHA-256
 `cde69bc9e6f2d6cb833e02585ea4d8e6a1575743b29d09939abb6ffd783d7e5f`.
-Subsequent changes add tests and documentation only.
+Its immediate follow-up added tests and documentation only.
 
 ## What actually improved
 

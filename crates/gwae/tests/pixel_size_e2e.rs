@@ -154,6 +154,32 @@ fn pixel_size_helper() {
                     "coalesced" => (b"\x1b[14t\x1b[16t\x1b[18t\x1b[14t", 4),
                     "status" => (b"\x1b[3;7H\x1b[c\x1b[5n\x1b[6n", 3),
                     "cursor" => (b"\x1b[6n", 1),
+                    "graphics-probes" => (
+                        b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b_Ga=q,i=32,t=s,f=24,s=1,v=1;L2d3YWUtcHJvYmU=\x1b\\\x1b_Ga=q,i=33,t=f,f=24,s=1,v=1;L2d3YWUtcHJvYmU=\x1b\\\x1b[16t",
+                        if std::env::var("GWAE_KITTY_GRAPHICS").as_deref() == Ok("1") { 7 } else { 1 },
+                    ),
+                    "graphics-red" => (
+                        b"\x1b[3;4H\x1b_Ga=T,i=1,f=24,s=1,v=1,c=1,r=1,C=1;/wAA\x1b\\\x1b[14t",
+                        3,
+                    ),
+                    "graphics-green" => (
+                        b"\x1b[3;4H\x1b_Ga=T,i=1,f=24,s=1,v=1,c=1,r=1,C=1;AP8A\x1b\\\x1b[14t",
+                        3,
+                    ),
+                    "graphics-delete" => (b"\x1b_Ga=d,d=A;\x1b\\\x1b[14t", 1),
+                    "graphics-legacy-external" => (
+                        concat!(
+                            "\x1b_Ga=T,U=1,i=34,p=1,t=s,f=24,s=1,v=1,c=1,r=1;L2d3YWUtcHJvYmU=\x1b\\",
+                            "\x1b[38;2;0;0;34m\u{10eeee}\u{305}\u{305}",
+                            "\x1b_Ga=T,U=1,i=35,p=1,t=f,f=24,s=1,v=1,c=1,r=1;L2d3YWUtcHJvYmU=\x1b\\",
+                            "\x1b[38;2;0;0;35m\u{10eeee}\u{305}\u{305}\x1b[0m\x1b[16t"
+                        ).as_bytes(),
+                        5,
+                    ),
+                    "graphics-redisplay" => (
+                        b"\x1b[3;4H\x1b_Ga=p,i=1,c=1,r=1,C=1;\x1b\\\x1b[14t",
+                        3,
+                    ),
                     _ => panic!("unknown helper command {command}"),
                 };
                 let mut stdout = std::io::stdout().lock();
@@ -201,6 +227,9 @@ struct Session {
     sequence: usize,
     panes: usize,
     reload_binary: Option<(PathBuf, PathBuf)>,
+    /// Graphics acceptance retains every host byte, including startup. Pixel
+    /// tests keep their existing bounded diagnostic tail and behavior.
+    capture_all: bool,
 }
 
 /// Replace only a test-owned executable, never the selected installed/build
@@ -228,6 +257,14 @@ impl Session {
     }
 
     fn start_with_reload(host: PtySize, panes: usize, reload: bool) -> Self {
+        Self::start_options(host, panes, reload, None)
+    }
+
+    fn start_graphics(host: PtySize, panes: usize, enabled: bool) -> Self {
+        Self::start_options(host, panes, false, Some(enabled))
+    }
+
+    fn start_options(host: PtySize, panes: usize, reload: bool, graphics: Option<bool>) -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::var_os("JCODE_SCRATCH_DIR")
             .map(PathBuf::from)
@@ -288,7 +325,10 @@ impl Session {
         cmd.env("LC_ALL", "C");
         cmd.env("GWAE_LOG", "off");
         cmd.env("GWAE_KITTY_KEYBOARD", "0");
-        cmd.env("GWAE_KITTY_GRAPHICS", "0");
+        cmd.env(
+            "GWAE_KITTY_GRAPHICS",
+            if graphics == Some(true) { "1" } else { "0" },
+        );
         cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
         cmd.env("GWAE_NO_INSTALL", "1");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
@@ -331,6 +371,7 @@ impl Session {
             sequence: 0,
             panes,
             reload_binary,
+            capture_all: graphics.is_some(),
         };
         for pane in 0..panes {
             let start = session.wait_line(pane, "START ");
@@ -351,9 +392,13 @@ impl Session {
     fn pump(&mut self) {
         if let Ok(bytes) = self.rx.recv_timeout(Duration::from_millis(20)) {
             self.output.extend(bytes);
-            if self.output.len() > 65536 {
+            if !self.capture_all && self.output.len() > 65536 {
                 self.output.drain(..self.output.len() - 65536);
             }
+            assert!(
+                self.output.len() < 8 * 1024 * 1024,
+                "unexpected unbounded host output"
+            );
         }
     }
 
@@ -625,4 +670,356 @@ fn hot_reload_inherits_live_pty_and_preserves_pixel_query_parity() {
         session.wait_size(0, size);
         session.query(0, "coalesced", size);
     }
+}
+
+// The graphics tests below use only bytes written by the real child and real
+// gwae executable. The outer PTY deliberately does not answer graphics packets.
+// Quiet host uploads therefore cannot hide accidental response-routing loops.
+#[derive(Debug, Clone)]
+struct HostGraphicsApc {
+    control: String,
+    payload: Vec<u8>,
+}
+
+impl HostGraphicsApc {
+    fn field(&self, name: &str) -> Option<&str> {
+        self.control.split(',').find_map(|field| {
+            let (key, value) = field.split_once('=')?;
+            (key == name).then_some(value)
+        })
+    }
+
+    fn id(&self) -> u32 {
+        self.field("i").expect("owned host id").parse().unwrap()
+    }
+}
+
+fn host_graphics_apcs(bytes: &[u8]) -> Vec<HostGraphicsApc> {
+    let mut result = Vec::new();
+    let mut rest = bytes;
+    while let Some(start) = rest.windows(3).position(|w| w == b"\x1b_G") {
+        rest = &rest[start + 3..];
+        let Some(end) = rest.windows(2).position(|w| w == b"\x1b\\") else {
+            break; // The PTY reader may have only received a packet prefix.
+        };
+        let packet = &rest[..end];
+        let split = packet
+            .iter()
+            .position(|&b| b == b';')
+            .unwrap_or(packet.len());
+        result.push(HostGraphicsApc {
+            control: String::from_utf8(packet[..split].to_vec()).expect("ASCII host controls"),
+            payload: packet.get(split + 1..).unwrap_or_default().to_vec(),
+        });
+        rest = &rest[end + 2..];
+    }
+    result
+}
+
+fn decode_host_base64(input: &[u8]) -> Vec<u8> {
+    fn digit(b: u8) -> u32 {
+        match b {
+            b'A'..=b'Z' => (b - b'A') as u32,
+            b'a'..=b'z' => (b - b'a' + 26) as u32,
+            b'0'..=b'9' => (b - b'0' + 52) as u32,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => 0,
+            _ => panic!("non-base64 host payload byte {b}"),
+        }
+    }
+    assert_eq!(input.len() % 4, 0);
+    let mut out = Vec::new();
+    for chunk in input.chunks_exact(4) {
+        let n = (digit(chunk[0]) << 18)
+            | (digit(chunk[1]) << 12)
+            | (digit(chunk[2]) << 6)
+            | digit(chunk[3]);
+        out.push((n >> 16) as u8);
+        if chunk[2] != b'=' {
+            out.push((n >> 8) as u8);
+        }
+        if chunk[3] != b'=' {
+            out.push(n as u8);
+        }
+    }
+    out
+}
+
+fn assert_canonical_host_graphics(apcs: &[HostGraphicsApc]) {
+    for apc in apcs {
+        let id = apc.id();
+        assert!(
+            id >= 0x4700_0001,
+            "client image/probe id escaped to host: {apc:?}"
+        );
+        assert_eq!(
+            apc.field("q"),
+            Some("2"),
+            "host responses must be suppressed"
+        );
+        match apc.field("a") {
+            Some("T") => {
+                assert_eq!(
+                    apc.control,
+                    format!("a=T,U=1,p=1,i={id},f=32,s=8,v=16,c=1,r=1,q=2,m=0"),
+                    "only canonical owned virtual uploads may reach the host"
+                );
+                assert_eq!(decode_host_base64(&apc.payload).len(), 8 * 16 * 4);
+            }
+            Some("d") => {
+                assert_eq!(apc.control, format!("a=d,d=I,i={id},q=2"));
+                assert!(apc.payload.is_empty());
+            }
+            _ => panic!("child probe/query or noncanonical command reached host: {apc:?}"),
+        }
+    }
+}
+
+impl Session {
+    fn collect_host_for(&mut self, duration: Duration) {
+        let deadline = Instant::now() + duration;
+        while Instant::now() < deadline {
+            self.pump();
+        }
+    }
+
+    fn assert_graphics_reply(
+        &mut self,
+        pane: usize,
+        sequence: usize,
+        mode: &str,
+        size: PtySize,
+        expected: &[u8],
+    ) {
+        let line = self.wait_line(pane, &format!("QUERY {sequence} "));
+        assert_eq!(
+            line,
+            format!(
+                "QUERY {sequence} {mode} {} {}",
+                dimensions(size),
+                hex(expected)
+            ),
+            "pane {pane}: actual child bytes must have no missing, duplicate, or sibling replies"
+        );
+        eprintln!(
+            "graphics child pane {pane}: {line}; actual reply {:?}",
+            String::from_utf8_lossy(expected)
+        );
+    }
+
+    fn graphics_query(&mut self, pane: usize, mode: &str, size: PtySize, expected: &[u8]) {
+        let sequence = self.request(pane, mode);
+        self.assert_graphics_reply(pane, sequence, mode, size, expected);
+    }
+
+    fn wait_host_graphics(
+        &mut self,
+        description: &str,
+        predicate: impl Fn(&[HostGraphicsApc]) -> bool,
+    ) -> Vec<HostGraphicsApc> {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let apcs = host_graphics_apcs(&self.output);
+            if predicate(&apcs) {
+                return apcs;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no {description}; host APCs {apcs:?}"
+            );
+            self.pump();
+        }
+    }
+
+    fn assert_no_host_probe_or_path(&self) {
+        for forbidden in [b"a=q".as_slice(), b"L2d3YWUtcHJvYmU=", b"/gwae-probe"] {
+            assert!(
+                !self.output.windows(forbidden.len()).any(|w| w == forbidden),
+                "child query/path escaped to host: {:?}",
+                String::from_utf8_lossy(forbidden)
+            );
+        }
+    }
+
+    fn visible_host_image_colors(&self) -> Vec<gwae_term::CColor> {
+        use gwae_term::TermGrid;
+        let mut host = gwae_term::Vt100Grid::new(gwae_term::Size {
+            cols: HOST.cols,
+            rows: HOST.rows,
+        });
+        host.feed(&self.output);
+        let mut colors = Vec::new();
+        for y in 0..HOST.rows {
+            for x in 0..HOST.cols {
+                let cell = host.cell(x, y);
+                if cell.ch == '\u{10eeee}' {
+                    eprintln!(
+                        "actual host placeholder ({x},{y}) color {:?}",
+                        cell.style.fg
+                    );
+                    colors.push(cell.style.fg);
+                }
+            }
+        }
+        colors
+    }
+}
+
+fn image_color(id: u32) -> gwae_term::CColor {
+    gwae_term::CColor::Rgb((id >> 16) as u8, (id >> 8) as u8, id as u8)
+}
+
+fn solid_upload_id(apcs: &[HostGraphicsApc], rgba: [u8; 4]) -> u32 {
+    let expected = rgba.repeat(8 * 16);
+    let matches: Vec<_> = apcs
+        .iter()
+        .filter(|apc| apc.field("a") == Some("T") && decode_host_base64(&apc.payload) == expected)
+        .collect();
+    assert_eq!(matches.len(), 1, "exactly one raster for {rgba:?}");
+    let apc = matches[0];
+    eprintln!(
+        "actual host APC {:?}; base64 {} bytes, decoded {} RGBA pixels all {rgba:?}; prefix {:?}",
+        apc.control,
+        apc.payload.len(),
+        8 * 16,
+        String::from_utf8_lossy(&apc.payload[..apc.payload.len().min(32)])
+    );
+    apc.id()
+}
+
+#[test]
+fn graphics_enabled_real_child_probe_errors_and_quiet_canonical_upload() {
+    let mut session = Session::start_graphics(HOST, 1, true);
+    let size = inner(HOST, 4);
+    session.graphics_query(
+        0, "graphics-probes", size,
+        b"\x1b_Gi=31;OK\x1b\\\x1b_Gi=32;ENOTSUP:unsupported graphics feature\x1b\\\x1b_Gi=33;ENOTSUP:unsupported graphics feature\x1b\\\x1b[6;16;8t",
+    );
+    session.collect_host_for(Duration::from_millis(200));
+    assert!(
+        host_graphics_apcs(&session.output).is_empty(),
+        "probes never upload or forward to host"
+    );
+    let expected = format!(
+        "\x1b_Gi=1;OK\x1b\\\x1b[4;{};{}t",
+        size.pixel_height, size.pixel_width
+    );
+    session.graphics_query(0, "graphics-red", size, expected.as_bytes());
+    session.wait_host_graphics("red canonical upload", |apcs| {
+        apcs.iter().any(|a| a.field("a") == Some("T"))
+    });
+    session.collect_host_for(Duration::from_millis(200));
+    let apcs = host_graphics_apcs(&session.output);
+    assert_canonical_host_graphics(&apcs);
+    let red = solid_upload_id(&apcs, [255, 0, 0, 255]);
+    assert!(session
+        .visible_host_image_colors()
+        .contains(&image_color(red)));
+    session.assert_no_host_probe_or_path();
+}
+
+#[test]
+fn graphics_disabled_real_child_probe_has_no_false_ok_or_host_forwarding() {
+    let mut session = Session::start_graphics(HOST, 1, false);
+    session.graphics_query(0, "graphics-probes", inner(HOST, 4), b"\x1b[6;16;8t");
+    session.collect_host_for(Duration::from_millis(200));
+    assert!(host_graphics_apcs(&session.output).is_empty());
+    session.assert_no_host_probe_or_path();
+}
+
+#[test]
+fn graphics_legacy_external_media_cannot_escape_via_visible_placeholders() {
+    let mut session = Session::start_graphics(HOST, 1, true);
+    session.graphics_query(
+        0,
+        "graphics-legacy-external",
+        inner(HOST, 4),
+        b"\x1b_Gi=34,p=1;ENOTSUP:unsupported graphics feature\x1b\\\x1b_Gi=35,p=1;ENOTSUP:unsupported graphics feature\x1b\\\x1b[6;16;8t",
+    );
+    session.collect_host_for(Duration::from_millis(200));
+    assert!(
+        host_graphics_apcs(&session.output).is_empty(),
+        "even visible U=1 placeholders must never forward external-media commands"
+    );
+    assert!(session.visible_host_image_colors().is_empty());
+    session.assert_no_host_probe_or_path();
+}
+
+#[test]
+fn graphics_two_real_panes_own_same_client_id_and_survive_sibling_deletion() {
+    let mut session = Session::start_graphics(HOST, 2, true);
+    session.keys(b"\x1br");
+    let left_size = inner(HOST, 3);
+    let right_size = inner(HOST, 4);
+    session.wait_size(0, left_size);
+    assert_ne!(left_size.cols, right_size.cols);
+    // Concurrent child requests both use i=1. Different geometry replies make
+    // cross-routing or replying only to the focused pane immediately visible.
+    let left = session.request(0, "graphics-red");
+    let right = session.request(1, "graphics-green");
+    let left_reply = format!(
+        "\x1b_Gi=1;OK\x1b\\\x1b[4;{};{}t",
+        left_size.pixel_height, left_size.pixel_width
+    );
+    let right_reply = format!(
+        "\x1b_Gi=1;OK\x1b\\\x1b[4;{};{}t",
+        right_size.pixel_height, right_size.pixel_width
+    );
+    session.assert_graphics_reply(0, left, "graphics-red", left_size, left_reply.as_bytes());
+    session.assert_graphics_reply(
+        1,
+        right,
+        "graphics-green",
+        right_size,
+        right_reply.as_bytes(),
+    );
+    session.wait_host_graphics("two independently owned uploads", |apcs| {
+        apcs.iter().filter(|a| a.field("a") == Some("T")).count() >= 2
+    });
+    session.collect_host_for(Duration::from_millis(200));
+    let before = host_graphics_apcs(&session.output);
+    assert_canonical_host_graphics(&before);
+    let red = solid_upload_id(&before, [255, 0, 0, 255]);
+    let green = solid_upload_id(&before, [0, 255, 0, 255]);
+    assert_ne!(
+        red, green,
+        "two client i=1 images must have different owned host ids"
+    );
+    let colors = session.visible_host_image_colors();
+    assert!(colors.contains(&image_color(red)));
+    assert!(colors.contains(&image_color(green)));
+
+    let delete_reply = format!(
+        "\x1b[4;{};{}t",
+        left_size.pixel_height, left_size.pixel_width
+    );
+    session.graphics_query(0, "graphics-delete", left_size, delete_reply.as_bytes());
+    session.wait_host_graphics("scoped deletion of only the red host id", |apcs| {
+        apcs.iter()
+            .any(|a| a.field("a") == Some("d") && a.id() == red)
+    });
+    // The sibling source must still be usable, not merely a stale host texture.
+    session.graphics_query(1, "graphics-redisplay", right_size, right_reply.as_bytes());
+    session.collect_host_for(Duration::from_millis(250));
+    let after = host_graphics_apcs(&session.output);
+    assert_canonical_host_graphics(&after);
+    let deleted: Vec<_> = after
+        .iter()
+        .filter(|a| a.field("a") == Some("d"))
+        .map(|a| {
+            eprintln!("actual host deletion {:?}", a.control);
+            a.id()
+        })
+        .collect();
+    assert!(deleted.contains(&red));
+    assert!(
+        !deleted.contains(&green),
+        "sibling host image must remain owned and visible"
+    );
+    assert_eq!(solid_upload_id(&after, [0, 255, 0, 255]), green);
+    let colors = session.visible_host_image_colors();
+    assert!(!colors.contains(&image_color(red)));
+    assert!(colors.contains(&image_color(green)));
+    session.assert_no_host_probe_or_path();
 }

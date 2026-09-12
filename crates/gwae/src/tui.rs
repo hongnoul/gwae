@@ -19,7 +19,7 @@ use crossterm::terminal::{
     LeaveAlternateScreen,
 };
 use gwae_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport, Width};
-use gwae_term::{CColor, Cell, KittyApcExtractor, Size as GridSize, TermGrid, Vt100Grid};
+use gwae_term::{CColor, Cell, Size as GridSize, TermGrid, Vt100Grid};
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 
 use crate::config::Config;
@@ -323,10 +323,64 @@ pub struct PtyPane {
     /// True once the child has spoken OSC 133; from then on the explicit
     /// protocol owns the status and the activity heuristic stands down.
     pub saw_osc133: bool,
-    /// Streaming scanner that recovers Kitty graphics APCs from this pane's
-    /// raw output so they can be forwarded to the host terminal (vt100
-    /// swallows them, which would otherwise leave images invisible).
-    pub apc: KittyApcExtractor,
+    pub graphics_stream: crate::graphics_stream::Stream,
+    pub graphics: crate::graphics::Graphics,
+    pub legacy_images: crate::graphics_host::Legacy,
+}
+
+/// Graphics placements use the cursor at their position in the byte stream,
+/// never the cursor after a whole PTY read. Replies go only to this child.
+fn feed_pane_output(pane: &mut PtyPane, bytes: &[u8], graphics_enabled: bool) {
+    use crate::graphics_stream::Event;
+    for event in pane.graphics_stream.feed(bytes) {
+        let before = pane.grid.screen_epoch();
+        match &event {
+            Event::Text(bytes) | Event::Apc(bytes) => pane.grid.feed(bytes),
+            Event::Oversized => {
+                pane.graphics.abort_transfer();
+                pane.legacy_images.abort_transfer();
+                pane.grid.feed(b"\x18")
+            }
+        };
+        if pane.grid.screen_epoch() != before {
+            pane.graphics.clear_all();
+            pane.legacy_images = Default::default();
+        }
+        let mut replies = pane.grid.take_pty_replies();
+        if let Event::Apc(apc) = event {
+            if graphics_enabled {
+                let outcome = pane.graphics.command(
+                    &apc,
+                    pane.grid.cursor_position(),
+                    (
+                        pane.pty_size.pixel_width / pane.pty_size.cols.max(1),
+                        pane.pty_size.pixel_height / pane.pty_size.rows.max(1),
+                    ),
+                );
+                if outcome.unsupported {
+                    tracing::debug!("unsupported pane graphics feature");
+                }
+                pane.legacy_images.delete_command(&apc);
+                if let Some(id) = outcome.committed_image {
+                    pane.legacy_images.forget_image(id);
+                }
+                if outcome.legacy {
+                    pane.legacy_images.accept(&apc);
+                    if let Some(id) = pane.legacy_images.take_committed_image() {
+                        pane.graphics.forget_image(id);
+                    }
+                }
+                if let Some((row, col)) = outcome.cursor {
+                    pane.grid.set_graphics_cursor(row, col);
+                }
+                replies.extend_from_slice(&outcome.replies);
+            }
+        }
+        if !replies.is_empty() {
+            let _ = pane.writer.write_all(&replies);
+            let _ = pane.writer.flush();
+        }
+    }
 }
 
 /// Message a per-pane reader thread sends to the main loop.
@@ -733,7 +787,9 @@ fn spawn_pane(
         h_scroll: 0,
         last_output: Instant::now(),
         saw_osc133: false,
-        apc: KittyApcExtractor::new(),
+        graphics_stream: Default::default(),
+        graphics: Default::default(),
+        legacy_images: Default::default(),
     })
 }
 
@@ -845,7 +901,9 @@ fn adopt_pane(
         h_scroll: 0,
         last_output: Instant::now(),
         saw_osc133: false,
-        apc: KittyApcExtractor::new(),
+        graphics_stream: Default::default(),
+        graphics: Default::default(),
+        legacy_images: Default::default(),
     })
 }
 
@@ -1162,6 +1220,7 @@ fn strip_number(layout: &Layout) -> usize {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn render_frame(
     out: &mut Vec<Cell>,
     layout: &Layout,
@@ -1174,6 +1233,37 @@ fn render_frame(
     cow: &crate::config::Cowsay,
     cell_labels: bool,
     selection: Option<&Selection<PaneId>>,
+) {
+    render_frame_with_images(
+        out,
+        layout,
+        panes,
+        cols,
+        rows,
+        content_width,
+        pal,
+        mm,
+        cow,
+        cell_labels,
+        selection,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_frame_with_images(
+    out: &mut Vec<Cell>,
+    layout: &Layout,
+    panes: &mut HashMap<PaneId, PtyPane>,
+    cols: u16,
+    rows: u16,
+    content_width: u16,
+    pal: &Palette,
+    mm: &crate::config::Minimap,
+    cow: &crate::config::Cowsay,
+    cell_labels: bool,
+    selection: Option<&Selection<PaneId>>,
+    mut images: Option<&mut crate::graphics_host::Host>,
 ) {
     // Every chrome color in this function comes from the palette; the
     // skeleton frame color is just `pal.overlay`, kept in a local so the
@@ -1221,6 +1311,24 @@ fn render_frame(
                 continue;
             }
         };
+        let tiles = if !v.peek && pane.grid.scrollback_offset() == 0 {
+            images
+                .as_deref_mut()
+                .map(|host| {
+                    host.prepare(
+                        v.pid,
+                        &pane.graphics,
+                        (g_start, 0, g_end - g_start, v.rect.h),
+                        (
+                            pane.pty_size.pixel_width / pane.pty_size.cols.max(1),
+                            pane.pty_size.pixel_height / pane.pty_size.rows.max(1),
+                        ),
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         if is_focus {
             // Map the emulator cursor into screen coords, accounting for the
             // pane's content-window ([g_start, g_end) visible in rect).
@@ -1248,6 +1356,12 @@ fn render_frame(
         // viewport edge), the uncovered tail is filled with blank cells, which
         // for the focused pane keeps the highlight a clean, unbroken rectangle.
         for gy in 0..v.rect.h {
+            pane.legacy_images.begin_row();
+            if images.is_some() && !v.peek {
+                for gx in 0..g_start {
+                    pane.legacy_images.observe(pane.grid.cell(gx, gy));
+                }
+            }
             for gx in 0..v.rect.w {
                 let idx = ((v.rect.y as usize + gy as usize) * cols as usize)
                     + (v.rect.x as usize + gx as usize);
@@ -1260,6 +1374,26 @@ fn render_frame(
                 } else {
                     Cell::default()
                 };
+                if !v.peek {
+                    if let Some(host) = images.as_deref_mut() {
+                        cell = pane.legacy_images.cell(cell, host);
+                    } else if cell.ch == crate::graphics_host::PLACEHOLDER {
+                        cell = Cell {
+                            style: cell.style,
+                            ..Cell::default()
+                        };
+                    }
+                    for tile in &tiles {
+                        if let Some(overlay) = tile.cell(gy, gi, cell) {
+                            cell = overlay;
+                        }
+                    }
+                } else if cell.ch == crate::graphics_host::PLACEHOLDER {
+                    cell = Cell {
+                        style: cell.style,
+                        ..Cell::default()
+                    };
+                }
                 // A wide character clipped at an edge cannot be shown as half
                 // a glyph: an orphaned continuation cell at the left edge, or
                 // a wide head whose second column falls past the right edge,
@@ -3491,7 +3625,7 @@ fn crossterm_color(c: CColor) -> crossterm::style::Color {
 fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -> bool {
     use crossterm::queue;
     use crossterm::style::{
-        Attribute, Print, SetAttribute, SetBackgroundColor, SetForegroundColor,
+        Attribute, Print, SetAttribute, SetBackgroundColor, SetForegroundColor, SetUnderlineColor,
     };
     let cc = cols as usize;
     let mut dirty = false;
@@ -3537,6 +3671,12 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
             if style.underline {
                 let _ = queue!(buf, SetAttribute(Attribute::Underlined));
             }
+            if style.underline_color != CColor::Default {
+                let _ = queue!(
+                    buf,
+                    SetUnderlineColor(crossterm_color(style.underline_color))
+                );
+            }
             if style.inverse {
                 let _ = queue!(buf, SetAttribute(Attribute::Reverse));
             }
@@ -3553,6 +3693,11 @@ fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -
 /// the disagreement cases; those cells are printed alone so any drift stays
 /// bounded to one column instead of shearing (and wrapping) the whole row.
 fn host_width_agrees(cell: Cell) -> bool {
+    // Protocol-generated placeholders have a specified one-cell width. Their
+    // explicit high-id mark distinguishes these from arbitrary unknown glyphs.
+    if cell.ch == crate::graphics_host::PLACEHOLDER && cell.combining[2] != '\0' {
+        return cell.width == 1;
+    }
     use unicode_width::UnicodeWidthChar;
     match cell.ch.width() {
         Some(w) => w as u8 == cell.width,
@@ -4421,6 +4566,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut frame: Vec<Cell> = Vec::new();
     let mut last: Vec<Cell> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
+    let mut host_images = crate::graphics_host::Host::default();
     let mut dirty = true;
     // Headless PTY tests must not inherit a real Option key held in another
     // terminal. Protocol key events still work when this explicit opt-out is
@@ -4531,31 +4677,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 PaneMsg::Output(pid, bytes) => {
                     if let Some(p) = panes.get_mut(&pid) {
                         p.grid.set_cell_size(cell_pixels.width, cell_pixels.height);
-                        p.grid.feed(&bytes);
-                        // The terminal parser retains partial sequences and
-                        // emits every reply in order. Route them to the pane
-                        // that asked, never to the focused pane or host input.
-                        let replies = p.grid.take_pty_replies();
-                        if !replies.is_empty() {
-                            let _ = p.writer.write_all(&replies);
-                            let _ = p.writer.flush();
-                        }
+                        feed_pane_output(p, &bytes, host_kitty_graphics);
                         p.last_output = Instant::now();
-                        // Recover Kitty graphics APCs that vt100 swallows and
-                        // forward them verbatim to the host. Emitters use
-                        // virtual placements (U=1): the APC carries only image
-                        // data + id, and the on-screen position comes from
-                        // U+10EEEE placeholder cells painted through the grid,
-                        // so forwarding is position- and pane-safe (hidden
-                        // panes upload pixels but display nothing until their
-                        // placeholders are actually painted).
-                        if host_kitty_graphics {
-                            let apcs = p.apc.extract(&bytes);
-                            if !apcs.is_empty() {
-                                let _ = stdout.write_all(&apcs);
-                                let _ = stdout.flush();
-                            }
-                        }
                         // Explicit OSC 133 status beats the activity
                         // heuristic from the first marker onward.
                         if let Some(st) = scan_osc133(&bytes) {
@@ -4726,6 +4849,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     // image would otherwise inherit raw mode and the alt
                     // screen and paint into a screen it never entered.
                     tracing::info!("hot reload: binary changed, execing new image");
+                    let _ = stdout.write_all(&host_images.clear());
                     restore_terminal(&mut stdout, kitty_keyboard);
                     // Drop the sleep assertion before the exec: the new image
                     // acquires its own guard at startup, and the old
@@ -5692,12 +5816,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         hud_plan = (show_center_minimap && !show_hud)
             .then(|| plan_center_minimap(cols, rows, &layout, &cfg.minimap, cfg.cowsay.enabled))
             .flatten();
+        if host_kitty_graphics && host_images.refresh_due() {
+            dirty = true;
+        }
         if dirty {
             // While the keep-awake assertion is held the focus ring paints
             // red: the state must be visible without opening anything, and a
             // derived copy keeps the theme intact when it is released.
             let pal = crate::keepawake::effective_palette(&pal, &keep_awake);
-            render_frame(
+            host_images.begin();
+            render_frame_with_images(
                 &mut frame,
                 &layout,
                 &mut panes,
@@ -5709,7 +5837,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 &cfg.cowsay,
                 cfg.cell_labels,
                 selection.as_ref(),
+                host_kitty_graphics.then_some(&mut host_images),
             );
+            host_images.finish();
             if show_hud {
                 draw_center_hud(&mut frame, cols, rows, &pal);
             }
@@ -5750,13 +5880,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
-            if !buf.is_empty() {
+            if !buf.is_empty() || !host_images.pending.is_empty() {
                 // Synchronized update (ESC[?2026h/l): the host terminal holds
                 // the screen and applies the whole frame atomically, so a
                 // repaint can never be displayed half-drawn (visible shearing
                 // when a vsync lands mid-write). Terminals that don't support
                 // it ignore the markers.
                 let _ = stdout.write_all(b"\x1b[?2026h");
+                let _ = stdout.write_all(&host_images.pending);
                 let _ = stdout.write_all(&buf);
                 let _ = stdout.write_all(b"\x1b[?2026l");
                 let _ = stdout.flush();
@@ -5774,6 +5905,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // map without going through `kill_pane_tree`) is caught here, so the
     // process leaves nothing behind.
     crate::reap::reap_all();
+    let _ = stdout.write_all(&host_images.clear());
     restore_terminal(&mut stdout, kitty_keyboard);
     Ok(())
 }
@@ -9696,6 +9828,435 @@ mod tests {
                 cols - 1,
                 "grid ends flush at cols={cols}"
             );
+        }
+    }
+    // Exercise the actual pane event path without launching a child or writing
+    // to the host terminal. The inert inherited handles are never accessed.
+    #[cfg(unix)]
+    mod graphics_feed_tests {
+        use super::*;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Replies(Arc<Mutex<Vec<u8>>>);
+
+        impl Replies {
+            fn bytes(&self) -> Vec<u8> {
+                self.0.lock().unwrap().clone()
+            }
+        }
+
+        impl Write for Replies {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        fn pane_with_replies() -> (PtyPane, Replies) {
+            let replies = Replies::default();
+            let mut grid = Vt100Grid::new(GridSize { cols: 20, rows: 10 });
+            grid.set_cell_size(8, 16);
+            (
+                PtyPane {
+                    master: PaneIo::Inherited(-1),
+                    writer: Box::new(replies.clone()),
+                    child: PaneProc::Adopted(None),
+                    grid,
+                    pty_size: CellPixels {
+                        width: 8,
+                        height: 16,
+                    }
+                    .pty_size(20, 10),
+                    alive: true,
+                    h_scroll: 0,
+                    last_output: Instant::now(),
+                    saw_osc133: false,
+                    graphics_stream: Default::default(),
+                    graphics: Default::default(),
+                    legacy_images: Default::default(),
+                },
+                replies,
+            )
+        }
+
+        #[test]
+        fn native_overlay_is_visible_over_styled_text_and_no_host_means_no_placeholders() {
+            let (mut pane, _) = pane_with_replies();
+            feed_pane_output(
+                &mut pane,
+                b"\x1b[?25l\x1b[1;4;7mX\x1b[H\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            let layout = Layout::new(1);
+            let pid = focused_pane(&layout).unwrap();
+            let mut panes = HashMap::from([(pid, pane)]);
+            let mut out = Vec::new();
+            let mut host = crate::graphics_host::Host::default();
+            host.begin();
+            render_frame_with_images(
+                &mut out,
+                &layout,
+                &mut panes,
+                80,
+                24,
+                0,
+                &Palette::default(),
+                &no_map(),
+                &no_cow(),
+                false,
+                None,
+                Some(&mut host),
+            );
+            let cell = out[81];
+            assert_eq!(cell.ch, crate::graphics_host::PLACEHOLDER);
+            assert!(!cell.style.bold && !cell.style.underline && !cell.style.inverse);
+            // Unmapped child placeholders must never be interpreted as a host ID,
+            // including disabled graphics and test/preview renders without a host.
+            panes
+                .get_mut(&pid)
+                .unwrap()
+                .grid
+                .feed("\x1b[H\u{10eeee}\u{305}\u{305}".as_bytes());
+            render_frame(
+                &mut out,
+                &layout,
+                &mut panes,
+                80,
+                24,
+                0,
+                &Palette::default(),
+                &no_map(),
+                &no_cow(),
+                false,
+                None,
+            );
+            assert!(out
+                .iter()
+                .all(|c| c.ch != crate::graphics_host::PLACEHOLDER));
+        }
+
+        #[test]
+        fn dispatcher_replaces_native_source_only_after_successful_legacy_commit() {
+            let (mut pane, _) = pane_with_replies();
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,U=1,q=2,i=7,p=1,f=24,s=1,v=2,c=1,r=1,m=1;AAAA\x1b\\",
+                true,
+            );
+            assert!(pane.graphics.source(7).is_some());
+            feed_pane_output(&mut pane, b"\x1b_Gm=0;BAUG\x1b\\", true);
+            assert!(pane.graphics.source(7).is_none());
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            assert!(pane.graphics.source(7).is_some());
+            pane.grid
+                .feed("\x1b[H\x1b[38;2;0;0;7m\x1b[58;2;0;0;1m\u{10eeee}\u{305}\u{305}".as_bytes());
+            let mut host = crate::graphics_host::Host::default();
+            host.begin();
+            pane.legacy_images.begin_row();
+            assert_eq!(
+                pane.legacy_images.cell(pane.grid.cell(0, 0), &mut host).ch,
+                ' '
+            );
+            assert!(
+                host.pending.is_empty(),
+                "replaced legacy source cannot be uploaded"
+            );
+        }
+
+        #[test]
+        fn mixed_text_and_apcs_use_each_command_cursor_at_every_split() {
+            let input = concat!(
+                "aé",
+                "\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AAAA\x1b\\",
+                "XY\x1b[4;6H",
+                "\x1b_Ga=T,i=2,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                "Z"
+            )
+            .as_bytes();
+            for split in 0..=input.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, &input[..split], true);
+                feed_pane_output(&mut pane, &input[split..], true);
+                let placements = pane.graphics.placements();
+                assert_eq!(placements.len(), 2, "split {split}");
+                assert_eq!(
+                    (placements[0].row, placements[0].col),
+                    (0, 2),
+                    "split {split}"
+                );
+                assert_eq!(
+                    (placements[1].row, placements[1].col),
+                    (3, 5),
+                    "split {split}"
+                );
+                assert_eq!(pane.grid.cursor_position(), (3, 6), "split {split}");
+                assert_eq!(pane.grid.cell(0, 0).ch, 'a');
+                assert_eq!(pane.grid.cell(1, 0).ch, 'é');
+                assert_eq!(pane.grid.cell(2, 0).ch, 'X');
+                assert_eq!(pane.grid.cell(3, 0).ch, 'Y');
+                assert_eq!(pane.grid.cell(5, 3).ch, 'Z');
+                assert_eq!(&**pane.graphics.source(2).unwrap().pixels, &[1, 2, 3]);
+                assert_eq!(
+                    replies.bytes(),
+                    b"\x1b_Gi=1;OK\x1b\\\x1b_Gi=2;OK\x1b\\",
+                    "split {split}"
+                );
+                assert!(pane.grid.take_pty_replies().is_empty());
+            }
+        }
+
+        #[test]
+        fn graphics_cursor_advance_precedes_following_text_and_cursor_query() {
+            let input = b"ab\x1b_Ga=T,i=4,f=24,s=1,v=1,c=3,r=2;AAAA\x1b\\Z\x1b[6n";
+            for split in 0..=input.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, &input[..split], true);
+                feed_pane_output(&mut pane, &input[split..], true);
+                let placement = &pane.graphics.placements()[0];
+                assert_eq!((placement.row, placement.col), (0, 2), "split {split}");
+                assert_eq!((placement.pixel_width, placement.pixel_height), (24, 32));
+                assert_eq!(pane.grid.cell(5, 2).ch, 'Z', "split {split}");
+                assert_eq!(pane.grid.cursor_position(), (2, 6), "split {split}");
+                assert_eq!(
+                    replies.bytes(),
+                    b"\x1b_Gi=4;OK\x1b\\\x1b[3;7R",
+                    "split {split}"
+                );
+            }
+        }
+
+        #[test]
+        fn final_image_chunk_uses_final_cursor_and_only_then_acknowledges() {
+            let first = b"\x1b[2;3H\x1b_Ga=T,i=9,f=24,s=2,v=2,C=1,m=1;AAAA\x1b\\BEFORE";
+            let last = b"\x1b[8;12H\x1b_Gm=0;/wAAAP8AAAD/\x1b\\!\x1b[6n";
+            for split in 0..=last.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, first, true);
+                assert!(replies.bytes().is_empty());
+                assert!(pane.graphics.source(9).is_none());
+                assert!(pane.graphics.placements().is_empty());
+                feed_pane_output(&mut pane, &last[..split], true);
+                feed_pane_output(&mut pane, &last[split..], true);
+                let placement = &pane.graphics.placements()[0];
+                assert_eq!((placement.row, placement.col), (7, 11), "split {split}");
+                assert_eq!(pane.graphics.source(9).unwrap().pixels.len(), 12);
+                assert_eq!(pane.grid.cell(11, 7).ch, '!');
+                assert_eq!(pane.grid.cursor_position(), (7, 12));
+                assert_eq!(
+                    replies.bytes(),
+                    b"\x1b_Gi=9;OK\x1b\\\x1b[8;13R",
+                    "split {split}"
+                );
+            }
+        }
+
+        #[test]
+        fn graphics_and_terminal_query_replies_keep_exact_stream_order() {
+            let input = concat!(
+                "\x1b[14t",
+                "\x1b_Ga=q,i=31,f=24,s=1,v=1;AAAA\x1b\\",
+                "\x1b[16t\x1b[18t\x1b[c\x1b[5n\x1b[3;7H\x1b[6n",
+                "\x1b_Ga=t,i=2,f=24,s=1,v=1;AQID\x1b\\",
+                "\x1b[16tXY\x1b[6n",
+                "\x1b_Ga=q,i=32,f=24,s=1,v=1;AAAA\x1b\\"
+            )
+            .as_bytes();
+            let expected = concat!(
+                "\x1b[4;160;160t\x1b_Gi=31;OK\x1b\\",
+                "\x1b[6;16;8t\x1b[8;10;20t\x1b[?6c\x1b[0n\x1b[3;7R",
+                "\x1b_Gi=2;OK\x1b\\\x1b[6;16;8t\x1b[3;9R\x1b_Gi=32;OK\x1b\\"
+            )
+            .as_bytes();
+            for split in 0..=input.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, &input[..split], true);
+                feed_pane_output(&mut pane, &input[split..], true);
+                assert_eq!(replies.bytes(), expected, "split {split}");
+                assert!(pane.grid.take_pty_replies().is_empty());
+            }
+            let (mut pane, replies) = pane_with_replies();
+            for byte in input {
+                feed_pane_output(&mut pane, std::slice::from_ref(byte), true);
+            }
+            assert_eq!(replies.bytes(), expected, "one byte per read");
+        }
+
+        #[test]
+        fn exact_tdf_probe_is_acknowledged_only_when_graphics_are_enabled() {
+            let input = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c\x1b[16t\x1b[5n";
+            for enabled in [false, true] {
+                for split in 0..=input.len() {
+                    let (mut pane, replies) = pane_with_replies();
+                    feed_pane_output(&mut pane, &input[..split], enabled);
+                    feed_pane_output(&mut pane, &input[split..], enabled);
+                    let expected: &[u8] = if enabled {
+                        b"\x1b_Gi=31;OK\x1b\\\x1b[?6c\x1b[6;16;8t\x1b[0n"
+                    } else {
+                        b"\x1b[?6c\x1b[6;16;8t\x1b[0n"
+                    };
+                    assert_eq!(
+                        replies.bytes(),
+                        expected,
+                        "enabled={enabled}, split {split}"
+                    );
+                    assert!(
+                        pane.graphics.source(31).is_none(),
+                        "a query never stores pixels"
+                    );
+                    assert!(pane.graphics.placements().is_empty());
+                    assert_eq!(pane.grid.cursor_position(), (0, 0));
+                    assert_eq!(pane.grid.visible_text(), "");
+                }
+            }
+        }
+
+        #[test]
+        fn separate_panes_reuse_ids_without_cross_routing_partial_streams_or_replies() {
+            let (first, first_replies) = pane_with_replies();
+            let (second, second_replies) = pane_with_replies();
+            let mut panes = HashMap::from([(11u64, first), (22u64, second)]);
+            feed_pane_output(
+                panes.get_mut(&11).unwrap(),
+                b"\x1b_Ga=T,i=7,f=24,s=1,v=2,C=1,m=1;AA",
+                true,
+            );
+            feed_pane_output(
+                panes.get_mut(&22).unwrap(),
+                b"\x1b[5;7H\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\\x1b[6n",
+                true,
+            );
+            assert!(first_replies.bytes().is_empty());
+            assert!(panes[&11].graphics.source(7).is_none());
+            let second_expected = b"\x1b_Gi=7;OK\x1b\\\x1b[5;7R";
+            assert_eq!(second_replies.bytes(), second_expected);
+            feed_pane_output(panes.get_mut(&11).unwrap(), b"AA\x1b\\", true);
+            assert!(
+                first_replies.bytes().is_empty(),
+                "a non-final chunk never acknowledges"
+            );
+            feed_pane_output(
+                panes.get_mut(&11).unwrap(),
+                b"\x1b[3;4H\x1b_Gm=0;BAUG\x1b\\\x1b[6n",
+                true,
+            );
+            assert_eq!(first_replies.bytes(), b"\x1b_Gi=7;OK\x1b\\\x1b[3;4R");
+            assert_eq!(second_replies.bytes(), second_expected);
+            assert_eq!(
+                &**panes[&11].graphics.source(7).unwrap().pixels,
+                &[0, 0, 0, 4, 5, 6]
+            );
+            assert_eq!(&**panes[&22].graphics.source(7).unwrap().pixels, &[1, 2, 3]);
+            let first_placement = &panes[&11].graphics.placements()[0];
+            let second_placement = &panes[&22].graphics.placements()[0];
+            assert_eq!((first_placement.row, first_placement.col), (2, 3));
+            assert_eq!((second_placement.row, second_placement.col), (4, 6));
+            feed_pane_output(panes.get_mut(&11).unwrap(), b"\x1b_Ga=d,d=A;\x1b\\", true);
+            assert!(panes[&11].graphics.source(7).is_none());
+            assert!(panes[&11].graphics.placements().is_empty());
+            assert!(panes[&22].graphics.source(7).is_some());
+            assert_eq!(panes[&22].graphics.placements().len(), 1);
+            assert_eq!(second_replies.bytes(), second_expected);
+        }
+
+        #[test]
+        fn alternate_screen_enter_and_leave_in_one_text_event_clear_graphics() {
+            for mode in [47, 1047, 1049] {
+                let (mut pane, _) = pane_with_replies();
+                feed_pane_output(
+                    &mut pane,
+                    b"\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AAAA\x1b\\",
+                    true,
+                );
+                feed_pane_output(
+                    &mut pane,
+                    b"\x1b_Ga=T,i=9,f=24,s=1,v=2,C=1,m=1;AAAA\x1b\\",
+                    true,
+                );
+                assert!(pane.graphics.source(1).is_some());
+                assert_eq!(pane.graphics.placements().len(), 1);
+                let text = format!("\x1b[?{mode}hALT\x1b[?{mode}l");
+                let events = crate::graphics_stream::Stream::default().feed(text.as_bytes());
+                assert_eq!(
+                    events,
+                    vec![crate::graphics_stream::Event::Text(
+                        text.as_bytes().to_vec()
+                    )]
+                );
+                let epoch = pane.grid.screen_epoch();
+                feed_pane_output(&mut pane, text.as_bytes(), true);
+                assert!(!pane.grid.alternate_screen(), "mode {mode}");
+                assert_ne!(pane.grid.screen_epoch(), epoch, "mode {mode}");
+                assert!(pane.graphics.source(1).is_none(), "mode {mode}");
+                assert!(pane.graphics.placements().is_empty(), "mode {mode}");
+                // Alternate-screen invalidation must discard partial transfers,
+                // not just remove the already-visible placement.
+                feed_pane_output(&mut pane, b"\x1b_Gm=0;AQID\x1b\\", true);
+                assert!(pane.graphics.source(9).is_none(), "mode {mode}");
+                assert!(pane.graphics.placements().is_empty(), "mode {mode}");
+            }
+        }
+
+        #[test]
+        fn cancelling_an_opaque_apc_keeps_grid_and_graphics_parser_synchronized() {
+            let input = b"A\x1b_Xopaque\x1b_Ga=T,i=3,f=24,s=1,v=1,C=1;AAAA\x1b\\B\x1b[6n";
+            for split in 0..=input.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, &input[..split], true);
+                feed_pane_output(&mut pane, &input[split..], true);
+                assert_eq!(pane.grid.visible_text(), "AB", "split {split}");
+                let placement = &pane.graphics.placements()[0];
+                assert_eq!((placement.row, placement.col), (0, 1));
+                assert_eq!(
+                    replies.bytes(),
+                    b"\x1b_Gi=3;OK\x1b\\\x1b[1;3R",
+                    "split {split}"
+                );
+            }
+        }
+
+        #[test]
+        fn discarded_oversized_continuation_cannot_commit_a_partial_image() {
+            let (mut pane, replies) = pane_with_replies();
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            feed_pane_output(&mut pane, b"\x1b_Ga=t,i=9,f=24,s=1,v=1,m=1;\x1b\\", true);
+            let mut oversized = b"\x1b_Gm=1;".to_vec();
+            oversized.extend(std::iter::repeat_n(b'A', 64 * 1024));
+            oversized.extend_from_slice(b"\x1b\\");
+            feed_pane_output(&mut pane, &oversized, true);
+            feed_pane_output(&mut pane, b"\x1b_Gm=0;AAAA\x1b\\Z\x1b[6n", true);
+            assert!(
+                pane.graphics.source(9).is_none(),
+                "dropping an oversized continuation must invalidate the pending transfer"
+            );
+            assert!(
+                !replies
+                    .bytes()
+                    .windows(b"\x1b_Gi=9;OK".len())
+                    .any(|s| s == b"\x1b_Gi=9;OK"),
+                "an image with discarded payload cannot be acknowledged as successful"
+            );
+            assert_eq!(&**pane.graphics.source(1).unwrap().pixels, &[1, 2, 3]);
+            assert_eq!(pane.graphics.placements().len(), 1);
+            assert_eq!(pane.grid.visible_text(), "Z");
+            assert!(replies.bytes().ends_with(b"\x1b[1;2R"));
         }
     }
 }

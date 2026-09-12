@@ -31,6 +31,8 @@ gwae-testkit = { path = "../gwae-testkit", version = "1.0.0" }
 portable-pty = { workspace = true }
 crossterm = { workspace = true }
 unicode-width = { workspace = true }
+# Validate bounded PNG IDAT data before quiet legacy uploads reach the host.
+miniz_oxide = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

@@ -20,6 +20,8 @@ pub enum CColor {
 pub struct Style {
     pub fg: CColor,
     pub bg: CColor,
+    /// SGR 58, also used as the Kitty Unicode-placeholder placement id.
+    pub underline_color: CColor,
     pub bold: bool,
     pub underline: bool,
     pub inverse: bool,
@@ -186,10 +188,14 @@ impl EventListener for GridListener {
 /// its VT parser for this one extension too, so control-string payloads,
 /// cancellations and partial sequences are never mistaken for queries.
 #[derive(Default)]
-struct CellSizeQuery(bool);
+struct CellSizeQuery(bool, bool);
 
 impl Perform for CellSizeQuery {
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
+        self.1 = !ignore
+            && intermediates == b"?"
+            && matches!(action, 'h' | 'l')
+            && params.iter().any(|p| matches!(p, [47] | [1047] | [1049]));
         let mut params = params.iter();
         self.0 = !ignore
             && intermediates.is_empty()
@@ -199,7 +205,11 @@ impl Perform for CellSizeQuery {
     }
 
     fn terminated(&self) -> bool {
-        self.0
+        self.0 || self.1
+    }
+
+    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
+        self.1 = !ignore && intermediates.is_empty() && byte == b'c';
     }
 }
 
@@ -231,6 +241,7 @@ fn map_cell(c: &alacritty_terminal::term::cell::Cell) -> Cell {
         style: Style {
             fg: map_color(c.fg),
             bg: map_color(c.bg),
+            underline_color: c.underline_color().map(map_color).unwrap_or_default(),
             bold: c.flags.contains(Flags::BOLD),
             underline: c.flags.intersects(Flags::ALL_UNDERLINES),
             inverse: c.flags.contains(Flags::INVERSE),
@@ -257,6 +268,7 @@ pub struct TerminalGrid {
     pty_replies: Vec<u8>,
     cell_width: u16,
     cell_height: u16,
+    screen_epoch: u64,
     title: String,
     size: Size,
 }
@@ -277,6 +289,7 @@ impl TerminalGrid {
             pty_replies: Vec::new(),
             cell_width: 0,
             cell_height: 0,
+            screen_epoch: 0,
             title: String::new(),
             size,
         }
@@ -292,6 +305,22 @@ impl TerminalGrid {
     /// Drain parser-generated replies, in query order, for writing to the child PTY.
     pub fn take_pty_replies(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.pty_replies)
+    }
+
+    /// Changes on alternate-screen commands or RIS, even when two such
+    /// commands arrive in one read and the final screen mode is unchanged.
+    pub fn screen_epoch(&self) -> u64 {
+        self.screen_epoch
+    }
+
+    /// Absolute graphics cursor advance, independent of DEC origin mode.
+    pub fn set_graphics_cursor(&mut self, row: u16, col: u16) {
+        let row = row.min(self.size.rows.saturating_sub(1));
+        let col = col.min(self.size.cols.saturating_sub(1));
+        let cursor = &mut self.term.grid_mut().cursor;
+        cursor.point.line = Line(row as i32);
+        cursor.point.column = Column(col as usize);
+        cursor.input_needs_wrap = false;
     }
 
     fn window_size(&self) -> WindowSize {
@@ -422,6 +451,9 @@ impl TermGrid for TerminalGrid {
                 .cell_query_parser
                 .advance_until_terminated(&mut query, remaining);
             self.feed_core(&remaining[..consumed]);
+            if query.1 {
+                self.screen_epoch = self.screen_epoch.wrapping_add(1);
+            }
             if query.0 {
                 let size = self.window_size();
                 self.pty_replies.extend_from_slice(
@@ -917,6 +949,7 @@ mod tests {
                 bold: true,
                 underline: true,
                 inverse: true,
+                underline_color: CColor::Default,
             }
         );
         // Cursor remains attached to the last hard line, not an old grid cell.
