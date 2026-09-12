@@ -60,7 +60,9 @@ cargo test -p gwae --test yazi_e2e -- --ignored --nocapture
 These optional tests run actual Yazi in PTYs and inside gwae. They assert
 rendered parent/file/preview content through width cycling, fullscreen,
 terminal resizing, breakpoint boundaries in both directions, repeated live
-activation, and standalone use.
+activation, and standalone use. They also compare filename readability
+before/after activation, custom breakpoint/ratio behavior, ordinary directory
+navigation, and rollback. See [the requirement-to-observation report](ACCEPTANCE.md).
 
 The live-activation case first checks the unmodified three-panel layout,
 then enables the plugin in the same Yazi process. To replay against your

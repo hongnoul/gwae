@@ -13,6 +13,7 @@ use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+const LONG_NAME: &str = "FILE_NAME_that_needs_more_horizontal_room.txt";
 
 struct Session {
     child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -21,19 +22,32 @@ struct Session {
     rx: Receiver<Vec<u8>>,
     screen: Vt100Grid,
     dir: PathBuf,
+    client_id: String,
 }
 
 impl Session {
     fn start(cols: u16, in_gwae: bool, pane_env: bool, setup: bool) -> Self {
+        Self::configured(
+            cols,
+            in_gwae,
+            pane_env,
+            if setup {
+                "require('gwae-responsive'):setup()\nrequire('gwae-responsive'):setup()\n"
+            } else {
+                ""
+            },
+            "",
+        )
+    }
+
+    fn configured(cols: u16, in_gwae: bool, pane_env: bool, init: &str, config_text: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+        let client_id = (u64::from(std::process::id()) * 10000 + serial as u64).to_string();
         let dir = std::env::var_os("JCODE_SCRATCH_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir)
-            .join(format!(
-                "gwae-yazi-e2e-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
+            .join(format!("gwae-yazi-e2e-{}-{}", std::process::id(), serial));
         let config = dir.join("yazi");
         let cwd = dir.join("files/current");
         std::fs::create_dir_all(config.join("plugins/gwae-responsive.yazi")).unwrap();
@@ -42,22 +56,17 @@ impl Session {
         std::fs::create_dir_all(&cwd).unwrap();
         std::fs::write(dir.join("files/UP"), "parent sibling\n").unwrap();
         std::fs::write(cwd.join("CURRENT.txt"), "PREVIEW\n").unwrap();
+        // This unhovered filename can only appear in the file list, never
+        // in the header, selected-file status, or selected-file preview.
+        std::fs::write(cwd.join(LONG_NAME), "another file\n").unwrap();
         // Runtime loading lets packaged crates compile these ignored tests
         // without requiring the repository-level examples at compile time.
         let plugin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../examples/yazi/gwae-responsive.yazi/main.lua");
         std::fs::copy(plugin, config.join("plugins/gwae-responsive.yazi/main.lua"))
             .expect("run this optional acceptance suite from the gwae repository");
-        // Repeated setup must not capture an already-collapsed ratio.
-        std::fs::write(
-            config.join("init.lua"),
-            if setup {
-                "require('gwae-responsive'):setup()\nrequire('gwae-responsive'):setup()\n"
-            } else {
-                ""
-            },
-        )
-        .unwrap();
+        std::fs::write(config.join("init.lua"), init).unwrap();
+        std::fs::write(config.join("yazi.toml"), config_text).unwrap();
         std::fs::write(
             config.join("keymap.toml"),
             "[[mgr.prepend_keymap]]\non = '<C-g>'\nrun = 'plugin gwae-responsive'\n",
@@ -102,7 +111,10 @@ impl Session {
         }
         if in_gwae {
             cmd.arg("run");
-            cmd.arg("yazi");
+            cmd.arg(format!("yazi --client-id {client_id}"));
+        } else {
+            cmd.arg("--client-id");
+            cmd.arg(&client_id);
         }
         eprintln!("Yazi acceptance command: {:?}", cmd.get_argv());
         let child = pair
@@ -128,6 +140,7 @@ impl Session {
             rx,
             screen: Vt100Grid::new(Size { rows: 30, cols }),
             dir,
+            client_id,
         }
     }
 
@@ -143,19 +156,24 @@ impl Session {
     }
 
     fn expect(&mut self, parent: bool, preview: bool, label: &str) {
+        self.expect_text(label, |text| {
+            text.contains("CURRENT.txt")
+                && text.contains("UP") == parent
+                && text.contains("PREVIEW") == preview
+        });
+        eprintln!("PASS {label}: parent={parent}, preview={preview}");
+    }
+
+    fn expect_text(&mut self, label: &str, predicate: impl Fn(&str) -> bool) {
         // Require a stable frame rather than accepting an intermediate paint.
         let deadline = Instant::now() + TIMEOUT;
         let mut matching_since = None;
         while Instant::now() < deadline {
             self.pump();
             let text = self.screen.visible_text();
-            if text.contains("CURRENT.txt")
-                && text.contains("UP") == parent
-                && text.contains("PREVIEW") == preview
-            {
+            if predicate(&text) {
                 let since = matching_since.get_or_insert_with(Instant::now);
                 if since.elapsed() > Duration::from_millis(300) {
-                    eprintln!("PASS {label}: parent={parent}, preview={preview}");
                     return;
                 }
             } else {
@@ -163,7 +181,7 @@ impl Session {
             }
         }
         panic!(
-            "{label}: expected parent={parent}, preview={preview}\nscreen:\n{}\nlogs: {:?}",
+            "{label}: expected frame not observed\nscreen:\n{}\nlogs: {:?}",
             self.screen.visible_text(),
             self.dir.join("state/yazi")
         );
@@ -177,6 +195,53 @@ impl Session {
     fn resize(&mut self, cols: u16) {
         self.master.resize(pty_size(cols)).unwrap();
         self.screen.resize(Size { rows: 30, cols });
+    }
+
+    fn text_column(&self, token: &str) -> u16 {
+        let chars: Vec<_> = token.chars().collect();
+        for y in 0..self.screen.size().rows {
+            for x in 0..=self.screen.size().cols - chars.len() as u16 {
+                if chars
+                    .iter()
+                    .enumerate()
+                    .all(|(i, ch)| self.screen.cell(x + i as u16, y).ch == *ch)
+                {
+                    return x;
+                }
+            }
+        }
+        panic!("missing {token:?}: {}", self.screen.visible_text());
+    }
+
+    fn save_screen(&self, name: &str) {
+        let path = self.dir.join(format!("{name}.txt"));
+        std::fs::write(&path, self.screen.visible_text()).unwrap();
+        eprintln!("Rendered evidence: {}", path.display());
+    }
+
+    fn activate_via_cli(&self) {
+        // The documented command from a Yazi subshell, with this isolated
+        // test instance's environment rather than the user's live session.
+        let output = std::process::Command::new("ya")
+            .args(["emit", "plugin", "gwae-responsive"])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("HOME", &self.dir)
+            .env("YAZI_ID", &self.client_id)
+            .env("YAZI_CONFIG_HOME", self.dir.join("yazi"))
+            .env("XDG_CONFIG_HOME", &self.dir)
+            .env("XDG_CACHE_HOME", self.dir.join("cache"))
+            .env("XDG_STATE_HOME", self.dir.join("state"))
+            .env("XDG_DATA_HOME", self.dir.join("data"))
+            .env("XDG_RUNTIME_DIR", self.dir.join("tmp"))
+            .env("TMPDIR", self.dir.join("tmp"))
+            .output()
+            .expect("ya CLI must be installed beside Yazi");
+        assert!(
+            output.status.success(),
+            "ya emit failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 
@@ -255,12 +320,113 @@ fn yazi_breakpoints_and_live_activation_are_reversible() {
 #[test]
 #[ignore = "requires installed Yazi >= 26.8.15"]
 fn yazi_outside_gwae_is_unchanged() {
+    let mut baseline = Session::start(53, false, false, false);
+    baseline.expect(true, true, "standalone unmodified narrow baseline");
+    let narrow = baseline.screen.visible_text();
+    baseline.resize(107);
+    baseline.expect(true, true, "standalone unmodified wide baseline");
+    let wide = baseline.screen.visible_text();
+    drop(baseline);
     let mut s = Session::start(53, false, false, true);
     s.expect(true, true, "standalone narrow terminal");
+    assert_eq!(s.screen.visible_text(), narrow);
     s.send(b"\x07");
     s.expect(true, true, "standalone plugin activation");
+    assert_eq!(s.screen.visible_text(), narrow);
     s.resize(107);
     s.expect(true, true, "standalone wide terminal");
+    assert_eq!(s.screen.visible_text(), wide);
     s.resize(53);
     s.expect(true, true, "standalone restored narrow terminal");
+    assert_eq!(s.screen.visible_text(), narrow);
+    eprintln!("PASS standalone: complete rendered text matches unmodified narrow and wide baselines byte-for-byte");
+}
+
+#[test]
+#[ignore = "requires installed Yazi >= 26.8.15"]
+fn yazi_default_pane_displays_more_of_the_actual_file_list() {
+    let mut s = Session::start(215, true, false, false);
+    s.expect(true, true, "baseline quarter-width Yazi");
+    assert!(
+        !s.screen.visible_text().contains(LONG_NAME),
+        "baseline must truncate the long filename"
+    );
+    s.save_screen("before-activation");
+    let old_column = s.text_column("CURRENT.txt");
+    s.activate_via_cli();
+    s.expect(false, false, "responsive quarter-width Yazi");
+    assert!(
+        s.screen.visible_text().contains(LONG_NAME),
+        "responsive file list must show the entire filename"
+    );
+    let new_column = s.text_column("CURRENT.txt");
+    assert!(
+        new_column < old_column,
+        "file list must reclaim the parent panel's space"
+    );
+    s.save_screen("after-activation");
+    eprintln!("PASS usability: {}-character unhovered filename changes from truncated to fully visible in the same 53-column pane; file-list text moves from column {old_column} to {new_column}", LONG_NAME.len());
+    s.send(b"h");
+    s.expect_text("navigate to parent while panels are hidden", |text| {
+        text.contains("UP") && !text.contains("CURRENT.txt")
+    });
+    s.send(b"l");
+    s.expect(false, false, "reenter directory while panels are hidden");
+    assert!(s.screen.visible_text().contains(LONG_NAME));
+    eprintln!("PASS live activation via ya emit and ordinary h/l directory navigation");
+    // Plugin activation is not allowed to rewrite openers or keymaps.
+    assert_eq!(
+        std::fs::read_to_string(s.dir.join("yazi/yazi.toml")).unwrap(),
+        ""
+    );
+    assert_eq!(
+        std::fs::read_to_string(s.dir.join("yazi/keymap.toml")).unwrap(),
+        "[[mgr.prepend_keymap]]\non = '<C-g>'\nrun = 'plugin gwae-responsive'\n"
+    );
+}
+
+#[test]
+#[ignore = "requires installed Yazi >= 26.8.15"]
+fn yazi_custom_breakpoints_restore_the_configured_ratio() {
+    let config = "[mgr]\nratio = [2, 3, 5]\n\
+        [opener]\nfixture = [{ run = 'true', desc = 'Preserved opener' }]\n";
+    let init = "require('gwae-responsive'):setup { preview_width = 80, parent_width = 120 }\n";
+    let mut baseline = Session::configured(160, false, true, "", config);
+    baseline.expect(true, true, "configured-ratio baseline");
+    let columns = (
+        baseline.text_column("CURRENT.txt"),
+        baseline.text_column("PREVIEW"),
+    );
+    baseline.save_screen("configured-ratio-baseline");
+    drop(baseline);
+    let mut s = Session::configured(79, false, true, init, config);
+    s.expect(false, false, "custom preview breakpoint minus one");
+    for (cols, parent, preview) in [
+        (80, false, true),
+        (119, false, true),
+        (120, true, true),
+        (119, false, true),
+        (80, false, true),
+        (79, false, false),
+        (160, true, true),
+    ] {
+        s.resize(cols);
+        s.expect(parent, preview, &format!("custom {cols}-column boundary"));
+    }
+    let restored = (s.text_column("CURRENT.txt"), s.text_column("PREVIEW"));
+    assert_eq!(
+        restored, columns,
+        "wide layout must restore configured 2:3:5, not hard-coded 1:4:3"
+    );
+    s.save_screen("configured-ratio-restored");
+    assert_eq!(
+        std::fs::read_to_string(s.dir.join("yazi/yazi.toml")).unwrap(),
+        config
+    );
+    eprintln!("PASS configured ratio: current/preview text columns {restored:?} exactly match the unmodified 2:3:5 baseline; opener configuration is byte-identical");
+    drop(s);
+    // Removing setup and restarting is the documented rollback, even with
+    // the plugin files still installed and GWAE_PANE still present.
+    let mut reverted = Session::configured(79, false, true, "", config);
+    reverted.expect(true, true, "setup removed and Yazi restarted");
 }
