@@ -117,6 +117,8 @@ disabled mode, canonical quiet host uploads, two panes reusing child image ID
 1, sibling-safe deletion, and rejected external media even when a child emits
 visible virtual placeholders.
 
-See [the validation ledger](GWAE-TDF-VALIDATION.md) for requirement-level
-observations, the pre-fix comparison, new-pane/reload coverage, and known
-negative results. An aggregate test count alone is not the acceptance evidence.
+See [the acceptance map](GWAE-ACCEPTANCE-MAP.md) for requirement-level and
+changed-output observations, including known failures and blocked checks.
+The [graphics ledger](GWAE-GRAPHICS-VALIDATION.md) records actual application
+evidence, and the [historical sizing ledger](GWAE-TDF-VALIDATION.md) preserves
+the pre-fix comparison. Aggregate test counts are not the acceptance evidence.

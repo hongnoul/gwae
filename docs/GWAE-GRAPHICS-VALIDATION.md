@@ -2,6 +2,9 @@
 
 Validated on macOS ARM64 on 2026-09-12 with real Yazi 26.8.15 and tdf 0.5.0.
 This follows the [historical sizing repair](GWAE-TDF-VALIDATION.md).
+The [acceptance map](GWAE-ACCEPTANCE-MAP.md) ties ten outcome requirements and
+twenty changed public-output boundaries to named checks and observed results,
+including the still-failing installed resize and blocked Ghostty capture.
 
 ## Result and boundary
 
@@ -218,6 +221,21 @@ This minimal check supplements, not replaces, the actual tdf comparisons above.
 The committed patch also reconstructs the built tdf source byte-for-byte from
 the pristine archive. All nine source/manifest files were compared, and only
 `src/main.rs` differs. No GPU acceptance or installed-tdf fix is inferred.
+
+The final traceability pass added direct project regressions for SGR58 color
+and reset mapping, absolute/clamped graphics cursor behavior with pending wrap,
+alternate-screen/RIS epoch counting, and RIS invalidation of visible/pending
+graphics. All four pass in the real Cargo targets: 46 terminal tests and 72
+graphics tests. These additions change tests only, not installed runtime code.
+The acceptance map's 67 distinct named test references were mechanically
+matched to individual observed passing results, not inferred from totals.
+
+A fresh installed Yazi/tdf workflow also passed again in 7.8 seconds, under
+`gwae-native-graphics-20260912/acceptance-final-20260912T0226`. An independent
+audit verified its exact upload-to-PNG bytes, reversible hashes, sequential
+real child PIDs and return to the same responsive Yazi process. This exercises
+the actual opener and viewer, not a substitute child. Its outer PTY still has
+no GPU, so the final visual acceptance constraint remains unchanged.
 
 ## Reproduction
 

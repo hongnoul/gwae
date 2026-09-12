@@ -10211,6 +10211,32 @@ mod tests {
         }
 
         #[test]
+        fn ris_clears_visible_and_pending_graphics_at_every_split() {
+            let reset = b"\x1bc";
+            for split in 0..=reset.len() {
+                let (mut pane, _) = pane_with_replies();
+                feed_pane_output(
+                    &mut pane,
+                    b"\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AAAA\x1b\\",
+                    true,
+                );
+                feed_pane_output(
+                    &mut pane,
+                    b"\x1b_Ga=T,i=9,f=24,s=1,v=2,C=1,m=1;AAAA\x1b\\",
+                    true,
+                );
+                assert!(pane.graphics.source(1).is_some());
+                feed_pane_output(&mut pane, &reset[..split], true);
+                feed_pane_output(&mut pane, &reset[split..], true);
+                assert!(pane.graphics.source(1).is_none(), "split {split}");
+                assert!(pane.graphics.placements().is_empty(), "split {split}");
+                feed_pane_output(&mut pane, b"\x1b_Gm=0;AQID\x1b\\", true);
+                assert!(pane.graphics.source(9).is_none(), "split {split}");
+                assert!(pane.graphics.placements().is_empty(), "split {split}");
+            }
+        }
+
+        #[test]
         fn cancelling_an_opaque_apc_keeps_grid_and_graphics_parser_synchronized() {
             let input = b"A\x1b_Xopaque\x1b_Ga=T,i=3,f=24,s=1,v=1,C=1;AAAA\x1b\\B\x1b[6n";
             for split in 0..=input.len() {

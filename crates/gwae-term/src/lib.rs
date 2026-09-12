@@ -852,6 +852,71 @@ mod tests {
     }
 
     #[test]
+    fn sgr58_underline_color_and_resets_survive_every_split() {
+        let input = b"\x1b[58;2;18;52;86mA\x1b[58;5;42mB\x1b[59mC\x1b[58:2::7:8:9mD\x1b[0mE";
+        for split in 0..=input.len() {
+            let mut g = TerminalGrid::new(Size { cols: 8, rows: 3 });
+            g.feed(&input[..split]);
+            g.feed(&input[split..]);
+            for (col, expected) in [
+                CColor::Rgb(18, 52, 86),
+                CColor::Idx(42),
+                CColor::Default,
+                CColor::Rgb(7, 8, 9),
+                CColor::Default,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                assert_eq!(
+                    g.cell(col as u16, 0).style.underline_color,
+                    expected,
+                    "split {split}, col {col}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn screen_epoch_counts_alt_pairs_and_ris_at_every_split() {
+        for input in [
+            b"\x1b[?47h\x1b[?47l".as_slice(),
+            b"\x1b[?1047h\x1b[?1047l".as_slice(),
+            b"\x1b[?1049h\x1b[?1049l".as_slice(),
+            b"\x1bc\x1bc".as_slice(),
+        ] {
+            for split in 0..=input.len() {
+                let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+                assert_eq!(g.screen_epoch(), 0);
+                g.feed(&input[..split]);
+                g.feed(&input[split..]);
+                assert_eq!(g.screen_epoch(), 2, "input {input:?}, split {split}");
+                g.feed(b"plain ?1049h text\x1b[16t");
+                assert_eq!(g.screen_epoch(), 2);
+                assert_eq!(g.take_pty_replies(), b"\x1b[6;0;0t");
+            }
+        }
+    }
+
+    #[test]
+    fn graphics_cursor_is_absolute_clamped_and_clears_pending_wrap() {
+        let mut g = TerminalGrid::new(Size { cols: 8, rows: 5 });
+        g.feed(b"\x1b[2;4r\x1b[?6h12345678");
+        assert_eq!(g.cursor_position(), (1, 7));
+        g.set_graphics_cursor(0, 0);
+        assert_eq!(g.cursor_position(), (0, 0));
+        g.feed(b"X");
+        assert_eq!(g.cell(0, 0).ch, 'X');
+        assert_eq!(g.cursor_position(), (0, 1));
+        g.set_graphics_cursor(u16::MAX, u16::MAX);
+        assert_eq!(g.cursor_position(), (4, 7));
+        g.set_graphics_cursor(3, 0);
+        g.feed(b"Y");
+        assert_eq!(g.cell(0, 3).ch, 'Y');
+        assert_eq!(g.cursor_position(), (3, 1));
+    }
+
+    #[test]
     fn csi_16t_uses_current_measured_cells() {
         let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
         g.feed(b"\x1b[16t");
