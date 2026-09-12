@@ -44,6 +44,12 @@ native-quality Kitty rendering. In Ghostty through GWAE, tdf currently falls
 back to text-cell halfblocks. Pages render, but small PDF text is blocky and
 can be unreadable. Native Ghostty remains preferable for reading PDFs.
 
+In the verified tdf 0.5 fallback workflow, reducing an already-open pane can
+temporarily leave the previous larger page clipped. Ordinary page navigation
+causes tdf to redraw at the new width. Its help screen also hides Kitty-only
+controls, including zoom. These are remaining limitations, not passing native
+graphics acceptance checks.
+
 GWAE's existing Kitty passthrough is designed around Unicode-placeholder
 virtual placements. tdf uses traditional placements and expects graphics
 acknowledgements. Supporting those safely requires pane-scoped image IDs and
@@ -66,3 +72,7 @@ fullscreen changes, and independent replies to focused and unfocused panes.
 Core tests also replay the tdf image picker's combined probe at every split
 boundary, and check cursor reports, unknown metrics, overflow, malformed
 queries, and control-string isolation.
+
+See [the validation ledger](GWAE-TDF-VALIDATION.md) for requirement-level
+observations, the pre-fix comparison, new-pane/reload coverage, and known
+negative results. An aggregate test count alone is not the acceptance evidence.

@@ -12,7 +12,7 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
@@ -128,6 +128,7 @@ fn pixel_size_helper() {
         .open(dir.join(format!("pane-{pane}.log")))
         .expect("open helper log");
     record(&mut log, &format!("START {}", dimensions(initial)));
+    record(&mut log, &format!("PID {}", std::process::id()));
     crossterm::terminal::enable_raw_mode().expect("raw child stdin for terminal replies");
     record(&mut log, "READY");
     let mut previous_size = initial;
@@ -152,6 +153,7 @@ fn pixel_size_helper() {
                     "fragmented" => (b"\x1b[14t\x1b[16t\x1b[18t", 3),
                     "coalesced" => (b"\x1b[14t\x1b[16t\x1b[18t\x1b[14t", 4),
                     "status" => (b"\x1b[3;7H\x1b[c\x1b[5n\x1b[6n", 3),
+                    "cursor" => (b"\x1b[6n", 1),
                     _ => panic!("unknown helper command {command}"),
                 };
                 let mut stdout = std::io::stdout().lock();
@@ -169,6 +171,10 @@ fn pixel_size_helper() {
                 }
                 drop(stdout);
                 let reply = read_replies(frames);
+                record(
+                    &mut log,
+                    &format!("PROCESS {sequence} {}", std::process::id()),
+                );
                 record(
                     &mut log,
                     &format!(
@@ -194,10 +200,34 @@ struct Session {
     dir: PathBuf,
     sequence: usize,
     panes: usize,
+    reload_binary: Option<(PathBuf, PathBuf)>,
+}
+
+/// Replace only a test-owned executable, never the selected installed/build
+/// binary. Atomic replacement and ad-hoc signing match hotreload_e2e.rs.
+fn install_binary(source: &Path, destination: &Path) {
+    let temporary = destination.with_extension("new");
+    std::fs::copy(source, &temporary).expect("copy executable for real hot reload");
+    std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o755))
+        .expect("make copied executable runnable");
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("/usr/bin/codesign")
+            .args(["-f", "-s", "-"])
+            .arg(&temporary)
+            .status()
+            .expect("ad-hoc sign copied executable");
+        assert!(status.success(), "copied executable must be validly signed");
+    }
+    std::fs::rename(temporary, destination).expect("atomically replace test executable");
 }
 
 impl Session {
     fn start(host: PtySize, panes: usize) -> Self {
+        Self::start_with_reload(host, panes, false)
+    }
+
+    fn start_with_reload(host: PtySize, panes: usize, reload: bool) -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::var_os("JCODE_SCRATCH_DIR")
             .map(PathBuf::from)
@@ -232,7 +262,18 @@ impl Session {
         let executable =
             std::env::var_os("GWAE_E2E_BIN").unwrap_or_else(|| env!("CARGO_BIN_EXE_gwae").into());
         eprintln!("pixel acceptance executable: {executable:?}, host {host:?}");
-        let mut cmd = CommandBuilder::new(executable);
+        let source = std::fs::canonicalize(executable).expect("selected gwae executable");
+        let reload_binary = reload.then(|| {
+            let destination = dir.join("gwae-bin");
+            install_binary(&source, &destination);
+            (source.clone(), destination)
+        });
+        let mut cmd = CommandBuilder::new(
+            reload_binary
+                .as_ref()
+                .map(|(_, path)| path)
+                .unwrap_or(&source),
+        );
         cmd.env_clear();
         cmd.cwd(&dir);
         cmd.env("HOME", &dir);
@@ -254,6 +295,10 @@ impl Session {
         cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_PIXEL_HELPER", "1");
         cmd.env("GWAE_PIXEL_DIR", &dir);
+        cmd.env("TMPDIR", &dir);
+        if reload {
+            cmd.env("GWAE_DEV_RELOAD", "1");
+        }
         cmd.env(
             "GWAE_PIXEL_TEST_EXE",
             std::env::current_exe().expect("test executable"),
@@ -285,6 +330,7 @@ impl Session {
             dir,
             sequence: 0,
             panes,
+            reload_binary,
         };
         for pane in 0..panes {
             let start = session.wait_line(pane, "START ");
@@ -465,5 +511,118 @@ fn differently_sized_panes_receive_only_their_own_query_responses() {
         let right = session.request(1, "fragmented");
         session.assert_reply(0, left, "coalesced", inner(HOST, 3));
         session.assert_reply(1, right, "fragmented", inner(HOST, 4));
+    }
+}
+
+#[test]
+fn newly_spawned_pane_first_ioctl_uses_current_host_pixels() {
+    let mut session = Session::start(HOST, 1);
+    let host = PtySize {
+        rows: 36,
+        cols: 144,
+        pixel_width: 1735,
+        pixel_height: 727,
+    };
+    session
+        .master
+        .resize(host)
+        .expect("resize before adding pane");
+    let size = inner(host, 4);
+    session.wait_size(0, size);
+    session.query(0, "coalesced", size);
+    // Real Alt+Enter opens a shell column through sync_panes, rather than
+    // exercising the initial startup-panes loop again.
+    session.panes = 2;
+    session.keys(b"\x1b\r");
+    let start = session.wait_line(1, "START ");
+    assert_eq!(start, format!("START {}", dimensions(size)));
+    eprintln!("new pane 1 first ioctl: {start}");
+    session.wait_line(1, "READY");
+    session.query(1, "coalesced", size);
+    session.query(0, "fragmented", size);
+}
+
+#[test]
+fn hot_reload_inherits_live_pty_and_preserves_pixel_query_parity() {
+    let mut session = Session::start_with_reload(HOST, 1, true);
+    let size = inner(HOST, 4);
+    let helper_pid = session.wait_line(0, "PID ");
+    let helper_pid = helper_pid.strip_prefix("PID ").unwrap();
+    let host_pid = session.child.process_id().expect("gwae pid");
+    // Reload reconstructs the emulator at 1;1, but keeps the child/PTY.
+    // A deliberately non-default cursor gives observable evidence that the
+    // new image adopted the PTY, rather than merely waiting after a copy.
+    session.query(0, "status", size);
+    let (source, destination) = session.reload_binary.as_ref().unwrap();
+    install_binary(source, destination);
+    let deadline = Instant::now() + TIMEOUT;
+    let mut saw_repaint = false;
+    loop {
+        let sequence = session.request(0, "cursor");
+        let line = session.wait_line(0, &format!("QUERY {sequence} "));
+        let prefix = format!("QUERY {sequence} cursor {} ", dimensions(size));
+        let reply = line
+            .strip_prefix(&prefix)
+            .expect("geometry survives reload");
+        // The real adoption path also sends Ctrl+L to repaint the child. A
+        // probe in flight during exec may be lost, leaving just this input.
+        // Observe it explicitly rather than pretending it is a query reply.
+        if reply.contains("0c") {
+            assert!(!saw_repaint, "only one reload repaint is expected");
+            assert_eq!(reply.matches("0c").count(), 1);
+            saw_repaint = true;
+            eprintln!("observed real adoption repaint input: {line}");
+        }
+        let reply = reply.replace("0c", "");
+        if reply == hex(b"\x1b[1;1R") {
+            assert!(saw_repaint, "new grid must follow real PTY adoption");
+            assert_eq!(
+                session.wait_line(0, &format!("PROCESS {sequence} ")),
+                format!("PROCESS {sequence} {helper_pid}"),
+                "the same helper process must continue across exec/adoption"
+            );
+            eprintln!("observed reconstructed emulator after reload: {line}");
+            break;
+        }
+        assert!(
+            reply == hex(b"\x1b[3;7R") || (reply.is_empty() && saw_repaint),
+            "unexpected transition response: {line}"
+        );
+        assert!(Instant::now() < deadline, "never observed a real reload");
+    }
+    assert_eq!(session.child.process_id(), Some(host_pid));
+    assert!(session.child.try_wait().expect("check live gwae").is_none());
+    assert_eq!(
+        session
+            .log(0)
+            .lines()
+            .filter(|line| line.starts_with("START "))
+            .count(),
+        1,
+        "reload must not restart the helper"
+    );
+    session.query(0, "coalesced", size);
+    // Both pixel-only and cell-count changes now exercise PaneIo::Inherited,
+    // not the Owned master used before exec. Every query records a fresh ioctl.
+    for host in [
+        PtySize {
+            pixel_width: 1200,
+            pixel_height: 600,
+            ..HOST
+        },
+        PtySize {
+            rows: 36,
+            cols: 144,
+            pixel_width: 1735,
+            pixel_height: 727,
+        },
+    ] {
+        session
+            .master
+            .resize(host)
+            .expect("resize inherited pane's host");
+        let size = inner(host, 4);
+        session.wait_size(0, size);
+        session.query(0, "coalesced", size);
     }
 }
