@@ -151,6 +151,51 @@ and `patched-real-tdf-resize-results.json`.
 This validates the responsible fix without adding duplicate SIGWINCH delivery
 to GWAE. The patched tdf is scratch-only, not installed or submitted upstream.
 
+### Combined native path: unpatched versus patched tdf
+
+A further independent replay runs each **real tdf executable directly under
+the installed GWAE**, with no nested recorder or `/usr/bin/script`. The host
+PTY is 160x60 cells / 1280x960 pixels, and each run has an isolated HOME/XDG.
+The same actual PDF, native graphics path, quarter/fullscreen bindings and
+harmless `x` follow-up key are used for both binaries.
+
+| Transition | Package-managed tdf 0.5.0 | Local patched tdf 0.5.0 |
+| --- | --- | --- |
+| Initial quarter-width pane | 280x368 pixels, 35x23 image cells | Identical dimensions and pixel hash |
+| Fullscreen, no further child input | Still the old 280x368 page | Correct 624x800 page, 78x50 cells |
+| Subsequent `x` | Finally changes to 624x800 | No output or image change |
+| Quarter width, no further child input | Old page clipped to 8x800 at x39, one image column | Correct 280x368 fit and original pixel hash |
+| Subsequent `x` | Finally restores the original 280x368 page | No output or image change |
+
+The fitted image rectangles are exactly x3..37/y19..41 in quarter width and
+x42..119/y5..54 fullscreen. Both executables produce identical fitted pixel
+hashes. This separates GWAE's successful clipping of stale child placements
+from tdf's failed immediate relayout. The patched path fixes both enlargement
+and shrink without a compensating key or duplicate resize notification.
+
+The initial recording harness collected observations but did not fail on all
+acceptance conditions. A separate **fail-fast validator** therefore reparses
+every captured graphics packet independently, decodes the actual host frame,
+and checks exact RGBA lengths/hashes, complete per-cell placeholder coordinates,
+quiet canonical uploads, scoped deletes, unchanged executable hashes, actual
+child command/PID continuity, no timeouts, and normal exit. Both recorded cases
+pass these assertions. A second complete comparison passes in 15.4 seconds,
+including a final raw capture and grid replay after `q`: no live host textures,
+no image placeholders and no descendant processes remain. This is actual
+application wire/grid acceptance, not a Ghostty GPU screenshot.
+
+Private evidence is under
+`$JCODE_SCRATCH_DIR/tdf-native-resize-verify-20260912T021356Z`, including
+`native_tdf_resize_compare.py`, `validate_results.py`, `all-results.json`,
+`independent-validation.json`, and per-stage `.ansi`/decoded-text captures.
+The repeated run and its final cleanup captures are in `repeat-with-cleanup/`.
+The package-managed tdf SHA-256 remains
+`e00642315b768c3f913e8893dc37afef268a2f625ac8d5dbac06246f75a95aac`.
+The scratch patched binary is
+`efcb33c9200f21823b491d522f5c19e1c48af909f3d62ff33cebe93549e00290`.
+**Installed tdf still has the resize lag.** No package override or Yazi opener
+change was made to substitute the patched executable.
+
 ## Reproduction
 
 ### Delivered artifact
