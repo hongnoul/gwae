@@ -196,6 +196,29 @@ The scratch patched binary is
 **Installed tdf still has the resize lag.** No package override or Yazi opener
 change was made to substitute the patched executable.
 
+### Confidence recheck
+
+A subsequent audit rechecked the three application-level claims rather than
+relying on completion labels. All nine saved workflow PNGs decode to the exact
+RGBA bytes in their actual host uploads. Reversible hashes, distinct sequential
+tdf PIDs, Kitty help and the same responsive Yazi process all agree with the
+recorded assertions. Both two-viewer runs also pass an independent full-buffer
+host-packet parse and per-cell frame replay, including actual child image IDs,
+recorder ioctl parity, source reuse, sibling process survival and final cleanup.
+The scratch audit is `gwae-native-graphics-20260912/confidence-audit.py`.
+
+The audit found that the old minimal ratatui JSON filename had been overwritten
+by its fixed run. It was therefore not usable as preserved paired evidence.
+Separate unpatched/patched binaries were built with identical dependencies and
+only the `autoresize()` call differing. A fresh paired PTY run asserts
+`resize pre=100x20 draw=40x20` without the call and
+`resize pre=40x20 draw=40x20` with it. Distinct captures and binary hashes are
+preserved in `tdf-resize-lag-20260912/confidence-paired-ratatui/paired-results.json`.
+This minimal check supplements, not replaces, the actual tdf comparisons above.
+The committed patch also reconstructs the built tdf source byte-for-byte from
+the pristine archive. All nine source/manifest files were compared, and only
+`src/main.rs` differs. No GPU acceptance or installed-tdf fix is inferred.
+
 ## Reproduction
 
 ### Delivered artifact
