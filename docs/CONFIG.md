@@ -56,6 +56,14 @@ source = ""                  # "" detects; or pin: install.sh, brew, cargo,
                              # cargo-git, source, nix, system, windows
 ```
 
+## Responsive Yazi panels
+
+Yazi owns its internal panel layout. The optional
+[`gwae-responsive` plugin](../examples/yazi/) hides its parent and preview
+panels below 64 columns, reveals the preview at 64, and restores the full
+layout at 96. It follows pane resizes automatically and leaves standalone
+Yazi unchanged. Keep `content_width = 0` so Yazi sees the visible pane width.
+
 ## Staying up to date (`[update]`)
 
 gwae upgrades **the way it was installed, or not at all**: `gwae upgrade` runs

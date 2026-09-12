@@ -17,3 +17,9 @@ Verify any config parses with:
 ```sh
 gwae doctor
 ```
+
+## Application layouts
+
+[`yazi/`](yazi/) contains an opt-in responsive Yazi plugin. Narrow gwae panes
+show only the current directory, then reveal the preview and parent panels
+as the pane widens. Standalone Yazi keeps its normal layout.
