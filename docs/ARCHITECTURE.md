@@ -182,8 +182,11 @@ optional `Cmd+hjkl` snippet via `gwae setup`.
 The initial `vt100` prototype truncated cell tails on narrowing instead of
 reflowing them, so widening could not recover the text. `alacritty_terminal`
 0.25 replaces it behind the facade, providing primary-screen and history
-reflow while retaining the workspace's Rust 1.85 minimum. Host-owned terminal
-query replies, clipboard handling, and Kitty graphics passthrough are unchanged.
+reflow while retaining the workspace's Rust 1.85 minimum. Parser-generated terminal
+replies are routed back to the requesting pane in order. A streaming VT parser
+adds the cell-size query missing from the core. Clipboard handling and Kitty
+graphics passthrough remain host-owned. See [terminal compatibility](TERMINAL-COMPATIBILITY.md)
+for pixel geometry, query coverage, and graphics limitations.
 Child synchronized-update buffers are flushed after each feed because the
 compositor owns host frame synchronization, so an interrupted child frame cannot
 freeze the pane. Legacy `DECSET 47` is normalized to `1049` to protect the primary

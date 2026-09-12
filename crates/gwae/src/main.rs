@@ -9,6 +9,7 @@ mod binds;
 mod cli;
 mod config;
 mod cowsay;
+mod geometry;
 mod install;
 mod keepawake;
 mod keys;

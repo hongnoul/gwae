@@ -98,7 +98,7 @@ Choose gwae when you want readable panes that scroll beyond the screen, rather t
 * Scroll snaps to column boundaries. No slivers.
 * One process. No daemon, no socket. Agent persistence is `claude --resume` or `jcode --resume`.
 * Any terminal on macOS and Linux. Windows builds natively via ConPTY, experimental.
-* Kitty graphics forwarded and clipped to pane.
+* Kitty Unicode-placeholder graphics are forwarded with pane cell clipping. Traditional image placement and graphics replies are not fully supported. See [terminal compatibility](docs/TERMINAL-COMPATIBILITY.md).
 
 ## Agent status
 

@@ -139,11 +139,14 @@ pub trait TermGrid {
 // --- Reflowing Alacritty-backed grid ---
 
 use alacritty_terminal::{
-    event::{Event, EventListener},
+    event::{Event, EventListener, WindowSize},
     grid::{Dimensions, Scroll},
     index::{Column, Line, Point},
     term::{cell::Flags, Config, Term, TermMode},
-    vte::ansi::{Color, NamedColor, Processor},
+    vte::{
+        ansi::{Color, NamedColor, Processor},
+        Params, Parser, Perform,
+    },
 };
 use std::sync::mpsc;
 
@@ -161,18 +164,42 @@ impl Dimensions for Size {
     }
 }
 
-/// Keep title events inside the facade. The host still owns PTY query replies,
-/// clipboard access, and graphics passthrough, just as with the previous core.
-struct TitleListener(mpsc::Sender<String>);
+/// Keep titles and parser-generated replies in one queue so deferred size
+/// callbacks cannot overtake immediate PTY writes. Clipboard access and graphics
+/// passthrough remain the host's responsibility.
+struct GridListener(mpsc::Sender<Event>);
 
-impl EventListener for TitleListener {
+impl EventListener for GridListener {
     fn send_event(&self, event: Event) {
-        let title = match event {
-            Event::Title(title) => title,
-            Event::ResetTitle => String::new(),
+        match event {
+            Event::Title(_)
+            | Event::ResetTitle
+            | Event::PtyWrite(_)
+            | Event::TextAreaSizeRequest(_) => {}
             _ => return,
-        };
-        let _ = self.0.send(title);
+        }
+        let _ = self.0.send(event);
+    }
+}
+
+/// vte's ANSI handler supports window queries 14 and 18, but not 16. Use
+/// its VT parser for this one extension too, so control-string payloads,
+/// cancellations and partial sequences are never mistaken for queries.
+#[derive(Default)]
+struct CellSizeQuery(bool);
+
+impl Perform for CellSizeQuery {
+    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
+        let mut params = params.iter();
+        self.0 = !ignore
+            && intermediates.is_empty()
+            && action == 't'
+            && params.next() == Some(&[16][..])
+            && params.next().is_none();
+    }
+
+    fn terminated(&self) -> bool {
+        self.0
     }
 }
 
@@ -222,10 +249,14 @@ fn map_cell(c: &alacritty_terminal::term::cell::Cell) -> Cell {
 /// Full-screen applications retain the standard non-reflowing alternate screen
 /// and redraw for the new PTY dimensions on SIGWINCH.
 pub struct TerminalGrid {
-    term: Term<TitleListener>,
+    term: Term<GridListener>,
     parser: Processor,
+    cell_query_parser: Parser,
     legacy_modes: compat::LegacyCsiNormalizer,
-    titles: mpsc::Receiver<String>,
+    events: mpsc::Receiver<Event>,
+    pty_replies: Vec<u8>,
+    cell_width: u16,
+    cell_height: u16,
     title: String,
     size: Size,
 }
@@ -236,15 +267,66 @@ pub type Vt100Grid = TerminalGrid;
 impl TerminalGrid {
     pub fn new(size: Size) -> Self {
         let size = Self::nonzero_size(size);
-        let (tx, titles) = mpsc::channel();
+        let (tx, events) = mpsc::channel();
         Self {
-            term: Term::new(Config::default(), &size, TitleListener(tx)),
+            term: Term::new(Config::default(), &size, GridListener(tx)),
             parser: Processor::new(),
+            cell_query_parser: Parser::new(),
             legacy_modes: compat::LegacyCsiNormalizer::default(),
-            titles,
+            events,
+            pty_replies: Vec::new(),
+            cell_width: 0,
+            cell_height: 0,
             title: String::new(),
             size,
         }
+    }
+
+    /// Set measured cell dimensions in pixels. Zero means unknown (the default).
+    /// Measurements are retained across grid resizes.
+    pub fn set_cell_size(&mut self, width: u16, height: u16) {
+        self.cell_width = width;
+        self.cell_height = height;
+    }
+
+    /// Drain parser-generated replies, in query order, for writing to the child PTY.
+    pub fn take_pty_replies(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pty_replies)
+    }
+
+    fn window_size(&self) -> WindowSize {
+        // Alacritty's pixel-size callback multiplies u16 values. Clamp each
+        // measurement before invoking it, and recompute after every resize.
+        WindowSize {
+            num_lines: self.size.rows,
+            num_cols: self.size.cols,
+            cell_width: self.cell_width.min(u16::MAX / self.size.cols),
+            cell_height: self.cell_height.min(u16::MAX / self.size.rows),
+        }
+    }
+
+    fn process_events(&mut self) {
+        let window_size = self.window_size();
+        for event in self.events.try_iter() {
+            match event {
+                Event::Title(title) => self.title = title,
+                Event::ResetTitle => self.title.clear(),
+                Event::PtyWrite(reply) => self.pty_replies.extend_from_slice(reply.as_bytes()),
+                Event::TextAreaSizeRequest(format) => {
+                    self.pty_replies
+                        .extend_from_slice(format(window_size).as_bytes());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn feed_core(&mut self, bytes: &[u8]) {
+        self.parser.advance(&mut self.term, bytes);
+        // The compositor owns synchronized host frames. Flush child frames
+        // before emitting extension replies so earlier core replies stay first.
+        self.parser.stop_sync(&mut self.term);
+        self.process_events();
     }
 
     fn nonzero_size(size: Size) -> Size {
@@ -333,14 +415,20 @@ impl TermGrid for TerminalGrid {
 
     fn feed(&mut self, bytes: &[u8]) -> Vec<Damage> {
         let bytes = self.legacy_modes.feed(bytes);
-        self.parser.advance(&mut self.term, &bytes);
-        // The compositor owns synchronized host frames. Do not retain an
-        // inner child's DECSET 2026 buffer: an interrupted frame could otherwise
-        // freeze its pane forever since we don't run Alacritty's timeout loop.
-        // stop_sync uses the same parser, preserving partial UTF-8/CSI state.
-        self.parser.stop_sync(&mut self.term);
-        for title in self.titles.try_iter() {
-            self.title = title;
+        let mut remaining = bytes.as_slice();
+        while !remaining.is_empty() {
+            let mut query = CellSizeQuery::default();
+            let consumed = self
+                .cell_query_parser
+                .advance_until_terminated(&mut query, remaining);
+            self.feed_core(&remaining[..consumed]);
+            if query.0 {
+                let size = self.window_size();
+                self.pty_replies.extend_from_slice(
+                    format!("\x1b[6;{};{}t", size.cell_height, size.cell_width).as_bytes(),
+                );
+            }
+            remaining = &remaining[consumed..];
         }
         // The renderer diffs cells, so keep the existing whole-grid damage API.
         vec![Damage {
@@ -619,6 +707,179 @@ impl TermGrid for NullGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_replies_preserve_order_at_every_byte_boundary() {
+        let input =
+            b"\x1b[14t\x1b[16t\x1b[18t\x1b[c\x1b[5n\x1b[3;7H\x1b[6nXY\x1b[6n\x1b[16t\x1b[14t";
+        let expected =
+            b"\x1b[4;120;160t\x1b[6;24;8t\x1b[8;5;20t\x1b[?6c\x1b[0n\x1b[3;7R\x1b[3;9R\x1b[6;24;8t\x1b[4;120;160t";
+        // Includes a single coalesced feed and every possible two-chunk split.
+        for split in 0..=input.len() {
+            let mut g = Vt100Grid::new(Size { cols: 20, rows: 5 });
+            g.set_cell_size(8, 24);
+            g.feed(&input[..split]);
+            let mut replies = g.take_pty_replies();
+            g.feed(&input[split..]);
+            replies.extend(g.take_pty_replies());
+            assert_eq!(replies, expected, "split at byte {split}");
+            assert!(g.take_pty_replies().is_empty(), "replies must drain");
+            assert_eq!(g.cursor_position(), (2, 8));
+        }
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+        g.set_cell_size(8, 24);
+        let mut replies = Vec::new();
+        for byte in input {
+            g.feed(std::slice::from_ref(byte));
+            replies.extend(g.take_pty_replies());
+        }
+        assert_eq!(replies, expected, "one byte per feed");
+    }
+
+    #[test]
+    fn geometry_replies_use_current_measurements_and_resize() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+        assert!(g.take_pty_replies().is_empty());
+        g.feed(b"\x1b[14t\x1b[18t");
+        assert_eq!(g.take_pty_replies(), b"\x1b[4;0;0t\x1b[8;5;20t");
+        g.set_cell_size(8, 24);
+        g.feed(b"\x1b[14t\x1b[18t\x1b[1");
+        // Already-generated replies must keep the old dimensions even when
+        // the host drains them only after a resize and measurement update.
+        g.resize(Size { cols: 30, rows: 8 });
+        g.set_cell_size(10, 18);
+        g.feed(b"4t\x1b[18t");
+        assert_eq!(
+            g.take_pty_replies(),
+            b"\x1b[4;120;160t\x1b[8;5;20t\x1b[4;144;300t\x1b[8;8;30t"
+        );
+        g.resize(Size { cols: 10, rows: 3 });
+        g.feed(b"\x1b[14t");
+        assert_eq!(g.take_pty_replies(), b"\x1b[4;54;100t");
+        g.set_cell_size(0, 0);
+        g.feed(b"\x1b[14t");
+        assert_eq!(g.take_pty_replies(), b"\x1b[4;0;0t");
+    }
+
+    #[test]
+    fn pixel_callbacks_clamp_before_multiplying_and_reclamp_after_resize() {
+        let mut g = TerminalGrid::new(Size { cols: 80, rows: 24 });
+        g.set_cell_size(u16::MAX, u16::MAX);
+        g.feed(b"\x1b[14t\x1b[18t");
+        assert_eq!(g.take_pty_replies(), b"\x1b[4;65520;65520t\x1b[8;24;80t");
+        g.resize(Size::default());
+        g.feed(b"\x1b[14t\x1b[18t");
+        assert_eq!(g.take_pty_replies(), b"\x1b[4;65535;65534t\x1b[8;1;2t");
+    }
+
+    #[test]
+    fn dsr_uses_live_cursor_even_when_scrollback_is_visible() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+        for _ in 0..20 {
+            g.feed(b"history\r\n");
+        }
+        g.feed(b"\x1b[4;9H");
+        g.scroll_by(10);
+        assert!(g.scrollback_offset() > 0);
+        g.feed(b"\x1b[6n\x1b[2;3H\x1b[6n");
+        assert_eq!(g.take_pty_replies(), b"\x1b[4;9R\x1b[2;3R");
+    }
+
+    #[test]
+    fn queries_do_not_change_titles_or_title_stack_behavior() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+        // Save the original None title so restoring it emits ResetTitle.
+        g.feed(b"\x1b[22t");
+        g.feed(b"\x1b]2;first\x07\x1b[22t\x1b[14t\x1b]0;second\x1b\\\x1b[18t");
+        assert_eq!(g.title(), "second");
+        assert_eq!(g.take_pty_replies(), b"\x1b[4;0;0t\x1b[8;5;20t");
+        g.feed(b"\x1b[23t\x1b[5n");
+        assert_eq!(g.title(), "first");
+        assert_eq!(g.take_pty_replies(), b"\x1b[0n");
+        g.feed(b"\x1b[23t");
+        assert_eq!(g.title(), "");
+        assert!(g.take_pty_replies().is_empty());
+    }
+
+    #[test]
+    fn query_like_payload_in_osc_and_apc_does_not_reply() {
+        // CSI-looking text and C1 bytes are opaque payload, not queries. A raw
+        // ESC would instead terminate the string in the backend's VT parser.
+        let input =
+            b"\x1b]2;[14t [18t [6n [c \x9b14t\x07\x1b_Gpayload;[14t [18t [6n [c \x9b18t\x1b\\";
+        for split in 0..=input.len() {
+            let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+            g.feed(&input[..split]);
+            assert!(g.take_pty_replies().is_empty(), "first chunk {split}");
+            g.feed(&input[split..]);
+            assert!(g.take_pty_replies().is_empty(), "second chunk {split}");
+            assert_eq!(g.visible_text(), "");
+            g.feed(b"\x1b[18t");
+            assert_eq!(g.take_pty_replies(), b"\x1b[8;5;20t");
+        }
+    }
+
+    #[test]
+    fn csi_16t_uses_current_measured_cells() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+        g.feed(b"\x1b[16t");
+        assert_eq!(g.take_pty_replies(), b"\x1b[6;0;0t");
+        g.set_cell_size(8, 24);
+        for byte in b"\x1b[16" {
+            g.feed(std::slice::from_ref(byte));
+            assert!(g.take_pty_replies().is_empty());
+        }
+        g.resize(Size { cols: 30, rows: 8 });
+        g.set_cell_size(10, 18);
+        g.feed(b"t\x1b[14t");
+        assert_eq!(g.take_pty_replies(), b"\x1b[6;18;10t\x1b[4;144;300t");
+        g.set_cell_size(u16::MAX, u16::MAX);
+        g.feed(b"\x1b[16t\x1b[14t");
+        assert_eq!(
+            g.take_pty_replies(),
+            b"\x1b[6;8191;2184t\x1b[4;65528;65520t"
+        );
+    }
+
+    #[test]
+    fn tdf_picker_receives_font_size_without_advertising_unsupported_graphics() {
+        // Exact query from tdf 0.5.0's pinned ratatui-image 8.0.1 picker.
+        // Without CSI16 it returns NoCap before trying its ioctl fallback,
+        // then silently uses 10x20 even though tdf renders at measured pixels.
+        let input = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c\x1b[16t\x1b[5n";
+        for split in 0..=input.len() {
+            let mut g = TerminalGrid::new(Size { cols: 52, rows: 61 });
+            g.set_cell_size(16, 34);
+            g.feed(&input[..split]);
+            let mut replies = g.take_pty_replies();
+            g.feed(&input[split..]);
+            replies.extend(g.take_pty_replies());
+            assert_eq!(replies, b"\x1b[?6c\x1b[6;34;16t\x1b[0n", "split {split}");
+        }
+    }
+
+    #[test]
+    fn csi_16t_rejects_payloads_cancelled_and_nonplain_sequences() {
+        let input = b"\x1b]2;[16t\x9b16t\x07\x1b_Gdata;[16t\x9b16t\x1b\\\x1bPdata;[16t\x1b\\\x1b[?16t\x1b[16 t\x1b[16:0t\x1b[16;0t\x1b[16\x18t\x1b[16\x1at";
+        for split in 0..=input.len() {
+            let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+            g.feed(&input[..split]);
+            g.feed(&input[split..]);
+            assert!(g.take_pty_replies().is_empty(), "split {split}");
+            g.feed(b"\x1b[16t");
+            assert_eq!(g.take_pty_replies(), b"\x1b[6;0;0t");
+        }
+    }
+
+    #[test]
+    fn synchronized_output_flush_preserves_reply_order() {
+        let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
+        g.feed(b"\x1b[?2026h\x1b[14t\x1b[16t\x1b[2;3H\x1b[6n\x1b[18t\x1b[16t");
+        assert_eq!(
+            g.take_pty_replies(),
+            b"\x1b[4;0;0t\x1b[6;0;0t\x1b[2;3R\x1b[8;5;20t\x1b[6;0;0t"
+        );
+    }
 
     #[test]
     fn pane_text_reflows_losslessly_across_width_cycles() {

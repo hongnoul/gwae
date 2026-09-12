@@ -23,6 +23,7 @@ use gwae_term::{CColor, Cell, KittyApcExtractor, Size as GridSize, TermGrid, Vt1
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 
 use crate::config::Config;
+use crate::geometry::CellPixels;
 use crate::select::{self, Selection};
 
 /// What a mouse event inside a pane should do.
@@ -223,23 +224,16 @@ pub enum PaneIo {
 
 impl PaneIo {
     /// Tell the kernel the pane's new logical size, so the child re-lays out.
-    pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+    pub fn resize(&self, size: PtySize) -> Result<(), String> {
         match self {
-            PaneIo::Owned(m) => m
-                .resize(PtySize {
-                    rows,
-                    cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                })
-                .map_err(|e| e.to_string()),
+            PaneIo::Owned(m) => m.resize(size).map_err(|e| e.to_string()),
             #[cfg(unix)]
             PaneIo::Inherited(fd) => {
                 let ws = libc::winsize {
-                    ws_row: rows,
-                    ws_col: cols,
-                    ws_xpixel: 0,
-                    ws_ypixel: 0,
+                    ws_row: size.rows,
+                    ws_col: size.cols,
+                    ws_xpixel: size.pixel_width,
+                    ws_ypixel: size.pixel_height,
                 };
                 // Safety: TIOCSWINSZ on a PTY master fd this process owns.
                 let rc = unsafe { libc::ioctl(*fd, libc::TIOCSWINSZ, &ws) };
@@ -319,6 +313,9 @@ pub struct PtyPane {
     pub writer: Box<dyn Write + Send>,
     pub child: PaneProc,
     pub grid: Vt100Grid,
+    /// Last geometry successfully sent to the kernel, including pixel-only
+    /// font changes that do not alter character rows or columns.
+    pub pty_size: PtySize,
     pub alive: bool,
     pub h_scroll: i32,
     /// When the pane last emitted any output (activity heuristic).
@@ -345,30 +342,6 @@ struct Rect {
     y: u16,
     w: u16,
     h: u16,
-}
-
-/// Detect terminal capability/status queries from a child and produce a reply
-/// sequence. Answers Device Attributes (DA) and Device Status Report (DSR) so
-/// shells like fish don't warn that they "could not read a response to the
-/// Primary Device Attribute query". Returns None when no query is present.
-fn query_reply(bytes: &[u8]) -> Option<Vec<u8>> {
-    // DA / DA1: ESC [ c or ESC [ 0;1;2c  ->  VT100 with advanced video option.
-    if bytes.windows(3).any(|w| w == b"\x1b[c")
-        || bytes
-            .windows(4)
-            .any(|w| w == b"\x1b[0c" || w == b"\x1b[1c" || w == b"\x1b[2c")
-    {
-        return Some(b"\x1b[?1;2c".to_vec());
-    }
-    // DSR operating status: ESC [ 5 n -> "OK".
-    if bytes.windows(4).any(|w| w == b"\x1b[5n") {
-        return Some(b"\x1b[0n".to_vec());
-    }
-    // DSR cursor position: ESC [ 6 n -> report row;col (1;1 is a safe answer).
-    if bytes.windows(4).any(|w| w == b"\x1b[6n") {
-        return Some(b"\x1b[1;1R".to_vec());
-    }
-    None
 }
 
 /// Scan a PTY output chunk for OSC 133 shell-integration markers and return
@@ -689,14 +662,10 @@ fn spawn_pane(
     gh: u16,
     tx: Sender<PaneMsg>,
     cwd: Option<&std::path::Path>,
+    cell_pixels: CellPixels,
 ) -> Result<PtyPane, String> {
     let pty = native_pty_system();
-    let size = PtySize {
-        rows: gh,
-        cols: gw,
-        pixel_width: 0,
-        pixel_height: 0,
-    };
+    let size = cell_pixels.pty_size(gw, gh);
     let pair = pty.openpty(size).map_err(|e| format!("openpty: {e}"))?;
     let master = pair.master;
     let slave = pair.slave;
@@ -759,6 +728,7 @@ fn spawn_pane(
         writer,
         child: PaneProc::Owned(child),
         grid: Vt100Grid::new(GridSize { cols: gw, rows: gh }),
+        pty_size: size,
         alive: true,
         h_scroll: 0,
         last_output: Instant::now(),
@@ -864,6 +834,13 @@ fn adopt_pane(
         writer: Box::new(writer_file),
         child: PaneProc::Adopted(pid),
         grid: Vt100Grid::new(GridSize { cols, rows }),
+        // Refresh even if character geometry survived reload unchanged.
+        pty_size: PtySize {
+            cols,
+            rows,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
         alive: true,
         h_scroll: 0,
         last_output: Instant::now(),
@@ -4016,14 +3993,46 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     Some(Cmd::Input(key_bytes(ev)))
 }
 
+/// Use the same drawable geometry before spawn and on every resize. A child
+/// may measure its terminal immediately, before the first compositor frame.
+fn pane_grid_sizes(layout: &Layout, host: GridSize, cfg: &Config) -> Vec<(PaneId, GridSize)> {
+    layout
+        .rows
+        .iter()
+        .flat_map(|r| &r.columns)
+        .flat_map(|col| {
+            let sizes = column_grid_sizes(
+                col.width,
+                col.panes.len(),
+                host,
+                cfg.content_width,
+                true,
+                chrome_rows(cfg),
+            );
+            col.panes.iter().copied().zip(sizes).map(|(pid, size)| {
+                (
+                    pid,
+                    GridSize {
+                        // Match TerminalGrid's minimum wide-glyph-safe width,
+                        // even when only a clipped sliver is drawable.
+                        cols: size.cols.max(2),
+                        rows: size.rows.max(1),
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
 /// Kill any pane whose id is no longer in the layout, and spawn missing ones.
 fn sync_panes(
     layout: &mut Layout,
     panes: &mut HashMap<PaneId, PtyPane>,
     tx: &Sender<PaneMsg>,
-    _first_id: PaneId,
+    geometry: (GridSize, CellPixels),
     agent_panes: &HashSet<PaneId>,
     cwd: Option<&std::path::Path>,
+    cfg: &Config,
 ) -> Result<(), String> {
     let mut wanted: Vec<PaneId> = Vec::new();
     for row in &layout.rows {
@@ -4045,7 +4054,7 @@ fn sync_panes(
     // Spawn missing panes. Agent panes (created via the spawn-agent verb) run
     // the agent gateway, which becomes the harness; everything else gets the
     // shell.
-    for pid in wanted {
+    for (pid, size) in pane_grid_sizes(layout, geometry.0, cfg) {
         if panes.contains_key(&pid) {
             continue;
         }
@@ -4059,7 +4068,7 @@ fn sync_panes(
         } else {
             String::new()
         };
-        let pane = spawn_pane(pid, &cmd, 80, 24, tx.clone(), cwd)?;
+        let pane = spawn_pane(pid, &cmd, size.cols, size.rows, tx.clone(), cwd, geometry.1)?;
         panes.insert(pid, pane);
         tracing::debug!(pid, "spawned pane");
     }
@@ -4276,6 +4285,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     })?;
     let mut cols = cols.max(1);
     rows = rows.max(2);
+    let mut cell_pixels = CellPixels::measure().unwrap_or_default();
     if std::env::var_os("GWAE_DEBUG_SIZE").is_some() {
         eprintln!("[gwae] initial terminal size -> {cols} cols x {rows} rows");
     }
@@ -4326,8 +4336,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let (tx, rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     let initial = command.clone().unwrap_or_default();
-    let gw = cols.max(1);
-    let gh = rows.saturating_sub(chrome_rows(&cfg)).max(1);
+    let initial_sizes: HashMap<_, _> = pane_grid_sizes(&layout, GridSize { cols, rows }, &cfg)
+        .into_iter()
+        .collect();
     // Spawn every pane in the initial strip; the rest get the user's shell.
     // Sort by id: `panes` is a HashMap, and unsorted iteration made *which
     // pane runs the command* random (ids are allocated in column order, so id
@@ -4387,7 +4398,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         } else {
             String::new()
         };
-        match spawn_pane(*pid, &cmd, gw, gh, tx.clone(), spawn_dir.as_deref()) {
+        let size = initial_sizes[pid];
+        match spawn_pane(
+            *pid,
+            &cmd,
+            size.cols,
+            size.rows,
+            tx.clone(),
+            spawn_dir.as_deref(),
+            cell_pixels,
+        ) {
             Ok(p) => {
                 panes.insert(*pid, p);
             }
@@ -4510,7 +4530,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             match msg {
                 PaneMsg::Output(pid, bytes) => {
                     if let Some(p) = panes.get_mut(&pid) {
+                        p.grid.set_cell_size(cell_pixels.width, cell_pixels.height);
                         p.grid.feed(&bytes);
+                        // The terminal parser retains partial sequences and
+                        // emits every reply in order. Route them to the pane
+                        // that asked, never to the focused pane or host input.
+                        let replies = p.grid.take_pty_replies();
+                        if !replies.is_empty() {
+                            let _ = p.writer.write_all(&replies);
+                            let _ = p.writer.flush();
+                        }
                         p.last_output = Instant::now();
                         // Recover Kitty graphics APCs that vt100 swallows and
                         // forward them verbatim to the host. Emitters use
@@ -4540,12 +4569,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 lp.status = PaneStatus::Running;
                             }
                         }
-                        // Answer terminal capability/status queries (fish's DA
-                        // probe etc.) so children don't warn or hang.
-                        if let Some(reply) = query_reply(&bytes) {
-                            let _ = p.writer.write_all(&reply);
-                            let _ = p.writer.flush();
-                        }
                         dirty = true;
                     }
                 }
@@ -4574,9 +4597,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             &mut layout,
                             &mut panes,
                             &tx,
-                            0,
+                            (GridSize { cols, rows }, cell_pixels),
                             &agent_panes,
                             spawn_dir.as_deref(),
+                            &cfg,
                         ) {
                             tracing::error!("sync panes: {e}");
                         }
@@ -4595,6 +4619,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // full-bleed to the actual right margin.
         if size_check.elapsed() >= SIZE_POLL {
             size_check = Instant::now();
+            // Font/DPI changes can alter pixels without changing rows/cols.
+            // Keep the last valid metrics across a transient ioctl failure.
+            if let Some(measured) = CellPixels::measure() {
+                cell_pixels = measured;
+            }
             if refresh_size(&mut cols, &mut rows) {
                 layout.clamp_scrolls(Viewport::new(cols));
                 dirty = true;
@@ -5263,9 +5292,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         &mut layout,
                                         &mut panes,
                                         &tx,
-                                        0,
+                                        (GridSize { cols, rows }, cell_pixels),
                                         &agent_panes,
                                         spawn_dir.as_deref(),
+                                        &cfg,
                                     ) {
                                         tracing::error!("sync panes: {e}");
                                     }
@@ -5549,6 +5579,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     Ok(Event::Resize(c, r)) => {
                         cols = c.max(1);
                         rows = r.max(2);
+                        if let Some(measured) = CellPixels::measure() {
+                            cell_pixels = measured;
+                        }
                         // A wider terminal shrinks the strip relative to the
                         // viewport; drop any now-invalid scroll immediately so the
                         // strip snaps back to full bleed on the next paint.
@@ -5568,29 +5601,20 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // Size all panes, including hidden columns/strips, from logical
         // geometry. Deferring hidden panes until focus reveals them would
         // provoke a SIGWINCH redraw and falsely turn an idle `!` into `»`.
-        let chrome = chrome_rows(&cfg);
-        for col in layout.rows.iter().flat_map(|r| &r.columns) {
-            let sizes = column_grid_sizes(
-                col.width,
-                col.panes.len(),
-                GridSize { cols, rows },
-                cfg.content_width,
-                true,
-                chrome,
-            );
-            for (pid, size) in col.panes.iter().zip(sizes) {
-                // Zero-height stacks have no drawable view. Keep the emulator
-                // and kernel at their one-row minimum until space is available.
-                let size = GridSize {
-                    rows: size.rows.max(1),
-                    ..size
-                };
-                if let Some(p) = panes.get_mut(pid) {
-                    if p.grid.size() != size {
-                        p.grid.resize(size);
-                        let _ = p.master.resize(size.cols, size.rows);
-                        dirty = true;
+        for (pid, size) in pane_grid_sizes(&layout, GridSize { cols, rows }, &cfg) {
+            if let Some(p) = panes.get_mut(&pid) {
+                if p.grid.size() != size {
+                    p.grid.resize(size);
+                    dirty = true;
+                }
+                p.grid.set_cell_size(cell_pixels.width, cell_pixels.height);
+                let pty_size = cell_pixels.pty_size(size.cols, size.rows);
+                if p.pty_size != pty_size {
+                    match p.master.resize(pty_size) {
+                        Ok(()) => p.pty_size = pty_size,
+                        Err(e) => tracing::warn!(pid, "resize pane: {e}"),
                     }
+                    dirty = true;
                 }
             }
         }
@@ -5943,6 +5967,34 @@ fn sgr_mouse_report(ev: &MouseEvent, gx: u16, gy: u16) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_and_inherited_pty_resize_preserve_pixel_dimensions() {
+        let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+        let owned = PaneIo::Owned(pair.master);
+        let size = CellPixels {
+            width: 8,
+            height: 16,
+        }
+        .pty_size(38, 22);
+        owned.resize(size).unwrap();
+        let PaneIo::Owned(ref master) = owned else {
+            unreachable!()
+        };
+        assert_eq!(master.get_size().unwrap(), size);
+
+        // The original owner keeps this fd alive. Exercise exactly the ioctl
+        // path used by a pane adopted after exec, without spawning a child.
+        let inherited = PaneIo::Inherited(owned.raw_fd().unwrap());
+        let next = CellPixels {
+            width: 10,
+            height: 20,
+        }
+        .pty_size(78, 28);
+        inherited.resize(next).unwrap();
+        assert_eq!(master.get_size().unwrap(), next);
+    }
 
     /// A palette with a distinctive accent, everything else Mocha. Render
     /// tests assert on the accent to prove focus chrome is drawn, so the
@@ -6951,7 +7003,8 @@ mod tests {
             .unwrap();
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let (tx, _rx) = channel::<PaneMsg>();
-        let mut pane = spawn_pane(pid, "sleep 30", 80, 24, tx, None).expect("spawn pane");
+        let mut pane = spawn_pane(pid, "sleep 30", 80, 24, tx, None, CellPixels::default())
+            .expect("spawn pane");
         pane.grid.feed(b"hello world\r\nsecond line");
         panes.insert(pid, pane);
         let (cols, rows) = (80u16, 24u16);
@@ -9657,7 +9710,8 @@ fn content_scroll_reveals_overflow_e2e() {
     }
     let (tx, rx) = channel::<PaneMsg>();
     let cmd = "sh -c \"for i in $(seq 1 240); do printf '%s' $((i % 10)); done; echo\"";
-    let pane = spawn_pane(pid, cmd, 240, 10, tx.clone(), None).expect("spawn pane");
+    let pane =
+        spawn_pane(pid, cmd, 240, 10, tx.clone(), None, CellPixels::default()).expect("spawn pane");
     let mut pane = pane;
     // Feed PTY output until the 240-cell digit line has landed.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -9784,7 +9838,8 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
             "sh -c \"for i in $(seq 1 {w}); do printf '%s' {}; done; echo\"",
             fills[i]
         );
-        let pane = spawn_pane(*pid, &cmd, w, rows, tx.clone(), None).expect("spawn pane");
+        let pane = spawn_pane(*pid, &cmd, w, rows, tx.clone(), None, CellPixels::default())
+            .expect("spawn pane");
         panes.insert(*pid, pane);
     }
     // Feed PTY output until every pane's first row is fully painted.
@@ -9892,7 +9947,16 @@ fn widened_last_pane_wraps_at_logical_width_e2e() {
     // emulator wrapped (or not) at the live grid width.
     let (tx, rx) = channel::<PaneMsg>();
     let cmd = format!("sh -c \"printf '%s' {}\"", "D".repeat(v.grid_cols as usize));
-    let pane = spawn_pane(pids[3], &cmd, v.grid_cols, rows, tx.clone(), None).expect("spawn pane");
+    let pane = spawn_pane(
+        pids[3],
+        &cmd,
+        v.grid_cols,
+        rows,
+        tx.clone(),
+        None,
+        CellPixels::default(),
+    )
+    .expect("spawn pane");
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     panes.insert(pids[3], pane);
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -9994,7 +10058,16 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
     let (tx, _rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     for pid in &pids {
-        let pane = spawn_pane(*pid, "sleep 30", 80, rows, tx.clone(), None).expect("spawn pane");
+        let pane = spawn_pane(
+            *pid,
+            "sleep 30",
+            80,
+            rows,
+            tx.clone(),
+            None,
+            CellPixels::default(),
+        )
+        .expect("spawn pane");
         panes.insert(*pid, pane);
     }
 
