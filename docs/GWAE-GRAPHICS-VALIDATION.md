@@ -8,7 +8,8 @@ This follows the [historical sizing repair](GWAE-TDF-VALIDATION.md).
 The new path accepts validated direct RGB/RGBA transfers and traditional
 placements, answers the requesting pane, and renders clipped images using
 owned host texture IDs. Actual tdf now selects Kitty mode. Its Yazi opener,
-fit/fill, zoom and page navigation passed against the release candidate.
+fit/fill, zoom and page navigation passed against the release candidate and
+then again against the installed executable.
 Decoded **actual host-upload pixels** show readable PDF text, not halfblocks.
 
 This is not full Kitty compatibility. Final Ghostty framebuffer visual
@@ -108,6 +109,31 @@ This validates the responsible fix without adding duplicate SIGWINCH delivery
 to GWAE. The patched tdf is scratch-only, not installed or submitted upstream.
 
 ## Reproduction
+
+### Delivered artifact
+
+Implementation commit: `39efea8`. The signed release artifact was atomically
+installed at `~/.bun/bin/gwae` after the complete serial workspace passed
+**668 tests, zero failures, seven guarded helpers ignored**, across 29 targets.
+The release and installed files are byte-identical, SHA-256:
+
+```text
+90a7a810a90b72885dae643c9718a8728eb753764dbaaea7165f408e945f979d
+```
+
+All **nine** actual-executable pixel/graphics cases then passed against the
+installed path, with one guarded helper ignored (`installed-e2e.log`). The
+complete real Yazi/tdf native workflow passed again in 7.8 seconds. Its result
+JSON records the installed path and this exact executable hash.
+
+The previous installed sizing-only executable is preserved locally as
+`gwae-native-graphics-20260912/gwae-before-native-39efea8` under the scratch
+directory, with its original SHA-256
+`cde69bc9e6f2d6cb833e02585ea4d8e6a1575743b29d09939abb6ffd783d7e5f`.
+No package-managed tdf binary or user PDF was changed. These delivery checks
+do not close the final Ghostty framebuffer or installed-tdf resize limitations.
+
+### Commands
 
 ```sh
 cargo test -p gwae --bin gwae graphics
