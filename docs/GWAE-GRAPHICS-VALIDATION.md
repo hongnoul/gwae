@@ -91,6 +91,49 @@ Private local evidence is under `$JCODE_SCRATCH_DIR/gwae-native-graphics-2026091
 
 PDFs, screenshots and application captures are not committed.
 
+## Two real viewers: lifecycle follow-up
+
+The first delivery checked these lifecycle properties with component tests and
+synthetic red/green child programs. A subsequent **actual two-tdf replay** now
+passes as well, twice in about 8.8 seconds, against the same installed hash.
+It uses two unmodified tdf 0.5.0 processes, one-page display (`-m 1`) and
+different page colors to distinguish the panes. Both view the same real PDF.
+Actual child wire captures confirm that **both transmit image ID 1**.
+
+The host PTY is 160x60 cells with 8x16-pixel cells. A test-only PTY recorder
+captures each real viewer's output and mirrors the **actual GWAE-provided
+ioctl** to its nested PTY on SIGWINCH. Every recorded outer/inner tuple matches:
+39x58 cells / 312x928 pixels, then 159x58 / 1272x928 for the fullscreen pane,
+then 39x58 / 312x928 again. It never invents child query replies or image data.
+Host frames are replayed through the project's tested `gwae-term` grid, not a
+GPU emulator. This remains explicitly separate from Ghostty visual acceptance.
+
+Observed checks, using zero-based host cell coordinates:
+
+| Step | Observed result |
+| --- | --- |
+| Dismiss initial GWAE help | The intentional startup HUD initially masks part of one image. A harmless key removes it, revealing two complete 35x23-cell rectangles, 280x368 RGBA pixels each. |
+| Tiled panes | Image bounds are x3..37 and x43..77, y19..41. Every placeholder resolves to an owned upload and valid row/column/placement coordinates. The distinct page colors have distinct hashes and host IDs. |
+| Fullscreen first viewer | The sibling's host texture is deleted. After a harmless layout tick, the first page is 624x800 pixels at x42..119, y5..54. The extra tick is needed by unpatched tdf and is not counted as immediate resize success. |
+| Return to quarter width, no child input | The old large page is clipped to one cell at x39, 8x800 pixels, never into its neighbor. The sibling is revealed at its original bounds/hash with a new owned host ID. Its child transmit count stays at one, proving local source reuse rather than child retransmission. The first viewer's immediate fit still fails. |
+| Subsequent harmless key | The first page returns to its original 280x368 texture and exact original hash. Both complete image rectangles are inside their respective panes. |
+| Navigate only the second viewer | Its actual source ID changes to page 2, and its pixels change. The first viewer keeps the same host ID/hash. Returning to page 1 restores the second viewer's original hash without retransmitting that retained page source. |
+| First viewer exits normally | Only its texture disappears. The same sibling tdf PID survives, with the same texture ID/hash, relocated correctly into the vacated left column. |
+| Second viewer exits normally | Both recorded tdf PIDs are gone, GWAE exits with status zero, all owned host textures are deleted, and the final decoded frame contains no image placeholders. Every observed delete addresses a previously owned ID. |
+
+The initial harness attempts exposed two measurement issues, not product fixes:
+the startup HUD legitimately occludes image cells, and macOS `/usr/bin/script`
+did not propagate resized nested-PTY dimensions here. The recorder replaced
+that unsuitable capture layer and logs ioctl parity. The strict complete-image
+assertion remains in force after dismissing the startup HUD.
+
+Private evidence under `gwae-native-graphics-20260912/lifecycle` includes
+`real-viewers.py`, `record-pty.py`, `decode-host.rs`, and successful directories
+`run-1789179285580928000` and `run-1789179401883849000`. Each contains per-step
+host `.ansi`/decoded-text captures, actual child `.ansi` captures, process and
+geometry logs, owned-ID events, `results.json`, and a `PASS` marker. No user
+config, package-managed binary or PDF was changed by these follow-up checks.
+
 ## Independent resize hypothesis
 
 The pre-draw layout lag reproduces directly in tdf without GWAE, and in a
