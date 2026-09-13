@@ -23,7 +23,16 @@ const HOST: PtySize = PtySize {
     pixel_width: 960,
     pixel_height: 480,
 };
-const TIMEOUT: Duration = Duration::from_secs(10);
+/// Wall-clock budget for a real PTY exchange. Shared CI runners are far
+/// slower than a developer machine (a reload re-execs a freshly installed
+/// binary), so the budget is widened there rather than left as a flake.
+fn timeout() -> Duration {
+    if std::env::var_os("CI").is_some() {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_secs(10)
+    }
+}
 
 fn ioctl_size() -> PtySize {
     // SAFETY: winsize is a plain C structure and ioctl writes through its
@@ -403,7 +412,7 @@ impl Session {
     }
 
     fn wait_line(&mut self, pane: usize, prefix: &str) -> String {
-        let deadline = Instant::now() + TIMEOUT;
+        let deadline = Instant::now() + timeout();
         while Instant::now() < deadline {
             if let Some(line) = self
                 .log(pane)
@@ -600,7 +609,7 @@ fn hot_reload_inherits_live_pty_and_preserves_pixel_query_parity() {
     session.query(0, "status", size);
     let (source, destination) = session.reload_binary.as_ref().unwrap();
     install_binary(source, destination);
-    let deadline = Instant::now() + TIMEOUT;
+    let deadline = Instant::now() + timeout();
     let mut saw_repaint = false;
     loop {
         let sequence = session.request(0, "cursor");
@@ -826,7 +835,7 @@ impl Session {
         description: &str,
         predicate: impl Fn(&[HostGraphicsApc]) -> bool,
     ) -> Vec<HostGraphicsApc> {
-        let deadline = Instant::now() + TIMEOUT;
+        let deadline = Instant::now() + timeout();
         loop {
             let apcs = host_graphics_apcs(&self.output);
             if predicate(&apcs) {
