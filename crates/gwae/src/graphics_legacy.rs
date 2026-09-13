@@ -867,8 +867,10 @@ mod tests {
         ));
     }
     fn mark(id: u32, row: usize, col: usize) -> Cell {
-        let mut cell = Cell::default();
-        cell.ch = PLACEHOLDER;
+        let mut cell = Cell {
+            ch: PLACEHOLDER,
+            ..Cell::default()
+        };
         cell.style.fg = id_color(id);
         cell.combining[0] = DIACRITICS[row];
         cell.combining[1] = DIACRITICS[col];

@@ -6,6 +6,8 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-13
+
 ### Changed
 - **Split below moved to `⌥+b`.** `⌥+s` collided with jcode's typing-scroll-lock toggle, so gwae swallowed the chord before the agent pane saw it. Splitting a column is now `⌥+b` ("below"), including the macOS `∫` glyph fallback when Option is not mapped to Meta. The directory picker's save key is unchanged.
 - **One default paste action.** `Cmd+V` (the terminal's native paste shortcut) now owns pane-aware multiline handling and delivery feedback. The separate gwae `⌥+v` clipboard-reading shortcut is removed, including its picker handling and special agent routing. HUD/cow hints advertise native paste only. Unbound Option+V still belongs to the child, and native agent paste is delivered once for the agent to interpret.

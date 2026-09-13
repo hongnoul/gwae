@@ -164,7 +164,7 @@ impl Host {
         if tile_cols == 0 {
             return result;
         }
-        let tile_rows = (MAX_RASTER / per_cell / tile_cols).min(256).max(1);
+        let tile_rows = (MAX_RASTER / per_cell / tile_cols).clamp(1, 256);
         let mut placements: Vec<_> = graphics.placements().iter().collect();
         placements.sort_by_key(|p| (p.z_index, p.image_id, p.placement_id));
         for p in placements {

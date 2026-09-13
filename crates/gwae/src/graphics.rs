@@ -133,7 +133,7 @@ impl Control {
         if self.has(b'i') && self.has(b'I') {
             return Err(Error::Invalid);
         }
-        for key in [b'i', b'I'] {
+        for key in *b"iI" {
             if self.has(key) && self.number(key, 0)? == 0 {
                 return Err(Error::Invalid);
             }
@@ -204,10 +204,13 @@ fn parse(apc: &[u8]) -> (Control, &[u8], Option<Error>) {
                 continue;
             }
             let value = String::from_utf8(pair[2..].to_vec()).expect("validated ASCII");
-            if control.0.contains_key(&pair[0]) {
-                error = Some(Error::Invalid);
-            } else {
-                control.0.insert(pair[0], value);
+            match control.0.entry(pair[0]) {
+                std::collections::btree_map::Entry::Occupied(_) => {
+                    error = Some(Error::Invalid);
+                }
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(value);
+                }
             }
         }
     }
