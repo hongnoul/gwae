@@ -266,7 +266,37 @@ pub fn is_loadable(_exe: &std::path::Path) -> Result<(), String> {
 /// is that the file at this path has *changed* since we started.
 #[allow(dead_code)]
 pub fn own_path() -> Result<PathBuf, String> {
-    std::env::current_exe().map_err(|e| format!("current_exe: {e}"))
+    let path = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    Ok(undeleted(path))
+}
+
+/// Strip Linux's `" (deleted)"` marker from a `/proc/self/exe` path.
+///
+/// A rebuild replaces the file, which unlinks the inode this process is
+/// running. Linux then resolves `/proc/self/exe` to `"<path> (deleted)"`,
+/// which is not the name of any file: stat'ing it fails, so the watcher
+/// never sees the new build's mtime and a reload never fires. macOS
+/// resolves by path and never shows this. The suffix is only dropped when
+/// the literal path does not exist but the trimmed one does, so a real file
+/// whose name ends in `" (deleted)"` is still handled correctly.
+#[allow(dead_code)]
+fn undeleted(path: PathBuf) -> PathBuf {
+    const MARKER: &str = " (deleted)";
+    if path.exists() {
+        return path;
+    }
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    let Some(trimmed) = text.strip_suffix(MARKER) else {
+        return path;
+    };
+    let candidate = PathBuf::from(trimmed);
+    if candidate.exists() {
+        candidate
+    } else {
+        path
+    }
 }
 
 /// The mtime of the running binary, used to notice a rebuild.
@@ -447,5 +477,47 @@ mod tests {
     #[test]
     fn make_inheritable_reports_a_bad_fd() {
         assert!(make_inheritable(-1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod deleted_path_tests {
+    use super::*;
+
+    /// A replaced binary is still watchable by its real path.
+    ///
+    /// Linux reports `/proc/self/exe` as `"<path> (deleted)"` after a rebuild
+    /// unlinks the running image, and stat'ing that name fails, so the hot
+    /// reload watcher would never see the new build.
+    #[test]
+    fn a_replaced_binary_resolves_back_to_its_real_path() {
+        let dir = std::env::temp_dir().join(format!("gwae-deleted-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("fixture directory");
+        let real = dir.join("gwae-bin");
+        std::fs::write(&real, b"new build").expect("write replacement build");
+
+        let reported = PathBuf::from(format!("{} (deleted)", real.display()));
+        assert!(!reported.exists(), "the reported name is not a real file");
+        assert_eq!(undeleted(reported), real);
+        assert!(
+            binary_mtime(&undeleted(PathBuf::from(format!(
+                "{} (deleted)",
+                real.display()
+            ))))
+            .is_some(),
+            "the watcher can stat the resolved path"
+        );
+
+        // An existing path is never rewritten, including a real file whose
+        // own name ends in the marker.
+        assert_eq!(undeleted(real.clone()), real);
+        let literal = dir.join("odd (deleted)");
+        std::fs::write(&literal, b"real file").expect("write literal file");
+        assert_eq!(undeleted(literal.clone()), literal);
+
+        // Nothing on disk: keep the reported name rather than inventing one.
+        let missing = dir.join("absent (deleted)");
+        assert_eq!(undeleted(missing.clone()), missing);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
