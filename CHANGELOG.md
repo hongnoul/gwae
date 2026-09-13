@@ -6,6 +6,11 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-09-13
+
+### Fixed
+- **Hot reload works on Linux again.** A rebuild unlinks the running image, so Linux resolves `/proc/self/exe` to `"<path> (deleted)"`. Stat'ing that name fails, so the dev watcher never saw the new build's mtime and the session never swapped itself in place. The running binary's path is now resolved back to the real file when, and only when, the reported name does not exist and the trimmed one does. macOS was unaffected. Caught by the real-PTY reload acceptance test on Linux CI.
+
 ## [1.4.0] - 2026-09-13
 
 ### Changed
