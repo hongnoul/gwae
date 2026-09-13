@@ -96,7 +96,7 @@ pub struct Bind {
     /// bijective with exactly one hint, so adding a keybinding necessarily
     /// adds its cow hint and the helper can never fall behind the
     /// dispatcher. Phrased to read after [`Bind::label`], e.g.
-    /// "⌥+s splits this column".
+    /// "⌥+b splits this column".
     pub hint: &'static str,
     pub effect: Effect,
 }
@@ -277,9 +277,9 @@ pub const BINDS: &[Bind] = &[
         effect: Effect::Act(Action::SpawnAgentRow),
     },
     Bind {
-        trigger: Trigger::Chord('s'),
+        trigger: Trigger::Chord('b'),
         hint: "splits this column",
-        glyph: None,
+        glyph: Some('\u{222b}'),
         group: Group::Panes,
         desc: "split below",
         effect: Effect::Act(Action::SplitBelow),

@@ -3980,6 +3980,7 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{2020}') => return Some(Cmd::ThemePick(0)),         // † (Option+t)
             Char('\u{2202}') => return Some(Cmd::DirPick),              // ∂ (Option+d)
             Char('\u{2211}') => return Some(Cmd::ToggleKeepAwake),      // ∑ (Option+w)
+            Char('\u{222b}') => return Some(Cmd::Act(Action::SplitBelow)), // ∫ (Option+b)
             Char('\u{f7}') => return Some(Cmd::ToggleHud),              // ÷ (Option+/)
             _ => {}
         }
@@ -4059,7 +4060,10 @@ fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             } else {
                 Action::SpawnAgent
             }),
-            's' => Some(Action::SplitBelow),
+            // ⌥+b splits *below*. It used to be ⌥+s, which collided with
+            // jcode's typing-scroll-lock toggle: gwae ate the chord and the
+            // agent pane never saw it. `b` is free on both sides.
+            'b' => Some(Action::SplitBelow),
             'r' => Some(Action::CycleWidth),
             'f' => Some(Action::ToggleFullWidth),
             'q' => {
@@ -6610,28 +6614,28 @@ mod tests {
 
     #[test]
     fn alt_shift_letter_is_forwarded_not_swallowed_as_the_unshifted_chord() {
-        // Regression: ⌥+Shift+s used to case-fold to 's' and split the column,
+        // Regression: ⌥+Shift+b used to case-fold to 'b' and split the column,
         // stealing a chord the focused pane owns (jcode copies with ⌥+Shift+s).
         // Both encodings a terminal may send must reach the pane as ESC+'S'.
         for ev in [
-            KeyEvent::new(KeyCode::Char('S'), KeyModifiers::ALT | KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::Char('B'), KeyModifiers::ALT | KeyModifiers::SHIFT),
             // Kitty REPORT_ALTERNATE_KEYS consumes the shift bit.
-            KeyEvent::new(KeyCode::Char('S'), KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Char('B'), KeyModifiers::ALT),
             // Terminals that keep the unshifted codepoint plus a SHIFT bit.
-            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT | KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT | KeyModifiers::SHIFT),
         ] {
             assert_eq!(
                 handle_key(&ev),
-                Some(Cmd::Input(b"\x1bS".to_vec())),
+                Some(Cmd::Input(b"\x1bB".to_vec())),
                 "{ev:?} should be forwarded to the pane"
             );
         }
-        // The unshifted chord still splits.
-        let ev = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT);
+        // The unshifted chord still splits (⌥+b since the ⌥+s rebind).
+        let ev = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SplitBelow)));
-        // Caps Lock is not Shift: ⌥+CapsLock+s must still split.
+        // Caps Lock is not Shift: ⌥+CapsLock+b must still split.
         let ev = KeyEvent::new_with_kind_and_state(
-            KeyCode::Char('S'),
+            KeyCode::Char('B'),
             KeyModifiers::ALT,
             KeyEventKind::Press,
             KeyEventState::CAPS_LOCK,

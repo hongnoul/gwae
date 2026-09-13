@@ -51,7 +51,7 @@ go to gwae, even with an agent focused.
 | move-pane up/down | `⌥+Shift+k/j` | move pane within column; at the stack edge the pane moves to the neighboring strip (creating one past the end), and an emptied strip is discarded |
 | new-column | `⌥+Enter` | new column right of focused (launcher) |
 | new-agent | `⌥+a` / `;` | new column running the default agent harness |
-| split-down | `⌥+s` | new pane below focused |
+| split-down | `⌥+b` | new pane below focused |
 | new-row | `⌥+Shift+Enter` | new row below focused |
 | cycle-width | `⌥+r` | cycle focused preset width 1/3 → 1/2 → 1/4 |
 | toggle-full-width | `⌥+f` | toggle focused column between full width and 1/4 |
