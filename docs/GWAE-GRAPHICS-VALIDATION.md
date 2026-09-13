@@ -301,6 +301,33 @@ A still page costs 0.00-0.20% of a core, since the texture cache is keyed by
 content and an unchanging page is never re-rastered. Twenty page turns in
 2.4 seconds cost under 3% of a core.
 
+## Why gwae re-rasterizes, and what it costs
+
+gwae is an emulator in the middle, not a pass-through. Kitty graphics place
+images at cell coordinates in the host's single grid, and the protocol has no
+clipping rectangle, so forwarding a child's packets unchanged would let one
+pane's image spill across its neighbors. gwae therefore decodes each child
+image, crops and scales it to the pane rect, and re-emits it under its own
+host IDs.
+
+That cost is real but not perceptible. Keystroke to first byte of the
+resulting redraw, for a fit/fill toggle that re-scales the whole page and
+defeats the texture cache (10 samples per run, real tdf under real gwae):
+
+| build | mean | worst |
+| --- | --- | --- |
+| uncompressed uploads | 4.7-5.8 ms | 8.8-13.9 ms |
+| `o=z` uploads | 5.9-6.0 ms | 11.6-13.8 ms |
+
+Both are inside one 60 Hz frame and their ranges overlap, so compression is
+CPU-neutral here while removing ~800 KB of writes per page turn. Isolated,
+zlib level 1 is also *faster* than base64 alone on a full-pane raster
+(1.06 ms vs 4.13 ms for 7.4 MB), because it has far less output to encode.
+
+No sub-cell scrolling limitation was observed. True pass-through would require
+the host to expose child surfaces or scissor rects, neither of which the Kitty
+protocol or Ghostty offers today.
+
 For a representative text page the raster itself compresses 5,600,000 -> 40,674
 bytes (137x) in 2.4 ms. Real Ghostty acknowledges an `o=z` transfer with
 `OK`, confirmed by a direct `a=q` query against the live terminal.

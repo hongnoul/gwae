@@ -303,3 +303,55 @@ fn sustained_page_turning_keeps_up_with_input() {
          (this cost ~16.4 MB before uploads were compressed)"
     );
 }
+
+/// Time from a keystroke to the first byte of the resulting redraw. This is
+/// what "tactile" means to a reader: not throughput, but how soon the screen
+/// starts responding to each key.
+fn input_latency(s: &mut Session, key: &[u8]) -> Option<Duration> {
+    // Settle first so we time this key's response, not the previous one's.
+    let _ = s.drain_until_quiet(Duration::from_millis(400));
+    let sent = Instant::now();
+    s.writer.write_all(key).unwrap();
+    s.writer.flush().unwrap();
+    let first = s.rx.recv_timeout(Duration::from_secs(5)).ok()?;
+    assert!(!first.is_empty());
+    Some(sent.elapsed())
+}
+
+/// Zoom and scroll are the continuous interactions where re-rasterizing in the
+/// middle would be felt. Each step is new content that defeats the texture
+/// cache, so this measures the full decode/raster/encode/transmit path.
+#[test]
+#[ignore]
+fn continuous_zoom_and_scroll_stay_responsive() {
+    let mut s = Session::start();
+    std::thread::sleep(Duration::from_secs(4));
+    let mut worst = Duration::ZERO;
+    let mut samples = Vec::new();
+    // `z` toggles fit/fill, which re-scales the page: the most expensive
+    // non-page-turn redraw, and a different raster every time.
+    for _ in 0..10 {
+        if let Some(d) = input_latency(&mut s, b"z") {
+            worst = worst.max(d);
+            samples.push(d);
+        }
+    }
+    assert!(!samples.is_empty(), "tdf never responded to zoom input");
+    let total: Duration = samples.iter().sum();
+    let mean = total / samples.len() as u32;
+    eprintln!(
+        "zoom toggle: mean {:?}, worst {:?} over {} samples",
+        mean,
+        worst,
+        samples.len()
+    );
+    // A redraw that starts within ~150 ms reads as immediate. Measured means
+    // are 5-6 ms with a worst case near 14 ms, comfortably inside one 60 Hz
+    // frame, so gwae's re-raster/re-encode is not what a reader feels. The
+    // bound is deliberately loose: it catches a real regression (the path
+    // becoming perceptible) without failing on scheduling noise.
+    assert!(
+        worst < Duration::from_millis(150),
+        "worst zoom response was {worst:?}; the re-raster path is felt"
+    );
+}
