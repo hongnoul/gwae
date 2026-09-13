@@ -276,3 +276,26 @@ GWAE_E2E_BIN="$PWD/target/release/gwae" cargo test -p gwae --test pixel_size_e2e
 The private real-application replay can select another executable through
 `GWAE_ACCEPT_BIN`. See [terminal compatibility](TERMINAL-COMPATIBILITY.md) for
 supported operations, quotas, transparent-text compositing and reload limits.
+
+## Compressed host uploads (2026-09-13)
+
+Image panes made the whole session feel sluggish, not just the image pane:
+every pane is painted from one thread, so one pane's host output volume is the
+entire frame budget.
+
+A full-pane page raster (1400x1000 RGBA) is 5.6 MB, which base64 alone expands
+to ~7.4 MB of host output per redraw. Uploads now use the Kitty protocol's
+`o=z` zlib option at the cheapest level, which is both smaller and faster than
+sending raw base64.
+
+Measured with real tdf 0.5.0 under real gwae on a real PTY
+(`cargo test -p gwae --test pdf_e2e -- --ignored`):
+
+| | host output at startup |
+| --- | --- |
+| before | 855,885 bytes |
+| after | 81,053 bytes |
+
+For a representative text page the raster itself compresses 5,600,000 -> 40,674
+bytes (137x) in 2.4 ms. Real Ghostty acknowledges an `o=z` transfer with
+`OK`, confirmed by a direct `a=q` query against the live terminal.

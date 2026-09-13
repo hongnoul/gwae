@@ -392,14 +392,29 @@ pub fn encode(data: &[u8]) -> Vec<u8> {
     out
 }
 fn upload(buf: &mut Vec<u8>, id: u32, rgba: &[u8], w: u32, h: u32, cols: u16, rows: u16) {
-    let encoded = encode(rgba);
+    // A full-pane page raster is several megabytes; base64 alone would push
+    // ~7.4 MB per redraw through the single render thread and the host's
+    // parser, which is what made image-heavy panes (and therefore the whole
+    // UI, since one thread paints every pane) feel sluggish. Page rasters are
+    // hugely redundant, so the cheapest zlib level shrinks them by two orders
+    // of magnitude for a fraction of the time base64 alone already cost.
+    // `o=z` is the Kitty protocol's own zlib option; hosts that lack it never
+    // get image output in the first place, since we only emit tiles when the
+    // host advertised graphics support.
+    let deflated = miniz_oxide::deflate::compress_to_vec_zlib(rgba, 1);
+    let (encoded, compressed) = if deflated.len() < rgba.len() {
+        (encode(&deflated), true)
+    } else {
+        (encode(rgba), false)
+    };
+    let o = if compressed { ",o=z" } else { "" };
     let count = encoded.len().div_ceil(4096);
     for (n, chunk) in encoded.chunks(4096).enumerate() {
         let more = u8::from(n + 1 < count);
         if n == 0 {
             buf.extend_from_slice(
                 format!(
-                    "\x1b_Ga=T,U=1,p=1,i={id},f=32,s={w},v={h},c={cols},r={rows},q=2,m={more};"
+                    "\x1b_Ga=T,U=1,p=1,i={id},f=32,s={w},v={h},c={cols},r={rows}{o},q=2,m={more};"
                 )
                 .as_bytes(),
             );
@@ -650,17 +665,98 @@ mod tests {
     #[test]
     fn canonical_upload_chunks_are_bounded_quiet_and_direct() {
         let mut bytes = Vec::new();
-        upload(&mut bytes, allocate(), &vec![123; 10000], 50, 50, 10, 10);
+        let rgba = vec![123; 10000];
+        upload(&mut bytes, allocate(), &rgba, 50, 50, 10, 10);
         let text = String::from_utf8(bytes).unwrap();
         let packets: Vec<_> = text.split("\x1b\\").filter(|p| !p.is_empty()).collect();
-        assert_eq!(packets.len(), 4);
+        // A redundant raster compresses far below one chunk, so the whole
+        // transfer is a single final packet rather than the four base64
+        // chunks the uncompressed payload needed.
+        assert_eq!(packets.len(), 1);
+        let last = packets.len() - 1;
         for (n, packet) in packets.iter().enumerate() {
             let (header, payload) = packet.split_once(';').unwrap();
             assert!(header.contains("q=2"));
-            assert!(header.contains(if n == 3 { "m=0" } else { "m=1" }));
+            assert!(header.contains(if n == last { "m=0" } else { "m=1" }));
             assert!(payload.len() <= 4096);
             assert_eq!(payload.len() % 4, 0);
             assert!(!header.contains("t=f") && !header.contains("t=s"));
         }
+        // The payload is advertised as zlib and inflates back to the exact
+        // raster, at its full uncompressed pixel dimensions.
+        let header = packets[0].split_once(';').unwrap().0;
+        assert!(header.contains(",o=z"), "{header}");
+        assert!(header.contains("s=50,v=50"), "{header}");
+        let payload: String = packets
+            .iter()
+            .map(|p| p.split_once(';').unwrap().1)
+            .collect();
+        let raw = decode_base64(payload.as_bytes());
+        assert_eq!(
+            miniz_oxide::inflate::decompress_to_vec_zlib(&raw).unwrap(),
+            rgba
+        );
+    }
+
+    fn decode_base64(input: &[u8]) -> Vec<u8> {
+        const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = Vec::new();
+        for quad in input.chunks(4) {
+            let mut bits = 0u32;
+            let mut n = 0;
+            for &b in quad {
+                if b == b'=' {
+                    bits <<= 6;
+                    continue;
+                }
+                bits = (bits << 6) | ABC.iter().position(|&c| c == b).unwrap() as u32;
+                n += 1;
+            }
+            for i in 0..n - 1 {
+                out.push((bits >> (16 - i * 8)) as u8);
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod page_cost {
+    use super::*;
+
+    /// A full-pane page raster must not cost megabytes of host output per
+    /// redraw. This is the regression guard for image-heavy panes making the
+    /// whole UI sluggish: every pane is painted by one thread, so one pane's
+    /// upload volume is the whole app's frame time.
+    #[test]
+    fn full_pane_page_upload_stays_small_enough_to_stream_per_frame() {
+        let (w, h) = (1400u32, 1000u32);
+        let mut rgba = vec![255u8; (w * h * 4) as usize];
+        for y in 0..h {
+            if (y / 4) % 6 < 2 {
+                for x in 0..w {
+                    if (x * 7 + y * 13) % 11 < 4 {
+                        let i = ((y * w + x) * 4) as usize;
+                        rgba[i] = 20;
+                        rgba[i + 1] = 20;
+                        rgba[i + 2] = 20;
+                    }
+                }
+            }
+        }
+        let mut buf = Vec::new();
+        let start = Instant::now();
+        upload(&mut buf, allocate(), &rgba, w, h, 140, 50);
+        let elapsed = start.elapsed();
+        // Uncompressed base64 of this raster is ~7.4 MB.
+        assert!(
+            buf.len() < 256 * 1024,
+            "{} bytes is too much host output for one page",
+            buf.len()
+        );
+        assert!(
+            elapsed < Duration::from_millis(60),
+            "{elapsed:?} per page upload would drop frames"
+        );
     }
 }

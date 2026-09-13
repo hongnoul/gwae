@@ -762,10 +762,18 @@ fn assert_canonical_host_graphics(apcs: &[HostGraphicsApc]) {
             Some("T") => {
                 assert_eq!(
                     apc.control,
-                    format!("a=T,U=1,p=1,i={id},f=32,s=8,v=16,c=1,r=1,q=2,m=0"),
+                    format!("a=T,U=1,p=1,i={id},f=32,s=8,v=16,c=1,r=1,o=z,q=2,m=0"),
                     "only canonical owned virtual uploads may reach the host"
                 );
-                assert_eq!(decode_host_base64(&apc.payload).len(), 8 * 16 * 4);
+                // `o=z` payloads are zlib streams that must inflate to the
+                // exact declared raster, so the host sees the same pixels for
+                // far fewer bytes on the wire.
+                let raw = decode_host_base64(&apc.payload);
+                assert!(
+                    raw.len() < 8 * 16 * 4,
+                    "compressed upload is no smaller than the raw raster"
+                );
+                assert_eq!(host_upload_pixels(apc).len(), 8 * 16 * 4);
             }
             Some("d") => {
                 assert_eq!(apc.control, format!("a=d,d=I,i={id},q=2"));
@@ -870,11 +878,23 @@ fn image_color(id: u32) -> gwae_term::CColor {
     gwae_term::CColor::Rgb((id >> 16) as u8, (id >> 8) as u8, id as u8)
 }
 
+/// The exact RGBA bytes the host was given, inflating the `o=z` zlib payloads
+/// that keep image uploads small.
+fn host_upload_pixels(apc: &HostGraphicsApc) -> Vec<u8> {
+    let raw = decode_host_base64(&apc.payload);
+    if apc.field("o") == Some("z") {
+        miniz_oxide::inflate::decompress_to_vec_zlib(&raw)
+            .expect("host upload must be a valid zlib stream")
+    } else {
+        raw
+    }
+}
+
 fn solid_upload_id(apcs: &[HostGraphicsApc], rgba: [u8; 4]) -> u32 {
     let expected = rgba.repeat(8 * 16);
     let matches: Vec<_> = apcs
         .iter()
-        .filter(|apc| apc.field("a") == Some("T") && decode_host_base64(&apc.payload) == expected)
+        .filter(|apc| apc.field("a") == Some("T") && host_upload_pixels(apc) == expected)
         .collect();
     assert_eq!(matches.len(), 1, "exactly one raster for {rgba:?}");
     let apc = matches[0];
