@@ -291,10 +291,15 @@ sending raw base64.
 Measured with real tdf 0.5.0 under real gwae on a real PTY
 (`cargo test -p gwae --test pdf_e2e -- --ignored`):
 
-| | host output at startup |
-| --- | --- |
-| before | 855,885 bytes |
-| after | 81,053 bytes |
+| Measurement (real tdf, real PTY) | before | after |
+| --- | --- | --- |
+| host output at startup | 855,885 bytes | 81,053 bytes |
+| one page turn | ~818,000 bytes | ~44,000 bytes |
+| 20 page turns | 16,370,652 bytes | 898,852 bytes |
+
+A still page costs 0.00-0.20% of a core, since the texture cache is keyed by
+content and an unchanging page is never re-rastered. Twenty page turns in
+2.4 seconds cost under 3% of a core.
 
 For a representative text page the raster itself compresses 5,600,000 -> 40,674
 bytes (137x) in 2.4 ms. Real Ghostty acknowledges an `o=z` transfer with

@@ -15,28 +15,38 @@ use std::time::{Duration, Instant};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
-/// A minimal single-page PDF with enough ink that its raster is a realistic
-/// page rather than a flat fill.
+/// A multi-page PDF whose pages differ, so page turns are genuine new content
+/// rather than a cached texture.
 fn write_pdf(path: &PathBuf) {
-    let mut text = String::new();
-    for line in 0..40 {
-        text.push_str(&format!(
-            "BT /F1 11 Tf 40 {} Td (Line {line} of an ordinary paragraph of page text.) Tj ET\n",
-            740 - line * 18
+    const PAGES: usize = 6;
+    let mut objects: Vec<String> = Vec::new();
+    // 1: catalog, 2: pages, then per page a page object and its content.
+    let kids: Vec<String> = (0..PAGES).map(|n| format!("{} 0 R", 3 + n * 2)).collect();
+    objects.push("<< /Type /Catalog /Pages 2 0 R >>".into());
+    objects.push(format!(
+        "<< /Type /Pages /Kids [{}] /Count {PAGES} >>",
+        kids.join(" ")
+    ));
+    let font_obj = 3 + PAGES * 2;
+    for n in 0..PAGES {
+        let mut text = String::new();
+        for line in 0..40 {
+            text.push_str(&format!(
+                "BT /F1 11 Tf 40 {} Td (Page {} line {line}: ordinary paragraph text for rendering.) Tj ET\n",
+                740 - line * 18,
+                n + 1
+            ));
+        }
+        objects.push(format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+             /Resources << /Font << /F1 {font_obj} 0 R >> >> /Contents {} 0 R >>",
+            4 + n * 2
+        ));
+        objects.push(format!(
+            "<< /Length {} >>\nstream\n{text}endstream",
+            text.len()
         ));
     }
-    let mut objects: Vec<String> = Vec::new();
-    objects.push("<< /Type /Catalog /Pages 2 0 R >>".into());
-    objects.push("<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into());
-    objects.push(
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
-         /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
-            .into(),
-    );
-    objects.push(format!(
-        "<< /Length {} >>\nstream\n{text}endstream",
-        text.len()
-    ));
     objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into());
     let mut pdf = String::from("%PDF-1.4\n");
     let mut offsets = Vec::new();
@@ -189,17 +199,107 @@ fn real_tdf_page_redraws_stay_within_a_streamable_frame_budget() {
 
     // A page turn is the interactive case that felt laggy. Measure the bytes
     // and the wall time gwae needs to absorb and repaint it.
-    for _ in 0..3 {
+    for n in 0..3 {
         let start = Instant::now();
-        s.writer.write_all(b" ").unwrap();
+        s.writer
+            .write_all(if n % 2 == 0 { b"l" } else { b"h" })
+            .unwrap();
         s.writer.flush().unwrap();
         let frame = s.drain_until_quiet(Duration::from_millis(700));
         let elapsed = start.elapsed();
         eprintln!("page turn: {} bytes in {elapsed:?}", frame.len());
         assert!(
-            frame.len() < 2 * 1024 * 1024,
-            "{} bytes per page turn is not streamable at interactive rates",
+            frame.len() < 256 * 1024,
+            "{} bytes per page turn is not streamable at interactive rates \
+             (this cost ~818 KB before uploads were compressed)",
             frame.len()
         );
     }
+}
+
+/// CPU seconds a process has used so far, via `ps`.
+fn cpu_seconds(pid: u32) -> Option<f64> {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "time=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let mut seconds = 0.0;
+    for part in text.split(':') {
+        seconds = seconds * 60.0 + part.parse::<f64>().ok()?;
+    }
+    Some(seconds)
+}
+
+/// A PDF left open on screen must be as cheap as an idle session. The texture
+/// cache is keyed by content, so an unchanging page must not be re-rastered or
+/// re-uploaded every frame.
+#[test]
+#[ignore]
+fn a_pdf_left_open_on_screen_costs_almost_nothing() {
+    let s = Session::start();
+    let pid = s.child.process_id().expect("gwae pid");
+    // Startup rendering is real work and must not count against steady state.
+    std::thread::sleep(Duration::from_secs(4));
+    let Some(start) = cpu_seconds(pid) else {
+        return;
+    };
+    let t0 = Instant::now();
+    std::thread::sleep(Duration::from_secs(5));
+    let end = cpu_seconds(pid).expect("gwae still running");
+    let wall = t0.elapsed().as_secs_f64();
+    let pct = (end - start) / wall * 100.0;
+    eprintln!("idle with a PDF on screen: {pct:.2}% of a core");
+    assert!(
+        pct < 5.0,
+        "a still PDF burned {pct:.2}% of a core; it is being re-rendered every frame"
+    );
+}
+
+/// Rapid page turns are the interaction that felt laggy. Each turn is genuine
+/// new content, so this measures the real cost of the raster+upload path under
+/// sustained input rather than the cached steady state.
+#[test]
+#[ignore]
+fn sustained_page_turning_keeps_up_with_input() {
+    let mut s = Session::start();
+    let pid = s.child.process_id().expect("gwae pid");
+    std::thread::sleep(Duration::from_secs(4));
+    let _ = s.drain_until_quiet(Duration::from_millis(500));
+    let Some(start) = cpu_seconds(pid) else {
+        return;
+    };
+    let t0 = Instant::now();
+    // Alternate forward/back so every step is a different page, defeating the
+    // texture cache the way a reader flipping through a document does.
+    let mut bytes = 0;
+    for n in 0..20 {
+        s.writer
+            .write_all(if n % 2 == 0 { b"l" } else { b"h" })
+            .unwrap();
+        s.writer.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(120));
+        while let Ok(chunk) = s.rx.try_recv() {
+            bytes += chunk.len();
+        }
+    }
+    let wall = t0.elapsed().as_secs_f64();
+    let end = cpu_seconds(pid).expect("gwae still running");
+    let pct = (end - start) / wall * 100.0;
+    eprintln!("20 page turns: {pct:.2}% of a core, {bytes} bytes to the host");
+    // Turning pages costs real work, but it must stay well inside one core:
+    // a saturated render thread is exactly what made the whole UI lag.
+    assert!(
+        pct < 30.0,
+        "page turning burned {pct:.2}% of a core; the render thread is saturating"
+    );
+    assert!(
+        bytes < 4 * 1024 * 1024,
+        "{bytes} bytes for 20 page turns is not streamable \
+         (this cost ~16.4 MB before uploads were compressed)"
+    );
 }

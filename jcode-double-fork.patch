@@ -1,0 +1,150 @@
+From 9fbc3b31c86850165ae4ff280f4d7c92d23eda49 Mon Sep 17 00:00:00 2001
+From: Justin Hong <namyang@mit.edu>
+Date: Tue, 1 Sep 2026 06:33:45 -0700
+Subject: [PATCH] fix(server): double-fork shared server so gwae ppid walk
+ cannot kill it
+
+The singleton jcode server currently daemonizes with only setsid() in
+spawn_server_notify. That changes the pgid but leaves ppid == the
+spawning pane. gwae reap on Opt+q walks ppid descendents via ps to
+kill nohup/setsid leaks, so it still finds and SIGKILLs the shared
+server even though the pgid differs, dropping every other client on
+the same socket. tmux/niri etc only send SIGHUP to the foreground
+pgid, so the bug is gwae-specific but the daemonization was incomplete
+for any ppid-walking reaper.
+
+Daemonize correctly: fork -> setsid -> fork, intermediate exits via
+_exit so the surviving daemon is reparented to pid 1 (launchd).
+
+The JCODE_READY_FD pipe is still inherited by the daemon (CLOEXEC
+cleared in the grandchild before exec); the intermediate exit is
+reaped without being treated as a spawn failure. No perf or resource
+impact; one extra fork at spawn only.
+
+Fixes: Opt+q on one jcode pane no longer disconnects other panes in
+gwae, while pane-local leaks are still reaped by gwae on quit.
+
+Cherry-pickable: single file, no API change.
+---
+ crates/jcode-app-core/src/server/socket.rs | 70 ++++++++++++++++++----
+ 1 file changed, 59 insertions(+), 11 deletions(-)
+
+diff --git a/crates/jcode-app-core/src/server/socket.rs b/crates/jcode-app-core/src/server/socket.rs
+index c5a802b62..791729460 100644
+--- a/crates/jcode-app-core/src/server/socket.rs
++++ b/crates/jcode-app-core/src/server/socket.rs
+@@ -239,8 +239,8 @@ pub async fn spawn_server_notify(cmd: &mut std::process::Command) -> Result<std:
+     use std::os::unix::process::CommandExt;
+ 
+     // Create a pipe: fds[0] = read end, fds[1] = write end.
+-    // Use pipe2 with O_CLOEXEC on the read end (parent keeps it).
+-    // The write end needs CLOEXEC cleared so it survives exec in the child.
++    // The read end is CLOEXEC (parent only); the write end must survive exec
++    // in the daemon so it can signal readiness via JCODE_READY_FD.
+     let mut fds = [0i32; 2];
+     if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+         anyhow::bail!("pipe() failed: {}", std::io::Error::last_os_error());
+@@ -256,26 +256,70 @@ pub async fn spawn_server_notify(cmd: &mut std::process::Command) -> Result<std:
+         }
+     }
+ 
+-    // Pass the write-end fd to the child and tell it the fd number.
++    // Pass the write-end fd to the daemon and daemonize with a double-fork
++    // so the surviving server is reparented to pid 1 (init/launchd).
++    //
++    // Why: a single `setsid()` in the first child changes the pgid but leaves
++    // ppid == the spawning pane. Multiplexers like gwae that reap a pane's
++    // *process tree* via `ps -o ppid` (to kill nohup/setsid leaks on Opt+q)
++    // still find the server through that ppid link and SIGKILL it, which drops
++    // every other jcode client sharing the singleton socket. A daemon must have
++    // ppid 1 to be invisible to any per-pane ppid walk; the classic way is
++    // fork -> setsid -> fork. The intermediate child exits immediately, the
++    // grandchild (daemon) inherits the pipe/socket fds and execs.
+     unsafe {
+         cmd.pre_exec(move || {
+-            // Clear CLOEXEC on the write end so it survives exec
++            // Clear CLOEXEC on the write end so the grandchild/daemon keeps it
++            // across exec and can call signal_ready_fd().
+             let flags = libc::fcntl(write_fd, libc::F_GETFD);
+             if flags >= 0 {
+                 libc::fcntl(write_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+             }
+-            libc::setsid();
+-            Ok(())
++            if libc::setsid() < 0 {
++                return Err(std::io::Error::last_os_error());
++            }
++            match libc::fork() {
++                -1 => Err(std::io::Error::last_os_error()),
++                0 => {
++                    // Grandchild (daemon) — continue to exec. Already a session
++                    // leader's child, so it cannot acquire a controlling tty.
++                    Ok(())
++                }
++                _pid => {
++                    // Intermediate child — exit so the original parent no longer
++                    // appears as the daemon's ppid. _exit avoids atexit flushes.
++                    libc::_exit(0);
++                }
++            }
+         });
+     }
+     cmd.env("JCODE_READY_FD", write_fd.to_string());
+ 
+     let mut child = cmd.spawn()?;
+ 
+-    // Close our copy of the write end so we get EOF if the child dies.
++    // Close our copy of the write end so we get EOF if the daemon dies.
+     unsafe { libc::close(write_fd) };
+ 
+-    // Wait for the ready signal (or timeout / child death).
++    // For the double-fork case the immediate child (intermediate) exits with 0
++    // almost instantly. Reap it without treating a clean exit as a server
++    // failure; a non-zero exit still means the exec never happened.
++    let mut intermediate_exited_cleanly = false;
++    for _ in 0..50 {
++        if let Some(status) = child.try_wait()? {
++            if status.success() {
++                intermediate_exited_cleanly = true;
++            } else {
++                handle_server_start_exit(&mut child, status).await?;
++                // Race where another daemon already holds the socket is handled
++                // there and returns Ok(()), so treat as clean for the pipe wait.
++                intermediate_exited_cleanly = true;
++            }
++            break;
++        }
++        tokio::time::sleep(Duration::from_millis(10)).await;
++    }
++
++    // Wait for the ready signal (or timeout / daemon death).
+     let read_file = unsafe { std::fs::File::from_raw_fd(read_fd) };
+     let mut async_file = tokio::fs::File::from_std(read_file);
+     let mut buf = [0u8; 1];
+@@ -289,8 +333,10 @@ pub async fn spawn_server_notify(cmd: &mut std::process::Command) -> Result<std:
+             crate::logging::info("Server signalled ready via pipe");
+         }
+         Ok(Ok(_)) => {
+-            if let Some(status) = child.try_wait()? {
+-                handle_server_start_exit(&mut child, status).await?;
++            if !intermediate_exited_cleanly {
++                if let Some(status) = child.try_wait()? {
++                    handle_server_start_exit(&mut child, status).await?;
++                }
+             }
+             crate::logging::info(
+                 "Server closed ready pipe without signalling; falling back to poll",
+@@ -313,7 +359,9 @@ pub async fn spawn_server_notify(cmd: &mut std::process::Command) -> Result<std:
+     if let Some(mut stderr) = child.stderr.take() {
+         // The shared daemon outlives the spawning client. Keep draining the
+         // stderr pipe after startup so later reloads cannot die on SIGPIPE
+-        // when they emit provider/model selection notices during boot.
++        // when they emit provider/model selection notices during boot. With the
++        // double-fork the daemon inherits the write end, so this pipe stays
++        // open as long as the daemon lives.
+         std::thread::spawn(move || {
+             let mut sink = std::io::sink();
+             let _ = std::io::copy(&mut stderr, &mut sink);
+-- 
+2.50.1 (Apple Git-155)
+
