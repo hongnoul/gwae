@@ -67,22 +67,11 @@ pub enum Command {
         #[arg(long)]
         print: bool,
     },
-    /// Move this gwae to the latest release, using the same route it was
-    /// installed by (installer script, Homebrew, cargo), or print the command
-    /// for the package manager that owns it (Nix, AUR, distro).
-    ///
-    /// Never runs anything without printing it first, and never touches a
-    /// binary another package manager owns.
+    /// Report the version, the detected install source, and the command
+    /// that would upgrade this gwae. Never executes anything: run the
+    /// printed command yourself.
     #[command(alias = "update")]
-    Upgrade {
-        /// Report the version, the detected install source, and the command
-        /// that would run, then stop.
-        #[arg(long)]
-        check: bool,
-        /// Skip the confirmation prompt (for scripts and dotfile bootstraps).
-        #[arg(long, short = 'y')]
-        yes: bool,
-    },
+    Upgrade,
     /// Print diagnostics about the current terminal and $mod decoding.
     Doctor,
 }

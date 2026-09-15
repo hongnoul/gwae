@@ -73,8 +73,8 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
                 code => Err(code),
             }
         }
-        Command::Upgrade { check, yes } => {
-            match update::run_upgrade(cfg.update.source(), check, yes) {
+        Command::Upgrade => {
+            match update::run_upgrade(cfg.update.source()) {
                 0 => Ok(()),
                 code => Err(code),
             }

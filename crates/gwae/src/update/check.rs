@@ -226,12 +226,10 @@ pub fn spawn_check(
 // `gwae upgrade`
 // ---------------------------------------------------------------------------
 
-/// `gwae upgrade`. Returns the process exit code.
-///
-/// `check_only` reports and stops. Otherwise the plan is printed *before* it
-/// runs and, unless `assume_yes`, confirmed. There is no silent path: every
-/// route out of this function has told the user what it did.
-pub fn run_upgrade(configured: Option<Source>, check_only: bool, assume_yes: bool) -> i32 {
+/// `gwae upgrade`: report the version, source, route, and latest release.
+/// Always check-only: prints the exact upgrade command but never executes it.
+/// Returns the process exit code.
+pub fn run_upgrade(configured: Option<Source>) -> i32 {
     let facts = probe(configured);
     let source = detect(&facts);
     let p = plan(source, &facts.exe);
@@ -302,29 +300,10 @@ pub fn run_upgrade(configured: Option<Source>, check_only: bool, assume_yes: boo
     for (prog, args) in &cmds {
         println!("  {prog} {}", args.join(" "));
     }
-    if check_only {
-        return 0;
-    }
-    if !assume_yes && !confirm("Proceed? [y/N] ") {
-        println!("nothing done.");
-        return 0;
-    }
-
-    for (prog, args) in &cmds {
-        let status = std::process::Command::new(prog).args(args).status();
-        match status {
-            Ok(s) if s.success() => {}
-            Ok(s) => {
-                eprintln!("gwae: `{prog}` exited with {s}; nothing else was run.");
-                return 1;
-            }
-            Err(e) => {
-                eprintln!("gwae: could not run `{prog}`: {e}");
-                return 1;
-            }
-        }
-    }
-    println!("upgraded. Run `gwae --version` to confirm.");
+    // Check-only by design: gwae prints the exact command but never executes
+    // a package manager itself.
+    let _ = check_only;
+    let _ = assume_yes;
     0
 }
 
@@ -362,21 +341,6 @@ pub(crate) fn ignored_receipt(f: &Facts) -> Option<&Receipt> {
 
 /// A y/N prompt on stdin. `false` when stdin is not a terminal, so a piped
 /// `gwae upgrade` reports the plan and stops rather than acting on a
-/// confirmation nobody gave.
-fn confirm(prompt: &str) -> bool {
-    use std::io::{IsTerminal, Write};
-    if !std::io::stdin().is_terminal() {
-        return false;
-    }
-    print!("{prompt}");
-    let _ = std::io::stdout().flush();
-    let mut line = String::new();
-    if std::io::stdin().read_line(&mut line).is_err() {
-        return false;
-    }
-    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
-}
-
 /// The `gwae doctor` line: source, route, and what the last check found.
 pub fn doctor_line(configured: Option<Source>, startup_enabled: bool) -> String {
     let facts = probe(configured);
