@@ -98,8 +98,7 @@ pub fn selected_text<G: TermGrid>(grid: &G, sel: &Selection<impl Copy + Eq>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::paste::PASTE_CHUNK;
-    use gwae_term::{Size, Vt100Grid};
+    use super::super::paste::{paste_bytes, PASTE_CHUNK};
     use gwae_term::{Size, Vt100Grid};
 
     
