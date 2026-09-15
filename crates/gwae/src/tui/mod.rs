@@ -26,6 +26,15 @@ use crate::config::Config;
 use crate::geometry::CellPixels;
 use crate::select::{self, Selection};
 
+mod osc;
+mod shell;
+mod title;
+
+pub use shell::shell_split;
+use osc::scan_osc133;
+use shell::agent_gateway_cmd;
+use title::emit_title;
+
 /// What a mouse event inside a pane should do.
 ///
 /// Mouse capture is what gives gwae click-to-focus and drag-to-copy, which
@@ -398,53 +407,6 @@ struct Rect {
     h: u16,
 }
 
-/// Scan a PTY output chunk for OSC 133 shell-integration markers and return
-/// the status implied by the *last* one present. The protocol (emitted by
-/// fish/zsh integrations and agent harnesses like jcode):
-///   `133;A`   prompt shown  -> the pane is waiting for input (Idle)
-///   `133;C`   command start -> the pane is working (Running)
-///   `133;D;n` command done  -> Done when n == 0 (or omitted), Failed else
-/// `133;B` (prompt end / input start) is ignored: focus-wise it is still the
-/// prompt. Sequences may be terminated by BEL or ST and may split across
-/// reads; a marker whose terminator hasn't arrived yet is picked up on a
-/// later chunk (the payload we need sits right after the `133;` prefix).
-fn scan_osc133(bytes: &[u8]) -> Option<PaneStatus> {
-    let mut status = None;
-    let mut i = 0;
-    while i + 6 <= bytes.len() {
-        // ESC ] 1 3 3 ;
-        if bytes[i] == 0x1b && bytes[i + 1] == b']' && bytes[i + 2..i + 6] == *b"133;" {
-            let rest = &bytes[i + 6..];
-            match rest.first() {
-                Some(b'A') => status = Some(PaneStatus::Idle),
-                Some(b'C') => status = Some(PaneStatus::Running),
-                Some(b'D') => {
-                    // Exit code follows as `;n` up to BEL/ESC; absent means 0.
-                    let code: u32 = rest
-                        .get(1)
-                        .filter(|c| **c == b';')
-                        .map(|_| {
-                            rest[2..]
-                                .iter()
-                                .take_while(|c| c.is_ascii_digit())
-                                .fold(0u32, |a, c| a.saturating_mul(10) + (*c - b'0') as u32)
-                        })
-                        .unwrap_or(0);
-                    status = Some(if code == 0 {
-                        PaneStatus::Done
-                    } else {
-                        PaneStatus::Failed
-                    });
-                }
-                _ => {}
-            }
-            i += 6;
-        } else {
-            i += 1;
-        }
-    }
-    status
-}
 
 /// Whether the terminal gwae itself runs in understands Kitty graphics.
 ///
@@ -522,46 +484,8 @@ fn macos_option_held() -> bool {
     false
 }
 
-/// Strip control characters that could escape an OSC title sequence and clip
-/// the result to a reasonable window-title length. Prevents a malicious child
-/// title from running state-changing escapes on the host terminal.
-fn sanitize_title(title: &str) -> String {
-    let mut out = String::with_capacity(title.len());
-    for c in title.chars() {
-        if (c as u32) < 0x20 || c == '\x7f' {
-            continue;
-        }
-        out.push(c);
-        if out.chars().count() >= 256 {
-            break;
-        }
-    }
-    out
-}
 
-/// Tell the host terminal what title to display by writing OSC 2 (window
-/// title) terminated with ST. Forwarding the focused pane's inner title makes
-/// gwae effectively transparent to the host's title/status bar: the outer
-/// window shows e.g. a jcode session title instead of "gwae".
-fn emit_title(stdout: &mut impl Write, title: &str) -> std::io::Result<()> {
-    write!(stdout, "\x1b]2;{}\x1b\\", sanitize_title(title))?;
-    stdout.flush()
-}
 
-/// The command an agent pane runs: this very binary's `agent` subcommand.
-///
-/// `current_exe` rather than a bare `gwae`, so a binary that is not on
-/// `PATH` (a `cargo run` build, or an install into a directory the shell does
-/// not know about) still spawns *itself* rather than some other gwae, or
-/// nothing at all.
-fn agent_gateway_cmd() -> String {
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.to_str().map(str::to_string))
-        .unwrap_or_else(|| "gwae".to_string());
-    // Quoted so an install path containing spaces survives `shell_split`.
-    format!("\"{exe}\" agent")
-}
 
 /// Persist the picked spawn directory as `agent_dir` in the config file.
 ///
@@ -793,29 +717,6 @@ fn spawn_pane(
     })
 }
 
-/// Naive shell splitter: split on whitespace, keeping simple quoting (\"..\").
-pub fn shell_split(cmd: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_quote = false;
-    for c in cmd.chars() {
-        match c {
-            '\'' | '"' => {
-                in_quote = !in_quote;
-            }
-            c if c.is_whitespace() && !in_quote => {
-                if !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                }
-            }
-            c => cur.push(c),
-        }
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
-}
 
 /// Rebuild a pane around a PTY master fd inherited from the previous image of
 /// gwae across a hot reload.
@@ -6749,26 +6650,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn emit_title_writes_osc2_st() {
-        let mut out = Vec::new();
-        emit_title(&mut out, "jcode: my session").unwrap();
-        assert_eq!(out, b"\x1b]2;jcode: my session\x1b\\");
-    }
 
-    #[test]
-    fn sanitize_title_strips_control_and_clips() {
-        // Ordinary text passes through untouched.
-        assert_eq!(sanitize_title("abc 123"), "abc 123");
-        // Control characters (ESC/BEL/CR/LF) are dropped so a child cannot
-        // smuggle state-changing escapes out through the title; printable
-        // characters inside the OSC payload are preserved verbatim.
-        assert_eq!(sanitize_title("a\x1b]0;evil\x07b"), "a]0;evilb");
-        assert_eq!(sanitize_title("\x01\x02"), "");
-        // Over-long titles are clipped to a sane window-title length.
-        let long = "x".repeat(1000);
-        assert_eq!(sanitize_title(&long).chars().count(), 256);
-    }
 
     #[test]
     fn pane_scroll_reveals_overflow() {
@@ -7716,28 +7598,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scan_osc133_maps_protocol_to_status() {
-        // Prompt marker -> waiting for input.
-        assert_eq!(scan_osc133(b"\x1b]133;A\x07"), Some(PaneStatus::Idle));
-        // Command start -> running.
-        assert_eq!(scan_osc133(b"\x1b]133;C\x07"), Some(PaneStatus::Running));
-        // Command done, exit 0 (and the bare form) -> done.
-        assert_eq!(scan_osc133(b"\x1b]133;D;0\x07"), Some(PaneStatus::Done));
-        assert_eq!(scan_osc133(b"\x1b]133;D\x1b\\"), Some(PaneStatus::Done));
-        // Non-zero exit -> failed.
-        assert_eq!(scan_osc133(b"\x1b]133;D;127\x07"), Some(PaneStatus::Failed));
-        // The *last* marker in a chunk wins (C then D;1 -> failed).
-        assert_eq!(
-            scan_osc133(b"\x1b]133;C\x07output\x1b]133;D;1\x07"),
-            Some(PaneStatus::Failed)
-        );
-        // Ordinary output and other OSCs carry no status.
-        assert_eq!(scan_osc133(b"plain output"), None);
-        assert_eq!(scan_osc133(b"\x1b]2;title\x07"), None);
-        // B (input start) is not a status change.
-        assert_eq!(scan_osc133(b"\x1b]133;B\x07"), None);
-    }
 
     #[test]
     fn smart_jump_prefers_failed_then_attention() {
