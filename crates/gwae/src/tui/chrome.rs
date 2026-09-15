@@ -175,7 +175,7 @@ pub(crate) fn draw_art(out: &mut [Cell], cols: u16, rect: Rect, lines: &[String]
             if let Some(c) = out.get_mut(idx) {
                 // Only the glyph and its color are ours: the cell keeps the
                 // background the box was filled with, so the art blends into
-                // the themed backdrop instead of stamping a differently
+                // the terminal backdrop instead of stamping a differently
                 // colored rectangle over it.
                 let bg = c.style.bg;
                 *c = Cell {
@@ -223,6 +223,35 @@ pub(crate) struct HudFacts {
     pub(crate) jump_target: Option<PaneId>,
     /// The 1-based column an un-committed `⌥+<number>` is pointing at.
     pub(crate) pending_jump: Option<usize>,
+    /// Whether the `caffeinate` assertion is held: stamps the coffee badge
+    /// onto the HUD frame so the state reads without leaving the overlay.
+    pub(crate) keep_awake: bool,
+}
+
+/// Stamp [`crate::keepawake::COFFEE_BADGE`] onto the top frame row of `rect`,
+/// right-aligned inside the frame. No-op when the panel is too narrow to
+/// hold the badge, so small viewports degrade to the plain frame rather than
+/// a clipped fragment.
+pub(crate) fn stamp_keep_awake_badge(
+    out: &mut [Cell],
+    cols: u16,
+    rect: super::Rect,
+    pal: &Palette,
+) {
+    let badge = crate::keepawake::COFFEE_BADGE;
+    let n = badge.chars().count();
+    if n == 0 || rect.w as usize <= n + 2 || rect.h == 0 {
+        return;
+    }
+    let y = rect.y as usize;
+    let start = rect.x as usize + rect.w as usize - 1 - n;
+    for (i, ch) in badge.chars().enumerate() {
+        let idx = y * cols as usize + start + i;
+        let Some(c) = out.get_mut(idx) else { continue };
+        c.ch = ch;
+        c.style.fg = pal.accent;
+        c.style.bold = true;
+    }
 }
 
 /// Reduce a window title to something that fits on a minimap tile.
@@ -865,6 +894,9 @@ pub(crate) fn paint_center_minimap(
             false,
         );
     }
+    if facts.keep_awake {
+        stamp_keep_awake_badge(out, cols, plan.rect, pal);
+    }
 }
 
 /// Build the full frame (cols x rows).
@@ -885,7 +917,7 @@ pub(crate) fn strip_number(layout: &Layout) -> usize {
 /// Draw a one-line toast along the bottom of the screen.
 ///
 /// Used to report config reloads. It is a single row so it never covers a
-/// pane's working area meaningfully, and it sits on the theme's `surface` so
+/// pane's working area meaningfully, and it sits on the terminal `surface` so
 /// it reads as chrome rather than as pane output.
 pub(crate) fn draw_toast(out: &mut [Cell], cols: u16, rows: u16, text: &str, pal: &Palette, ok: bool) {
     draw_toast_at(out, cols, rows, text, pal, ok, None)
@@ -943,7 +975,13 @@ pub(crate) fn draw_toast_at(
 /// Attention (Idle/Failed panes) is deliberately *not* surfaced here: the
 /// ambient chrome already carries it (pane tints, right-edge strip ticks,
 /// minimap glyphs) and `⌥+g` jumps to the pane that wants you on demand.
-pub(crate) fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, pal: &Palette) {
+pub(crate) fn draw_center_hud(
+    out: &mut [Cell],
+    cols: u16,
+    rows: u16,
+    pal: &Palette,
+    keep_awake: bool,
+) {
     let focus_color = pal.accent;
     if cols < 30 || rows < 9 {
         return;
@@ -1062,6 +1100,9 @@ pub(crate) fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, pal: &Pale
         h: bh as u16,
     };
     draw_focus_frame(out, cols, rect, focus_color);
+    if keep_awake {
+        stamp_keep_awake_badge(out, cols, rect, pal);
+    }
     for (idx, line) in lines.iter().enumerate() {
         let ty = oy + 1 + idx;
         let line_len = line.chars().count();
@@ -1529,7 +1570,7 @@ mod tests {
         for (what, draw) in [("hud", 0), ("center minimap", 1)] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
             if draw == 0 {
-                draw_center_hud(&mut out, cols, rows, &term);
+                draw_center_hud(&mut out, cols, rows, &term, false);
             } else {
                 let mm = crate::config::Minimap {
                     mode: crate::config::MinimapMode::Off,
@@ -2256,7 +2297,7 @@ mod tests {
         let rows: u16 = 24;
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
         let frame_color = CColor::Rgb(0x74, 0xc7, 0xec);
-        draw_center_hud(&mut out, cols, rows, &pal_accent(frame_color));
+        draw_center_hud(&mut out, cols, rows, &pal_accent(frame_color), false);
         let has_frame = out
             .iter()
             .any(|c| c.ch == '╭' || c.ch == '╮' || c.ch == '╰' || c.ch == '╯');
@@ -2290,7 +2331,7 @@ mod tests {
             layout.panes.get_mut(pid).unwrap().status = PaneStatus::Running;
         }
         let mut out2 = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(&mut out2, cols, rows, &pal_accent(frame_color));
+        draw_center_hud(&mut out2, cols, rows, &pal_accent(frame_color), false);
         let all2: Vec<String> = (0..rows)
             .map(|y| {
                 (0..cols)
@@ -2333,7 +2374,7 @@ mod tests {
         );
         // Tiny viewport: nothing painted.
         let mut tiny = vec![Cell::default(); 10 * 4];
-        draw_center_hud(&mut tiny, 10, 4, &pal_accent(frame_color));
+        draw_center_hud(&mut tiny, 10, 4, &pal_accent(frame_color), false);
         assert!(
             tiny.iter().all(|c| c.ch == ' '),
             "tiny viewport draws no HUD"
@@ -2379,6 +2420,43 @@ mod tests {
             facts,
         );
         out
+    }
+
+    #[test]
+    fn coffee_badge_stamps_the_dashboard_frame_only_while_awake() {
+        // The keep-awake state reads on the Option HUD chrome: the badge is
+        // stamped onto the panel frame while the guard is active, and the
+        // frame is plain box-drawing when it is not.
+        let (layout, _) = dashboard_layout(4);
+        for keep_awake in [false, true] {
+            let facts = HudFacts {
+                keep_awake,
+                ..HudFacts::default()
+            };
+            let out = paint_dashboard(&layout, &facts, 100, 24);
+            let text = screen_rows(&out, 100).join("\n");
+            assert_eq!(
+                text.contains("~[_]o"),
+                keep_awake,
+                "badge reads on the HUD frame iff awake:\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn coffee_badge_stamps_the_center_help_frame_only_while_awake() {
+        // Same promise for the startup / `⌥+/` help panel.
+        let (cols, rows) = (80u16, 24u16);
+        for keep_awake in [false, true] {
+            let mut out = vec![Cell::default(); cols as usize * rows as usize];
+            draw_center_hud(&mut out, cols, rows, &Palette::TERMINAL, keep_awake);
+            let text: String = out.iter().map(|c| c.ch).collect();
+            assert_eq!(
+                text.contains("~[_]o"),
+                keep_awake,
+                "badge reads on the help frame iff awake: {text:?}"
+            );
+        }
     }
 
     /// The vertical rules of the skeleton grid, by screen column.

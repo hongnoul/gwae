@@ -8,6 +8,7 @@ changelog, updated per PR). The format is based on
 
 ### Changed
 - **Keep-awake is on by default.** The Mac stays up while gwae runs with no onboarding question. Opt out with `keep_awake = false`, `⌥+w`, or `GWAE_NO_KEEP_AWAKE=1`. Teardown is unchanged: exiting gwae still kills every pane process and releases the assertion.
+- **Keep-awake shows a coffee badge, not a red ring.** While the `caffeinate` assertion is held a small `~[_]o keep-awake` badge is stamped on the Option HUD frame (hold Option to see it) instead of recoloring the focus ring. The palette is never touched, so toggling `⌥+w` off restores every color exactly.
 
 ## [1.4.1] - 2026-09-13
 

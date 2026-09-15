@@ -154,40 +154,16 @@ pub fn doctor_line(enabled: bool) -> String {
     line_for(enabled, &availability())
 }
 
-/// The focus-ring color while the assertion is held: unmissable red.
+/// Small coffee badge stamped onto the Option HUD chrome while the
+/// assertion is held.
 ///
-/// ANSI bright red rather than a hardcoded RGB, because it is a *state*
-/// signal, not a taste: red means "this machine is deliberately not
-/// sleeping", and it follows the terminal's own red.
-pub const ACTIVE_ACCENT: gwae_term::CColor = gwae_term::CColor::Idx(9);
-
-/// The palette this frame should paint with: the terminal-native one, with
-/// the accent swapped for [`ACTIVE_ACCENT`] while the guard holds an
-/// assertion.
-///
-/// Layered at render time rather than stored, so toggling off restores the
-/// chrome exactly and a config reload can never bake the red in.
-pub fn effective_palette(base: &crate::theme::Palette, guard: &Guard) -> crate::theme::Palette {
-    let mut pal = *base;
-    if guard.active() {
-        pal.accent = ACTIVE_ACCENT;
-    }
-    pal
-}
-
-/// [`effective_palette`] against a described state, so tests can cover the
-/// active branch without spawning `caffeinate`.
-#[cfg(test)]
-pub fn effective_palette_for_test(
-    base: &crate::theme::Palette,
-    active: bool,
-) -> crate::theme::Palette {
-    let mut pal = *base;
-    if active {
-        pal.accent = ACTIVE_ACCENT;
-    }
-    pal
-}
+/// A fixed annotation rather than a palette key, because it is a *state*
+/// signal, not a taste: `~[_]o` is a steaming cup in pure ASCII (steam,
+/// cup, handle) followed by the label, and it reads the same whatever the
+/// terminal colors are. It lives only on the HUD, so the palette itself —
+/// focus ring included — is never touched and toggling off restores every
+/// color exactly.
+pub const COFFEE_BADGE: &str = " ~[_]o keep-awake ";
 
 /// [`doctor_line`] against a described machine, so tests never depend on
 /// what happens to be installed on the one running them.
@@ -280,23 +256,20 @@ mod tests {
     }
 
     #[test]
-    fn inactive_guard_leaves_every_color_alone() {
-        // Toggling off must restore the theme exactly: the red is layered
-        // per frame, never written into the palette a reload would keep.
-        let g = Guard::acquire(false);
-        for base in [crate::theme::Palette::TERMINAL] {
-            assert_eq!(effective_palette(&base, &g), base);
-            assert_eq!(effective_palette_for_test(&base, false), base);
-        }
-    }
-
-    #[test]
-    fn active_state_swaps_only_the_accent() {
-        let base = crate::theme::Palette::TERMINAL;
-        let on = effective_palette_for_test(&base, true);
-        assert_eq!(on.accent, ACTIVE_ACCENT, "the ring must read as red");
-        let mut rest = on;
-        rest.accent = base.accent;
-        assert_eq!(rest, base, "nothing else may change");
+    fn coffee_badge_is_small_plain_ascii() {
+        // The badge is stamped onto box-drawing chrome cell by cell, so it
+        // must be short and pure ASCII: no wide glyphs, no emoji.
+        assert!(
+            COFFEE_BADGE.chars().count() <= 24,
+            "badge must stay small: {COFFEE_BADGE:?}"
+        );
+        assert!(
+            COFFEE_BADGE.is_ascii(),
+            "badge must be ASCII art, got {COFFEE_BADGE:?}"
+        );
+        assert!(
+            COFFEE_BADGE.contains("~[_]o"),
+            "badge must carry the coffee cup, got {COFFEE_BADGE:?}"
+        );
     }
 }

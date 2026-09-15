@@ -1434,6 +1434,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             HudFacts {
                 jump_target: smart_jump_target(&layout),
                 pending_jump: jump.pending(),
+                keep_awake: keep_awake.active(),
                 ..HudFacts::default()
             }
         } else {
@@ -1449,10 +1450,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             dirty = true;
         }
         if dirty {
-            // While the keep-awake assertion is held the focus ring paints
-            // red: the state must be visible without opening anything, and a
-            // derived copy keeps the theme intact when it is released.
-            let pal = crate::keepawake::effective_palette(&pal, &keep_awake);
             host_images.begin();
             render_frame_with_images(
                 &mut frame,
@@ -1469,7 +1466,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             );
             host_images.finish();
             if show_hud {
-                draw_center_hud(&mut frame, cols, rows, &pal);
+                draw_center_hud(&mut frame, cols, rows, &pal, keep_awake.active());
             }
             if show_center_minimap && !show_hud {
                 if let Some(plan) = &hud_plan {

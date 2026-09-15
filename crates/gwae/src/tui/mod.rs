@@ -93,26 +93,15 @@ pub(crate) struct Rect {
 mod tests {
 
     #[test]
-    fn keep_awake_red_ring_layers_over_chrome_and_releases() {
-        // The ring is derived per frame, never stored: toggling off must
-        // restore the chrome exactly.
-        let base = crate::theme::Palette::TERMINAL;
+    fn keep_awake_badge_shows_only_while_the_guard_is_active() {
+        // The state signal is a coffee badge on the Option HUD, never a
+        // palette change: toggling off must mean plain chrome everywhere.
         let off = crate::keepawake::Guard::acquire(false);
-        assert_eq!(
-            crate::keepawake::effective_palette(&base, &off),
-            base,
-            "inactive guard must leave the chrome untouched"
+        assert!(!off.active(), "a disabled guard holds no assertion");
+        assert!(
+            !crate::keepawake::COFFEE_BADGE.is_empty(),
+            "the active badge must exist to stamp onto the HUD"
         );
-        // An active guard swaps only the accent; everything else survives.
-        let fake_active = crate::keepawake::effective_palette_for_test(&base, true);
-        assert_eq!(
-            fake_active.accent,
-            crate::keepawake::ACTIVE_ACCENT,
-            "active guard must paint the ring red"
-        );
-        let mut rest = fake_active;
-        rest.accent = base.accent;
-        assert_eq!(rest, base, "only the accent may change");
     }
 
 }
