@@ -322,6 +322,7 @@ fn cargo_crates_toml() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::update::check::{ignored_receipt, provenance};
     use crate::update::plan::{plan, Plan};
     use std::path::{Path, PathBuf};
 

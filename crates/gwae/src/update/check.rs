@@ -330,7 +330,7 @@ pub fn run_upgrade(configured: Option<Source>, check_only: bool, assume_yes: boo
 
 /// How the source was decided, appended to the `source:` line so the user can
 /// tell a fact from a guess.
-fn provenance(f: &Facts) -> String {
+pub(crate) fn provenance(f: &Facts) -> String {
     if f.configured.is_some() {
         return " (from config)".to_string();
     }
@@ -352,7 +352,7 @@ fn provenance(f: &Facts) -> String {
 
 /// A receipt that exists but must not speak for this binary, because the
 /// binary no longer sits in the directory the receipt names.
-fn ignored_receipt(f: &Facts) -> Option<&Receipt> {
+pub(crate) fn ignored_receipt(f: &Facts) -> Option<&Receipt> {
     let r = f.receipt.as_ref()?;
     if r.dir.as_os_str().is_empty() || same_dir(f.exe.parent(), &r.dir) {
         return None;
