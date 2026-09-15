@@ -373,9 +373,14 @@ pub(crate) fn render_frame_with_images(
         // fewer columns than the rect is wide (a pane clipped at the content or
         // viewport edge), the uncovered tail is filled with blank cells, which
         // for the focused pane keeps the highlight a clean, unbroken rectangle.
+        // Phase 2: a promoted image viewer paints only its image tiles.
+        // Grid text (status lines, hidden TUI chrome) stays out of the frame
+        // so stale glyphs never compete with the page texture. The PTY and
+        // grid stay live underneath: demotion restores text with no redraw.
+        let image_only = pane.image_view.is_some() && !v.peek;
         for gy in 0..v.rect.h {
             pane.legacy_images.begin_row();
-            if images.is_some() && !v.peek {
+            if images.is_some() && !v.peek && !image_only {
                 for gx in 0..g_start {
                     pane.legacy_images.observe(pane.grid.cell(gx, gy));
                 }
@@ -387,7 +392,9 @@ pub(crate) fn render_frame_with_images(
                     continue;
                 }
                 let gi = g_start + gx;
-                let mut cell = if gi < g_end {
+                let mut cell = if image_only {
+                    Cell::default()
+                } else if gi < g_end {
                     pane.grid.cell(gi, gy)
                 } else {
                     Cell::default()
