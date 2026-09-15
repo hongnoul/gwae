@@ -15,9 +15,10 @@ use std::path::{Path, PathBuf};
 /// guessed at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// `scripts/install.sh` put a release binary in a plain directory. We own
-    /// that file outright, so re-running the installer is the upgrade.
-    /// Legacy: new installs should use Homebrew.
+    /// `scripts/install.sh` put a release binary in a plain directory.
+    /// The installer is retired and removed: this source now resolves to a
+    /// reinstall-with-Homebrew instruction. Kept so surviving receipts and
+    /// old configs still get a truthful answer instead of `unknown`.
     Script,
     /// Homebrew (the tap). `brew upgrade gwae`. The canonical route.
     Homebrew,
@@ -124,7 +125,7 @@ pub enum CargoOrigin {
     Path,
 }
 
-/// The note `scripts/install.sh` leaves so the source is *known* rather than
+/// The note the retired `scripts/install.sh` left, so the source is *known* rather than
 /// inferred from a path that a user may well have moved the binary to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Receipt {

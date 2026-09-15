@@ -139,7 +139,10 @@ fn an_install_receipt_decides_the_route_over_the_path() {
         line.contains("install.sh (from install receipt)"),
         "the receipt must beat the target/ path heuristic: {line}"
     );
-    assert!(line.contains("re-run the installer"), "{line}");
+    assert!(
+        line.contains("brew install"),
+        "retired script route must point at brew: {line}"
+    );
 }
 
 #[test]
@@ -181,11 +184,7 @@ fn upgrade_names_the_receipt_it_is_ignoring() {
         "source = \"install.sh\"\ndir = \"/somewhere/else/bin\"\nversion = \"0.0.1\"\n",
     )
     .expect("write receipt");
-    let (out, _, code) = run(
-        &dir,
-        Some("[update]\nsource = \"unknown\"\n"),
-        &["upgrade"],
-    );
+    let (out, _, code) = run(&dir, Some("[update]\nsource = \"unknown\"\n"), &["upgrade"]);
     assert_eq!(code, 1, "{out}");
     assert!(out.contains("will not guess"), "must still refuse: {out}");
     assert!(
@@ -201,11 +200,7 @@ fn upgrade_check_never_runs_an_upgrade_command() {
     // the route is a Managed one that cannot run anything at all - and the
     // run must still succeed and explain itself.
     let dir = sandbox();
-    let (out, err, code) = run(
-        &dir,
-        Some("[update]\nsource = \"nix\"\n"),
-        &["upgrade"],
-    );
+    let (out, err, code) = run(&dir, Some("[update]\nsource = \"nix\"\n"), &["upgrade"]);
     assert!(
         code == 0 || code == 1,
         "check exits cleanly or reports it could not reach github, got {code}: {err}"
@@ -229,11 +224,7 @@ fn upgrade_refuses_to_guess_when_it_cannot_tell() {
     // that never installed gwae that way. Refusing, and naming the config key
     // that fixes it, is the only safe answer.
     let dir = sandbox();
-    let (out, _, code) = run(
-        &dir,
-        Some("[update]\nsource = \"unknown\"\n"),
-        &["upgrade"],
-    );
+    let (out, _, code) = run(&dir, Some("[update]\nsource = \"unknown\"\n"), &["upgrade"]);
     assert_eq!(code, 1, "an unresolvable route is a failure, not a no-op");
     assert!(
         out.contains("will not guess") || out.contains("latest:  unknown"),
@@ -263,11 +254,7 @@ fn update_is_accepted_as_an_alias_for_upgrade() {
     // `update` is what half of all users will type first; a "no such
     // subcommand" error for the feature's own name would be a bad joke.
     let dir = sandbox();
-    let (out, _, _) = run(
-        &dir,
-        Some("[update]\nsource = \"nix\"\n"),
-        &["update"],
-    );
+    let (out, _, _) = run(&dir, Some("[update]\nsource = \"nix\"\n"), &["update"]);
     assert!(out.contains("source:  nix"), "{out}");
 }
 
@@ -343,7 +330,10 @@ fn with_a_newer_release_upgrade_prints_but_never_runs_the_command() {
         &["upgrade"],
     );
     assert_eq!(code, 0, "stdout:\n{out}\nstderr:\n{err}");
-    assert!(out.contains("brew upgrade gwae"), "prints the command: {out}");
+    assert!(
+        out.contains("brew upgrade gwae"),
+        "prints the command: {out}"
+    );
     assert!(
         !out.contains("RAN-brew"),
         "must never execute the upgrade: {out}"
@@ -357,12 +347,8 @@ fn with_a_newer_release_a_managed_install_is_still_never_touched() {
     // A Nix user with brew also installed is the case where a careless
     // implementation reaches for whatever package manager it can find.
     let dir = sandbox();
-    let (out, _, code) = run_with_fake_release(
-        &dir,
-        "[update]\nsource = \"nix\"\n",
-        "99.0.0",
-        &["upgrade"],
-    );
+    let (out, _, code) =
+        run_with_fake_release(&dir, "[update]\nsource = \"nix\"\n", "99.0.0", &["upgrade"]);
     assert_eq!(code, 0, "{out}");
     assert!(
         !out.contains("RAN-"),
@@ -395,12 +381,8 @@ fn a_cargo_install_is_upgraded_with_locked_and_force() {
 fn the_check_writes_a_cache_so_the_next_session_stays_quiet() {
     // The daily-cadence promise is only real if the answer is persisted.
     let dir = sandbox();
-    let (_, _, _) = run_with_fake_release(
-        &dir,
-        "[update]\nsource = \"nix\"\n",
-        "99.0.0",
-        &["upgrade"],
-    );
+    let (_, _, _) =
+        run_with_fake_release(&dir, "[update]\nsource = \"nix\"\n", "99.0.0", &["upgrade"]);
     let cache = std::fs::read_to_string(dir.join("state/gwae/update.toml"))
         .expect("the check must record what it found");
     assert!(cache.contains("99.0.0"), "{cache}");

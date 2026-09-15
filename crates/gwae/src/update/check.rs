@@ -158,7 +158,6 @@ pub fn should_check(startup_enabled: bool, env_off: bool, cache: &Cache, now: u6
 pub fn notice(current: &str, latest: &str, plan: &Plan) -> String {
     let how = match plan {
         Plan::Ask => "run: gwae upgrade".to_string(),
-        Plan::Script { .. } => "run: gwae upgrade".to_string(),
         p => format!("run: {}", p.describe()),
     };
     format!("gwae {latest} is out (you have {current}) · {how}")

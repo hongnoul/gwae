@@ -1,6 +1,10 @@
 //! Staying current: how an *already installed* gwae learns about a new
 //! version, and how it moves to one (ADR-016).
 //!
+//! Homebrew is the absolute source of truth: `brew install hongnoul/tap/gwae`
+//! installs, `brew upgrade gwae` upgrades. Every other source below is legacy
+//! detection so old installs get a truthful answer, not a supported route.
+//!
 //! The rule this module exists to enforce is one sentence: **gwae updates
 //! itself the way it was installed, or not at all.** A binary that overwrites
 //! itself in place would be wrong for most of the ways gwae is actually on a
@@ -14,13 +18,14 @@
 //! 1. **Where did this binary come from?** [`Source`], decided by
 //!    [`detect`] from facts ([`Facts`]) rather than probed inline, so every
 //!    branch is testable without owning five differently-installed machines.
-//!    Order of authority: the user's config, then the receipt
-//!    `scripts/install.sh` leaves behind, then the path the running binary
+//!    Order of authority: the user's config, then the legacy receipt the
+//!    retired installer left behind, then the path the running binary
 //!    sits at. A guess is always labelled as one ([`Source::Unknown`]).
 //! 2. **What would upgrading take?** [`plan`], pure, yielding either a
 //!    command we are willing to run ([`Plan::commands`]) or an explanation of
 //!    the one command *you* should run when the answer belongs to a package
-//!    manager we must not fight.
+//!    manager we must not fight — or to a retired route that now means
+//!    reinstalling with Homebrew.
 //! 3. **Is there anything to upgrade to?** [`latest_version`] asks GitHub's
 //!    `releases/latest` redirect for a tag. That request is a bare HTTP HEAD:
 //!    it carries no version, no machine id, and nothing about the user, and
@@ -28,10 +33,9 @@
 //!    that can turn it off entirely.
 //!
 //! What this module never does is install anything on its own. The check
-//! notifies; `gwae upgrade` acts, and only after saying what it will run.
+//! notifies; `gwae upgrade` prints the exact command and stops.
 //! Software that replaces itself without being asked is a class of surprise a
 //! terminal multiplexer has not earned the right to hand anyone.
-
 
 use std::time::Duration;
 
@@ -70,13 +74,5 @@ pub const NO_CHECK_ENV: &str = "GWAE_NO_UPDATE_CHECK";
 /// vendor gwae somewhere the heuristics cannot see.
 pub const SOURCE_ENV: &str = "GWAE_UPDATE_SOURCE";
 
-
-pub use check::{
-    cache_path, doctor_line, latest_version, notice, now_unix, run_upgrade, should_check,
-    spawn_check, Cache,
-};
-pub use plan::{is_newer, parse_version, plan, tag_from_url, Plan};
-pub use source::{
-    cargo_origin, detect, probe, receipt_path, same_dir, state_dir, CargoOrigin, Facts, Receipt,
-    Source,
-};
+pub use check::{doctor_line, run_upgrade, spawn_check};
+pub use source::{detect, probe, Source};

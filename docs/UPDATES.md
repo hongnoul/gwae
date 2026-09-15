@@ -68,7 +68,7 @@ gwae explains instead of acting.
 | Source | Route | gwae runs it? |
 |---|---|---|
 | `brew` | `brew upgrade gwae` | yes (canonical) |
-| `install.sh` | Re-run the legacy installer with `GWAE_INSTALL_DIR` pinned to the current directory | yes (legacy) |
+| `install.sh` | Retired installer (file removed): reinstall with `brew install hongnoul/tap/gwae` | **no**, printed |
 | `cargo` | `cargo install gwae --locked --force` | yes (legacy) |
 | `cargo-git` | `cargo install --git .../gwae gwae --locked --force` | yes (legacy) |
 | `source` | `git pull && make install` | **no**, printed |
@@ -81,9 +81,10 @@ returns an empty vector for them, so "will this run something?" is one
 `is_empty()` at the call site rather than a match that has to be kept in sync
 with a growing enum.
 
-Re-running the legacy `install.sh` *is* the upgrade for the script route,
-deliberately: download, checksum verification, and atomic install already live
-there. New installs should use Homebrew instead.
+The retired `install.sh` route resolves to a reinstall-with-Homebrew
+instruction. The installer file is removed, so there is nothing to re-run;
+surviving receipts still identify the install truthfully instead of falling
+through to `unknown`.
 
 ### 3. Is there anything to upgrade to?
 
