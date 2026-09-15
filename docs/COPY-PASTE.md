@@ -54,6 +54,6 @@
 - **Images:** the `image_clipboard` / `⌥+Shift+c` (PNG) flow remains removed.
   Capture screenshots with the OS or terminal, not gwae.
 
-See [native-paste acceptance evidence](NATIVE-PASTE-ACCEPTANCE.md) and
-[drag-copy acceptance evidence](DRAG-COPY-ACCEPTANCE.md) for before/after
+See [native-paste acceptance evidence](archive/NATIVE-PASTE-ACCEPTANCE.md) and
+[drag-copy acceptance evidence](archive/DRAG-COPY-ACCEPTANCE.md) for before/after
 replays, requirement-to-test mappings, observed results, and validation limits.

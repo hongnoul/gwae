@@ -45,7 +45,7 @@ halfblocks. Actual Yazi/tdf PTY runs verified two sequential PDFs, Kitty help,
 fit/fill (`z`), zoom (`o`/`O`), page navigation and responsive return to Yazi.
 The captured RGBA uploads contain readable PDF text and reversible zoom crops.
 These are real application/protocol observations, not a completed visual
-check of the final Ghostty framebuffer. See the [graphics ledger](GWAE-GRAPHICS-VALIDATION.md).
+check of the final Ghostty framebuffer. See the [graphics ledger](archive/GWAE-GRAPHICS-VALIDATION.md).
 
 An independent tdf 0.5.0 resize-order bug can leave the old page clipped until
 another input event. It reproduces without GWAE: tdf computes layout from
@@ -117,8 +117,8 @@ disabled mode, canonical quiet host uploads, two panes reusing child image ID
 1, sibling-safe deletion, and rejected external media even when a child emits
 visible virtual placeholders.
 
-See [the acceptance map](GWAE-ACCEPTANCE-MAP.md) for requirement-level and
+See [the acceptance map](archive/GWAE-ACCEPTANCE-MAP.md) for requirement-level and
 changed-output observations, including known failures and blocked checks.
-The [graphics ledger](GWAE-GRAPHICS-VALIDATION.md) records actual application
-evidence, and the [historical sizing ledger](GWAE-TDF-VALIDATION.md) preserves
+The [graphics ledger](archive/GWAE-GRAPHICS-VALIDATION.md) records actual application
+evidence, and the [historical sizing ledger](archive/GWAE-TDF-VALIDATION.md) preserves
 the pre-fix comparison. Aggregate test counts are not the acceptance evidence.

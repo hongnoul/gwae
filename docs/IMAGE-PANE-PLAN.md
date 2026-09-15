@@ -12,7 +12,7 @@ tile uploads through one `Host::pending` queue (`tui/mod.rs:1715-1778`).
 
 A tdf page (e.g. 560x736 RGBA, larger fullscreen) therefore costs multi-MB
 APC chunk decode, bilinear rescale, tile split, zlib, and reupload per redraw.
-`GWAE-GRAPHICS-VALIDATION.md` states it directly: one pane's host output volume
+`archive/GWAE-GRAPHICS-VALIDATION.md` states it directly: one pane's host output volume
 is the entire frame budget. `o=z` shrank bytes (855KB to 81KB startup, ~818KB
 to ~44KB per page turn) but kept the coupling. One image pane stalls all text
 panes.
@@ -52,7 +52,7 @@ control set, and one composer rect.
 
 ### Pane model (minimal refactor)
 
-`TUI-SPLIT-PLAN.md` says leave `graphics_*.rs` alone during the split. So do
+`archive/TUI-SPLIT-PLAN.md` says leave `graphics_*.rs` alone during the split. So do
 not rewrite `PtyPane` on day one. Instead:
 
 ```rust
@@ -171,4 +171,4 @@ retransmit. With this plan:
 - PDF decode dependency for native open: shell to `pdftoppm`, link
   `poppler`, or reuse tdf as decoder initially?
 - Promotion thresholds: tune from real tdf traces (page pixel sizes above).
-- Enum refactor timing vs `TUI-SPLIT-PLAN.md` step 14 (`tui/app.rs`).
+- Enum refactor timing vs `archive/TUI-SPLIT-PLAN.md` step 14 (`tui/app.rs`).
