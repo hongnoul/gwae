@@ -116,7 +116,7 @@ pub fn zoxide_dirs(limit: usize) -> Vec<PathBuf> {
 /// How many zoxide entries to take. Enough to cover the places anyone works
 /// in regularly, small enough that the picker stays a list rather than a
 /// history dump.
-const ZOXIDE_LIMIT: usize = 40;
+pub(super) const ZOXIDE_LIMIT: usize = 40;
 
 /// The roots a scan starts from: whatever the user configured, else `$HOME`.
 ///
@@ -132,13 +132,8 @@ pub fn search_roots(configured: &[String]) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// A directory offered by the `⌥+d` picker.
-#[derive(Debug, Clone, PartialEq, Eq)]
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use super::*;
 
     

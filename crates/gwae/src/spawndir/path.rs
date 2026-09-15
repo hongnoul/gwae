@@ -2,8 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use std::path::{Path, PathBuf};
-
 /// Markers that identify a directory as a *project*, whatever it is called
 /// and wherever it lives.
 ///
@@ -14,7 +12,7 @@ use std::path::{Path, PathBuf};
 /// or a company-mandated tree. A `.git` directory, by contrast, means the
 /// same thing everywhere, so the feature works on a machine gwae has never
 /// seen without the user configuring anything.
-const PROJECT_MARKERS: &[&str] = &[
+pub(super) const PROJECT_MARKERS: &[&str] = &[
     ".git",
     ".hg",
     ".svn",
@@ -32,7 +30,7 @@ const PROJECT_MARKERS: &[&str] = &[
 /// *inside* projects and would otherwise multiply every hit by its vendored
 /// copies (`node_modules`, `target`, `vendor`). Matched by name at any depth,
 /// because that is where they appear.
-const SKIP_DIRS: &[&str] = &[
+pub(super) const SKIP_DIRS: &[&str] = &[
     "Library",
     "Applications",
     "Music",
@@ -56,12 +54,12 @@ const SKIP_DIRS: &[&str] = &[
 /// `readdir`s on a normal machine (measured: ~35 repos in about 2ms on the
 /// author's `$HOME`). The project-suggestion scan stops at a project, while
 /// directory-name search also visits its children within the same limits.
-const MAX_DEPTH: usize = 4;
+pub(super) const MAX_DEPTH: usize = 4;
 
 /// Hard ceiling on directories examined, so a pathological tree (a network
 /// mount, a home full of generated data) cannot make `⌥+d` hang. Reaching it
 /// yields fewer candidates, never a stall.
-const MAX_SCAN: usize = 4000;
+pub(super) const MAX_SCAN: usize = 4000;
 
 /// Expand `~` and `$VAR` / `${VAR}` in a configured path.
 ///

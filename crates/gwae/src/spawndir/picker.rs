@@ -1,7 +1,7 @@
 //! Picker candidates: ranked directories for the spawn picker.
 
-use super::path::{expand, inherited};
-use super::scan::{is_project, scan, search_roots, zoxide_dirs};
+use super::path::{expand, inherited, MAX_DEPTH, MAX_SCAN};
+use super::scan::{is_project, scan, search_roots, zoxide_dirs, ZOXIDE_LIMIT};
 use std::path::{Path, PathBuf};
 
 /// A directory offered by the `⌥+d` picker.
