@@ -329,8 +329,12 @@ pub(crate) fn render_frame_with_images(
             images
                 .as_deref_mut()
                 .map(|host| {
-                    host.prepare(
+                    // Phase 1: idle panes (no image traffic, or unchanged
+                    // image state) skip the source walk and reuse cached
+                    // tiles. Only changed panes pay for prepare.
+                    host.prepare_cached(
                         v.pid,
+                        pane.image_activity,
                         &pane.graphics,
                         (g_start, 0, g_end - g_start, v.rect.h),
                         (

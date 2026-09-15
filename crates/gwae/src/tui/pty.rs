@@ -139,6 +139,11 @@ pub struct PtyPane {
     pub graphics_stream: crate::graphics_stream::Stream,
     pub graphics: crate::graphics::Graphics,
     pub legacy_images: crate::graphics_host::Legacy,
+    /// Phase 1 image isolation token: `None` until the pane carries image
+    /// traffic, bumped on every image commit/placement/delete, reset on
+    /// graphics clear. `Host::prepare_cached` skips panes whose token is
+    /// unchanged since the last prepared frame.
+    pub image_activity: Option<u64>,
 }
 
 /// Graphics placements use the cursor at their position in the byte stream,
@@ -158,10 +163,13 @@ pub(crate) fn feed_pane_output(pane: &mut PtyPane, bytes: &[u8], graphics_enable
         if pane.grid.screen_epoch() != before {
             pane.graphics.clear_all();
             pane.legacy_images = Default::default();
+            pane.image_activity = None;
         }
         let mut replies = pane.grid.take_pty_replies();
         if let Event::Apc(apc) = event {
             if graphics_enabled {
+                let graphics_gen = pane.graphics.generation();
+                let legacy_rev = pane.legacy_images.revision();
                 let outcome = pane.graphics.command(
                     &apc,
                     pane.grid.cursor_position(),
@@ -185,6 +193,11 @@ pub(crate) fn feed_pane_output(pane: &mut PtyPane, bytes: &[u8], graphics_enable
                 }
                 if let Some((row, col)) = outcome.cursor {
                     pane.grid.set_graphics_cursor(row, col);
+                }
+                if pane.graphics.generation() != graphics_gen
+                    || pane.legacy_images.revision() != legacy_rev
+                {
+                    pane.image_activity = Some(pane.image_activity.unwrap_or(0).wrapping_add(1));
                 }
                 replies.extend_from_slice(&outcome.replies);
             }
@@ -377,6 +390,7 @@ pub(crate) fn spawn_pane(
         graphics_stream: Default::default(),
         graphics: Default::default(),
         legacy_images: Default::default(),
+        image_activity: None,
     })
 }
 
@@ -467,6 +481,7 @@ pub(crate) fn adopt_pane(
         graphics_stream: Default::default(),
         graphics: Default::default(),
         legacy_images: Default::default(),
+        image_activity: None,
     })
 }
 
@@ -656,6 +671,7 @@ mod tests {
                     graphics_stream: Default::default(),
                     graphics: Default::default(),
                     legacy_images: Default::default(),
+                    image_activity: None,
                 },
                 replies,
             )
@@ -713,6 +729,34 @@ mod tests {
             assert!(out
                 .iter()
                 .all(|c| c.ch != crate::graphics_host::PLACEHOLDER));
+        }
+
+        #[test]
+        fn image_activity_token_tracks_commits_placements_and_clears() {
+            let (mut pane, _) = pane_with_replies();
+            // Fresh pane: no image traffic, so `prepare_cached` skips it.
+            assert_eq!(pane.image_activity, None);
+            // Plain text never advances the token.
+            feed_pane_output(&mut pane, b"hello", true);
+            assert_eq!(pane.image_activity, None);
+            // A native source commit advances it once.
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            assert_eq!(pane.image_activity, Some(1));
+            // A no-op query changes no state: token holds.
+            feed_pane_output(&mut pane, b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\", true);
+            assert_eq!(pane.image_activity, Some(1));
+            assert!(pane.graphics.source(7).is_some());
+            // A re-display placement advances it again.
+            feed_pane_output(&mut pane, b"\x1b_Ga=p,i=7,C=1\x1b\\", true);
+            assert_eq!(pane.image_activity, Some(2));
+            // Alternate-screen entry clears graphics state: token resets so
+            // the host cache cannot serve stale tiles.
+            feed_pane_output(&mut pane, b"\x1b[?1049h", true);
+            assert_eq!(pane.image_activity, None);
         }
 
         #[test]

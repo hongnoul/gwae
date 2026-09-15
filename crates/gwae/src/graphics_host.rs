@@ -23,7 +23,7 @@ fn delete(buf: &mut Vec<u8>, id: u32) {
     buf.extend_from_slice(format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\").as_bytes());
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tile {
     pub row: u16,
     pub col: u16,
@@ -85,6 +85,9 @@ struct VirtualTexture {
     revision: u64,
     bytes: usize,
 }
+/// Key for `Host::prepare_cache`: pane id, image-activity token, view rect
+/// (col, row, w, h), and cell pixel size (w, h).
+type PrepareKey = (u64, u64, u16, u16, u16, u16, u16, u16);
 #[derive(Default)]
 pub struct Host {
     epoch: u64,
@@ -92,6 +95,13 @@ pub struct Host {
     legacy: HashMap<u32, VirtualTexture>,
     bytes: usize,
     pub pending: Vec<u8>,
+    /// Phase 1 image isolation: per-pane prepared frame cache. Keyed by pane
+    /// id plus the pane's image-activity token, view rect, and cell size, so
+    /// a still image pane reuses its tiles without rewalking sources,
+    /// resorting placements, or rebuilding tile rects every frame. Entries
+    /// are invalidated by token change, geometry change, `finish()` eviction,
+    /// or `clear()`.
+    prepare_cache: HashMap<PrepareKey, Vec<Tile>>,
 }
 impl Host {
     pub fn refresh_due(&self) -> bool {
@@ -148,6 +158,43 @@ impl Host {
     }
     /// Grid-space view rectangle (column, row, width, height). Only visible
     /// pieces are rasterized, in <=256-cell tiles with explicit row/column ids.
+    ///
+    /// Phase 1 cache: when the caller's `image_activity` token matches the
+    /// last prepared frame for this pane/view/cell geometry, the cached tile
+    /// list is returned after refreshing texture epochs, skipping the source
+    /// walk, placement sort, and tile-rect rebuild. Any token change (image
+    /// commit, placement update, delete, clear) forces a full prepare. `None`
+    /// means the pane never carried image traffic: empty tiles, no walk.
+    pub fn prepare_cached(
+        &mut self,
+        pane: u64,
+        image_activity: Option<u64>,
+        graphics: &Graphics,
+        view: (u16, u16, u16, u16),
+        cell: (u16, u16),
+    ) -> Vec<Tile> {
+        let Some(token) = image_activity else {
+            return Vec::new();
+        };
+        let key = (pane, token, view.0, view.1, view.2, view.3, cell.0, cell.1);
+        if let Some(cached) = self.prepare_cache.get(&key) {
+            let tiles = cached.clone();
+            // Cached path must still mark textures live for this epoch, or
+            // `finish()` would delete textures backing a still-visible frame.
+            for tile in &tiles {
+                for texture in self.textures.values_mut() {
+                    if texture.id == tile.id {
+                        texture.epoch = self.epoch;
+                        break;
+                    }
+                }
+            }
+            return tiles;
+        }
+        let tiles = self.prepare(pane, graphics, view, cell);
+        self.prepare_cache.insert(key, tiles.clone());
+        tiles
+    }
     pub fn prepare(
         &mut self,
         pane: u64,
@@ -311,6 +358,13 @@ impl Host {
                 false
             }
         });
+        // Phase 1: drop cached tile lists whose texture ids no longer exist
+        // (evicted by hide/budget). Without this a still pane would keep
+        // returning tiles that point at deleted host textures.
+        let live: std::collections::HashSet<u32> =
+            self.textures.values().map(|t| t.id).collect();
+        self.prepare_cache
+            .retain(|_, tiles| tiles.iter().all(|t| live.contains(&t.id)));
     }
     pub fn clear(&mut self) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -324,6 +378,7 @@ impl Host {
         self.legacy.clear();
         self.bytes = 0;
         self.pending.clear();
+        self.prepare_cache.clear();
         buf
     }
 }
@@ -442,6 +497,71 @@ mod tests {
         let out = graphics.command(packet.as_bytes(), (0, 0), cell);
         assert_eq!(out.replies, b"\x1b_Gi=1;OK\x1b\\");
         graphics
+    }
+
+    #[test]
+    fn cached_prepare_reuses_tiles_without_reupload_for_still_panes() {
+        let g = scene("", &[1, 2, 3], (1, 1), (1, 1));
+        let mut host = Host::default();
+        // No image traffic: no source walk, no tiles.
+        host.begin();
+        assert!(host.prepare_cached(7, None, &g, (0, 0, 1, 1), (1, 1)).is_empty());
+        host.finish();
+        // First prepare uploads once and populates the cache.
+        host.begin();
+        let first = host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        assert_eq!(first.len(), 1);
+        assert!(!host.pending.is_empty());
+        assert!(!host.prepare_cache.is_empty());
+        // Same token, same geometry: cached tiles, same host id, no new upload.
+        host.begin();
+        let cached = host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        assert_eq!(cached, first);
+        assert!(host.pending.is_empty());
+        // Token change: full re-prepare; tile rect is unchanged so the list
+        // matches (upload cadence is owned by the texture timestamp).
+        host.begin();
+        let changed = host.prepare_cached(7, Some(4), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        assert_eq!(changed, first);
+        // Geometry change with the same token: cache miss by key, same id.
+        host.begin();
+        let moved = host.prepare_cached(7, Some(4), &g, (1, 0, 1, 1), (1, 1));
+        host.finish();
+        assert!(moved.is_empty());
+        // A different pane id must not alias the first pane's tiles.
+        host.begin();
+        let other = host.prepare_cached(9, Some(4), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        assert_ne!(other[0].id, first[0].id);
+    }
+
+    #[test]
+    fn cached_tiles_are_dropped_when_their_texture_is_evicted() {
+        let g = scene("", &[1, 2, 3], (1, 1), (1, 1));
+        let mut host = Host::default();
+        host.begin();
+        let first = host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        assert_eq!(first.len(), 1);
+        // Hide the image for an epoch so `finish()` deletes the texture.
+        host.begin();
+        host.finish();
+        assert!(host.pending.starts_with(b"\x1b_Ga=d"));
+        // The cached tile list must be gone too: returning it would point the
+        // composer at a deleted host texture.
+        assert!(host.prepare_cache.is_empty());
+        // Re-preparing after eviction re-uploads under a fresh host id.
+        host.begin();
+        let visible = host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        assert_ne!(visible[0].id, first[0].id);
+        assert!(!host.pending.is_empty());
+        // `clear()` drops textures and cache entries together.
+        assert!(!host.clear().is_empty());
+        assert!(host.prepare_cache.is_empty());
     }
 
     #[test]

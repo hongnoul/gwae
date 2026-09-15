@@ -390,7 +390,9 @@ impl Graphics {
     pub fn source(&self, id: u32) -> Option<&Source> {
         self.sources.get(&id)
     }
-    #[cfg(test)]
+    /// Bumped on every successful source commit, replacement, or clear.
+    /// `Host` and pane routers use this as a content-change token so idle
+    /// panes skip re-preparation without rewalking sources.
     pub fn generation(&self) -> u64 {
         self.generation
     }

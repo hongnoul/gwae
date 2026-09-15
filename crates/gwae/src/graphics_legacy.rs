@@ -283,6 +283,11 @@ impl Legacy {
     pub fn take_committed_image(&mut self) -> Option<u32> {
         self.committed_image.take()
     }
+    /// Bumped on every image commit, placement update, or delete. Paired with
+    /// `Graphics::generation` as the pane's image-change token.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
     pub fn forget_image(&mut self, id: u32) {
         if let Some(image) = self.images.remove(&id) {
             self.bytes -= image.commands.capacity();
