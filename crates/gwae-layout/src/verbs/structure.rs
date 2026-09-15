@@ -1,330 +1,14 @@
-//! Layout verbs and their semantics.
-//!
-//! Verbs are the keyboard-triggerable operations from the Layout Model spec
-//! (``Alt+hjkl`` focus, ``Alt+Shift+hjkl`` move, ``cycle-width``, ``split``,
-//! ``kill-pane``, ``spawn-agent``, ...). Each verb is a pure mutation of the layout tree that
-//! must preserve the invariants (no implicit resize, no gaps, no row reorder).
-//! Any I/O (PTY spawn/kill) is the caller's job; here we only change structure.
+//! Structure verbs: split, kill, spawn, widths, scroll, and jumps.
 
 use crate::model::Layout;
 use crate::viewport::{follow_focus_scroll, scroll_stops, snap_scroll, Viewport};
 use crate::width::{Preset, Width};
+use super::Action;
 use crate::{FollowScroll, LayoutError, LayoutResult, PaneId, RowId};
 
-/// A single user-initiated layout action. Represents one keypress verb.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
-    FocusLeft,
-    FocusRight,
-    FocusUp,
-    FocusDown,
-    MovePaneLeft,
-    MovePaneRight,
-    MovePaneUp,
-    MovePaneDown,
-    CycleWidth,
-    /// Toggle the focused column between full viewport width and 1/4.
-    ToggleFullWidth,
-    SplitBelow,
-    KillPane,
-    /// Close a specific pane by id (e.g. its process exited), collapsing the
-    /// layout exactly like `KillPane` does for the focused pane.
-    ClosePane(PaneId),
-    NewColumn,
-    NewRow,
-    SpawnAgent,
-    /// Spawn an agent on a brand-new strip below the focused one.
-    SpawnAgentRow,
-    ScrollViewport(i32),
-    JumpToColumn(usize),
-    /// Jump focus directly to a pane anywhere in the grid (smart-jump: the
-    /// caller picks the pane, e.g. the next one whose status needs attention).
-    FocusPane(PaneId),
-}
-
 impl Layout {
-    /// Number of columns in the focused row.
-    fn focused_col_count(&self) -> usize {
-        self.focused_row().map(|r| r.columns.len()).unwrap_or(0)
-    }
-
-    /// Absolute x-center of the focused column (for row-crossing navigation).
-    fn focused_x_center(&self, vw: u16) -> i32 {
-        self.focused_range(vw)
-            .map(|(s, e)| ((s + e) / 2) as i32)
-            .unwrap_or(0)
-    }
-
-    /// Apply a verb, keeping the layout consistent, and return the new
-    /// follow-scroll position for the focused row.
-    pub fn apply(
-        &mut self,
-        action: Action,
-        viewport: Viewport,
-        follow: FollowScroll,
-    ) -> LayoutResult<i32> {
-        match action {
-            Action::FocusLeft => self.focus_left(viewport, follow),
-            Action::FocusRight => self.focus_right(viewport, follow),
-            Action::FocusUp => self.focus_up(viewport, follow),
-            Action::FocusDown => self.focus_down(viewport, follow),
-            Action::MovePaneLeft => self.move_pane(-1, viewport, follow),
-            Action::MovePaneRight => self.move_pane(1, viewport, follow),
-            Action::MovePaneUp => self.move_pane_vertical(-1, viewport, follow),
-            Action::MovePaneDown => self.move_pane_vertical(1, viewport, follow),
-            Action::CycleWidth => Ok(self.apply_cycle_width(viewport, follow)),
-            Action::ToggleFullWidth => Ok(self.apply_toggle_full_width(viewport, follow)),
-            Action::SplitBelow => self.apply_split_below(),
-            Action::KillPane => self.apply_kill_pane(viewport, follow),
-            Action::ClosePane(pid) => self.apply_close_pane(pid, viewport, follow),
-            Action::NewColumn => Ok(self.apply_new_column(viewport, follow)),
-            Action::NewRow => Ok(self.apply_new_row(viewport, follow)),
-            Action::SpawnAgent => Ok(self.apply_new_column(viewport, follow)),
-            Action::SpawnAgentRow => Ok(self.apply_new_row(viewport, follow)),
-            Action::ScrollViewport(d) => Ok(self.apply_scroll(d, viewport)),
-            Action::JumpToColumn(n) => self.apply_jump(n, viewport, follow),
-            Action::FocusPane(pid) => self.apply_focus_pane(pid, viewport, follow),
-        }
-    }
-}
-impl Layout {
-    fn focused_scroll(&self) -> i32 {
-        self.focused_row().map(|r| r.scroll_x).unwrap_or(0)
-    }
-
-    fn refocus_scroll(&mut self, viewport: Viewport, follow: FollowScroll) {
-        let scroll = follow_focus_scroll(
-            self,
-            self.focus.row,
-            self.focus.column,
-            viewport.cols,
-            follow,
-        );
-        if let Some(row) = self.row_mut(self.focus.row) {
-            row.scroll_x = scroll;
-        }
-    }
-
-    /// Clamp `focus.pane` into the currently focused column, so moving focus
-    /// into a shallower column never leaves a stale (out-of-range) pane index.
-    fn clamp_focus_pane(&mut self) {
-        let max = self
-            .focused_row()
-            .and_then(|r| r.columns.get(self.focus.column))
-            .map(|c| c.panes.len().max(1))
-            .unwrap_or(1);
-        self.focus.pane = self.focus.pane.min(max - 1);
-    }
-
-    /// Point `focus.pane` at the focused column's remembered pane.
-    ///
-    /// Vertical focus is *per column*, not per strip: stepping sideways off a
-    /// stack and back returns to the pane you were on rather than the top of
-    /// the column.
-    fn restore_column_focus(&mut self) {
-        self.focus.pane = self.column_focus(self.focus.row, self.focus.column);
-        self.clamp_focus_pane();
-    }
-
-    fn focus_left(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
-        if self.focus.column == 0 {
-            return Ok(self.focused_scroll());
-        }
-        self.focus.column -= 1;
-        self.restore_column_focus();
-        self.remember_focus();
-        self.refocus_scroll(viewport, follow);
-        Ok(self.focused_scroll())
-    }
-
-    fn focus_right(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
-        let count = self.focused_col_count();
-        if self.focus.column + 1 >= count {
-            return Ok(self.focused_scroll());
-        }
-        self.focus.column += 1;
-        self.restore_column_focus();
-        self.remember_focus();
-        self.refocus_scroll(viewport, follow);
-        Ok(self.focused_scroll())
-    }
-
-    fn focus_up(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
-        if self.focus.pane > 0 {
-            self.focus.pane -= 1;
-            self.remember_focus();
-            return Ok(self.focused_scroll());
-        }
-        self.cross_row(-1, viewport, follow)
-    }
-
-    fn focus_down(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
-        let max = self
-            .focused_row()
-            .and_then(|r| r.columns.get(self.focus.column))
-            .map(|c| c.panes.len())
-            .unwrap_or(1);
-        if self.focus.pane + 1 < max {
-            self.focus.pane += 1;
-            self.remember_focus();
-            return Ok(self.focused_scroll());
-        }
-        self.cross_row(1, viewport, follow)
-    }
-
-    fn cross_row(
-        &mut self,
-        delta: i32,
-        viewport: Viewport,
-        follow: FollowScroll,
-    ) -> LayoutResult<i32> {
-        let idx = self
-            .rows
-            .iter()
-            .position(|r| r.id == self.focus.row)
-            .ok_or(LayoutError::UnknownRow(self.focus.row))?;
-        let ti = if delta < 0 {
-            idx.checked_sub(1)
-        } else {
-            Some(idx + 1)
-        };
-        let Some(ti) = ti else {
-            return Ok(self.focused_scroll());
-        };
-        if ti >= self.rows.len() {
-            // niri-style dynamic strips: moving past the last strip creates a
-            // fresh empty one, but only when the current strip has something
-            // in it. That keeps a chain of empty strips from piling up.
-            if self.row_is_empty(self.focus.row) {
-                return Ok(self.focused_scroll());
-            }
-            self.new_row();
-        }
-        let target_id = self.rows[ti].id;
-        let from = self.focus.row;
-        // Remember where we were on the source strip.
-        self.remember_focus();
-        // Restore remembered focus for the target strip if we have one;
-        // otherwise fall back to the nearest column to the x-center heuristic.
-        if let Some((col, pane)) = self.remembered_focus(target_id) {
-            self.focus.row = target_id;
-            self.focus.column = col;
-            self.focus.pane = pane;
-            self.clamp_focus_pane();
-        } else {
-            let x_center = self.focused_x_center(viewport.cols);
-            let col = self.nearest_column(target_id, x_center, viewport.cols);
-            self.focus.row = target_id;
-            self.focus.column = col;
-            self.restore_column_focus();
-        }
-        // Leaving an empty strip behind drops it, so only the strip you are
-        // standing on can ever be empty.
-        if from != target_id && self.row_is_empty(from) {
-            self.rows.retain(|r| r.id != from);
-            self.gc_row_focus();
-        }
-        self.remember_focus();
-        self.refocus_scroll(viewport, follow);
-        Ok(self.focused_scroll())
-    }
-
-    /// A strip with no columns: nothing lives on it yet.
-    pub fn row_is_empty(&self, row: RowId) -> bool {
-        self.row(row).map(|r| r.columns.is_empty()).unwrap_or(true)
-    }
-
-    fn nearest_column(&self, row: RowId, x: i32, vw: u16) -> usize {
-        let ranges = self.column_x_ranges(row, vw).unwrap_or_default();
-        if ranges.is_empty() {
-            return 0;
-        }
-        ranges
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, (s, e))| {
-                let sz = *s as i32;
-                let ez = *e as i32;
-                if x < sz {
-                    sz - x
-                } else if x >= ez {
-                    x - (ez - 1)
-                } else {
-                    0
-                }
-            })
-            .map(|(i, _)| i)
-            .unwrap_or(0)
-    }
-}
-impl Layout {
-    fn move_pane(
-        &mut self,
-        dx: i32,
-        viewport: Viewport,
-        follow: FollowScroll,
-    ) -> LayoutResult<i32> {
-        let n = self.focused_col_count();
-        let c = self.focus.column;
-        let target = if dx < 0 {
-            c.checked_sub(1)
-        } else {
-            Some(c + 1)
-        };
-        let Some(t) = target else {
-            return Ok(self.focused_scroll());
-        };
-        if t >= n {
-            return Ok(self.focused_scroll());
-        }
-        if let Some(row) = self.row_mut(self.focus.row) {
-            row.columns.swap(c, t);
-        }
-        self.focus.column = t;
-        self.remember_focus();
-        self.refocus_scroll(viewport, follow);
-        Ok(self.focused_scroll())
-    }
-
-    fn move_pane_vertical(
-        &mut self,
-        dy: i32,
-        viewport: Viewport,
-        follow: FollowScroll,
-    ) -> LayoutResult<i32> {
-        let row = self.focus.row;
-        let col = self.focus.column;
-        let panes_len = self
-            .row(row)
-            .and_then(|r| r.columns.get(col))
-            .map(|c| c.panes.len())
-            .unwrap_or(0);
-        let p = self.focus.pane;
-        let target = if dy < 0 {
-            p.checked_sub(1)
-        } else {
-            Some(p + 1)
-        };
-        let Some(t) = target.filter(|t| *t < panes_len) else {
-            // At the top/bottom of the stack the pane leaves the strip
-            // entirely and lands on the neighboring one, niri-style
-            // "move window to workspace".
-            return self.move_pane_across_row(dy, viewport, follow);
-        };
-        if let Some(row) = self.row_mut(row) {
-            if let Some(c) = row.columns.get_mut(col) {
-                c.panes.swap(p, t);
-            }
-        }
-        self.focus.pane = t;
-        self.remember_focus();
-        Ok(self.focused_scroll())
-    }
-
-    /// Carry the focused pane to the strip above/below as a column of its own,
-    /// creating a new strip past the end (only from a non-empty one) and
     /// discarding the source strip if the move emptied it.
-    fn move_pane_across_row(
+    pub(super) fn move_pane_across_row(
         &mut self,
         dy: i32,
         viewport: Viewport,
@@ -405,7 +89,7 @@ impl Layout {
         Ok(self.focused_scroll())
     }
 
-    fn apply_cycle_width(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
+    pub(super) fn apply_cycle_width(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
         let row = self.focus.row;
         let col = self.focus.column;
         if let Some(row) = self.row_mut(row) {
@@ -427,7 +111,7 @@ impl Layout {
     /// Toggle the focused column between `Full` and `Quarter` width. Any
     /// other width (preset or fixed cells) goes to `Full` first, so the
     /// binding always has an obvious first effect.
-    fn apply_toggle_full_width(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
+    pub(super) fn apply_toggle_full_width(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
         let (row, col) = (self.focus.row, self.focus.column);
         if let Some(r) = self.row_mut(row) {
             if let Some(c) = r.columns.get_mut(col) {
@@ -442,7 +126,7 @@ impl Layout {
         self.focused_scroll()
     }
 
-    fn apply_split_below(&mut self) -> LayoutResult<i32> {
+    pub(super) fn apply_split_below(&mut self) -> LayoutResult<i32> {
         let pane = self.alloc_pane();
         let row = self.focus.row;
         let col = self.focus.column;
@@ -459,7 +143,7 @@ impl Layout {
     }
 }
 impl Layout {
-    fn apply_kill_pane(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
+    pub(super) fn apply_kill_pane(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
         let row = self.focus.row;
         let col = self.focus.column;
         let pane_idx = self.focus.pane;
@@ -469,7 +153,7 @@ impl Layout {
     /// Close a pane wherever it lives (used when its process exits). A pane
     /// that is already gone from the layout is a no-op, so a late `Exited`
     /// message after an explicit kill can never remove the wrong pane.
-    fn apply_close_pane(
+    pub(super) fn apply_close_pane(
         &mut self,
         pid: PaneId,
         viewport: Viewport,
@@ -485,7 +169,7 @@ impl Layout {
     /// columns compact leftward (no gaps, invariant 5) and focus **keeps its
     /// slot**: the column that slides in from the right takes the focus, and
     /// only when nothing remains to the right does focus fall left.
-    fn remove_pane_at(
+    pub(super) fn remove_pane_at(
         &mut self,
         row: RowId,
         col: usize,
@@ -609,7 +293,7 @@ impl Layout {
         Ok(self.focused_scroll())
     }
 
-    fn apply_new_column(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
+    pub(super) fn apply_new_column(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
         let pane = self.alloc_pane();
         // Spawn immediately to the right of the focused column (not at the far
         // end of the strip) so a new agent/terminal appears next to the work it
@@ -625,7 +309,7 @@ impl Layout {
         self.focused_scroll()
     }
 
-    fn apply_new_row(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
+    pub(super) fn apply_new_row(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
         let row = self.new_row();
         let pane = self.alloc_pane();
         self.add_column(row, Width::DEFAULT, vec![pane]);
@@ -637,7 +321,7 @@ impl Layout {
         self.focused_scroll()
     }
 
-    fn apply_scroll(&mut self, delta: i32, viewport: Viewport) -> i32 {
+    pub(super) fn apply_scroll(&mut self, delta: i32, viewport: Viewport) -> i32 {
         // Quantized scrolling: a manual scroll pages to the next/previous
         // stop (column boundary, or the end stop that pins the last column to
         // the right edge) rather than panning by cells. Stops never pass the
@@ -687,7 +371,7 @@ impl Layout {
         }
     }
 
-    fn apply_jump(
+    pub(super) fn apply_jump(
         &mut self,
         n: usize,
         _viewport: Viewport,
@@ -706,7 +390,7 @@ impl Layout {
     /// Smart-jump: focus a pane anywhere in the grid by id, crossing strips
     /// if needed and following the focus with the scroll. Leaving an empty
     /// strip drops it, exactly like directional row-crossing does.
-    fn apply_focus_pane(
+    pub(super) fn apply_focus_pane(
         &mut self,
         pid: PaneId,
         viewport: Viewport,
