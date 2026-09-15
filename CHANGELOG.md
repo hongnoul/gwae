@@ -10,6 +10,9 @@ changelog, updated per PR). The format is based on
 - **Keep-awake is on by default.** The Mac stays up while gwae runs with no onboarding question. Opt out with `keep_awake = false`, `⌥+w`, or `GWAE_NO_KEEP_AWAKE=1`. Teardown is unchanged: exiting gwae still kills every pane process and releases the assertion.
 - **Keep-awake shows a text badge, not a red ring.** While the `caffeinate` assertion is held a small `keep-awake` badge is stamped on the Option HUD frame (hold Option to see it) instead of recoloring the focus ring. The palette is never touched, so toggling `⌥+w` off restores every color exactly.
 
+### Removed
+- **Option+number column jump.** `⌥+1..9` (and multi-digit `⌥+1 2`) no longer focuses columns. Nobody used it, and it stole digits the focused pane owns (readline word ops, vim counts). Option+digits now reach the child as Meta `ESC+digit`. Includes the jump accumulator, the `JumpToColumn` layout action, and the dashboard pending-number preview.
+
 ## [1.4.1] - 2026-09-13
 
 ### Fixed
