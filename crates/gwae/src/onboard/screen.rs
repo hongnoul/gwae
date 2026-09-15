@@ -478,6 +478,8 @@ pub fn draw_with_banner(banner_step: usize, pal: &Palette, cols: u16, rows: u16,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::persist::apply_answers;
+    use crate::theme::Palette;
 
     use super::*;
     use crate::config::Config;

@@ -418,6 +418,8 @@ pub fn all_questions_for_with_extra(f: crate::install::Facts, extra: &[String]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::persist::apply_answers;
+    use super::super::screen::{step, Key};
     use crate::config::Config;
 
     /// The whole flow on a machine that does not have `btm`, so the offer is
