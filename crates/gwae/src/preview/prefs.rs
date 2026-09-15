@@ -140,13 +140,10 @@ impl Prefs {
     }
 }
 
-/// One rendered cell: a character with its colors.
-#[derive(Clone, Copy)]
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use super::*;
+    use super::super::paint::render;
 
     /// The visible characters of a rendered preview, ANSI stripped.
     fn plain(s: &str) -> String {

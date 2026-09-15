@@ -380,8 +380,6 @@ pub fn save_default_agent(path: &Path, agent: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    use super::*;
-
     /// Drop SGR escapes so assertions read the text a user sees.
     fn strip_ansi(s: &str) -> String {
         let mut out = String::new();
