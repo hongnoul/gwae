@@ -386,6 +386,84 @@ fn typing_a_column_number_previews_it_on_the_dashboard() {
     s.kill();
 }
 
+/// Count dashboard tiles by their column addresses: the first pane of each
+/// column prints `glyph + column number` (`»1`, `!2`, ...), so the set of
+/// addresses present is the set of live columns.
+fn tile_addresses(text: &str) -> Vec<usize> {
+    (1..=16)
+        .filter(|n| {
+            let n = n.to_string();
+            ["»", "!", "✓", "✗"]
+                .iter()
+                .any(|g| text.contains(&format!("{g}{n}")))
+        })
+        .collect()
+}
+
+/// Reveal the dashboard and return the live column addresses.
+fn live_columns(s: &mut Session) -> Vec<usize> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        s.send(&alt(b'h'));
+        s.peek(150);
+        let addrs = tile_addresses(&s.screen.visible_text());
+        if !addrs.is_empty() {
+            return addrs;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "dashboard never revealed tiles: {}",
+            s.screen.visible_text()
+        );
+    }
+}
+
+#[test]
+fn held_kill_repeats_cannot_outrun_the_dashboard() {
+    // Regression for the stale-HUD kill bug: holding ⌥+q fired key
+    // auto-repeat faster than frames, so every queued repeat landed in one
+    // drain batch and several panes died while the dashboard still showed
+    // the first frame. Repeats of the kill chord must kill nothing; each
+    // deliberate press kills exactly one pane, with a repaint between, so
+    // the dashboard always shows what is actually alive.
+    //
+    // Kitty CSI-u `ESC[113;3:2u` is the wire form of Alt+q auto-repeat
+    // (codepoint 113 = `q`, mods 3 = Alt, event type 2 = repeat); plain
+    // `ESC q` is one deliberate press.
+    const KILL_REPEAT: &[u8] = b"\x1b[113;3:2u";
+    let mut s = Session::start("startup_panes = 4\n");
+    let _ = s.drain();
+
+    assert_eq!(
+        live_columns(&mut s),
+        vec![1, 2, 3, 4],
+        "four panes start alive"
+    );
+
+    // A held key: five repeats must not kill anything.
+    for _ in 0..5 {
+        s.send(KILL_REPEAT);
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    let _ = s.drain();
+    assert_eq!(
+        live_columns(&mut s),
+        vec![1, 2, 3, 4],
+        "held ⌥+q repeats must kill nothing; the dashboard must still show all four"
+    );
+
+    // One deliberate press kills exactly one pane.
+    s.send(&alt(b'q'));
+    std::thread::sleep(Duration::from_millis(800));
+    let _ = s.drain();
+    assert_eq!(
+        live_columns(&mut s),
+        vec![1, 2, 3],
+        "one ⌥+q press kills exactly one pane and the dashboard tracks it"
+    );
+    s.kill();
+}
+
 #[test]
 fn dashboard_footer_names_key_hints() {
     let mut s = Session::start("");
@@ -403,10 +481,7 @@ fn dashboard_footer_names_key_hints() {
         shown.contains("attention"),
         "hint footer is shown: {shown:?}"
     );
-    assert!(
-        shown.contains("1-9 col"),
-        "column hint is shown: {shown:?}"
-    );
+    assert!(shown.contains("1-9 col"), "column hint is shown: {shown:?}");
 }
 
 /// Drive the real binary through the modifier reveal and inspect rendered cells,
