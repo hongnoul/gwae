@@ -10,7 +10,7 @@ use crossterm::cursor;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, KeyboardEnhancementFlags,
-    ModifierKeyCode, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
+    ModifierKeyCode, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
@@ -26,6 +26,15 @@ use crate::config::Config;
 use crate::geometry::CellPixels;
 use crate::select::{self, Selection};
 
+mod diff;
+mod mouse;
+
+pub(crate) use diff::paint;
+use mouse::{
+    MouseRole, clamped_pane_point, mouse_role, pane_at, sgr_mouse_report,
+    wheel_alt_screen_keys, wheel_scroll_delta, WHEEL_SCROLL_LINES,
+};
+
 mod osc;
 mod shell;
 mod title;
@@ -35,112 +44,10 @@ use osc::scan_osc133;
 use shell::agent_gateway_cmd;
 use title::emit_title;
 
-/// What a mouse event inside a pane should do.
-///
-/// Mouse capture is what gives gwae click-to-focus and drag-to-copy, which
-/// it takes away from the host terminal. These are the three ways an event can
-/// be resolved, in the order a terminal user expects:
-///  - the child asked for mouse reporting, so it owns the event (vim, an agent
-///    TUI, jcode itself) - unless Shift is held, the long-standing xterm
-///    convention for "give me the multiplexer's selection/scroll instead";
-///  - otherwise a left press/drag/release drives our own drag-to-copy;
-///  - a wheel notch over a pane scrolls that pane's history (Shift+wheel is
-///    the one exception: it always reaches the child, for horizontal scroll).
-///
-/// Anything else is handled locally, or not at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MouseRole {
-    /// Forward verbatim to the child as an SGR mouse report.
-    Forward,
-    /// Drive gwae's own drag-to-copy selection.
-    Select,
-    /// Scroll the pane's history directly (`ScrollBack`).
-    Wheel,
-    /// Handled locally, or ignored.
-    Local,
-}
-
-/// Decide what a mouse event does inside the pane under the cursor.
-fn mouse_role(kind: MouseEventKind, modifiers: KeyModifiers, child_wants_mouse: bool) -> MouseRole {
-    let shift = modifiers.contains(KeyModifiers::SHIFT);
-    let selecting = matches!(
-        kind,
-        MouseEventKind::Down(MouseButton::Left)
-            | MouseEventKind::Drag(MouseButton::Left)
-            | MouseEventKind::Up(MouseButton::Left)
-    );
-    if selecting {
-        // A reporting child owns the drag, unless Shift is held: the xterm
-        // convention for "let the multiplexer select instead of the app".
-        if child_wants_mouse && !shift {
-            return MouseRole::Forward;
-        }
-        return MouseRole::Select;
-    }
-    if is_wheel(kind) {
-        let horizontal = matches!(
-            kind,
-            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight
-        );
-        // A reporting child owns the wheel (jcode scrolls its own
-        // transcript, vim its own buffer) - except vertical Shift+wheel,
-        // the escape hatch that scrolls gwae's history instead.
-        // Horizontal flicks always stay with a reporting child: only the
-        // child knows wide content.
-        if child_wants_mouse && (!shift || horizontal) {
-            return MouseRole::Forward;
-        }
-        return MouseRole::Wheel;
-    }
-    // Anything else (right/middle buttons, moves): a reporting child owns
-    // it, otherwise gwae handles it locally or ignores it.
-    if child_wants_mouse {
-        return MouseRole::Forward;
-    }
-    MouseRole::Local
-}
-
-/// True for the four wheel kinds (vertical notches and horizontal flicks).
-fn is_wheel(kind: MouseEventKind) -> bool {
-    matches!(
-        kind,
-        MouseEventKind::ScrollUp
-            | MouseEventKind::ScrollDown
-            | MouseEventKind::ScrollLeft
-            | MouseEventKind::ScrollRight
-    )
-}
-
-/// One notch of wheel travel in scrollback rows: line-by-line like jcode's
-/// transcript, not a page jump. Small enough to keep precise positioning.
-const WHEEL_SCROLL_LINES: i32 = 3;
-
 /// Ctrl+Shift+J/K step in plain panes, matching jcode's default
 /// `keybindings.scroll_lines` (3). Keep independent of wheel tuning, and
 /// leave agent panes to the harness's own configured speed at dispatch.
 const KEYBOARD_SCROLL_LINES: i32 = 3;
-
-/// The scrollback delta for one wheel notch: up/left goes back into history,
-/// down/right comes forward. Horizontal flicks scroll history too when no
-/// reporting child owns them; a reporting child keeps all of its own wheel
-/// (see `mouse_role`), so this mapping only runs for plain panes.
-fn wheel_scroll_delta(kind: MouseEventKind) -> i32 {
-    match kind {
-        MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => WHEEL_SCROLL_LINES,
-        _ => -WHEEL_SCROLL_LINES,
-    }
-}
-
-/// The arrow keys a full-screen child (vim, less) expects for one wheel
-/// notch: it owns its own scrolling and keeps no scrollback of ours, so the
-/// wheel becomes the keys it would get natively. Mirrors the `ScrollBack`
-/// arm, which does the same translation for the keyboard route.
-fn wheel_alt_screen_keys(kind: MouseEventKind) -> &'static [u8] {
-    match kind {
-        MouseEventKind::ScrollUp => b"\x1b[A",
-        _ => b"\x1b[B]",
-    }
-}
 
 /// Peek-sliver rendering: a neighbour clipped to fewer than this many
 /// visible columns is not drawn as truncated text.
@@ -3489,122 +3396,8 @@ fn draw_minimap(
     }
 }
 
-fn crossterm_color(c: CColor) -> crossterm::style::Color {
-    match c {
-        CColor::Default => crossterm::style::Color::Reset,
-        CColor::Idx(i) => crossterm::style::Color::AnsiValue(i),
-        CColor::Rgb(r, g, b) => crossterm::style::Color::Rgb { r, g, b },
-    }
-}
 
-/// Diff and paint `out` vs `last` into `buf`. Returns true if anything changed.
-///
-/// Wide (two-column) characters need care to avoid shearing the row:
-///  - width-0 continuation cells are skipped, because the wide glyph printed
-///    just before them already covers that column; printing their placeholder
-///    space would shift everything after it one column right.
-///  - every run starts with an explicit `MoveTo`, and a run is cut right after
-///    any non-single-width cell, so even if the host terminal disagrees with
-///    the emulator about a glyph's width (a classic emoji problem) the drift
-///    is bounded to that one glyph instead of shearing the rest of the row.
-///
-/// Attributes are reset per run, not per row: SGR attributes (bold, underline,
-/// reverse) have no "set exactly these" form, only additive codes, so a run
-/// that doesn't reset first would inherit whatever the previous run enabled.
-/// The observed failure was a popup row with underlined entries painting an
-/// underline across every cell to its right ("line overflow"), which then
-/// stuck because the diff buffer believed those cells were already blank.
-///
-/// Runs also stop at any glyph whose *host* width (per `unicode-width`)
-/// disagrees with the width the emulator recorded. East-Asian text (Hangul,
-/// CJK) and ambiguous-width symbols are the common case: the host advances the
-/// cursor two columns where the emulator assumed one (or vice versa), and a
-/// long merged run then paints past the pane's right edge, wraps at the screen
-/// margin, and stains the rows below with the run's background ("highlight
-/// overflow"). Cutting the run and re-issuing an explicit `MoveTo` bounds any
-/// disagreement to the offending glyph.
-fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, rows: u16) -> bool {
-    use crossterm::queue;
-    use crossterm::style::{
-        Attribute, Print, SetAttribute, SetBackgroundColor, SetForegroundColor, SetUnderlineColor,
-    };
-    let cc = cols as usize;
-    let mut dirty = false;
-    for y in 0..rows as usize {
-        let row_eq = last.get(y * cc..(y + 1) * cc) == Some(&out[y * cc..(y + 1) * cc]);
-        if row_eq {
-            continue;
-        }
-        dirty = true;
-        // Group cells into style runs and print each run.
-        let mut x = 0usize;
-        while x < cc {
-            let cell = out[y * cc + x];
-            if cell.width == 0 {
-                // Continuation of a wide char; the glyph already covers it.
-                x += 1;
-                continue;
-            }
-            let style = cell.style;
-            let mut run = String::new();
-            cell.push_codepoints(&mut run);
-            let mut end = x + 1;
-            if cell.width == 1 && host_width_agrees(cell) {
-                while end < cc && out[y * cc + end].style == style {
-                    let next = out[y * cc + end];
-                    if next.width != 1 || !host_width_agrees(next) {
-                        break;
-                    }
-                    next.push_codepoints(&mut run);
-                    end += 1;
-                }
-            }
-            let _ = queue!(
-                buf,
-                cursor::MoveTo(x as u16, y as u16),
-                SetAttribute(Attribute::Reset),
-                SetForegroundColor(crossterm_color(style.fg)),
-                SetBackgroundColor(crossterm_color(style.bg)),
-            );
-            if style.bold {
-                let _ = queue!(buf, SetAttribute(Attribute::Bold));
-            }
-            if style.underline {
-                let _ = queue!(buf, SetAttribute(Attribute::Underlined));
-            }
-            if style.underline_color != CColor::Default {
-                let _ = queue!(
-                    buf,
-                    SetUnderlineColor(crossterm_color(style.underline_color))
-                );
-            }
-            if style.inverse {
-                let _ = queue!(buf, SetAttribute(Attribute::Reverse));
-            }
-            let _ = queue!(buf, Print(run));
-            x = end;
-        }
-    }
-    dirty
-}
 
-/// Whether the host terminal is expected to advance the cursor by exactly the
-/// column count the emulator recorded for this cell. Control/zero-width and
-/// ambiguous- or wide-width glyphs that the emulator called single-width are
-/// the disagreement cases; those cells are printed alone so any drift stays
-/// bounded to one column instead of shearing (and wrapping) the whole row.
-fn host_width_agrees(cell: Cell) -> bool {
-    // Protocol-generated placeholders have a specified one-cell width. Their
-    // explicit high-id mark distinguishes these from arbitrary unknown glyphs.
-    if cell.ch == crate::graphics_host::PLACEHOLDER && cell.combining[2] != '\0' {
-        return cell.width == 1;
-    }
-    use unicode_width::UnicodeWidthChar;
-    match cell.ch.width() {
-        Some(w) => w as u8 == cell.width,
-        None => false,
-    }
-}
 
 /// A decoded keyboard instruction.
 #[derive(Debug, PartialEq)]
@@ -5920,86 +5713,8 @@ fn focused_pane(layout: &Layout) -> Option<PaneId> {
         .copied()
 }
 
-/// The pane whose on-screen rect contains `(x, y)`, plus the cell coordinates
-/// *inside* that pane's grid. Only panes in the focused strip are visible, so
-/// only those can be hit.
-fn pane_at(views: &[PaneView], x: u16, y: u16) -> Option<(PaneId, u16, u16)> {
-    views.iter().find_map(|v| {
-        let r = v.rect;
-        if x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h {
-            let gx = (x - r.x) as i32 + v.col_x0 as i32 + v.h_scroll;
-            if gx < 0 || gx >= v.grid_cols as i32 {
-                return None;
-            }
-            Some((v.pid, gx as u16, y - r.y))
-        } else {
-            None
-        }
-    })
-}
 
-/// Resolve `(x, y)` inside `pid`'s view, clamping a point that has wandered
-/// outside the pane's rect to its nearest edge cell.
-///
-/// This is what makes a drag that leaves the pane behave like a native
-/// selection: dragging off the right edge selects to end of line, dragging
-/// below the last row selects to the bottom, instead of the selection simply
-/// freezing at the last in-bounds position.
-fn clamped_pane_point(
-    views: &[PaneView],
-    pid: PaneId,
-    x: u16,
-    y: u16,
-) -> Option<(PaneId, u16, u16)> {
-    let v = views.iter().find(|v| v.pid == pid)?;
-    let r = v.rect;
-    let sx = x.clamp(r.x, r.x + r.w.saturating_sub(1));
-    let sy = y.clamp(r.y, r.y + r.h.saturating_sub(1));
-    let gx = ((sx - r.x) as i32 + v.col_x0 as i32 + v.h_scroll)
-        .clamp(0, v.grid_cols.saturating_sub(1) as i32) as u16;
-    Some((pid, gx, sy - r.y))
-}
 
-/// Encode a mouse event as an SGR (1006) report for a child that asked for
-/// mouse reporting, with coordinates translated into the pane's own grid
-/// (1-based, as the protocol requires).
-fn sgr_mouse_report(ev: &MouseEvent, gx: u16, gy: u16) -> Option<Vec<u8>> {
-    let button = |b: MouseButton| match b {
-        MouseButton::Left => 0,
-        MouseButton::Middle => 1,
-        MouseButton::Right => 2,
-    };
-    let (mut code, release) = match ev.kind {
-        MouseEventKind::Down(b) => (button(b), false),
-        MouseEventKind::Up(b) => (button(b), true),
-        MouseEventKind::Drag(b) => (button(b) + 32, false),
-        MouseEventKind::Moved => (35, false),
-        MouseEventKind::ScrollUp => (64, false),
-        MouseEventKind::ScrollDown => (65, false),
-        MouseEventKind::ScrollLeft => (66, false),
-        MouseEventKind::ScrollRight => (67, false),
-    };
-    if ev.modifiers.contains(KeyModifiers::SHIFT) {
-        code += 4;
-    }
-    if ev.modifiers.contains(KeyModifiers::ALT) {
-        code += 8;
-    }
-    if ev.modifiers.contains(KeyModifiers::CONTROL) {
-        code += 16;
-    }
-    let final_byte = if release { 'm' } else { 'M' };
-    Some(
-        format!(
-            "\x1b[<{};{};{}{}",
-            code,
-            gx as u32 + 1,
-            gy as u32 + 1,
-            final_byte
-        )
-        .into_bytes(),
-    )
-}
 
 #[cfg(test)]
 mod tests {
@@ -6322,71 +6037,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn wheel_scrolls_a_plain_pane_but_reaches_a_reporting_child() {
-        use MouseEventKind::*;
-        let plain = KeyModifiers::NONE;
-        // A plain shell keeps no mouse of its own: the wheel scrolls gwae's
-        // history directly (vertical and horizontal alike), like jcode.
-        for kind in [ScrollUp, ScrollDown, ScrollLeft, ScrollRight] {
-            assert_eq!(
-                mouse_role(kind, plain, false),
-                MouseRole::Wheel,
-                "{kind:?} over a plain pane should scroll history"
-            );
-        }
-        // A child that asked for mouse reporting owns the wheel (jcode
-        // scrolls its own transcript, vim its own buffer).
-        for kind in [ScrollUp, ScrollDown, ScrollLeft, ScrollRight] {
-            assert_eq!(
-                mouse_role(kind, plain, true),
-                MouseRole::Forward,
-                "{kind:?} must reach a reporting child"
-            );
-        }
-        // Shift+vertical wheel is the escape hatch: even a reporting child
-        // yields to the multiplexer's scroll. Horizontal flicks always stay
-        // with the child (only it knows wide content).
-        assert_eq!(
-            mouse_role(ScrollUp, KeyModifiers::SHIFT, true),
-            MouseRole::Wheel,
-            "Shift+wheel lets the multiplexer scroll past a reporting child"
-        );
-        assert_eq!(
-            mouse_role(ScrollLeft, KeyModifiers::SHIFT, true),
-            MouseRole::Forward,
-            "Shift+horizontal wheel stays with the child"
-        );
-    }
 
-    #[test]
-    fn wheel_helpers_map_notches_to_deltas_and_arrow_keys() {
-        // Up/left go back into history, down/right come forward, by exactly
-        // one step constant so keyboard, wheel and e2e agree on the stride.
-        assert_eq!(
-            wheel_scroll_delta(MouseEventKind::ScrollUp),
-            WHEEL_SCROLL_LINES
-        );
-        assert_eq!(
-            wheel_scroll_delta(MouseEventKind::ScrollLeft),
-            WHEEL_SCROLL_LINES
-        );
-        assert_eq!(
-            wheel_scroll_delta(MouseEventKind::ScrollDown),
-            -WHEEL_SCROLL_LINES
-        );
-        assert_eq!(
-            wheel_scroll_delta(MouseEventKind::ScrollRight),
-            -WHEEL_SCROLL_LINES
-        );
-        // A full-screen child gets the arrows it expects, matching the
-        // `ScrollBack` arm's translation for the keyboard route.
-        assert_eq!(wheel_alt_screen_keys(MouseEventKind::ScrollUp), b"\x1b[A");
-        assert_eq!(
-            wheel_alt_screen_keys(MouseEventKind::ScrollDown),
-            b"\x1b[B]"
-        );
-    }
 
     /// Typing must never be slowed down by the idle backoff: while anything
     /// is happening the loop polls at exactly the configured rate.
@@ -6677,204 +6328,11 @@ mod tests {
         assert_eq!(pane_window(240, 0, 80, 240), None);
     }
 
-    #[test]
-    fn paint_emits_combining_marks_with_base_glyph() {
-        // A cell holding a Kitty image placeholder (U+10EEEE) with row/col
-        // diacritics: the diacritics are what address the image, so they must
-        // reach the host bytes right after the base char.
-        let mut row = vec![Cell::default(); 3];
-        row[0].ch = '\u{10EEEE}';
-        row[0].combining[0] = '\u{0305}';
-        row[0].combining[1] = '\u{030D}';
-        // width() for U+10EEEE is None (unassigned plane), so the run is cut
-        // and printed alone; that must not drop the combining marks.
-        let last = vec![
-            Cell {
-                ch: 'x',
-                ..Cell::default()
-            };
-            3
-        ];
-        let mut buf = Vec::new();
-        assert!(paint(&mut buf, &row, &last, 3, 1));
-        let s = String::from_utf8(buf).unwrap();
-        assert!(
-            s.contains("\u{10EEEE}\u{0305}\u{030D}"),
-            "combining marks split from base: {s:?}"
-        );
-    }
 
-    #[test]
-    fn paint_skips_wide_continuation_cells() {
-        // Row: wide '你' (head width 2, then a width-0 continuation), then "ab".
-        // If the continuation's placeholder space were printed, 'a' would land
-        // one column too far right and shear the row.
-        let mut row = vec![Cell::default(); 6];
-        row[0] = Cell {
-            ch: '你',
-            width: 2,
-            ..Cell::default()
-        };
-        row[1] = Cell {
-            ch: ' ',
-            width: 0,
-            ..Cell::default()
-        };
-        row[2].ch = 'a';
-        row[3].ch = 'b';
-        let last = vec![
-            Cell {
-                ch: 'x',
-                ..Cell::default()
-            };
-            6
-        ];
-        let mut buf = Vec::new();
-        assert!(paint(&mut buf, &row, &last, 6, 1));
-        let s = String::from_utf8(buf).unwrap();
-        // The wide glyph is printed exactly once and the continuation's
-        // placeholder space is never printed between it and 'a'.
-        assert_eq!(s.matches('你').count(), 1);
-        assert!(!s.contains("你 a"), "continuation cell was printed: {s:?}");
-        // 'a' is re-positioned to its true column (x=2) with an explicit
-        // MoveTo (CUP row 1, col 3 -> ESC[1;3H) rather than relying on the
-        // host's cursor advance across the wide glyph.
-        assert!(
-            s.contains("\u{1b}[1;3H"),
-            "missing MoveTo before 'a': {s:?}"
-        );
-    }
 
-    #[test]
-    fn paint_cuts_runs_at_width_ambiguous_glyphs() {
-        // A highlighted (styled) row of Hangul: vt100 records each syllable as
-        // a single-width cell, but the host renders it two columns wide. Merged
-        // into one run, the run overshoots the right margin, wraps, and smears
-        // its background down the screen ("highlight overflow"). Each such
-        // glyph must therefore be printed as its own MoveTo-anchored run.
-        let hl = gwae_term::Style {
-            bg: CColor::Idx(238),
-            ..gwae_term::Style::default()
-        };
-        let text = "\u{ac00}\u{b098}\u{b2e4}"; // 가나다
-        let mut row = vec![
-            Cell {
-                style: hl,
-                ..Cell::default()
-            };
-            4
-        ];
-        for (i, ch) in text.chars().enumerate() {
-            row[i] = Cell {
-                ch,
-                style: hl,
-                width: 1, // emulator's (wrong for this host) idea of the width
-                ..Cell::default()
-            };
-        }
-        let last = vec![Cell::default(); 4];
-        let mut buf = Vec::new();
-        assert!(paint(&mut buf, &row, &last, 4, 1));
-        let s = String::from_utf8(buf).unwrap();
-        // Never merged: no two ambiguous glyphs share a run.
-        assert!(
-            !s.contains("\u{ac00}\u{b098}"),
-            "ambiguous glyphs merged into one run: {s:?}"
-        );
-        // Every glyph is re-anchored with an explicit absolute cursor move, so
-        // a host/emulator width disagreement cannot drift past this cell.
-        for (i, ch) in text.chars().enumerate() {
-            let mv = format!("\x1b[1;{}H", i + 1);
-            let at = s
-                .find(&mv)
-                .unwrap_or_else(|| panic!("no MoveTo for col {i}: {s:?}"));
-            let g = s.find(ch).unwrap();
-            assert!(at < g, "glyph {ch} printed before its MoveTo: {s:?}");
-        }
-    }
 
-    #[test]
-    fn paint_keeps_merging_plain_ascii_runs() {
-        // The cut must be surgical: ordinary text still batches into one run.
-        let mut row = vec![Cell::default(); 6];
-        for (i, ch) in "hello".chars().enumerate() {
-            row[i].ch = ch;
-        }
-        let last = vec![
-            Cell {
-                ch: 'x',
-                ..Cell::default()
-            };
-            6
-        ];
-        let mut buf = Vec::new();
-        assert!(paint(&mut buf, &row, &last, 6, 1));
-        let s = String::from_utf8(buf).unwrap();
-        assert!(s.contains("hello"), "ascii run was split: {s:?}");
-    }
 
-    #[test]
-    fn paint_resets_attributes_between_runs() {
-        // Regression for the popup "line overflow": an underlined run followed
-        // by a plain run on the same row. SGR attrs are additive, so without a
-        // reset at the start of the second run the underline bleeds across the
-        // rest of the row on the host terminal.
-        let mut row = vec![Cell::default(); 4];
-        row[0].ch = 'u';
-        row[0].style.underline = true;
-        row[1].ch = 'p';
-        let last = vec![
-            Cell {
-                ch: 'x',
-                ..Cell::default()
-            };
-            4
-        ];
-        let mut buf = Vec::new();
-        assert!(paint(&mut buf, &row, &last, 4, 1));
-        let s = String::from_utf8(buf).unwrap();
-        // Underline (SGR 4) is enabled for the first run, and a full reset
-        // (SGR 0) is emitted after it and before the plain run's text.
-        let under = s.find("\u{1b}[4m").expect("underline never set");
-        let reset_after = s[under..]
-            .find("\u{1b}[0m")
-            .expect("no attribute reset after underlined run");
-        let plain = s.find('p').expect("plain run missing");
-        assert!(
-            under + reset_after < plain,
-            "underline leaks into the plain run: {s:?}"
-        );
-    }
 
-    #[test]
-    fn mouse_hit_test_maps_screen_cell_to_pane_grid() {
-        use gwae_layout::{Preset, Width};
-        let mut layout = Layout::new(1);
-        if let Some(r) = layout.row_mut(layout.focus.row) {
-            r.columns.clear();
-        }
-        let row = layout.focus.row;
-        for _ in 0..2 {
-            let p = layout.alloc_pane();
-            layout.add_column(row, Width::Preset(Preset::Half), vec![p]);
-        }
-        let panes = HashMap::new();
-        let views = focused_pane_views(&layout, 80, 24, 0, &panes, false);
-        assert_eq!(views.len(), 2);
-        // A click in the left half hits the left pane at its own grid column.
-        let (pid, gx, gy) = pane_at(&views, 5, 3).expect("hit left pane");
-        assert_eq!(pid, views[0].pid);
-        assert_eq!((gx, gy), (5, 3));
-        // A click in the right half hits the right pane, and the grid column
-        // is relative to that pane, not the screen.
-        let (pid, gx, gy) = pane_at(&views, 45, 7).expect("hit right pane");
-        assert_eq!(pid, views[1].pid);
-        assert_eq!((gx, gy), (45 - views[1].rect.x, 7));
-        // Past the last pane's right edge there is nothing to hit.
-        assert!(pane_at(&views, 79, 3).is_some());
-        assert!(pane_at(&views, 200, 3).is_none());
-        assert!(pane_at(&views, 5, 200).is_none());
-    }
 
     /// A vertical split must tile the whole strip no matter how many panes
     /// are in the stack. Floor-dividing the inner height stranded
@@ -6929,6 +6387,39 @@ mod tests {
         }
     }
 
+
+
+
+    #[test]
+    fn mouse_hit_test_maps_screen_cell_to_pane_grid() {
+        use gwae_layout::{Preset, Width};
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        for _ in 0..2 {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Half), vec![p]);
+        }
+        let panes = HashMap::new();
+        let views = focused_pane_views(&layout, 80, 24, 0, &panes, false);
+        assert_eq!(views.len(), 2);
+        // A click in the left half hits the left pane at its own grid column.
+        let (pid, gx, gy) = pane_at(&views, 5, 3).expect("hit left pane");
+        assert_eq!(pid, views[0].pid);
+        assert_eq!((gx, gy), (5, 3));
+        // A click in the right half hits the right pane, and the grid column
+        // is relative to that pane, not the screen.
+        let (pid, gx, gy) = pane_at(&views, 45, 7).expect("hit right pane");
+        assert_eq!(pid, views[1].pid);
+        assert_eq!((gx, gy), (45 - views[1].rect.x, 7));
+        // Past the last pane's right edge there is nothing to hit.
+        assert!(pane_at(&views, 79, 3).is_some());
+        assert!(pane_at(&views, 200, 3).is_none());
+        assert!(pane_at(&views, 5, 200).is_none());
+    }
+
     #[test]
     fn drag_outside_a_pane_clamps_to_its_edges() {
         use gwae_layout::{Preset, Width};
@@ -6961,54 +6452,6 @@ mod tests {
         // A pane that is not on screen cannot be resolved at all.
         let gone: PaneId = 9999;
         assert_eq!(clamped_pane_point(&views, gone, 5, 3), None);
-    }
-
-    #[test]
-    fn left_drag_selects_but_a_reporting_child_keeps_its_mouse() {
-        let plain = KeyModifiers::NONE;
-        // No mouse reporting: left press/drag/release drive our selection.
-        for kind in [
-            MouseEventKind::Down(MouseButton::Left),
-            MouseEventKind::Drag(MouseButton::Left),
-            MouseEventKind::Up(MouseButton::Left),
-        ] {
-            assert_eq!(mouse_role(kind, plain, false), MouseRole::Select);
-            // A child that asked for mouse reporting owns them instead, so
-            // clicking inside vim or an agent TUI behaves natively.
-            assert_eq!(mouse_role(kind, plain, true), MouseRole::Forward);
-            // ...unless Shift is held: the xterm convention for "let the
-            // multiplexer select instead of the app".
-            assert_eq!(
-                mouse_role(kind, KeyModifiers::SHIFT, true),
-                MouseRole::Select
-            );
-        }
-        // The wheel is never a selection: plain panes scroll their history
-        // (`Wheel`), and a reporting child owns the event (`Forward`).
-        assert_eq!(
-            mouse_role(MouseEventKind::ScrollUp, plain, false),
-            MouseRole::Wheel
-        );
-        assert_eq!(
-            mouse_role(MouseEventKind::ScrollUp, plain, true),
-            MouseRole::Forward
-        );
-        // Shift+vertical wheel is the escape hatch: even a reporting child
-        // yields to the multiplexer's scroll. Horizontal flicks always stay
-        // with the child (only it knows wide content).
-        assert_eq!(
-            mouse_role(MouseEventKind::ScrollUp, KeyModifiers::SHIFT, true),
-            MouseRole::Wheel
-        );
-        assert_eq!(
-            mouse_role(MouseEventKind::ScrollLeft, KeyModifiers::SHIFT, true),
-            MouseRole::Forward
-        );
-        // Right-drag is not our selection either.
-        assert_eq!(
-            mouse_role(MouseEventKind::Drag(MouseButton::Right), plain, false),
-            MouseRole::Local
-        );
     }
 
     #[test]
@@ -7093,40 +6536,6 @@ mod tests {
         assert_eq!(frame[9 * cols as usize + 1].ch, 'h');
     }
 
-    #[test]
-    fn sgr_mouse_report_encodes_wheel_and_buttons() {
-        let ev = |kind| MouseEvent {
-            kind,
-            column: 0,
-            row: 0,
-            modifiers: KeyModifiers::NONE,
-        };
-        // Coordinates are 1-based in the protocol.
-        assert_eq!(
-            sgr_mouse_report(&ev(MouseEventKind::ScrollUp), 4, 2).unwrap(),
-            b"\x1b[<64;5;3M".to_vec()
-        );
-        assert_eq!(
-            sgr_mouse_report(&ev(MouseEventKind::ScrollDown), 0, 0).unwrap(),
-            b"\x1b[<65;1;1M".to_vec()
-        );
-        // Release uses the lowercase final byte.
-        assert_eq!(
-            sgr_mouse_report(&ev(MouseEventKind::Up(MouseButton::Left)), 0, 0).unwrap(),
-            b"\x1b[<0;1;1m".to_vec()
-        );
-        // Modifiers add their bits.
-        let shifted = MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 0,
-            row: 0,
-            modifiers: KeyModifiers::SHIFT,
-        };
-        assert_eq!(
-            sgr_mouse_report(&shifted, 0, 0).unwrap(),
-            b"\x1b[<4;1;1M".to_vec()
-        );
-    }
 
     #[test]
     fn four_quarter_panes_fill_screen_without_overflow() {
