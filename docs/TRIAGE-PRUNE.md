@@ -8,7 +8,12 @@ Rule used: the product is scrolling multiplexer + fixed-width panes + PTYs + Alt
 - `prune(cli)`: deleted dead `gwae new` stub.
 - `prune(onboard)`: deleted `onboard/` + `preview/` + `splash` + focus daemon + 6 stub stages + `preview/splash` e2e; `init` is a `setup` alias; gateway asks/saves alone; registry 12 -> 6 stages. Unit 383 green, agent_e2e 24 green, setup/doctor green.
 - `prune(chrome)`: deleted cowsay art + `cell_labels` + legacy color keys; empty boxes show identifier + one wrapped key hint via `key_hints()`. Unit 364 green, hud 6 green.
-## DONE (P1, sibling-led 2026-09-15) — 24,781 -> 24,230 lines
+## DONE (P2, 2026-09-15) — 24,287 -> 23,532 lines, 28 -> 16 live docs
+
+- `prune(spawndir)` (305e214): one spawn-dir key (`agent_dir`), harness-aware variants gone, btm installer deleted.
+- `prune(config)` (f301a17): deleted `scroll_margin`, `center_focus`, `content_width`. One scroll behavior; panes wrap at visible width.
+- `prune(docs)` (56e2a69 + 69d9986): CONFIG/LAYOUT-SPEC/test fixtures cleaned; 12 stale plans + acceptance ledgers archived to `docs/archive/`.
+- Left for you (needs your call): graphics delete/flag (~3.4k), updater apply-paths.
 
 - `prune(cli)`: folded `gwae tune` into `setup --only latency`.
 - `theme`: removed all theming, chrome is terminal-native only (fixed ANSI palette, no presets/picker/config key/stage). `picker_e2e` deleted, `theme_e2e` asserts native chrome. Unit 355 green, all e2e green except pre-existing graphics-gated ignores.
