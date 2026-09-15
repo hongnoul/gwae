@@ -108,7 +108,7 @@ Semantics: merge over defaults, `none` unbinds and returns the chord to the pane
 
 ### 3.6 Detection instead of documentation
 
-Runtime detector in `tui.rs`:
+Runtime detector in `tui.rs`. Primary evidence is capability probing, not an emulator allowlist: gwae already requests Kitty keyboard enhancement flags at startup. Terminals that answer give unambiguous key events with explicit modifier bits and never need the glyph path. Terminals that stay silent reveal themselves, and the first classified keystroke confirms it:
 
 * First 30 seconds or first 20 key events, classify each Option-looking input as Meta chord, ESC-prefixed chord, or glyph.
 * On first glyph: enable compat mode silently and toast once: `Terminal sent ˙ not Meta. Navigation works. Enable Option-as-Meta for fewer surprises.`
