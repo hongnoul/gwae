@@ -6,6 +6,9 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **Keep-awake is on by default.** The Mac stays up while gwae runs with no onboarding question. Opt out with `keep_awake = false`, `⌥+w`, or `GWAE_NO_KEEP_AWAKE=1`. Teardown is unchanged: exiting gwae still kills every pane process and releases the assertion.
+
 ## [1.4.1] - 2026-09-13
 
 ### Fixed

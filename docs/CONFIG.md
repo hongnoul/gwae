@@ -35,7 +35,7 @@ theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-la
 # focus_color = "#74c7ec"    # -> theme.accent
 # skeleton_color = "#6c7086" # -> theme.overlay
 input_poll_ms = 1            # event-loop poll; 30ms backoff once the screen is quiet
-keep_awake = false           # macOS only: hold idle/display sleep via caffeinate
+keep_awake = true            # macOS only: hold idle/display sleep via caffeinate (false lets it sleep)
 
 [minimap]
 show = true
@@ -90,8 +90,9 @@ on, `←`/`h`/`⌫` goes back, a digit selects without Enter, `s` skips a questi
 and `esc` takes the defaults for the rest. It ends on a summary screen listing
 every setting and the file it landed in, where only `⏎` (leave) and `⌫` (back
 to the last question) do anything. It asks about `theme`,
-`default_column_width`, `center_focus`, `cell_labels`, `cowsay.enabled`,
-and (macOS only) `keep_awake`.
+`default_column_width`, `center_focus`, `cell_labels`, and `cowsay.enabled`.
+`keep_awake` is not a question: it is on unless you write
+`keep_awake = false` or toggle it off with `⌥+w` mid-session.
 
 Fresh setup highlights `white-phosphor` as the default color theme, a
 monochrome CRT palette on true black. Enter accepts it, and `esc` uses it
@@ -105,8 +106,8 @@ gwae is a single process with no daemon: when macOS sleeps, every pane (and
 every agent in it) freezes until wake. `keep_awake = true` holds a
 `caffeinate` assertion for gwae's own lifetime, so idle and display sleep
 never pause a session you walked away from. macOS-only; elsewhere the key
-does nothing. Default `false`: an awake machine is your call, never the
-multiplexer's presumption. Set `GWAE_NO_KEEP_AWAKE=1` to force it off
+does nothing. Default `true`: agents keep working unless you opt out with
+`keep_awake = false` or `⌥+w`. Set `GWAE_NO_KEEP_AWAKE=1` to force it off
 (scripted setups, tests). Editing the key applies live to the running
 session, with a one-line toast confirming the change.
 

@@ -23,6 +23,10 @@ fn default_input_poll_ms() -> u64 {
     1
 }
 
+fn default_keep_awake() -> bool {
+    true
+}
+
 /// The resolved view of the config file, with defaults filled in.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -119,10 +123,12 @@ pub struct Config {
     pub input_poll_ms: u64,
     /// Hold a macOS `caffeinate` assertion while gwae runs, so idle and
     /// display sleep never pause the panes. macOS-only; elsewhere this key
-    /// does nothing. Default `false`: an awake machine is the user's call,
-    /// never the multiplexer's presumption. Note the honest limit: a closed
+    /// does nothing. Default `true`: agents keep working while you are away;
+    /// set `keep_awake = false` to let the machine sleep as normal.
+    /// Note the honest limit: a closed
     /// lid still sleeps outside clamshell mode (power + external
     /// display + external input).
+    #[serde(default = "default_keep_awake")]
     pub keep_awake: bool,
     /// Staying current: whether gwae checks for new releases, and how it is
     /// allowed to upgrade itself. See `docs/UPDATES.md`.
@@ -154,7 +160,7 @@ impl Default for Config {
             cowsay: Cowsay::default(),
             cell_labels: true,
             input_poll_ms: default_input_poll_ms(),
-            keep_awake: false,
+            keep_awake: default_keep_awake(),
             update: Update::default(),
         }
     }
