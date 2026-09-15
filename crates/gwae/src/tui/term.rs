@@ -133,8 +133,6 @@ pub(crate) fn first_line(s: &str) -> &str {
     s.lines().next().unwrap_or(s).trim()
 }
 
-/// Run the interactive TUI.
-
 #[cfg(test)]
 mod tests {
     use super::*;

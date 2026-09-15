@@ -10,7 +10,7 @@ use crossterm::cursor;
 use crossterm::event::{
     self, EnableBracketedPaste, EnableMouseCapture,
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, KeyboardEnhancementFlags,
-    ModifierKeyCode, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags,
+    ModifierKeyCode, MouseButton, MouseEventKind,
     PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
@@ -18,7 +18,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size as term_size, EnterAlternateScreen,
 };
 use gwae_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport, Width};
-use gwae_term::{CColor, Cell, Size as GridSize, Vt100Grid};
+use gwae_term::{CColor, Cell, Size as GridSize, TermGrid, Vt100Grid};
 
 use crate::config::Config;
 use crate::geometry::CellPixels;
@@ -31,7 +31,7 @@ mod term;
 pub use pty::{PaneIo, PaneProc, PtyPane};
 pub(crate) use pty::{adopt_pane, descendants, feed_pane_output, kill_pane_tree, nudge_repaint, spawn_pane, sync_panes, PaneMsg, pane_grid_sizes};
 pub(crate) use platform::{host_supports_kitty_graphics, is_ghostty, macos_option_held, native_modifier_poll_enabled};
-pub(crate) use term::{first_line, input_poll_interval, re_enter_terminal, refresh_size, restore_terminal, BINARY_SETTLE, CONFIG_POLL, IDLE_AFTER, IDLE_POLL_MS, NOTE_LINGER, SIZE_POLL};
+pub(crate) use term::{first_line, input_poll_interval, re_enter_terminal, refresh_size, restore_terminal, BINARY_SETTLE, CONFIG_POLL, NOTE_LINGER, SIZE_POLL};
 
 mod diff;
 mod mouse;
