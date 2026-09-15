@@ -77,7 +77,12 @@ listen_on unix:/tmp/mykitty
 Then run `gwae-focus-fix` (source in
 [`scripts/macos/`](../scripts/macos/)), a ~90-line Swift agent that observes
 `NSWorkspace.didActivateApplicationNotification` plus
-`activeSpaceDidChangeNotification` and re-asserts focus:
+`activeSpaceDidChangeNotification` and re-asserts focus.
+
+The automated path is `gwae setup --only focus`: it checks the conf,
+reports the diff, compiles the embedded Swift source with `swiftc`, writes
+the plist with the absolute binary path, and loads it. The manual steps
+below are the fallback when you want to see each piece.
 
 ```sh
 mkdir -p ~/.local/bin

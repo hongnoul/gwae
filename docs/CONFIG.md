@@ -181,8 +181,39 @@ gwae doctor:
   theme: nord [ok]
   agent: claude [ok]
   updates: brew (detected from path) · checks daily · latest is 1.0.1 · `gwae upgrade` -> brew upgrade gwae [ok]
+  spawn dir: /home/you/git/foo [ok]
+  keep-awake: on; caffeinate holds idle/display sleep while gwae runs (a closed lid still sleeps outside clamshell mode)
+  onboarding: done [ok]
+  latency: all layers tuned [ok]
+  keyboard: kitty; Meta path expected [ok]
+  focus: daemon loaded, socket live [ok]
+  bindings: kitty; no per-terminal snippet installed yet
   layout smoke: columns 4 -> 5 on default row [ok]
 ```
+
+Every line is produced by its owning setup stage, so doctor can never
+disagree with the flow that acts on it. See `gwae setup --print` for the
+stage list.
+
+## Unified setup (`gwae setup`)
+
+One flow owns every machine concern: appearance, harness, latency,
+keyboard path, kitty focus repair, per-terminal snippets, companions, and
+the update route. Each concern is an independent stage; adding or removing
+one is one file plus one registry line, and doctor renders each stage's
+own verdict.
+
+```sh
+gwae setup              # apply safe fixes, report the rest
+gwae setup --check      # audit only; nonzero exit when anything needs work
+gwae setup --yes        # apply without prompting (scripts, dotfiles)
+gwae setup --only focus # run one stage by id
+gwae setup --print      # show every stage's planned steps
+```
+
+Only gwae's own config is ever written silently. kitty.conf and
+LaunchAgents print their diff first; macOS globals are printed as exact
+commands and never applied. `GWAE_NO_INSTALL=1` disables all writes.
 
 A typo'd theme name is called out along with the valid names:
 
@@ -225,7 +256,7 @@ and a config file that is not being applied at all points at the syntax error:
 | `focus_color` | color | preset `accent` | **Legacy alias for `theme.accent`**. Overrides the theme's `accent`; use `[theme] accent = ...` for new configs. |
 | `skeleton_color` | color | preset `overlay` | **Legacy alias for `theme.overlay`**. Overrides the theme's `overlay`; use `[theme] overlay = ...` for new configs. |
 | `input_poll_ms` | integer | `1` | Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. gwae sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. The loop backs off to 30ms once the screen has been quiet for 750ms, so an idle session stays cheap. Run `gwae tune` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
-| `keep_awake` | bool | `false` | macOS-only: hold a `caffeinate` assertion (idle/display sleep) while gwae runs, so agents keep working with the display asleep. Asked last by `gwae init` on macOS; hand-editable everywhere. Does **not** defeat lid-close sleep outside clamshell mode (power + external display + input) or `sudo pmset disablesleep 1`. Applies live on save. `GWAE_NO_KEEP_AWAKE=1` forces it off. |
+| `keep_awake` | bool | `true` | macOS-only: hold a `caffeinate` assertion (idle/display sleep) while gwae runs, so agents keep working with the display asleep. On unless you write `keep_awake = false` or toggle it off with `⌥+w`; never asked by setup. Does **not** defeat lid-close sleep outside clamshell mode (power + external display + input) or `sudo pmset disablesleep 1`. Applies live on save. `GWAE_NO_KEEP_AWAKE=1` forces it off. |
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit (the same digit `⌥+1..9` jumps to). Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
 | `minimap.mode` | string | `"off"` | Chrome presentation: `off` (no persistent row; `⌥`/Alt reveals centered HUD + minimap), `overlay` (bottom-right corner), `edge_ticks` (frame ticks). Legacy `reserved` / `reserved_quasimode` parse as `off` (no bottom row). |
 | `minimap.max_width` | integer | `32` | Width of the minimap. A hard *cap* for the corner `overlay`, whose whole point is a small footprint over live panes. For the centered panel revealed by `⌥`/Alt it is a **floor**: that panel spends its cells on pane names, so it asks for ~12 per column and takes the larger of the two, capped at ⅔ of the screen. Raising this widens the panel; lowering it will not squeeze names out of a screen with room for them. |
