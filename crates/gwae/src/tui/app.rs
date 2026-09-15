@@ -492,19 +492,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     Ok(new) => {
                         // Keep the panes and their harnesses exactly as they
                         // are; only adopt what is re-read every frame.
-                        let was_awake = cfg.keep_awake;
+                        // The keep-awake guard follows silently: no
+                        // bottom-left toast, the HUD coffee badge carries it.
                         cfg.adopt_appearance(new);
+                        keep_awake.refresh(cfg.keep_awake);
                         reload_note_anchor = None;
-                        let mut note = "config reloaded".to_string();
-                        if was_awake != cfg.keep_awake {
-                            keep_awake.refresh(cfg.keep_awake);
-                            note.push_str(if cfg.keep_awake {
-                                "; keep-awake on"
-                            } else {
-                                "; keep-awake off"
-                            });
-                        }
-                        reload_note = Some(note);
+                        reload_note = Some("config reloaded".to_string());
                         dirty = true;
                     }
                     Err(e) => {
@@ -914,39 +907,20 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     dirty = true;
                                 }
                                 Cmd::ToggleKeepAwake => {
-                                    // macOS-only: elsewhere the key does
-                                    // nothing, so say so rather than
-                                    // silently typing into the pane.
+                                    // Silent toggle: no bottom-left text. The
+                                    // guard still flips and persists; state
+                                    // reads on the HUD coffee badge.
                                     if !cfg!(target_os = "macos") {
                                         reload_note_anchor = None;
-                                        reload_note = Some("keep-awake is macOS-only".to_string());
+                                        reload_note = None;
+                                        reload_note_until = None;
                                     } else {
                                         cfg.keep_awake = !cfg.keep_awake;
                                         keep_awake.refresh(cfg.keep_awake);
+                                        let _ = write_keep_awake(&cfg_path, cfg.keep_awake);
                                         reload_note_anchor = None;
-                                        reload_note = Some(
-                                            match write_keep_awake(&cfg_path, cfg.keep_awake) {
-                                                Ok(()) => {
-                                                    if cfg.keep_awake {
-                                                        "keep-awake on: Mac stays up while gwae runs (saved)"
-                                                        .to_string()
-                                                    } else {
-                                                        "keep-awake off (saved)".to_string()
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    if cfg.keep_awake {
-                                                        format!(
-                                                        "keep-awake on (this session; save error: {e})"
-                                                    )
-                                                    } else {
-                                                        format!(
-                                                        "keep-awake off (this session; save error: {e})"
-                                                    )
-                                                    }
-                                                }
-                                            },
-                                        );
+                                        reload_note = None;
+                                        reload_note_until = None;
                                         // A config write bumps the mtime;
                                         // adopt it now so the reload poll
                                         // does not echo our own toggle back.
@@ -1426,7 +1400,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // the same plan, so a click can never land on a tile the paint put
         // somewhere else.
         hud_plan = (show_center_minimap && !show_hud)
-            .then(|| plan_center_minimap(cols, rows, &layout, &cfg.minimap, true))
+            .then(|| plan_center_minimap(cols, rows, &layout, &cfg.minimap))
             .flatten();
         if host_kitty_graphics && host_images.refresh_due() {
             dirty = true;
@@ -1442,7 +1416,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 0,
                 &pal,
                 &cfg.minimap,
-                true,
                 selection.as_ref(),
                 host_kitty_graphics.then_some(&mut host_images),
             );
