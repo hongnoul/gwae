@@ -95,20 +95,29 @@ pub fn selected_text<G: TermGrid>(grid: &G, sel: &Selection<impl Copy + Eq>) -> 
     out
 }
 
-/// OSC 52 has no acknowledgement: successfully sending a request is not proof
-/// that the terminal permitted a clipboard write. Keep that distinct from a
-/// native helper's confirmed success in the user-facing feedback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use super::super::paste::PASTE_CHUNK;
-
-    use super::*;
+    use gwae_term::{Size, Vt100Grid};
     use gwae_term::{Size, Vt100Grid};
 
     
+    fn sel(anchor: (u16, u16), cursor: (u16, u16)) -> Selection<u8> {
+        Selection {
+            pane: 1,
+            anchor: Point::new(anchor.0, anchor.1),
+            cursor: Point::new(cursor.0, cursor.1),
+            dragging: false,
+        }
+    }
+
+    fn grid(lines: &[&str]) -> Vt100Grid {
+        let mut g = Vt100Grid::new(Size { cols: 20, rows: 5 });
+        g.feed(lines.join("\r\n").as_bytes());
+        g
+    }
+
     #[test]
     fn ends_are_ordered_regardless_of_drag_direction() {
         let forward = sel((2, 0), (5, 1));

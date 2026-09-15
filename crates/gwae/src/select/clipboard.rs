@@ -1,5 +1,6 @@
 //! Clipboard writes: native helpers with OSC 52 fallback.
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CopyOutcome {
     Copied,
     SentToTerminal,
@@ -143,7 +144,7 @@ fn osc52_sequence(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::selection::{selected_text, Selection};
+    use super::super::selection::{selected_text, Point, Selection};
 
     use super::*;
     use gwae_term::{Size, Vt100Grid};
