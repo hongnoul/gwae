@@ -11,7 +11,8 @@ use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterP
 
 use crate::config::Config;
 use crate::geometry::CellPixels;
-use crate::tui::{chrome_rows, column_grid_sizes};
+use super::render::column_grid_sizes;
+use crate::tui::chrome_rows;
 
 use super::shell::agent_gateway_cmd;
 use super::shell::shell_split;

@@ -1,0 +1,542 @@
+//! Overlays: spawn-dir picker, theme picker, quit confirm (verbatim move from `tui/mod.rs`).
+
+use gwae_term::{CColor, Cell};
+
+use crate::theme::Palette;
+
+
+/// Live state of the `⌥+d` spawn-directory picker.
+///
+/// Mirrors the theme picker's grammar (open, step, ⏎ keep, esc cancel) and
+/// adds a typed filter, because the candidate list is dozens of repos rather
+/// than eight themes. `s` writes the highlighted directory back to the config
+/// file, which is the difference between "this session" and "from now on".
+pub(crate) struct DirPicker {
+    pub(crate) all: Vec<crate::spawndir::Candidate>,
+    pub(crate) query: String,
+    pub(crate) sel: usize,
+    /// Harness this picker is editing (e.g. "jcode"), empty when no harness.
+    pub(crate) harness_label: String,
+}
+
+impl DirPicker {
+    /// When the query itself expands to an existing directory, offer it as the
+    /// top candidate (`typed`). This is what makes `~/` + Enter resolve to `$HOME`
+    /// instead of to the top fuzzy match, and in general lets the user type any
+    /// valid path (including one outside the discovered set) and pick it.
+    pub(crate) fn typed_candidate(&self) -> Option<crate::spawndir::Candidate> {
+        let q = self.query.trim();
+        if q.is_empty() {
+            return None;
+        }
+        let p = crate::spawndir::expand(q);
+        if !p.is_dir() {
+            return None;
+        }
+        let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
+        Some(crate::spawndir::Candidate {
+            label: crate::spawndir::tilde(&canon),
+            path: canon,
+            origin: "typed",
+        })
+    }
+    pub(crate) fn shown(&self) -> Vec<crate::spawndir::Candidate> {
+        let mut base = crate::spawndir::filter(&self.all, &self.query);
+        if let Some(typed) = self.typed_candidate() {
+            // De-duplicate: if the typed path is already in the filtered list
+            // (e.g. query "~" already contains the "home" candidate), move it to
+            // the top so a literal path always wins over a fuzzy match.
+            let t = &typed.path;
+            if let Some(pos) = base.iter().position(|c| &c.path == t) {
+                base.remove(pos);
+            }
+            base.insert(0, typed);
+        }
+        base
+    }
+    pub(crate) fn current(&self) -> Option<crate::spawndir::Candidate> {
+        self.shown().get(self.sel).cloned()
+    }
+    /// Move the highlight, clamped to the filtered list. Wrapping matches the
+    /// theme picker, so a long repo list is reachable from either end.
+    pub(crate) fn step(&mut self, d: i32) {
+        let n = self.shown().len();
+        if n == 0 {
+            self.sel = 0;
+            return;
+        }
+        let i = self.sel as i32 + d;
+        self.sel = i.rem_euclid(n as i32) as usize;
+    }
+}
+
+/// Draw the spawn-directory picker: the filter line, the matching directories
+/// with the selection highlighted, and the key legend.
+///
+/// Unlike the theme picker there is nothing to preview live (a directory does
+/// not repaint the screen), so this panel has to actually show the list.
+pub(crate) fn draw_dir_picker(out: &mut [Cell], cols: u16, rows: u16, pick: &DirPicker, pal: &Palette) {
+    let shown = pick.shown();
+    let rows_shown = shown.len().clamp(1, 10);
+    // Title names the harness so a user with harness_dirs wonders less which
+    // entry ⌥+s will write. Plain "spawn dir:" when no harness is configured.
+    let title = if pick.harness_label.is_empty() {
+        format!(" spawn dir: {}_ ", pick.query)
+    } else {
+        format!(" spawn dir [{}]: {}_ ", pick.harness_label, pick.query)
+    };
+    // The save key is the *chord*, not a bare `s`: every printable key types
+    // into the filter, so advertising `s` would tell the user to type a
+    // letter that filters instead of saving.
+    let help = format!(
+        " ↑/↓ pick   ⏎ session   {} save to config   esc cancel ",
+        crate::keys::chord("s")
+    );
+    let help = help.as_str();
+    let widest = shown
+        .iter()
+        .take(rows_shown)
+        .map(|c| c.label.chars().count() + c.origin.chars().count() + 4)
+        .max()
+        .unwrap_or(0);
+    // A long discovered or typed path must not make the whole picker vanish.
+    let bw = (widest.max(title.chars().count()).max(help.chars().count()) + 2)
+        .min((cols as usize).saturating_sub(2));
+    let bh = rows_shown + 4;
+    if bw < 6 || (rows as usize) < bh + 2 {
+        return;
+    }
+    let ox = ((cols as usize) - bw) / 2;
+    let oy = ((rows as usize) - bh) / 2;
+    for y in 0..bh {
+        for x in 0..bw {
+            if let Some(c) = out.get_mut((oy + y) * cols as usize + ox + x) {
+                *c = Cell {
+                    ch: ' ',
+                    style: gwae_term::Style {
+                        fg: pal.text,
+                        bg: pal.surface,
+                        ..Default::default()
+                    },
+                    width: 1,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+    let mut edge = |x: usize, y: usize, ch: char| {
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            c.ch = ch;
+            c.style.fg = pal.accent;
+            c.style.bg = pal.surface;
+            c.width = 1;
+        }
+    };
+    for x in 0..bw {
+        edge(ox + x, oy, '─');
+        edge(ox + x, oy + bh - 1, '─');
+    }
+    for y in 0..bh {
+        edge(ox, oy + y, '│');
+        edge(ox + bw - 1, oy + y, '│');
+    }
+    edge(ox, oy, '╭');
+    edge(ox + bw - 1, oy, '╮');
+    edge(ox, oy + bh - 1, '╰');
+    edge(ox + bw - 1, oy + bh - 1, '╯');
+
+    // A free function rather than a closure: the selection highlight below
+    // also needs `&mut out`, and a capturing closure would hold the borrow
+    // for the whole body.
+    #[allow(clippy::too_many_arguments)]
+    fn text(
+        out: &mut [Cell],
+        cols: u16,
+        limit: usize,
+        row: usize,
+        col: usize,
+        s: &str,
+        fg: CColor,
+        bg: CColor,
+        bold: bool,
+    ) {
+        for (i, ch) in s.chars().enumerate() {
+            if col + i >= limit {
+                break;
+            }
+            if let Some(c) = out.get_mut(row * cols as usize + col + i) {
+                c.ch = ch;
+                c.style.fg = fg;
+                c.style.bg = bg;
+                c.style.bold = bold;
+                c.width = 1;
+            }
+        }
+    }
+    let lim = ox + bw - 1;
+    text(
+        out,
+        cols,
+        lim,
+        oy + 1,
+        ox + 1,
+        &title,
+        pal.accent,
+        pal.surface,
+        true,
+    );
+    if shown.is_empty() {
+        text(
+            out,
+            cols,
+            lim,
+            oy + 2,
+            ox + 2,
+            "no match",
+            pal.overlay,
+            pal.surface,
+            false,
+        );
+    }
+    // Scroll the window so the selection is always on screen, even when the
+    // filter leaves more matches than the panel can hold.
+    let first = pick.sel.saturating_sub(rows_shown.saturating_sub(1));
+    for (i, c) in shown.iter().skip(first).take(rows_shown).enumerate() {
+        let y = oy + 2 + i;
+        let selected = first + i == pick.sel;
+        let (fg, bg) = if selected {
+            (pal.base, pal.accent)
+        } else {
+            (pal.text, pal.surface)
+        };
+        if selected {
+            for x in 1..bw - 1 {
+                if let Some(cell) = out.get_mut(y * cols as usize + ox + x) {
+                    cell.ch = ' ';
+                    cell.style.bg = bg;
+                    cell.style.fg = fg;
+                    cell.width = 1;
+                }
+            }
+        }
+        let ow = c.origin.chars().count();
+        let at = ox + bw - 2 - ow.min(bw.saturating_sub(4));
+        // Reserve the origin column and keep the end of the path, where the
+        // directory name lives. Only the display is shortened, never c.path.
+        let label_width = at.saturating_sub(ox + 3);
+        let label_len = c.label.chars().count();
+        let label = if label_width == 0 {
+            String::new()
+        } else if label_len > label_width {
+            format!(
+                "…{}",
+                c.label
+                    .chars()
+                    .skip(label_len - label_width + 1)
+                    .collect::<String>()
+            )
+        } else {
+            c.label.clone()
+        };
+        text(out, cols, lim, y, ox + 2, &label, fg, bg, selected);
+        let ofg = if selected { fg } else { pal.overlay };
+        text(out, cols, lim, y, at, c.origin, ofg, bg, false);
+    }
+    text(
+        out,
+        cols,
+        lim,
+        oy + bh - 2,
+        ox + 1,
+        help,
+        pal.overlay,
+        pal.surface,
+        false,
+    );
+}
+
+/// Draw the theme picker: a small centered panel naming the previewed theme.
+///
+/// The picker deliberately shows almost nothing, because the *whole screen*
+/// is already the preview: stepping through presets re-themes the live
+/// chrome behind this panel. All it has to answer is "which one am I looking
+/// at, and how do I keep it".
+pub(crate) fn draw_theme_picker(out: &mut [Cell], cols: u16, rows: u16, sel: usize, pal: &Palette) {
+    let names = Palette::NAMES;
+    let Some(name) = names.get(sel) else {
+        return;
+    };
+    let title = format!(" theme {}/{}: {} ", sel + 1, names.len(), name);
+    let help = " ←/→ preview   ⏎ keep   esc cancel ";
+    let bw = title.chars().count().max(help.chars().count()) + 2;
+    let bh = 4usize;
+    if (cols as usize) < bw + 2 || (rows as usize) < bh + 2 {
+        return;
+    }
+    let ox = ((cols as usize) - bw) / 2;
+    let oy = ((rows as usize) - bh) / 2;
+    // Panel background.
+    for y in 0..bh {
+        for x in 0..bw {
+            if let Some(c) = out.get_mut((oy + y) * cols as usize + ox + x) {
+                *c = Cell {
+                    ch: ' ',
+                    style: gwae_term::Style {
+                        fg: pal.text,
+                        bg: pal.surface,
+                        ..Default::default()
+                    },
+                    width: 1,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+    // Accent border, so the picker itself demonstrates the previewed accent.
+    let mut edge = |x: usize, y: usize, ch: char| {
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            c.ch = ch;
+            c.style.fg = pal.accent;
+            c.style.bg = pal.surface;
+            c.width = 1;
+        }
+    };
+    for x in 0..bw {
+        edge(ox + x, oy, '─');
+        edge(ox + x, oy + bh - 1, '─');
+    }
+    for y in 0..bh {
+        edge(ox, oy + y, '│');
+        edge(ox + bw - 1, oy + y, '│');
+    }
+    edge(ox, oy, '╭');
+    edge(ox + bw - 1, oy, '╮');
+    edge(ox, oy + bh - 1, '╰');
+    edge(ox + bw - 1, oy + bh - 1, '╯');
+
+    let mut text = |row: usize, s: &str, fg: CColor, bold: bool| {
+        let chars: Vec<char> = s.chars().collect();
+        let tx = ox + 1 + (bw - 2).saturating_sub(chars.len()) / 2;
+        for (i, ch) in chars.iter().enumerate() {
+            if tx + i >= ox + bw - 1 {
+                break;
+            }
+            if let Some(c) = out.get_mut(row * cols as usize + tx + i) {
+                c.ch = *ch;
+                c.style.fg = fg;
+                c.style.bg = pal.surface;
+                c.style.bold = bold;
+                c.width = 1;
+            }
+        }
+    };
+    text(oy + 1, &title, pal.accent, true);
+    text(oy + 2, help, pal.text, false);
+}
+
+/// Centered disclaimer for the force-quit chord (`⌥+Shift+q`).
+///
+/// Quitting kills every pane and everything running in them, which is the one
+/// irreversible thing gwae can do, so the chord opens this overlay instead
+/// of exiting outright: it names the cost (how many panes die) and requires a
+/// second, deliberate keystroke.
+pub(crate) fn draw_quit_confirm(out: &mut [Cell], cols: u16, rows: u16, panes: usize, pal: &Palette) {
+    let title = format!(
+        " force quit gwae? {} pane{} will be killed ",
+        panes,
+        if panes == 1 { "" } else { "s" }
+    );
+    let warn = " running commands are terminated immediately ";
+    let help = format!(
+        " {} again or ⏎ quits   esc cancels ",
+        crate::keys::shift_chord("q")
+    );
+    let bw = [title.as_str(), warn, help.as_str()]
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 2;
+    let bh = 5usize;
+    if (cols as usize) < bw + 2 || (rows as usize) < bh + 2 {
+        return;
+    }
+    let ox = ((cols as usize) - bw) / 2;
+    let oy = ((rows as usize) - bh) / 2;
+    for y in 0..bh {
+        for x in 0..bw {
+            if let Some(c) = out.get_mut((oy + y) * cols as usize + ox + x) {
+                *c = Cell {
+                    ch: ' ',
+                    style: gwae_term::Style {
+                        fg: pal.text,
+                        bg: pal.surface,
+                        ..Default::default()
+                    },
+                    width: 1,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+    // The border uses the failed tint: this is the destructive overlay, and it
+    // must not be mistaken at a glance for the theme picker.
+    let mut edge = |x: usize, y: usize, ch: char| {
+        if let Some(c) = out.get_mut(y * cols as usize + x) {
+            c.ch = ch;
+            c.style.fg = pal.failed;
+            c.style.bg = pal.surface;
+            c.width = 1;
+        }
+    };
+    for x in 0..bw {
+        edge(ox + x, oy, '─');
+        edge(ox + x, oy + bh - 1, '─');
+    }
+    for y in 0..bh {
+        edge(ox, oy + y, '│');
+        edge(ox + bw - 1, oy + y, '│');
+    }
+    edge(ox, oy, '╭');
+    edge(ox + bw - 1, oy, '╮');
+    edge(ox, oy + bh - 1, '╰');
+    edge(ox + bw - 1, oy + bh - 1, '╯');
+
+    let mut text = |row: usize, s: &str, fg: CColor, bold: bool| {
+        let chars: Vec<char> = s.chars().collect();
+        let tx = ox + 1 + (bw - 2).saturating_sub(chars.len()) / 2;
+        for (i, ch) in chars.iter().enumerate() {
+            if tx + i >= ox + bw - 1 {
+                break;
+            }
+            if let Some(c) = out.get_mut(row * cols as usize + tx + i) {
+                c.ch = *ch;
+                c.style.fg = fg;
+                c.style.bg = pal.surface;
+                c.style.bold = bold;
+                c.width = 1;
+            }
+        }
+    };
+    text(oy + 1, &title, pal.failed, true);
+    text(oy + 2, warn, pal.text, false);
+    text(oy + 3, &help, pal.text, false);
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::input::{handle_key, Cmd};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use gwae_term::{CColor, Cell};
+
+    #[test]
+    fn dir_picker_keeps_long_directory_matches_visible() {
+        let label = format!("~/work/{}/fresh-scaffold", "long-parent-".repeat(10));
+        let pick = DirPicker {
+            all: vec![crate::spawndir::Candidate {
+                path: std::path::PathBuf::from(&label),
+                label,
+                origin: "directory",
+            }],
+            query: "fresh-scaffold".into(),
+            sel: 0,
+            harness_label: String::new(),
+        };
+        for cols in [60, 80, 100] {
+            let rows = 24;
+            let mut out = vec![Cell::default(); cols as usize * rows as usize];
+            draw_dir_picker(&mut out, cols, rows, &pick, &Palette::default());
+            let lines: Vec<String> = out
+                .chunks(cols as usize)
+                .map(|row| row.iter().map(|cell| cell.ch).collect())
+                .collect();
+            assert!(
+                lines.iter().any(|line| line.contains("spawn dir:")),
+                "{cols}: {lines:?}"
+            );
+            assert!(
+                lines.iter().any(|line| line.contains("…")
+                    && line.contains("fresh-scaffold")
+                    && line.contains("directory")),
+                "keep the basename and origin visible at {cols} columns: {lines:?}"
+            );
+            assert_eq!(pick.current().unwrap().path, pick.all[0].path);
+        }
+    }
+
+    #[test]
+    fn force_quit_chord_arms_a_centered_disclaimer() {
+        // The chord itself must still decode as Quit (the run loop turns that
+        // into "arm the overlay"), and the overlay must actually paint a
+        // centered, framed box that names the cost in the user's own key
+        // vocabulary. A quit that exits without this box is the bug.
+        let ev = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert_eq!(handle_key(&ev), Some(Cmd::Quit));
+
+        let cols: u16 = 80;
+        let rows: u16 = 24;
+        let mut out = vec![Cell::default(); cols as usize * rows as usize];
+        let pal = Palette::default();
+        draw_quit_confirm(&mut out, cols, rows, 4, &pal);
+        let lines: Vec<String> = (0..rows)
+            .map(|y| {
+                (0..cols)
+                    .map(|x| out[y as usize * cols as usize + x as usize].ch)
+                    .collect()
+            })
+            .collect();
+        assert!(
+            lines.iter().any(|s| s.contains("force quit gwae?")),
+            "disclaimer names the action, got {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|s| s.contains("4 panes will be killed")),
+            "disclaimer names the cost, got {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|s| s.contains(&crate::keys::shift_chord("q"))),
+            "disclaimer says how to confirm, got {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|s| s.contains("esc cancels")),
+            "disclaimer says how to back out, got {lines:?}"
+        );
+        // Framed and centered: corners exist, and the painted rows sit around
+        // the middle of the screen rather than at an edge.
+        let painted: Vec<usize> = (0..rows as usize)
+            .filter(|y| {
+                (0..cols as usize).any(|x| out[y * cols as usize + x].style.bg != CColor::Default)
+            })
+            .collect();
+        assert!(
+            out.iter().any(|c| c.ch == '╭') && out.iter().any(|c| c.ch == '╯'),
+            "disclaimer is a framed box"
+        );
+        let mid = rows as usize / 2;
+        assert!(
+            painted.first().is_some_and(|f| *f < mid) && painted.last().is_some_and(|l| *l > mid),
+            "disclaimer straddles the screen center, painted {painted:?}"
+        );
+        // Singular/plural, because "1 panes" reads like a bug in a warning.
+        let mut one = vec![Cell::default(); cols as usize * rows as usize];
+        draw_quit_confirm(&mut one, cols, rows, 1, &pal);
+        let text: String = one.iter().map(|c| c.ch).collect();
+        assert!(
+            text.contains("1 pane will be killed"),
+            "singular pane count"
+        );
+        // Too small to render honestly: paint nothing rather than a clipped
+        // warning the user cannot read.
+        let mut tiny = vec![Cell::default(); 10 * 4];
+        draw_quit_confirm(&mut tiny, 10, 4, 3, &pal);
+        assert!(
+            tiny.iter().all(|c| c.style.bg == CColor::Default),
+            "no partial disclaimer may be painted"
+        );
+    }
+
+}

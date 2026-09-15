@@ -179,7 +179,17 @@ pub(crate) fn sgr_mouse_report(ev: &MouseEvent, gx: u16, gy: u16) -> Option<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::pty::{spawn_pane, PaneMsg, PtyPane};
+    use super::super::render::tests::{no_cow, no_map};
+    use super::super::render::{focused_pane_views, render_frame};
+    use crate::geometry::CellPixels;
+    use crate::select::{self, Selection};
+    use crate::theme::Palette;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use gwae_layout::{Layout, PaneId};
+    use gwae_term::TermGrid;
+    use std::collections::HashMap;
+    use std::sync::mpsc::channel;
 
     #[test]
     fn wheel_scrolls_a_plain_pane_but_reaches_a_reporting_child() {
@@ -331,6 +341,122 @@ mod tests {
             sgr_mouse_report(&shifted, 0, 0).unwrap(),
             b"\x1b[<4;1;1M".to_vec()
         );
+    }
+
+    #[test]
+    fn mouse_hit_test_maps_screen_cell_to_pane_grid() {
+        use gwae_layout::{Preset, Width};
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        for _ in 0..2 {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Half), vec![p]);
+        }
+        let panes = HashMap::new();
+        let views = focused_pane_views(&layout, 80, 24, 0, &panes, false);
+        assert_eq!(views.len(), 2);
+        // A click in the left half hits the left pane at its own grid column.
+        let (pid, gx, gy) = pane_at(&views, 5, 3).expect("hit left pane");
+        assert_eq!(pid, views[0].pid);
+        assert_eq!((gx, gy), (5, 3));
+        // A click in the right half hits the right pane, and the grid column
+        // is relative to that pane, not the screen.
+        let (pid, gx, gy) = pane_at(&views, 45, 7).expect("hit right pane");
+        assert_eq!(pid, views[1].pid);
+        assert_eq!((gx, gy), (45 - views[1].rect.x, 7));
+        // Past the last pane's right edge there is nothing to hit.
+        assert!(pane_at(&views, 79, 3).is_some());
+        assert!(pane_at(&views, 200, 3).is_none());
+        assert!(pane_at(&views, 5, 200).is_none());
+    }
+
+    #[test]
+    fn drag_outside_a_pane_clamps_to_its_edges() {
+        use gwae_layout::{Preset, Width};
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        for _ in 0..2 {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Half), vec![p]);
+        }
+        let panes = HashMap::new();
+        let views = focused_pane_views(&layout, 80, 24, 0, &panes, false);
+        let left = views[0].pid;
+        let r = views[0].rect;
+        // Inside the pane the clamp is a no-op: same answer as `pane_at`.
+        assert_eq!(clamped_pane_point(&views, left, 5, 3), Some((left, 5, 3)));
+        // Dragging right, past the pane into its neighbour, still extends the
+        // left pane's selection to its last column instead of freezing.
+        let (pid, gx, gy) = clamped_pane_point(&views, left, 200, 3).unwrap();
+        assert_eq!(pid, left);
+        assert_eq!(gx, r.w - 1);
+        assert_eq!(gy, 3);
+        // Dragging below the last row clamps to the bottom row.
+        let (_, _, gy) = clamped_pane_point(&views, left, 5, 200).unwrap();
+        assert_eq!(gy, r.h - 1);
+        // Dragging above/left of the pane clamps to its first cell.
+        assert_eq!(clamped_pane_point(&views, left, 0, 0), Some((left, 0, 0)));
+        // A pane that is not on screen cannot be resolved at all.
+        let gone: PaneId = 9999;
+        assert_eq!(clamped_pane_point(&views, gone, 5, 3), None);
+    }
+
+    #[test]
+    fn selection_highlight_inverts_exactly_the_dragged_cells() {
+        let layout = Layout::new(1);
+        let pid = *layout
+            .focused_row()
+            .and_then(|r| r.columns.first())
+            .and_then(|c| c.panes.first())
+            .unwrap();
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        let (tx, _rx) = channel::<PaneMsg>();
+        let mut pane = spawn_pane(pid, "sleep 30", 80, 24, tx, None, CellPixels::default())
+            .expect("spawn pane");
+        pane.grid.feed(b"hello world\r\nsecond line");
+        panes.insert(pid, pane);
+        let (cols, rows) = (80u16, 24u16);
+        let sel = Selection {
+            pane: pid,
+            anchor: select::Point::new(0, 0),
+            cursor: select::Point::new(4, 0),
+            dragging: true,
+        };
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            cols,
+            rows,
+            0,
+            &Palette::default(),
+            &no_map(),
+            &no_cow(),
+            false,
+            Some(&sel),
+        );
+        // Content is inset 1 cell inside the column frame, so grid (0,0)
+        // lands at screen (1,1).
+        let at = |x: u16, y: u16| out[(y + 1) as usize * cols as usize + (x + 1) as usize];
+        // "hello" is inverted, both ends inclusive; the space after is not.
+        for x in 0..=4u16 {
+            assert!(at(x, 0).style.inverse, "cell {x} should be highlighted");
+        }
+        assert!(
+            !at(5, 0).style.inverse,
+            "past the drag end, not highlighted"
+        );
+        assert!(!at(0, 1).style.inverse, "other rows untouched");
+        // The text itself is unchanged: highlighting only restyles.
+        assert_eq!(at(0, 0).ch, 'h');
+        assert_eq!(at(4, 0).ch, 'o');
     }
 
 }
