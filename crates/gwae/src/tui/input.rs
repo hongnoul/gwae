@@ -2,7 +2,6 @@
 //!
 //! `handle_key` logic is untouched; the NAV rewrite lands here, not in the monolith.
 
-use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventState, KeyModifiers, ModifierKeyCode};
 
