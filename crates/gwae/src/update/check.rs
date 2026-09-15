@@ -302,8 +302,6 @@ pub fn run_upgrade(configured: Option<Source>) -> i32 {
     }
     // Check-only by design: gwae prints the exact command but never executes
     // a package manager itself.
-    let _ = check_only;
-    let _ = assume_yes;
     0
 }
 
