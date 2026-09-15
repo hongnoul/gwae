@@ -75,15 +75,7 @@ fn read_default(_key: &str) -> Option<f64> {
 
 /// The kitty config file kitty itself would load.
 pub fn kitty_conf_path() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("KITTY_CONFIG_DIRECTORY") {
-        return Some(PathBuf::from(dir).join("kitty.conf"));
-    }
-    let base = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg)
-    } else {
-        PathBuf::from(std::env::var_os("HOME")?).join(".config")
-    };
-    Some(base.join("kitty/kitty.conf"))
+    crate::setup::setup_support::terminal::kitty_conf_path()
 }
 
 /// Read one `key value` setting out of a kitty config's text.
@@ -91,29 +83,12 @@ pub fn kitty_conf_path() -> Option<PathBuf> {
 /// kitty's format is whitespace-separated, one per line, `#` comments. The
 /// last assignment wins, matching kitty's own precedence.
 pub fn kitty_setting(text: &str, key: &str) -> Option<String> {
-    let mut found = None;
-    for line in text.lines() {
-        let t = line.trim();
-        if t.starts_with('#') {
-            continue;
-        }
-        let mut parts = t.split_whitespace();
-        if parts.next() == Some(key) {
-            let v: Vec<&str> = parts.collect();
-            if !v.is_empty() {
-                found = Some(v.join(" "));
-            }
-        }
-    }
-    found
+    crate::setup::setup_support::kitty_conf::get(text, key)
 }
 
 /// True when we are actually running under kitty, so its advice is relevant.
 pub fn in_kitty() -> bool {
-    std::env::var_os("KITTY_WINDOW_ID").is_some()
-        || std::env::var("TERM")
-            .map(|t| t.contains("kitty"))
-            .unwrap_or(false)
+    crate::setup::setup_support::terminal::in_kitty()
 }
 
 /// Compare a numeric setting against a "lower is better" target.
