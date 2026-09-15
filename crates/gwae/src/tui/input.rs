@@ -104,6 +104,23 @@ pub(crate) enum Cmd {
     None,
 }
 
+impl Cmd {
+    /// Whether this command may fire on key auto-repeat.
+    ///
+    /// Destructive verbs (kill, quit) and jump digits never repeat: holding
+    /// ⌥+q must not kill panes faster than the HUD can repaint them, a held
+    /// quit chord must not confirm its own disclaimer, and repeated digits
+    /// would corrupt a multi-digit column address. Everything else (focus
+    /// moves, scrolls, plain input) repeats as before.
+    pub(crate) fn is_repeatable(&self) -> bool {
+        match self {
+            Cmd::Act(Action::KillPane) | Cmd::Act(Action::ClosePane(_)) => false,
+            Cmd::Quit | Cmd::JumpDigit(_) | Cmd::ToggleHud => false,
+            _ => true,
+        }
+    }
+}
+
 /// Accumulates the digits of a column jump typed while the modifier is held.
 ///
 /// `⌥+1..9` used to jump on the keystroke itself, which made columns 10 and
@@ -603,7 +620,6 @@ pub(crate) fn focused_pane(layout: &Layout) -> Option<PaneId> {
         .copied()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -871,6 +887,34 @@ mod tests {
         // macOS Option+q -> œ (U+0153) on the no-Meta path.
         let ev = KeyEvent::new(KeyCode::Char('\u{153}'), KeyModifiers::NONE);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::KillPane)));
+    }
+
+    #[test]
+    fn destructive_verbs_never_fire_on_auto_repeat() {
+        // Holding ⌥+q repeats faster than frames: without this, every queued
+        // repeat lands in one drain batch and the HUD shows a stale frame
+        // while several panes die underneath it.
+        for cmd in [
+            Cmd::Act(Action::KillPane),
+            Cmd::Act(Action::ClosePane(1)),
+            Cmd::Quit,
+            Cmd::JumpDigit(1),
+            Cmd::ToggleHud,
+        ] {
+            assert!(!cmd.is_repeatable(), "{cmd:?} must not repeat");
+        }
+        // Focus moves, scrolls, and pane input repeat as before.
+        for cmd in [
+            Cmd::Act(Action::FocusLeft),
+            Cmd::Act(Action::SpawnAgent),
+            Cmd::Scroll(200),
+            Cmd::ScrollBack(3),
+            Cmd::SmartJump,
+            Cmd::Input(vec![b'x']),
+            Cmd::None,
+        ] {
+            assert!(cmd.is_repeatable(), "{cmd:?} should still repeat");
+        }
     }
 
     #[test]
@@ -1418,5 +1462,4 @@ mod tests {
             assert_eq!(handle_key(&ev), Some(Cmd::Input(want.to_vec())), "F{n}");
         }
     }
-
 }

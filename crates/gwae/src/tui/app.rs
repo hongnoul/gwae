@@ -3,8 +3,8 @@
 //! `run_tui` is intentionally still one function: this step only moves it.
 //! Structuring the loop (`App`, handlers) is follow-up work, not this refactor.
 
-use super::*;
 use super::render::chrome_rows;
+use super::*;
 use std::time::Duration;
 
 /// How long a pane without OSC 133 shell integration must stay silent before
@@ -405,10 +405,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     }
                     if in_layout {
                         let v = Viewport::new(cols);
-                        let f = FollowScroll {
-                            margin: cfg.scroll_margin,
-                            center: cfg.center_focus,
-                        };
+                        let f = FollowScroll::default();
                         let _ = layout.apply(Action::ClosePane(pid), v, f);
                         agent_panes.remove(&pid);
                         if let Err(e) = sync_panes(
@@ -643,17 +640,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         // before selecting the paste destination.
                         if let Some(n) = jump.take() {
                             let v = Viewport::new(cols);
-                            let f = FollowScroll {
-                                margin: cfg.scroll_margin,
-                                center: cfg.center_focus,
-                            };
+                            let f = FollowScroll::default();
                             let _ = layout.apply(Action::JumpToColumn(n), v, f);
                         }
                         let anchor = focused_pane_views_with_chrome(
                             &layout,
                             cols,
                             rows,
-                            cfg.content_width,
+                            0,
                             &panes,
                             true,
                             chrome_rows(&cfg),
@@ -859,10 +853,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             // stale jump armed behind the forwarded keystroke.
                             if let Some(n) = jump.take() {
                                 let v = Viewport::new(cols);
-                                let f = FollowScroll {
-                                    margin: cfg.scroll_margin,
-                                    center: cfg.center_focus,
-                                };
+                                let f = FollowScroll::default();
                                 let _ = layout.apply(Action::JumpToColumn(n), v, f);
                                 dirty = true;
                             }
@@ -878,6 +869,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             continue;
                         }
                         if let Some(cmd) = handle_key(&ke) {
+                            // Destructive and addressing commands never fire on
+                            // auto-repeat: holding ⌥+q must not kill panes
+                            // faster than the HUD can repaint them, and a held
+                            // quit or toggle must not confirm or flicker
+                            // itself. The repeat still refreshes the hold
+                            // window above, so the dashboard stays up while the
+                            // key is down — it just stops acting on it.
+                            if ke.kind == KeyEventKind::Repeat && !cmd.is_repeatable() {
+                                continue;
+                            }
                             // Any command other than another digit ends the number
                             // being typed, the way a non-count key ends a vi count.
                             // The pending jump commits first, so `⌥+1 2` then
@@ -886,10 +887,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             if !matches!(cmd, Cmd::JumpDigit(_)) {
                                 if let Some(n) = jump.take() {
                                     let v = Viewport::new(cols);
-                                    let f = FollowScroll {
-                                        margin: cfg.scroll_margin,
-                                        center: cfg.center_focus,
-                                    };
+                                    let f = FollowScroll::default();
                                     let _ = layout.apply(Action::JumpToColumn(n), v, f);
                                     dirty = true;
                                 }
@@ -1018,10 +1016,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 }
                                 Cmd::Act(a) => {
                                     let v = Viewport::new(cols);
-                                    let f = FollowScroll {
-                                        margin: cfg.scroll_margin,
-                                        center: cfg.center_focus,
-                                    };
+                                    let f = FollowScroll::default();
                                     // Closing the last pane leaves nothing to show,
                                     // so gwae exits instead of resurrecting a
                                     // fresh default layout.
@@ -1081,10 +1076,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     // (failed > waiting > done), if any.
                                     if let Some(target) = smart_jump_target(&layout) {
                                         let v = Viewport::new(cols);
-                                        let f = FollowScroll {
-                                            margin: cfg.scroll_margin,
-                                            center: cfg.center_focus,
-                                        };
+                                        let f = FollowScroll::default();
                                         let _ = layout.apply(Action::FocusPane(target), v, f);
                                         dirty = true;
                                     }
@@ -1101,10 +1093,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             // addressable at all.
                             if let Some(n) = jump.take() {
                                 let v = Viewport::new(cols);
-                                let f = FollowScroll {
-                                    margin: cfg.scroll_margin,
-                                    center: cfg.center_focus,
-                                };
+                                let f = FollowScroll::default();
                                 let _ = layout.apply(Action::JumpToColumn(n), v, f);
                             }
                             bare_alt_held = false;
@@ -1134,10 +1123,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     if let Some(pid) = hud_pane_at(plan, me.column, me.row) {
                                         if focused_pane(&layout) != Some(pid) {
                                             let v = Viewport::new(cols);
-                                            let f = FollowScroll {
-                                                margin: cfg.scroll_margin,
-                                                center: cfg.center_focus,
-                                            };
+                                            let f = FollowScroll::default();
                                             let _ = layout.apply(Action::FocusPane(pid), v, f);
                                             dirty = true;
                                         }
@@ -1148,13 +1134,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         }
                         let chrome = chrome_rows(&cfg);
                         let views = focused_pane_views_with_chrome(
-                            &layout,
-                            cols,
-                            rows,
-                            cfg.content_width,
-                            &panes,
-                            true,
-                            chrome,
+                            &layout, cols, rows, 0, &panes, true, chrome,
                         );
                         // A drag that wanders outside the pane (or off-screen)
                         // must still extend and finish the selection, exactly as
@@ -1181,10 +1161,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 if let Some((pid, _, _)) = hit {
                                     if focused_pane(&layout) != Some(pid) {
                                         let v = Viewport::new(cols);
-                                        let f = FollowScroll {
-                                            margin: cfg.scroll_margin,
-                                            center: cfg.center_focus,
-                                        };
+                                        let f = FollowScroll::default();
                                         let _ = layout.apply(Action::FocusPane(pid), v, f);
                                         dirty = true;
                                     }
@@ -1250,10 +1227,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             // Clicking a pane still focuses it.
                                             if focused_pane(&layout) != Some(pid) {
                                                 let v = Viewport::new(cols);
-                                                let f = FollowScroll {
-                                                    margin: cfg.scroll_margin,
-                                                    center: cfg.center_focus,
-                                                };
+                                                let f = FollowScroll::default();
                                                 let _ = layout.apply(Action::FocusPane(pid), v, f);
                                                 dirty = true;
                                             }
@@ -1315,10 +1289,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 && focused_pane(&layout) != Some(pid)
                             {
                                 let v = Viewport::new(cols);
-                                let f = FollowScroll {
-                                    margin: cfg.scroll_margin,
-                                    center: cfg.center_focus,
-                                };
+                                let f = FollowScroll::default();
                                 let _ = layout.apply(Action::FocusPane(pid), v, f);
                                 dirty = true;
                             }
@@ -1411,10 +1382,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // forever and the jump would simply never happen.
         if let Some(n) = jump.take_if_expired(now_for_hud) {
             let v = Viewport::new(cols);
-            let f = FollowScroll {
-                margin: cfg.scroll_margin,
-                center: cfg.center_focus,
-            };
+            let f = FollowScroll::default();
             let _ = layout.apply(Action::JumpToColumn(n), v, f);
             dirty = true;
         }
@@ -1466,7 +1434,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 &mut panes,
                 cols,
                 rows,
-                cfg.content_width,
+                0,
                 &pal,
                 &cfg.minimap,
                 true,
@@ -1499,8 +1467,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 );
             }
             if let Some(note) = &reload_note {
-                let ok =
-                    !note.contains("error") && !note.starts_with("paste failed:");
+                let ok = !note.contains("error") && !note.starts_with("paste failed:");
                 draw_toast_at(&mut frame, cols, rows, note, &pal, ok, reload_note_anchor);
             }
             // Topmost: the destructive confirmation must never be obscured by
@@ -1540,347 +1507,169 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-#[test]
-fn content_scroll_reveals_overflow_e2e() {
-    let mut layout = Layout::default();
-    let pid = focused_pane(&layout).expect("default layout has a focused pane");
-    // Widen the single default column to the full viewport so we see 80 cells.
-    if let Some(row) = layout.row_mut(layout.focus.row) {
-        row.columns[0].width = gwae_layout::Width::Cells(80);
-    }
-    let (tx, rx) = channel::<PaneMsg>();
-    let cmd = "sh -c \"for i in $(seq 1 240); do printf '%s' $((i % 10)); done; echo\"";
-    let pane =
-        spawn_pane(pid, cmd, 240, 10, tx.clone(), None, CellPixels::default()).expect("spawn pane");
-    let mut pane = pane;
-    // Feed PTY output until the 240-cell digit line has landed.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    'feed: while std::time::Instant::now() < deadline {
-        match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(PaneMsg::Output(_, bytes)) => {
-                pane.grid.feed(&bytes);
-                if pane.grid.cell(239, 0).ch != ' ' {
-                    break 'feed;
-                }
-            }
-            Ok(PaneMsg::Exited(_)) | Err(_) => break 'feed,
+    #[test]
+    fn content_scroll_reveals_overflow_e2e() {
+        let mut layout = Layout::default();
+        let pid = focused_pane(&layout).expect("default layout has a focused pane");
+        // Widen the single default column to the full viewport so we see 80 cells.
+        if let Some(row) = layout.row_mut(layout.focus.row) {
+            row.columns[0].width = gwae_layout::Width::Cells(80);
         }
-    }
-    let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
-    panes.insert(pid, pane);
-    let mut out = Vec::new();
-
-    // At scroll 0 the viewport shows content columns 0..79 (digits 1,2,...,0).
-    panes.get_mut(&pid).unwrap().h_scroll = 0;
-    render_frame(
-        &mut out,
-        &layout,
-        &mut panes,
-        80,
-        10,
-        240,
-        &Palette::default(),
-        &crate::config::Minimap::default(),
-        false,
-        None,
-    );
-    // Content is inset 1 cell inside the column frame: grid (x,0) is at
-    // screen (x + 1, 1).
-    let at = |out: &Vec<Cell>, x: usize| out[80 + 1 + x].ch;
-    assert_eq!(at(&out, 0), '1'); // content col 0 -> first content cell
-    assert_eq!(at(&out, 9), '0'); // content col 9
-    assert_eq!(at(&out, 77), '8'); // content col 77
-
-    // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
-    panes.get_mut(&pid).unwrap().h_scroll = 60;
-    render_frame(
-        &mut out,
-        &layout,
-        &mut panes,
-        80,
-        10,
-        240,
-        &Palette::default(),
-        &crate::config::Minimap::default(),
-        false,
-        None,
-    );
-    assert_eq!(at(&out, 0), '1'); // content col 60
-    assert_eq!(at(&out, 1), '2'); // content col 61
-    assert_eq!(at(&out, 77), '8'); // content col 137
-
-    // Past the 240-col content the window reveals blanks.
-    panes.get_mut(&pid).unwrap().h_scroll = 200;
-    render_frame(
-        &mut out,
-        &layout,
-        &mut panes,
-        80,
-        10,
-        240,
-        &Palette::default(),
-        &crate::config::Minimap::default(),
-        false,
-        None,
-    );
-    assert_eq!(at(&out, 0), '1'); // content col 200
-    assert_eq!(at(&out, 39), '0'); // content col 239
-    assert_eq!(at(&out, 45), ' '); // past content end -> blank
-
-    panes.get_mut(&pid).unwrap().child.kill();
-}
-
-/// End-to-end acceptance for the quarter-pane overflow fix: four real PTY
-/// children, one per quarter column, rendered by `render_frame` at 342 cols
-/// (the reported failure width, not divisible by 4). Every screen cell up to
-/// and including the rightmost column must show the pane that owns it, with
-/// pane content never spilling past a column boundary or the screen edge.
-#[test]
-fn four_quarter_panes_render_to_screen_edge_e2e() {
-    use gwae_layout::{Preset, Width};
-    let cols: u16 = 342;
-    let rows: u16 = 8;
-    let mut layout = Layout::new(1);
-    if let Some(r) = layout.row_mut(layout.focus.row) {
-        r.columns.clear();
-    }
-    let row = layout.focus.row;
-    let fills = ['A', 'B', 'C', 'D'];
-    let mut pids = Vec::new();
-    for _ in fills {
-        let p = layout.alloc_pane();
-        layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
-        pids.push(p);
-    }
-    let ranges = layout
-        .column_x_ranges(row, cols)
-        .expect("ranges for the four-quarter row");
-    assert_eq!(ranges.last().unwrap().1, cols as u32);
-
-    // Spawn one real child per pane, each filling a line with its letter.
-    let (tx, rx) = channel::<PaneMsg>();
-    let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
-    for (i, pid) in pids.iter().enumerate() {
-        let w = (ranges[i].1 - ranges[i].0) as u16;
-        let cmd = format!(
-            "sh -c \"for i in $(seq 1 {w}); do printf '%s' {}; done; echo\"",
-            fills[i]
-        );
-        let pane = spawn_pane(*pid, &cmd, w, rows, tx.clone(), None, CellPixels::default())
+        let (tx, rx) = channel::<PaneMsg>();
+        let cmd = "sh -c \"for i in $(seq 1 240); do printf '%s' $((i % 10)); done; echo\"";
+        let pane = spawn_pane(pid, cmd, 240, 10, tx.clone(), None, CellPixels::default())
             .expect("spawn pane");
-        panes.insert(*pid, pane);
-    }
-    // Feed PTY output until every pane's first row is fully painted.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while std::time::Instant::now() < deadline {
-        let done = pids.iter().enumerate().all(|(i, pid)| {
-            let w = (ranges[i].1 - ranges[i].0) as u16;
-            panes
-                .get(pid)
-                .map(|p| p.grid.cell(w.saturating_sub(1), 0).ch == fills[i])
-                .unwrap_or(false)
-        });
-        if done {
-            break;
-        }
-        match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(PaneMsg::Output(pid, bytes)) => {
-                if let Some(p) = panes.get_mut(&pid) {
-                    p.grid.feed(&bytes);
+        let mut pane = pane;
+        // Feed PTY output until the 240-cell digit line has landed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        'feed: while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(PaneMsg::Output(_, bytes)) => {
+                    pane.grid.feed(&bytes);
+                    if pane.grid.cell(239, 0).ch != ' ' {
+                        break 'feed;
+                    }
                 }
+                Ok(PaneMsg::Exited(_)) | Err(_) => break 'feed,
             }
-            Ok(PaneMsg::Exited(_)) => {}
-            Err(_) => {}
         }
-    }
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        panes.insert(pid, pane);
+        let mut out = Vec::new();
 
-    let mut out = Vec::new();
-    render_frame(
-        &mut out,
-        &layout,
-        &mut panes,
-        cols,
-        rows,
-        0,
-        &Palette::default(),
-        &crate::config::Minimap::default(),
-        false,
-        None,
-    );
-    // The first content row shows each pane's letter across its column's
-    // interior: the frame owns the boundary cells, content never bleeds past
-    // them, and the rightmost column reaches the screen edge.
-    let row1 = cols as usize; // screen row 1: the first content row
-    for (i, (s, e)) in ranges.iter().enumerate() {
-        for x in (*s + 1)..(*e - 1) {
-            assert_eq!(
-                out[row1 + x as usize].ch,
-                fills[i],
-                "screen x={x} must show pane {} content",
-                fills[i]
-            );
-        }
-    }
-    assert_eq!(
-        out[cols as usize - 1].ch,
-        '╮',
-        "the rightmost column's frame reaches the screen edge"
-    );
-    assert_eq!(
-        out[row1 + cols as usize - 2].ch,
-        'D',
-        "pane D's content runs up to its frame"
-    );
-    for p in panes.values_mut() {
-        kill_pane_tree(&mut p.child);
-    }
-}
-
-/// Live-PTy proof that pane 4's content overflows at its logical width
-/// rather than wrapping early: a widened last column keeps a 39-cell grid
-/// (80 cols, half width, 1-cell left frame inset), so a 39-char line fills
-/// exactly one emulator row instead of wrapping at the 38-cell visible
-/// rect the old clamped sizing produced.
-#[test]
-fn widened_last_pane_wraps_at_logical_width_e2e() {
-    use gwae_layout::{Action, FollowScroll, Preset, Viewport, Width};
-    let cols: u16 = 80;
-    let rows: u16 = 10;
-    let mut layout = Layout::new(1);
-    if let Some(r) = layout.row_mut(layout.focus.row) {
-        r.columns.clear();
-    }
-    let row = layout.focus.row;
-    let mut pids = Vec::new();
-    for _ in 0..4 {
-        let p = layout.alloc_pane();
-        layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
-        pids.push(p);
-    }
-    // Widen pane 4 to half (quarter -> third -> half).
-    layout.focus.column = 3;
-    let vp = Viewport::new(cols);
-    for _ in 0..2 {
-        let _ = layout.apply(Action::CycleWidth, vp, FollowScroll::default());
-    }
-    let views = focused_pane_views(&layout, cols, rows, 0, &HashMap::new(), true);
-    let v = views.iter().find(|v| v.col == 3).unwrap();
-    assert_eq!(v.grid_cols, 39, "pane 4 keeps its logical grid width");
-
-    // Print exactly 39 chars with no trailing newline, then check the
-    // emulator wrapped (or not) at the live grid width.
-    let (tx, rx) = channel::<PaneMsg>();
-    let cmd = format!("sh -c \"printf '%s' {}\"", "D".repeat(v.grid_cols as usize));
-    let pane = spawn_pane(
-        pids[3],
-        &cmd,
-        v.grid_cols,
-        rows,
-        tx.clone(),
-        None,
-        CellPixels::default(),
-    )
-    .expect("spawn pane");
-    let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
-    panes.insert(pids[3], pane);
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while std::time::Instant::now() < deadline {
-        let done = panes
-            .get(&pids[3])
-            .map(|p| p.grid.cell(v.grid_cols.saturating_sub(1), 0).ch == 'D')
-            .unwrap_or(false);
-        if done {
-            break;
-        }
-        match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(PaneMsg::Output(pid, bytes)) => {
-                if let Some(p) = panes.get_mut(&pid) {
-                    p.grid.feed(&bytes);
-                }
-            }
-            Ok(PaneMsg::Exited(_)) => {}
-            Err(_) => {}
-        }
-    }
-    let p = panes.get(&pids[3]).expect("pane 4 live");
-    assert_eq!(
-        p.grid.cell(0, 0).ch,
-        'D',
-        "line starts at the first grid cell"
-    );
-    assert_eq!(
-        p.grid.cell(v.grid_cols.saturating_sub(1), 0).ch,
-        'D',
-        "39-char line fills the logical row without wrapping early"
-    );
-    assert_eq!(
-        p.grid.cell(0, 1).ch,
-        ' ',
-        "nothing spills to row 1: no early wrap at the visible width"
-    );
-    for p in panes.values_mut() {
-        kill_pane_tree(&mut p.child);
-    }
-}
-
-/// Acceptance for scroll-state paint stability (the user-visible bug: "grids
-/// are painted slightly differently across different scroll states despite
-/// identical panes"). Eight identical quarter columns of real PTY panes at
-/// 342 cols (not divisible by 4, the width where absolute-rounded boundaries
-/// wobble by one cell between stops). Walking focus across the whole strip in
-/// the skeleton renderer, the x-positions of the vertical frame edges painted
-/// on a mid-strip row must be identical in every frame.
-#[test]
-fn identical_grids_paint_identically_across_scroll_states_e2e() {
-    use gwae_layout::{Action, FollowScroll, Preset, Viewport, Width};
-    let cols: u16 = 342;
-    let rows: u16 = 8;
-    let n = 8usize;
-    let mut layout = Layout::new(1);
-    if let Some(r) = layout.row_mut(layout.focus.row) {
-        r.columns.clear();
-    }
-    let row = layout.focus.row;
-    let mut pids = Vec::new();
-    for _ in 0..n {
-        let p = layout.alloc_pane();
-        layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
-        pids.push(p);
-    }
-    // Real PTY children (sleeping shells: content is irrelevant, the frame
-    // geometry is what must not wobble).
-    let (tx, _rx) = channel::<PaneMsg>();
-    let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
-    for pid in &pids {
-        let pane = spawn_pane(
-            *pid,
-            "sleep 30",
-            80,
-            rows,
-            tx.clone(),
-            None,
-            CellPixels::default(),
-        )
-        .expect("spawn pane");
-        panes.insert(*pid, pane);
-    }
-
-    let vp = Viewport::new(cols);
-    let f = FollowScroll::default();
-    let mut out = Vec::new();
-    // Frames are thin box-drawing glyphs; the vertical edges (`│`) crossing a
-    // mid-strip row mark every column boundary on screen.
-    let mut boundary_sets: Vec<(i32, Vec<u16>)> = Vec::new();
-    let mut paint = |layout: &Layout, panes: &mut HashMap<PaneId, PtyPane>| -> Vec<u16> {
+        // At scroll 0 the viewport shows content columns 0..79 (digits 1,2,...,0).
+        panes.get_mut(&pid).unwrap().h_scroll = 0;
         render_frame(
             &mut out,
-            layout,
-            panes,
+            &layout,
+            &mut panes,
+            80,
+            10,
+            240,
+            &Palette::default(),
+            &crate::config::Minimap::default(),
+            false,
+            None,
+        );
+        // Content is inset 1 cell inside the column frame: grid (x,0) is at
+        // screen (x + 1, 1).
+        let at = |out: &Vec<Cell>, x: usize| out[80 + 1 + x].ch;
+        assert_eq!(at(&out, 0), '1'); // content col 0 -> first content cell
+        assert_eq!(at(&out, 9), '0'); // content col 9
+        assert_eq!(at(&out, 77), '8'); // content col 77
+
+        // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
+        panes.get_mut(&pid).unwrap().h_scroll = 60;
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            80,
+            10,
+            240,
+            &Palette::default(),
+            &crate::config::Minimap::default(),
+            false,
+            None,
+        );
+        assert_eq!(at(&out, 0), '1'); // content col 60
+        assert_eq!(at(&out, 1), '2'); // content col 61
+        assert_eq!(at(&out, 77), '8'); // content col 137
+
+        // Past the 240-col content the window reveals blanks.
+        panes.get_mut(&pid).unwrap().h_scroll = 200;
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            80,
+            10,
+            240,
+            &Palette::default(),
+            &crate::config::Minimap::default(),
+            false,
+            None,
+        );
+        assert_eq!(at(&out, 0), '1'); // content col 200
+        assert_eq!(at(&out, 39), '0'); // content col 239
+        assert_eq!(at(&out, 45), ' '); // past content end -> blank
+
+        panes.get_mut(&pid).unwrap().child.kill();
+    }
+
+    /// End-to-end acceptance for the quarter-pane overflow fix: four real PTY
+    /// children, one per quarter column, rendered by `render_frame` at 342 cols
+    /// (the reported failure width, not divisible by 4). Every screen cell up to
+    /// and including the rightmost column must show the pane that owns it, with
+    /// pane content never spilling past a column boundary or the screen edge.
+    #[test]
+    fn four_quarter_panes_render_to_screen_edge_e2e() {
+        use gwae_layout::{Preset, Width};
+        let cols: u16 = 342;
+        let rows: u16 = 8;
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        let fills = ['A', 'B', 'C', 'D'];
+        let mut pids = Vec::new();
+        for _ in fills {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
+            pids.push(p);
+        }
+        let ranges = layout
+            .column_x_ranges(row, cols)
+            .expect("ranges for the four-quarter row");
+        assert_eq!(ranges.last().unwrap().1, cols as u32);
+
+        // Spawn one real child per pane, each filling a line with its letter.
+        let (tx, rx) = channel::<PaneMsg>();
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        for (i, pid) in pids.iter().enumerate() {
+            let w = (ranges[i].1 - ranges[i].0) as u16;
+            let cmd = format!(
+                "sh -c \"for i in $(seq 1 {w}); do printf '%s' {}; done; echo\"",
+                fills[i]
+            );
+            let pane = spawn_pane(*pid, &cmd, w, rows, tx.clone(), None, CellPixels::default())
+                .expect("spawn pane");
+            panes.insert(*pid, pane);
+        }
+        // Feed PTY output until every pane's first row is fully painted.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let done = pids.iter().enumerate().all(|(i, pid)| {
+                let w = (ranges[i].1 - ranges[i].0) as u16;
+                panes
+                    .get(pid)
+                    .map(|p| p.grid.cell(w.saturating_sub(1), 0).ch == fills[i])
+                    .unwrap_or(false)
+            });
+            if done {
+                break;
+            }
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(PaneMsg::Output(pid, bytes)) => {
+                    if let Some(p) = panes.get_mut(&pid) {
+                        p.grid.feed(&bytes);
+                    }
+                }
+                Ok(PaneMsg::Exited(_)) => {}
+                Err(_) => {}
+            }
+        }
+
+        let mut out = Vec::new();
+        render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
             cols,
             rows,
             0,
@@ -1889,45 +1678,221 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
             false,
             None,
         );
-        let y = 2usize;
-        (0..cols)
-            .filter(|x| out[y * cols as usize + *x as usize].ch == '│')
-            .collect()
-    };
-    // Walk focus right across the whole strip, painting at every stop, then
-    // back left (reverse stops can differ from forward ones).
-    let mut boundary_scroll = 0;
-    boundary_sets.push((boundary_scroll, paint(&layout, &mut panes)));
-    for _ in 0..n - 1 {
-        boundary_scroll = layout.apply(Action::FocusRight, vp, f).unwrap();
-        boundary_sets.push((boundary_scroll, paint(&layout, &mut panes)));
-    }
-    for _ in 0..n - 1 {
-        boundary_scroll = layout.apply(Action::FocusLeft, vp, f).unwrap();
-        boundary_sets.push((boundary_scroll, paint(&layout, &mut panes)));
-    }
-    // Every painted frame shows the same vertical-edge skeleton: the grid
-    // never shifts by a cell between scroll states.
-    let first = &boundary_sets[0].1;
-    assert!(
-        !first.is_empty(),
-        "skeleton frame painted no vertical edges"
-    );
-    for (scroll, set) in &boundary_sets {
+        // The first content row shows each pane's letter across its column's
+        // interior: the frame owns the boundary cells, content never bleeds past
+        // them, and the rightmost column reaches the screen edge.
+        let row1 = cols as usize; // screen row 1: the first content row
+        for (i, (s, e)) in ranges.iter().enumerate() {
+            for x in (*s + 1)..(*e - 1) {
+                assert_eq!(
+                    out[row1 + x as usize].ch,
+                    fills[i],
+                    "screen x={x} must show pane {} content",
+                    fills[i]
+                );
+            }
+        }
         assert_eq!(
-            set, first,
-            "grid boundaries moved at scroll={scroll}: {set:?} != {first:?}"
+            out[cols as usize - 1].ch,
+            '╮',
+            "the rightmost column's frame reaches the screen edge"
         );
+        assert_eq!(
+            out[row1 + cols as usize - 2].ch,
+            'D',
+            "pane D's content runs up to its frame"
+        );
+        for p in panes.values_mut() {
+            kill_pane_tree(&mut p.child);
+        }
     }
-    // Distinct scroll stops were actually exercised (not one static frame).
-    let stops: std::collections::HashSet<i32> = boundary_sets.iter().map(|(s, _)| *s).collect();
-    assert!(
-        stops.len() >= 4,
-        "expected several scroll stops, got {stops:?}"
-    );
-    for p in panes.values_mut() {
-        kill_pane_tree(&mut p.child);
-    }
-}
 
+    /// Live-PTy proof that pane 4's content overflows at its logical width
+    /// rather than wrapping early: a widened last column keeps a 39-cell grid
+    /// (80 cols, half width, 1-cell left frame inset), so a 39-char line fills
+    /// exactly one emulator row instead of wrapping at the 38-cell visible
+    /// rect the old clamped sizing produced.
+    #[test]
+    fn widened_last_pane_wraps_at_logical_width_e2e() {
+        use gwae_layout::{Action, FollowScroll, Preset, Viewport, Width};
+        let cols: u16 = 80;
+        let rows: u16 = 10;
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        let mut pids = Vec::new();
+        for _ in 0..4 {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
+            pids.push(p);
+        }
+        // Widen pane 4 to half (quarter -> third -> half).
+        layout.focus.column = 3;
+        let vp = Viewport::new(cols);
+        for _ in 0..2 {
+            let _ = layout.apply(Action::CycleWidth, vp, FollowScroll::default());
+        }
+        let views = focused_pane_views(&layout, cols, rows, 0, &HashMap::new(), true);
+        let v = views.iter().find(|v| v.col == 3).unwrap();
+        assert_eq!(v.grid_cols, 39, "pane 4 keeps its logical grid width");
+
+        // Print exactly 39 chars with no trailing newline, then check the
+        // emulator wrapped (or not) at the live grid width.
+        let (tx, rx) = channel::<PaneMsg>();
+        let cmd = format!("sh -c \"printf '%s' {}\"", "D".repeat(v.grid_cols as usize));
+        let pane = spawn_pane(
+            pids[3],
+            &cmd,
+            v.grid_cols,
+            rows,
+            tx.clone(),
+            None,
+            CellPixels::default(),
+        )
+        .expect("spawn pane");
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        panes.insert(pids[3], pane);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let done = panes
+                .get(&pids[3])
+                .map(|p| p.grid.cell(v.grid_cols.saturating_sub(1), 0).ch == 'D')
+                .unwrap_or(false);
+            if done {
+                break;
+            }
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(PaneMsg::Output(pid, bytes)) => {
+                    if let Some(p) = panes.get_mut(&pid) {
+                        p.grid.feed(&bytes);
+                    }
+                }
+                Ok(PaneMsg::Exited(_)) => {}
+                Err(_) => {}
+            }
+        }
+        let p = panes.get(&pids[3]).expect("pane 4 live");
+        assert_eq!(
+            p.grid.cell(0, 0).ch,
+            'D',
+            "line starts at the first grid cell"
+        );
+        assert_eq!(
+            p.grid.cell(v.grid_cols.saturating_sub(1), 0).ch,
+            'D',
+            "39-char line fills the logical row without wrapping early"
+        );
+        assert_eq!(
+            p.grid.cell(0, 1).ch,
+            ' ',
+            "nothing spills to row 1: no early wrap at the visible width"
+        );
+        for p in panes.values_mut() {
+            kill_pane_tree(&mut p.child);
+        }
+    }
+
+    /// Acceptance for scroll-state paint stability (the user-visible bug: "grids
+    /// are painted slightly differently across different scroll states despite
+    /// identical panes"). Eight identical quarter columns of real PTY panes at
+    /// 342 cols (not divisible by 4, the width where absolute-rounded boundaries
+    /// wobble by one cell between stops). Walking focus across the whole strip in
+    /// the skeleton renderer, the x-positions of the vertical frame edges painted
+    /// on a mid-strip row must be identical in every frame.
+    #[test]
+    fn identical_grids_paint_identically_across_scroll_states_e2e() {
+        use gwae_layout::{Action, FollowScroll, Preset, Viewport, Width};
+        let cols: u16 = 342;
+        let rows: u16 = 8;
+        let n = 8usize;
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        let mut pids = Vec::new();
+        for _ in 0..n {
+            let p = layout.alloc_pane();
+            layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
+            pids.push(p);
+        }
+        // Real PTY children (sleeping shells: content is irrelevant, the frame
+        // geometry is what must not wobble).
+        let (tx, _rx) = channel::<PaneMsg>();
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        for pid in &pids {
+            let pane = spawn_pane(
+                *pid,
+                "sleep 30",
+                80,
+                rows,
+                tx.clone(),
+                None,
+                CellPixels::default(),
+            )
+            .expect("spawn pane");
+            panes.insert(*pid, pane);
+        }
+
+        let vp = Viewport::new(cols);
+        let f = FollowScroll::default();
+        let mut out = Vec::new();
+        // Frames are thin box-drawing glyphs; the vertical edges (`│`) crossing a
+        // mid-strip row mark every column boundary on screen.
+        let mut boundary_sets: Vec<(i32, Vec<u16>)> = Vec::new();
+        let mut paint = |layout: &Layout, panes: &mut HashMap<PaneId, PtyPane>| -> Vec<u16> {
+            render_frame(
+                &mut out,
+                layout,
+                panes,
+                cols,
+                rows,
+                0,
+                &Palette::default(),
+                &crate::config::Minimap::default(),
+                false,
+                None,
+            );
+            let y = 2usize;
+            (0..cols)
+                .filter(|x| out[y * cols as usize + *x as usize].ch == '│')
+                .collect()
+        };
+        // Walk focus right across the whole strip, painting at every stop, then
+        // back left (reverse stops can differ from forward ones).
+        let mut boundary_scroll = 0;
+        boundary_sets.push((boundary_scroll, paint(&layout, &mut panes)));
+        for _ in 0..n - 1 {
+            boundary_scroll = layout.apply(Action::FocusRight, vp, f).unwrap();
+            boundary_sets.push((boundary_scroll, paint(&layout, &mut panes)));
+        }
+        for _ in 0..n - 1 {
+            boundary_scroll = layout.apply(Action::FocusLeft, vp, f).unwrap();
+            boundary_sets.push((boundary_scroll, paint(&layout, &mut panes)));
+        }
+        // Every painted frame shows the same vertical-edge skeleton: the grid
+        // never shifts by a cell between scroll states.
+        let first = &boundary_sets[0].1;
+        assert!(
+            !first.is_empty(),
+            "skeleton frame painted no vertical edges"
+        );
+        for (scroll, set) in &boundary_sets {
+            assert_eq!(
+                set, first,
+                "grid boundaries moved at scroll={scroll}: {set:?} != {first:?}"
+            );
+        }
+        // Distinct scroll stops were actually exercised (not one static frame).
+        let stops: std::collections::HashSet<i32> = boundary_sets.iter().map(|(s, _)| *s).collect();
+        assert!(
+            stops.len() >= 4,
+            "expected several scroll stops, got {stops:?}"
+        );
+        for p in panes.values_mut() {
+            kill_pane_tree(&mut p.child);
+        }
+    }
 }
