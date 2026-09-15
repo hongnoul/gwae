@@ -430,7 +430,7 @@ fn saving_from_the_picker_writes_agent_dir_to_the_config() {
         &root,
         // A comment and an unrelated key: the rewrite must preserve both,
         // since the config is a hand-edited file.
-        "# my config\nscroll_margin = 4\n",
+        "# my config\nstartup_panes = 1\n",
         "sleep 60",
         &root,
         &[],
@@ -460,7 +460,7 @@ fn saving_from_the_picker_writes_agent_dir_to_the_config() {
         "with the directory that was highlighted; got:\n{text}"
     );
     assert!(
-        text.contains("# my config") && text.contains("scroll_margin = 4"),
+        text.contains("# my config") && text.contains("startup_panes = 1"),
         "and the rest of the file must survive; got:\n{text}"
     );
     s.kill();

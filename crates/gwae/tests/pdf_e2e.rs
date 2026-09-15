@@ -89,7 +89,7 @@ impl Session {
         write_pdf(&pdf);
         std::fs::write(
             dir.join("gwae/gwae.toml"),
-            "default_column_width = 'full'\ncontent_width = 0\nstartup_panes = 1\n\
+            "default_column_width = 'full'\nstartup_panes = 1\n\
              [minimap]\nshow = false\n\
              [update]\ncheck = false\n",
         )

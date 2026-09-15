@@ -74,7 +74,7 @@ impl Session {
         .unwrap();
         std::fs::write(
             dir.join("gwae/gwae.toml"),
-            "default_column_width = 'quarter'\ncontent_width = 0\nstartup_panes = 1\n\
+            "default_column_width = 'quarter'\nstartup_panes = 1\n\
              [minimap]\nshow = false\n\
              [update]\ncheck = false\n",
         )

@@ -94,7 +94,7 @@ impl Session {
         std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
         std::fs::write(
             dir.join("gwae/gwae.toml"),
-            "startup_panes = 1\ndefault_agent = \"jcode\"\ndefault_column_width = \"quarter\"\ncontent_width = 0\n\
+            "startup_panes = 1\ndefault_agent = \"jcode\"\ndefault_column_width = \"quarter\"\n\
              keep_awake = false\n\
              [minimap]\nshow = false\n\
              [update]\ncheck = false\n",

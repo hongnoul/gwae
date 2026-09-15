@@ -12,9 +12,6 @@ Example:
 
 ```toml
 default_column_width = "half"     # or "quarter", "two-thirds", "full", or 80 (cells)
-scroll_margin = 2
-center_focus = false
-content_width = 0
 default_agent = "claude"           # first pane + ; launch this
 agents = ["my-agent-wrapper"]     # extra names for the selector
 agent_dir = "~/git/gwae"          # directory new panes start in ("" = gwae's cwd)
@@ -43,7 +40,7 @@ Yazi owns its internal panel layout. The optional
 [`gwae-responsive` plugin](../examples/yazi/) hides its parent and preview
 panels below 64 columns, reveals the preview at 64, and restores the full
 layout at 96. It follows pane resizes automatically and leaves standalone
-Yazi unchanged. Keep `content_width = 0` so Yazi sees the visible pane width.
+Yazi unchanged. Panes wrap at the visible width, so Yazi sees the pane width.
 
 ## Staying up to date (`[update]`)
 
@@ -103,8 +100,8 @@ Everything else here is hand-edit only, deliberately:
 
 * `input_poll_ms` defaults to `1`, so there is nothing to set up: settings that only
   you can change (kitty, macOS) are reported once on the summary screen.
-* `[minimap]` geometry and `scroll_margin` are niche tastes; a
-  setup flow long enough to cover them is one nobody finishes.
+* `[minimap]` geometry is a niche taste; a
+  setup flow long enough to cover it is one nobody finishes.
 * `btm` is not a config key at all - it is an action on the machine, so it is
   never written to this file. On macOS a yes installs Homebrew first if it is
   missing. Set `GWAE_NO_INSTALL=1` to turn the offer off entirely.
@@ -190,9 +187,6 @@ A config file that is not being applied at all points at the syntax error:
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `default_column_width` | width | `"quarter"` | Width of newly created columns. A preset name (`"quarter"`, `"third"`, `"half"`, `"two-thirds"`, `"three-quarters"`, `"full"`; separators and case are ignored, and `"1/2"` style also works), a bare integer for fixed cells (`80`), or the table forms `{ preset = "half" }` / `{ cells = 80 }`. |
-| `scroll_margin` | integer | `2` | Cells of context kept visible around the focused column when scrolling. |
-| `center_focus` | bool | `false` | Always center the focused column (niri's centered mode) instead of scrolling minimally. |
-| `content_width` | integer | `0` | Logical grid content width (cells) of every pane, decoupled from the visible column width. Long lines up to this width do not wrap and can be revealed with horizontal pane scroll (`⌥+Left/Right`, the Option key on macOS). `0` (the default) follows the visible column width so lines wrap normally and there is no horizontal overflow to manage in a pane. |
 | `default_agent` | string | `""` (unset) | The agent harness `;` launches, and what the **first pane** opens on at startup. When unset, or not on `PATH`, you get the **agent selector** instead: it lists harnesses it knows, anything agent-shaped found on your `PATH`, and anything in `agents`; pick one (or type any command) and it is saved here, so every later launch goes straight to it. With nothing found it opens a plain `$SHELL`. `gwae run <cmd>` overrides the first pane. See `gwae agent --print`. |
 | `agents` | array of strings | `[]` | Extra agent commands to offer in the selector, for a harness whose name gwae cannot guess (or a wrapper script of your own). Entries that are not installed are simply not listed. |
 | `startup_panes` | integer | `1` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (shown as skeleton placeholder boxes). The default `1` opens a single terminal in the leftmost quarter. |

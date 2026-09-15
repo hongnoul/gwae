@@ -98,7 +98,7 @@ impl Session {
         std::fs::create_dir_all(dir.join("gwae")).expect("create isolated config");
         std::fs::write(
             dir.join("gwae/gwae.toml"),
-            "default_column_width = \"quarter\"\nstartup_panes = 1\ncontent_width = 0\n\
+            "default_column_width = \"quarter\"\nstartup_panes = 1\n\
              keep_awake = false\n\
              [minimap]\nshow = false\n\
              [update]\ncheck = false\n",

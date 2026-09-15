@@ -72,13 +72,9 @@ scroll state: no partial-column slivers, no margin drift.
 
 - **Follow-focus**: after a focus change, move to the *nearest stop* that
   fully reveals the focused column (minimal movement, niri feel). A column
-  wider than the viewport is shown from its left edge. `scroll_margin` is
-  ignored under quantization (partial-column margins are exactly the slivers
-  quantization removes).
+  wider than the viewport is shown from its left edge.
 - **Free scroll** pages to the previous/next stop and does not move focus;
   first pane-bound keystroke snaps back per `snap_back`.
-- Optional `center_focus` picks the feasible stop nearest the centered
-  position.
 - On resize, every row's scroll re-snaps to the nearest stop at the new
   geometry.
 

@@ -287,7 +287,7 @@ impl Session {
         std::fs::write(
             dir.join("gwae/gwae.toml"),
             format!(
-                "default_column_width = \"quarter\"\nstartup_panes = {panes}\ncontent_width = 0\n\
+                "default_column_width = \"quarter\"\nstartup_panes = {panes}\n\
                  keep_awake = false\n\
                  [minimap]\nshow = false\n\
                  [update]\ncheck = false\n"

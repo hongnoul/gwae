@@ -201,7 +201,7 @@ fn focusing_attention_panes_never_turns_redraws_into_work() {
     // Fractional quarter widths reproduce the one-cell rounding-phase resize.
     // Eight panes also leave startup panes offscreen until first visited.
     let mut s = Session::start_with_helper(
-        "startup_panes = 8\ncontent_width = 0\n\
+        "startup_panes = 8\n\
          ",
         RESIZE_HELPER,
         142,
