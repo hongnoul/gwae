@@ -415,9 +415,9 @@ fn dashboard_footer_names_key_hints() {
 #[test]
 fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     use gwae_term::{CColor, Size, TermGrid, Vt100Grid};
-    let mut s = Session::start(
-        "[theme]\npreset = \"terminal\"\naccent = 11\nrunning = 11\n",
-    );
+    // Chrome is terminal-native unconditionally: a bare config paints ANSI
+    // chrome from the host terminal's own palette.
+    let mut s = Session::start("");
     let _ = s.drain();
     widen(&mut s, 3);
     // The panel paints over several frames; on a loaded runner one peek can

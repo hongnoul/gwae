@@ -1,9 +1,8 @@
 //! `gwae doctor` must tell the user the truth about their config.
 //!
-//! Both failure modes here are silent at startup by design: a malformed config
-//! file is discarded and an unknown theme name falls back to the default, each
-//! with only a `tracing` warning that scrolls past (or never appears) before
-//! the alternate screen takes over. `doctor` is the one place a user can find
+//! A malformed config file is discarded silently at startup by design, with
+//! only a `tracing` warning that scrolls past (or never appears) before the
+//! alternate screen takes over. `doctor` is the one place a user can find
 //! out, so these tests run the real binary against real config files.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -55,48 +54,20 @@ fn doctor_with_agents(config_body: Option<&str>, agents: &[&str]) -> String {
 }
 
 #[test]
-fn reports_the_default_theme_when_no_config_exists() {
-    let out = doctor(None);
-    assert!(
-        out.contains("not present"),
-        "should say there is no config file; got:\n{out}"
-    );
-    assert!(
-        out.contains("catppuccin-mocha"),
-        "should name the default theme; got:\n{out}"
-    );
-}
-
-#[test]
-fn reports_a_configured_theme_by_name() {
-    let out = doctor(Some("theme = \"nord\"\n"));
-    assert!(
-        out.contains("theme: nord"),
-        "should report the configured theme; got:\n{out}"
-    );
-    assert!(
-        out.contains("parses [ok]"),
-        "a valid config should be reported as parsing; got:\n{out}"
-    );
-}
-
-#[test]
-fn flags_an_unknown_theme_and_lists_the_real_ones() {
-    // Silently falling back leaves the user staring at default colors with no
-    // idea their theme name was wrong (a typo like "tokyonight-storm").
-    let out = doctor(Some("theme = \"tokyonight-storm\"\n"));
-    assert!(
-        out.contains("UNKNOWN"),
-        "an unknown theme must be called out; got:\n{out}"
-    );
-    assert!(
-        out.contains("tokyonight-storm"),
-        "the offending name should be echoed back; got:\n{out}"
-    );
-    for name in ["catppuccin-mocha", "tokyo-night", "nord", "terminal"] {
+fn retired_theme_keys_do_not_break_doctor() {
+    // Old configs name themes gwae no longer reads. They must be ignored,
+    // not fatal, and doctor must stay clean.
+    for body in [
+        "theme = \"nord\"\n",
+        "theme = \"tokyonight-storm\"\n",
+        "[theme]\npreset = \"nord\"\naccent = \"#ff0000\"\n",
+        "focus_color = \"#ff0000\"\n",
+        "startup_panes = 2\n",
+    ] {
+        let out = doctor(Some(body));
         assert!(
-            out.contains(name),
-            "the available themes should be listed (missing {name}); got:\n{out}"
+            !out.contains("UNKNOWN") && !out.contains("INVALID"),
+            "retired theme keys in {body:?} should be ignored; got:\n{out}"
         );
     }
 }
@@ -105,7 +76,7 @@ fn flags_an_unknown_theme_and_lists_the_real_ones() {
 fn flags_a_config_file_that_is_being_ignored() {
     // gwae discards an unparseable config wholesale, so every setting in it
     // is silently inert. doctor must say so, and point at the syntax error.
-    let out = doctor(Some("theme = \"nord\"\nthis is not valid toml <<<\n"));
+    let out = doctor(Some("startup_panes = 2\nthis is not valid toml <<<\n"));
     assert!(
         out.contains("INVALID"),
         "a broken config must be reported as ignored; got:\n{out}"
@@ -114,20 +85,11 @@ fn flags_a_config_file_that_is_being_ignored() {
         out.contains("line 2"),
         "the parse error should locate the problem; got:\n{out}"
     );
-    assert!(
-        out.contains("catppuccin-mocha"),
-        "and the theme shown must be the fallback, not the ignored one; got:\n{out}"
-    );
 }
 
 #[test]
 fn a_valid_config_is_never_reported_as_a_problem() {
-    for body in [
-        "theme = \"gruvbox\"\n",
-        "[theme]\npreset = \"nord\"\naccent = \"#ff0000\"\n",
-        "focus_color = \"#ff0000\"\n",
-        "startup_panes = 2\n",
-    ] {
+    for body in ["startup_panes = 2\n", "focus_color = \"#ff0000\"\n"] {
         let out = doctor(Some(body));
         assert!(
             !out.contains("UNKNOWN") && !out.contains("INVALID"),

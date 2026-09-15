@@ -9,12 +9,10 @@ mod config_file;
 mod harness;
 mod latency;
 mod spawn_dir;
-mod theme;
 mod updates;
 
 pub use config_file::ConfigFileStage;
 pub use harness::HarnessStage;
 pub use latency::LatencyStage;
 pub use spawn_dir::SpawnDirStage;
-pub use theme::ThemeStage;
 pub use updates::UpdatesStage;

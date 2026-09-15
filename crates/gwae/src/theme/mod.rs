@@ -1,5 +1,7 @@
-mod config;
+//! Chrome palette: the fixed terminal-native colors.
+//!
+//! gwae has no theming. This module exists only to name the palette type.
+
 mod palette;
 
-pub use config::{Color, String2, ThemeConfig, ThemeSpec};
 pub use palette::Palette;

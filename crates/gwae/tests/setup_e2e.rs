@@ -40,18 +40,11 @@ fn setup(dir: &std::path::Path, args: &[&str]) -> (String, String, i32) {
 
 #[test]
 fn print_lists_every_stage_without_writing() {
-    let dir = sandbox(Some("theme = \"nord\"\n"));
+    let dir = sandbox(Some("startup_panes = 1\n"));
     let before = std::fs::read_to_string(dir.join("gwae/gwae.toml")).unwrap();
     let (out, _, code) = setup(&dir, &["--print"]);
     assert_eq!(code, 0, "print should exit cleanly");
-    for id in [
-        "config file",
-        "theme",
-        "agent",
-        "updates",
-        "spawn dir",
-        "latency",
-    ] {
+    for id in ["config file", "agent", "updates", "spawn dir", "latency"] {
         assert!(out.contains(id), "print missing stage {id}:\n{out}");
     }
     let after = std::fs::read_to_string(dir.join("gwae/gwae.toml")).unwrap();
@@ -106,7 +99,7 @@ fn doctor_contains_one_line_per_stage() {
     let out = cmd.output().expect("run gwae doctor");
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    for id in ["config file:", "theme:", "agent:", "latency:"] {
+    for id in ["config file:", "agent:", "latency:"] {
         assert!(text.contains(id), "doctor missing {id}:\n{text}");
     }
 }

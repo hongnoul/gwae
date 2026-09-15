@@ -16,12 +16,11 @@ const QUIET_AFTER: Duration = Duration::from_secs(4);
 /// Run the interactive TUI.
 pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) -> Result<(), i32> {
     use std::io;
-    // Config and palette are re-resolved whenever the config file changes on
-    // disk (see the reload check in the render loop), so both are mutable.
+    // Config is re-resolved whenever the config file changes on disk (see
+    // the reload check in the render loop). The palette is fixed: the host
+    // terminal's own colors. Every chrome color painted below reads from it.
     let mut cfg = cfg;
-    // The theme: preset lookup + `[theme]` overrides + the legacy top-level
-    // color keys. Every chrome color painted below reads from this palette.
-    let mut pal = cfg.palette();
+    let pal = cfg.palette();
     let mut stdout = io::stdout();
     // Arm signal handlers + panic hook before the first pane exists, and hold
     // a drop guard so every early return below still reaps. Quitting gwae is
@@ -355,10 +354,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // Whether the update notice still has to be shown. Latched false after
     // one showing so a user who dismissed it is not told again this session.
     let mut update_note_pending = true;
-    // Theme picker (⌥+t): Some(index into Palette::NAMES) while open. The
-    // selection previews live, so the whole screen is the preview and the
-    // picker itself only needs to show the name.
-    let mut theme_pick: Option<usize> = None;
     // Spawn-directory picker (⌥+d): the candidate list, the typed filter, and
     // the highlighted row. Built when the picker opens rather than at startup
     // so a repo cloned mid-session shows up without a restart.
@@ -481,7 +476,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         }
 
         // Live config reload. Editing the config file repaints the running
-        // session, so tweaking a theme is a save away rather than a restart:
+        // session, so a config edit is a save away rather than a restart:
         // restarting would kill every pane, which is exactly what someone
         // running long-lived agents cannot afford.
         //
@@ -496,17 +491,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 cfg_mtime = now;
                 match Config::load_checked(&cfg_path) {
                     Ok(new) => {
-                        let (new_pal, bad) = new.palette_checked();
                         // Keep the panes and their harnesses exactly as they
                         // are; only adopt what is re-read every frame.
                         let was_awake = cfg.keep_awake;
                         cfg.adopt_appearance(new);
-                        pal = new_pal;
                         reload_note_anchor = None;
-                        let mut note = match bad {
-                            Some(name) => format!("unknown theme {name:?}"),
-                            None => format!("config reloaded: {}", cfg.theme_name()),
-                        };
+                        let mut note = "config reloaded".to_string();
                         if was_awake != cfg.keep_awake {
                             keep_awake.refresh(cfg.keep_awake);
                             note.push_str(if cfg.keep_awake {
@@ -520,8 +510,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     }
                     Err(e) => {
                         // Keep the running config: a half-written file (the
-                        // editor saved mid-keystroke) must not blow away a
-                        // working theme.
+                        // editor saved mid-keystroke) must not blow away the
+                        // running session.
                         reload_note_anchor = None;
                         reload_note = Some(format!("config error: {}", first_line(&e)));
                         dirty = true;
@@ -650,9 +640,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 pick.query.push_str(&query);
                                 pick.sel = 0;
                             }
-                            continue;
-                        }
-                        if theme_pick.is_some() {
                             continue;
                         }
                         // Like typed input, finish any pending column jump
@@ -854,61 +841,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             dirty = true;
                             continue;
                         }
-                        // While the theme picker is open it owns the keyboard:
-                        // arrows/hjkl step through presets, Enter keeps the
-                        // choice, Escape restores what was there before. Without
-                        // this the keys would reach the focused pane instead.
-                        if let Some(sel) = theme_pick {
-                            let n = Palette::NAMES.len();
-                            let mut close: Option<bool> = None; // Some(keep?)
-                            let mut next = sel;
-                            match ke.code {
-                                KeyCode::Left | KeyCode::Up => next = (sel + n - 1) % n,
-                                KeyCode::Right | KeyCode::Down => next = (sel + 1) % n,
-                                KeyCode::Char('h') | KeyCode::Char('k') => next = (sel + n - 1) % n,
-                                KeyCode::Char('l') | KeyCode::Char('j') => next = (sel + 1) % n,
-                                KeyCode::Char('\u{2d9}') | KeyCode::Char('\u{2da}') => {
-                                    next = (sel + n - 1) % n
-                                }
-                                KeyCode::Char('\u{ac}') | KeyCode::Char('\u{2206}') => {
-                                    next = (sel + 1) % n
-                                }
-                                KeyCode::Enter => close = Some(true),
-                                KeyCode::Esc => close = Some(false),
-                                KeyCode::Char('\u{2020}') => close = Some(true),
-                                KeyCode::Char('t') if ke.modifiers.contains(KeyModifiers::ALT) => {
-                                    close = Some(true)
-                                }
-                                _ => {}
-                            }
-                            match close {
-                                Some(true) => {
-                                    theme_pick = None;
-                                    reload_note_anchor = None;
-                                    reload_note = Some(format!(
-                                        "theme: {} — add `theme = \"{}\"` to keep it",
-                                        Palette::NAMES[sel],
-                                        Palette::NAMES[sel]
-                                    ));
-                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                }
-                                Some(false) => {
-                                    // Restore the configured theme: the preview
-                                    // never touched the config file.
-                                    theme_pick = None;
-                                    pal = cfg.palette();
-                                }
-                                None => {
-                                    if next != sel {
-                                        theme_pick = Some(next);
-                                        pal = Palette::preset(Palette::NAMES[next])
-                                            .unwrap_or_default();
-                                    }
-                                }
-                            }
-                            dirty = true;
-                            continue;
-                        }
                         // Harness-first scroll: an agent harness (jcode) owns
                         // Ctrl+Shift+J/K natively, so when it is focused the
                         // chord is forwarded to the child untouched instead of
@@ -1043,18 +975,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         sel: 0,
                                         harness_label,
                                     });
-                                    dirty = true;
-                                }
-                                Cmd::ThemePick(_) => {
-                                    // Open on the currently configured theme when
-                                    // it is a known preset, so stepping starts
-                                    // from what the user is actually looking at.
-                                    let cur = Palette::NAMES
-                                        .iter()
-                                        .position(|n| Palette::preset(n) == Some(pal))
-                                        .unwrap_or(0);
-                                    theme_pick = Some(cur);
-                                    pal = Palette::preset(Palette::NAMES[cur]).unwrap_or_default();
                                     dirty = true;
                                 }
                                 Cmd::Scroll(d) => {
@@ -1550,9 +1470,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     paint_center_minimap(&mut frame, cols, rows, &layout, plan, &pal, &hud_facts);
                 }
             }
-            if let Some(sel) = theme_pick {
-                draw_theme_picker(&mut frame, cols, rows, sel, &pal);
-            }
             if let Some(pick) = &dir_pick {
                 draw_dir_picker(&mut frame, cols, rows, pick, &pal);
             }
@@ -1570,9 +1487,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 );
             }
             if let Some(note) = &reload_note {
-                let ok = !note.contains("error")
-                    && !note.starts_with("unknown theme")
-                    && !note.starts_with("paste failed:");
+                let ok =
+                    !note.contains("error") && !note.starts_with("paste failed:");
                 draw_toast_at(&mut frame, cols, rows, note, &pal, ok, reload_note_anchor);
             }
             // Topmost: the destructive confirmation must never be obscured by

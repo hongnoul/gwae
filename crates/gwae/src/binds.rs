@@ -60,8 +60,6 @@ pub enum Effect {
     Act(Action),
     /// Smart-jump to the pane that needs the user.
     SmartJump,
-    /// Open the theme picker.
-    ThemePick,
     /// Open the spawn-directory picker.
     DirPick,
     /// Toggle the cheat-sheet HUD.
@@ -315,14 +313,6 @@ pub const BINDS: &[Bind] = &[
         group: Group::Panes,
         desc: "force quit",
         effect: Effect::Quit,
-    },
-    Bind {
-        trigger: Trigger::Chord('t'),
-        hint: "previews themes",
-        glyph: Some('\u{2020}'),
-        group: Group::Panes,
-        desc: "theme picker",
-        effect: Effect::ThemePick,
     },
     Bind {
         trigger: Trigger::Chord('d'),

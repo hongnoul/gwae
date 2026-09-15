@@ -1,9 +1,10 @@
-//! End-to-end: editing the config file must re-theme a *running* session.
+//! End-to-end: editing the config file must reload a *running* session.
 //!
-//! This is the whole point of live reload. Restarting gwae to change a
-//! color would kill every pane, which is exactly what someone running
-//! long-lived agents cannot afford, so the acceptance check is that the
-//! colors on the wire change while the same process keeps running.
+//! This is the whole point of live reload. Restarting gwae would kill every
+//! pane, which is exactly what someone running long-lived agents cannot
+//! afford, so the acceptance check is that a config edit takes effect while
+//! the same process keeps running. Chrome itself is fixed to the terminal's
+//! own colors, so reload is about behavior keys, not colors.
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::Read;
@@ -101,47 +102,35 @@ impl Session {
 }
 
 /// A case body, unchanged.
-///
-/// These cases read the live theme off the frame glyphs, which carry every
-/// palette key as a *foreground* color. The frames are the only look, so
-/// nothing has to be turned on for them to appear.
 fn with_frames(body: &str) -> String {
     body.to_string()
 }
 
-/// The SGR foreground sequence for a 24-bit color. The skeleton frames are
-/// drawn as glyphs, so theme colors arrive as foreground codes.
-fn fg(r: u8, g: u8, b: u8) -> String {
-    format!("38;2;{r};{g};{b}")
+#[test]
+fn editing_the_config_reloads_the_running_session() {
+    // Save a behavior key, as a user editing their config would. The session
+    // must confirm without restarting.
+    let s = Session::start("");
+    let _ = s.drain(3);
+    s.write_config("startup_panes = 1\n");
+    let after = s.drain(4);
+    assert!(
+        after.contains("reloaded"),
+        "the running session should confirm the reload; got:\n{after:?}"
+    );
+    s.kill();
 }
 
-const MOCHA_ACCENT: (u8, u8, u8) = (0x74, 0xc7, 0xec);
-const NORD_ACCENT: (u8, u8, u8) = (0x88, 0xc0, 0xd0);
-const NORD_OVERLAY: (u8, u8, u8) = (0x4c, 0x56, 0x6a);
-
 #[test]
-fn editing_the_config_rethemes_the_running_session() {
+fn retired_theme_keys_do_not_repaint_the_running_session() {
+    // A retired `[theme]` key must be ignored: no "unknown theme" warning.
     let s = Session::start("");
-    let before = s.drain(3);
-    let (r, g, b) = MOCHA_ACCENT;
-    assert!(
-        before.contains(&fg(r, g, b)),
-        "should start on the default Mocha accent; got:\n{before:?}"
-    );
-
-    // Save a new theme, as a user editing their config would.
+    let _ = s.drain(3);
     s.write_config("theme = \"nord\"\n");
     let after = s.drain(4);
-
-    let (r, g, b) = NORD_ACCENT;
     assert!(
-        after.contains(&fg(r, g, b)),
-        "the running session should repaint in Nord without a restart; got:\n{after:?}"
-    );
-    let (r, g, b) = NORD_OVERLAY;
-    assert!(
-        after.contains(&fg(r, g, b)),
-        "the whole palette should switch, not just the accent; got:\n{after:?}"
+        !after.contains("unknown theme"),
+        "a retired theme key should be ignored silently; got:\n{after:?}"
     );
     s.kill();
 }
@@ -154,52 +143,32 @@ fn the_panes_survive_a_reload() {
     let s = Session::start("");
     let _ = s.drain(3);
     let pid_before = s.child.process_id();
-    s.write_config("theme = \"gruvbox\"\n");
+    s.write_config("startup_panes = 1\n");
     let after = s.drain(4);
     assert!(
         s.child.process_id() == pid_before,
         "reload must not restart gwae itself"
     );
     assert!(
-        after.contains(&fg(0x83, 0xa5, 0x98)),
-        "and it should still have applied the new theme; got:\n{after:?}"
+        after.contains("reloaded"),
+        "and it should still have confirmed the reload; got:\n{after:?}"
     );
     s.kill();
 }
 
 #[test]
-fn a_broken_edit_keeps_the_working_theme() {
+fn a_broken_edit_keeps_the_running_session() {
     // Editors save mid-keystroke, so gwae will inevitably read a
-    // half-written config. That must not blow away a working theme.
-    let s = Session::start("theme = \"nord\"\n");
-    let before = s.drain(3);
-    let (r, g, b) = NORD_ACCENT;
-    assert!(before.contains(&fg(r, g, b)), "should start on Nord");
+    // half-written config. That must not blow away the running session.
+    let s = Session::start("startup_panes = 1\n");
+    let _ = s.drain(3);
 
-    s.write_config("theme = \"nord\"\nthis is not valid toml <<<\n");
+    s.write_config("startup_panes = 1\nthis is not valid toml <<<\n");
     let after = s.drain(4);
 
-    let (mr, mg, mb) = MOCHA_ACCENT;
-    assert!(
-        !after.contains(&fg(mr, mg, mb)),
-        "a broken edit must not silently revert to the default theme; got:\n{after:?}"
-    );
     assert!(
         after.contains("config error"),
-        "and the user should be told the config is broken; got:\n{after:?}"
-    );
-    s.kill();
-}
-
-#[test]
-fn an_unknown_theme_name_is_reported_on_reload() {
-    let s = Session::start("");
-    let _ = s.drain(3);
-    s.write_config("theme = \"tokyonight-storm\"\n");
-    let after = s.drain(4);
-    assert!(
-        after.contains("unknown theme"),
-        "a typo'd theme name should be reported, not silently ignored; got:\n{after:?}"
+        "the user should be told the config is broken; got:\n{after:?}"
     );
     s.kill();
 }
@@ -208,7 +177,7 @@ fn an_unknown_theme_name_is_reported_on_reload() {
 fn a_successful_reload_is_confirmed_on_screen() {
     let s = Session::start("");
     let _ = s.drain(3);
-    s.write_config("theme = \"dracula\"\n");
+    s.write_config("startup_panes = 1\n");
     let after = s.drain(4);
     assert!(
         after.contains("reloaded"),

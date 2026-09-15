@@ -1514,23 +1514,22 @@ mod tests {
     }
 
     #[test]
-    fn hud_and_center_minimap_panels_follow_the_theme() {
+    fn hud_and_center_minimap_panels_use_terminal_colors() {
         // The HUD and centered minimap are the only chrome that uses
         // `surface` and `text`, and they are reachable only while holding
         // Option, so no render test above covers them. Assert both panels
-        // paint the theme's colors and leak none of Mocha's.
+        // paint the terminal-native palette.
         let mut layout = Layout::default();
         let r2 = layout.new_row();
         let p = layout.alloc_pane();
         layout.add_column(r2, gwae_layout::Width::Cells(20), vec![p]);
-        let nord = Palette::NORD;
-        let mocha = Palette::CATPPUCCIN_MOCHA;
+        let term = Palette::TERMINAL;
         let (cols, rows) = (80u16, 24u16);
 
         for (what, draw) in [("hud", 0), ("center minimap", 1)] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
             if draw == 0 {
-                draw_center_hud(&mut out, cols, rows, &nord);
+                draw_center_hud(&mut out, cols, rows, &term);
             } else {
                 let mm = crate::config::Minimap {
                     mode: crate::config::MinimapMode::Off,
@@ -1542,35 +1541,24 @@ mod tests {
                     rows,
                     &layout,
                     &mm,
-                    &nord,
+                    &term,
                     &HudFacts::default(),
                 );
             }
             assert!(
-                out.iter().any(|c| c.style.bg == nord.surface),
-                "{what} panel should be filled with the theme's surface"
+                out.iter().any(|c| c.style.bg == term.surface),
+                "{what} panel should be filled with the terminal surface"
             );
             assert!(
-                out.iter().any(|c| c.style.fg == nord.text),
-                "{what} text should use the theme's text color"
-            );
-            assert!(
-                !out.iter().any(|c| c.style.bg == mocha.surface),
-                "{what} leaked the Mocha surface"
-            );
-            assert!(
-                !out.iter().any(|c| c.style.fg == mocha.text),
-                "{what} leaked the Mocha text color"
+                out.iter().any(|c| c.style.fg == term.text),
+                "{what} text should use the terminal text color"
             );
         }
     }
 
     #[test]
-    fn minimap_status_tints_follow_the_theme() {
-        // The sibling test above pins the *default* status tints. This one
-        // proves they are not merely defaults hiding behind the palette: with
-        // a non-default theme, every tile must be that theme's status color,
-        // muted, and none of Mocha's may appear.
+    fn minimap_status_tints_use_the_palette() {
+        // Tiles carry the palette's status colors, muted.
         use gwae_layout::Width;
         let mut layout = Layout::default(); // 4 quarter panes on strip 1
         let r2 = layout.new_row();
@@ -1584,7 +1572,7 @@ mod tests {
         layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Failed;
         layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Idle;
 
-        let nord = Palette::NORD;
+        let term = Palette::TERMINAL;
         let cols = 40usize;
         let mut out = vec![Cell::default(); cols * 8];
         draw_minimap(
@@ -1593,44 +1581,30 @@ mod tests {
             8,
             &layout,
             &crate::config::Minimap::default(),
-            &nord,
+            &term,
         );
         let cell = |x: usize, y: usize| out[y * cols + x];
         let (ox, y) = (8usize, 6usize);
         assert_eq!(
             cell(ox, y).style.bg,
-            nord.accent,
+            term.accent,
             "focused tile uses accent"
         );
         assert_eq!(
             cell(ox + 8, y).style.bg,
-            Palette::muted(nord.done),
-            "done tile uses the theme's done tint"
+            Palette::muted(term.done),
+            "done tile uses the done tint"
         );
         assert_eq!(
             cell(ox + 16, y).style.bg,
-            Palette::muted(nord.failed),
-            "failed tile uses the theme's failed tint"
+            Palette::muted(term.failed),
+            "failed tile uses the failed tint"
         );
         assert_eq!(
             cell(ox + 24, y).style.bg,
-            Palette::muted(nord.idle),
-            "idle tile uses the theme's idle tint"
+            Palette::muted(term.idle),
+            "idle tile uses the idle tint"
         );
-        // No Catppuccin Mocha status tint may survive anywhere on the map.
-        let mocha = Palette::CATPPUCCIN_MOCHA;
-        for s in [
-            PaneStatus::Running,
-            PaneStatus::Idle,
-            PaneStatus::Done,
-            PaneStatus::Failed,
-        ] {
-            let stale = Palette::muted(mocha.status(s));
-            assert!(
-                !out.iter().any(|c| c.style.bg == stale),
-                "a Mocha {s:?} tint leaked into a Nord minimap"
-            );
-        }
     }
 
     #[test]
@@ -1810,22 +1784,11 @@ mod tests {
     }
 
     #[test]
-    fn contrast_fg_stays_legible_on_light_and_dark_tints() {
-        let light = Palette::CATPPUCCIN_LATTE;
-        let dark = Palette::CATPPUCCIN_MOCHA;
-        let luma = |c: CColor| match c {
-            CColor::Rgb(r, g, b) => {
-                (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) / 255.0
-            }
-            _ => panic!("expected rgb"),
-        };
-        // Ink on a light tile is dark, and on a dark tile is light: the old
-        // hardcoded near-white was invisible on Latte's status colors.
-        assert!(luma(contrast_fg(CColor::Rgb(0xef, 0xf1, 0xf5), &light)) < 0.4);
-        assert!(luma(contrast_fg(CColor::Rgb(0x1e, 0x1e, 0x2e), &dark)) > 0.6);
+    fn contrast_fg_defers_to_terminal_defaults_for_unknown_colors() {
+        let term = Palette::TERMINAL;
         // Unknown colors defer to terminal defaults rather than guessing white ink.
-        assert_eq!(contrast_fg(CColor::Idx(4), &dark), CColor::Default);
-        assert_eq!(contrast_fg(CColor::Default, &dark), CColor::Default);
+        assert_eq!(contrast_fg(CColor::Idx(4), &term), CColor::Default);
+        assert_eq!(contrast_fg(CColor::Default, &term), CColor::Default);
     }
 
     #[test]

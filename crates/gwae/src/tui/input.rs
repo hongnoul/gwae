@@ -76,9 +76,6 @@ pub(crate) enum Cmd {
     /// Smart-jump: focus the next pane that needs the user (`⌥+g`). Resolved
     /// against the live layout in the main loop, not here.
     SmartJump,
-    /// Open the theme picker (`⌥+t`), or step through it while it is open.
-    /// `0` opens, `-1`/`+1` move the selection.
-    ThemePick(i32),
     /// Open the spawn-directory picker (`⌥+d`): choose the directory new
     /// panes start in, for this session or written back to the config.
     DirPick,
@@ -333,7 +330,6 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{153}') => return Some(Cmd::Act(Action::KillPane)), // œ (Option+q)
             Char('\u{a9}') => return Some(Cmd::SmartJump),              // © (Option+g)
             Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
-            Char('\u{2020}') => return Some(Cmd::ThemePick(0)),         // † (Option+t)
             Char('\u{2202}') => return Some(Cmd::DirPick),              // ∂ (Option+d)
             Char('\u{2211}') => return Some(Cmd::ToggleKeepAwake),      // ∑ (Option+w)
             Char('\u{222b}') => return Some(Cmd::Act(Action::SplitBelow)), // ∫ (Option+b)
@@ -430,7 +426,6 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
                 }
             }
             'g' => return Some(Cmd::SmartJump),
-            't' => return Some(Cmd::ThemePick(0)),
             'd' => return Some(Cmd::DirPick),
             'w' => return Some(Cmd::ToggleKeepAwake),
             '/' | '?' => return Some(Cmd::ToggleHud),
@@ -1107,7 +1102,6 @@ mod tests {
             Some(match e {
                 Effect::Act(a) => Cmd::Act(a),
                 Effect::SmartJump => Cmd::SmartJump,
-                Effect::ThemePick => Cmd::ThemePick(0),
                 Effect::DirPick => Cmd::DirPick,
                 Effect::ToggleHud => Cmd::ToggleHud,
                 Effect::ToggleKeepAwake => Cmd::ToggleKeepAwake,

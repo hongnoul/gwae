@@ -365,7 +365,7 @@ fn choosing_a_shell_leaves_the_config_untouched() {
 #[test]
 fn saving_a_choice_preserves_the_rest_of_the_config_file() {
     let sb = Sandbox::new(&["claude"]);
-    sb.write_config("# hand written\nstartup_panes = 3\n\n[theme]\npreset = \"nord\"\n");
+    sb.write_config("# hand written\nstartup_panes = 3\n\n[minimap]\nmax_width = 31\n");
     let mut p = sb.spawn(&[]);
     p.wait_for("agent");
     p.send("1\n");
@@ -377,11 +377,11 @@ fn saving_a_choice_preserves_the_rest_of_the_config_file() {
         "comments survive; got:\n{cfg}"
     );
     assert!(cfg.contains("startup_panes = 3"), "got:\n{cfg}");
-    assert!(cfg.contains("preset = \"nord\""), "got:\n{cfg}");
+    assert!(cfg.contains("max_width = 31"), "got:\n{cfg}");
     // And it must still be valid TOML with the key at top level.
     let v: toml::Value = toml::from_str(&cfg).expect("config stays valid TOML");
     assert_eq!(v["default_agent"].as_str(), Some("claude"));
-    assert_eq!(v["theme"]["preset"].as_str(), Some("nord"));
+    assert_eq!(v["minimap"]["max_width"].as_integer(), Some(31));
     p.kill();
 }
 

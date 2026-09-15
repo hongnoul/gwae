@@ -98,7 +98,6 @@ pub trait SetupStage {
 pub fn stages() -> Vec<Box<dyn SetupStage>> {
     vec![
         Box::new(setup_stages::ConfigFileStage),
-        Box::new(setup_stages::ThemeStage),
         Box::new(setup_stages::HarnessStage),
         Box::new(setup_stages::UpdatesStage),
         Box::new(setup_stages::SpawnDirStage),
@@ -254,7 +253,6 @@ mod tests {
             stage_ids(),
             vec![
                 "config file",
-                "theme",
                 "agent",
                 "updates",
                 "spawn dir",

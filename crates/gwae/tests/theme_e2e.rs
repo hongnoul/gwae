@@ -1,11 +1,11 @@
-//! End-to-end: a `theme = "..."` in a real config file on disk must change the
-//! bytes the real binary paints to a real terminal.
+//! End-to-end: gwae paints the host terminal's own colors.
 //!
-//! This is the acceptance check for the theming feature. The `Palette` unit
-//! tests prove the resolution rules; this drives the *shipped executable*
-//! through a PTY with a config file it discovers on its own via
-//! `XDG_CONFIG_HOME`, and asserts on the SGR sequences that actually reach the
-//! terminal.
+//! gwae has no theming. Chrome is always the terminal's default
+//! foreground/background pair plus ANSI 0-15 indices, so this drives the
+//! *shipped executable* through a PTY with a config file it discovers on its
+//! own via `XDG_CONFIG_HOME`, and asserts on the SGR sequences that actually
+//! reach the terminal: ANSI indices present, no 24-bit chrome colors, and no
+//! config key able to change that.
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::Read;
@@ -131,9 +131,7 @@ fn paint_with_config_raw(config_body: &str) -> String {
 /// The SGR *foreground* sequence emitted for a 24-bit color.
 ///
 /// The skeleton frames are the chrome that is always on screen, and they are
-/// drawn as glyphs, so the accent and overlay colors arrive as foreground
-/// codes. `base` only shows through in genuinely uncovered cells, which a
-/// default skeleton layout does not have, so these tests key off the frames.
+/// drawn as glyphs, so any hardcoded RGB would arrive as a foreground code.
 fn fg_seq(r: u8, g: u8, b: u8) -> String {
     format!("38;2;{r};{g};{b}")
 }
@@ -150,185 +148,59 @@ fn fgs_in(painted: &str) -> Vec<String> {
     v
 }
 
-/// The SGR background sequence emitted for a 24-bit color.
-fn bg_seq(r: u8, g: u8, b: u8) -> String {
-    format!("48;2;{r};{g};{b}")
-}
+/// Colors no terminal-native chrome may ever emit: the old presets'
+/// accents and overlays. If any of these appear, gwae painted a hardcoded
+/// RGB instead of the host terminal's palette.
+const RETIRED_RGB: &[(&str, (u8, u8, u8))] = &[
+    ("Mocha accent", (0x74, 0xc7, 0xec)),
+    ("Mocha overlay", (0x6c, 0x70, 0x86)),
+    ("Nord accent", (0x88, 0xc0, 0xd0)),
+    ("Nord overlay", (0x4c, 0x56, 0x6a)),
+    ("Latte accent", (0x20, 0x9f, 0xb5)),
+    ("white phosphor", (0xd8, 0xd8, 0xd0)),
+    ("keep-awake red", (0xff, 0x40, 0x40)),
+];
 
-/// Mocha's accent (sapphire) and overlay0, the default focus ring and
-/// skeleton frame colors.
-const MOCHA_ACCENT: (u8, u8, u8) = (0x74, 0xc7, 0xec);
-const MOCHA_OVERLAY: (u8, u8, u8) = (0x6c, 0x70, 0x86);
-/// Nord's accent and overlay.
-const NORD_ACCENT: (u8, u8, u8) = (0x88, 0xc0, 0xd0);
-const NORD_OVERLAY: (u8, u8, u8) = (0x4c, 0x56, 0x6a);
-
-#[test]
-fn default_config_paints_the_catppuccin_mocha_chrome() {
-    let painted = paint_with_config("");
-    // (The palette is the default one; only the frames are opted into.)
-    let (r, g, b) = MOCHA_ACCENT;
-    assert!(
-        painted.contains(&fg_seq(r, g, b)),
-        "the focused box frame should be the Mocha accent; saw {:?}",
-        fgs_in(&painted)
-    );
-    let (r, g, b) = MOCHA_OVERLAY;
-    assert!(
-        painted.contains(&fg_seq(r, g, b)),
-        "unfocused skeleton frames should be the Mocha overlay"
-    );
-}
-
-#[test]
-fn theme_preset_changes_the_painted_chrome() {
-    // Naming a preset must put Nord's colors on the wire and remove Mocha's.
-    let painted = paint_with_config("theme = \"nord\"\n");
-    let (r, g, b) = NORD_ACCENT;
-    assert!(
-        painted.contains(&fg_seq(r, g, b)),
-        "theme = nord should paint the Nord accent; saw {:?}",
-        fgs_in(&painted)
-    );
-    let (r, g, b) = NORD_OVERLAY;
-    assert!(
-        painted.contains(&fg_seq(r, g, b)),
-        "theme = nord should paint the Nord overlay"
-    );
-    let (r, g, b) = MOCHA_ACCENT;
-    assert!(
-        !painted.contains(&fg_seq(r, g, b)),
-        "a Nord run must not paint the Mocha accent"
-    );
-}
-
-#[test]
-fn theme_table_override_reaches_the_screen() {
-    // Start from Nord but override just the accent: the override must win and
-    // the preset's own accent must be gone, while its overlay is untouched.
-    let painted = paint_with_config("[theme]\npreset = \"nord\"\naccent = \"#010203\"\n");
-    assert!(
-        painted.contains(&fg_seq(1, 2, 3)),
-        "the [theme] accent override should reach the screen; saw {:?}",
-        fgs_in(&painted)
-    );
-    let (r, g, b) = NORD_ACCENT;
-    assert!(
-        !painted.contains(&fg_seq(r, g, b)),
-        "the overridden Nord accent must not be painted"
-    );
-    let (r, g, b) = NORD_OVERLAY;
-    assert!(
-        painted.contains(&fg_seq(r, g, b)),
-        "the rest of the Nord preset must survive the override"
-    );
-}
-
-#[test]
-fn legacy_color_keys_still_work() {
-    // A pre-theme config file must keep painting exactly what it did before
-    // the theme system existed.
-    let painted = paint_with_config("focus_color = \"#040506\"\nskeleton_color = \"#070809\"\n");
-    assert!(
-        painted.contains(&fg_seq(4, 5, 6)),
-        "the legacy focus_color key must still be honored; saw {:?}",
-        fgs_in(&painted)
-    );
-    assert!(
-        painted.contains(&fg_seq(7, 8, 9)),
-        "the legacy skeleton_color key must still be honored"
-    );
-}
-
-#[test]
-fn legacy_keys_beat_a_named_preset() {
-    let painted = paint_with_config("theme = \"nord\"\nfocus_color = \"#040506\"\n");
-    assert!(
-        painted.contains(&fg_seq(4, 5, 6)),
-        "an explicit legacy key must win over the preset; saw {:?}",
-        fgs_in(&painted)
-    );
-    let (r, g, b) = NORD_ACCENT;
-    assert!(
-        !painted.contains(&fg_seq(r, g, b)),
-        "the preset accent must not be painted when overridden"
-    );
-    let (r, g, b) = NORD_OVERLAY;
-    assert!(
-        painted.contains(&fg_seq(r, g, b)),
-        "keys the user did not override still come from the preset"
-    );
-}
-
-#[test]
-fn background_key_paints_uncovered_cells() {
-    // `base` is only visible where nothing covers it: with one startup pane
-    // the empty right side of the grid is bare background.
-    let painted = paint_with_config_raw("background = \"#040506\"\n");
-    assert!(
-        painted.contains(&bg_seq(4, 5, 6)),
-        "the uncovered background should be painted with the configured base; saw {:?}",
-        fgs_in(&painted)
-    );
-}
-
-#[test]
-fn terminal_theme_paints_no_hardcoded_colors() {
-    // `theme = "terminal"` inherits the host scheme, so gwae must not emit
-    // any 24-bit color of its own; the frames come out as ANSI indices.
-    let painted = paint_with_config("theme = \"terminal\"\n");
-    for (name, (r, g, b)) in [
-        ("Mocha accent", MOCHA_ACCENT),
-        ("Mocha overlay", MOCHA_OVERLAY),
-        ("Nord accent", NORD_ACCENT),
-    ] {
+fn assert_terminal_native(painted: &str, ctx: &str) {
+    for (name, (r, g, b)) in RETIRED_RGB {
         assert!(
-            !painted.contains(&fg_seq(r, g, b)),
-            "terminal theme must not paint the hardcoded {name}"
+            !painted.contains(&fg_seq(*r, *g, *b)),
+            "{ctx} must not paint the retired hardcoded {name}; saw {fgs:?}",
+            fgs = fgs_in(painted),
         );
     }
     assert!(
         painted.contains("38;5;"),
-        "terminal theme should paint chrome as ANSI palette indices"
+        "{ctx} should paint chrome as ANSI palette indices; saw {fgs:?}",
+        fgs = fgs_in(painted),
     );
 }
 
 #[test]
-fn an_unparseable_config_still_starts_with_default_colors() {
+fn default_config_paints_terminal_native_chrome() {
+    let painted = paint_with_config("");
+    assert_terminal_native(&painted, "a default run");
+}
+
+#[test]
+fn retired_theme_keys_do_not_change_the_painted_chrome() {
+    // Old configs name presets and overrides gwae no longer reads. They
+    // must be ignored, not fatal, and the screen must look exactly like a
+    // default run: terminal-native chrome.
+    for config in [
+        "theme = \"nord\"\n",
+        "[theme]\npreset = \"nord\"\naccent = \"#010203\"\n",
+        "focus_color = \"#040506\"\nskeleton_color = \"#070809\"\n",
+        "theme = \"white-phosphor\"\n",
+    ] {
+        let painted = paint_with_config(config);
+        assert_terminal_native(&painted, &format!("config {config:?}"));
+    }
+}
+
+#[test]
+fn an_unparseable_config_still_starts_with_terminal_chrome() {
     // Bad TOML falls back to defaults rather than refusing to launch.
     let painted = paint_with_config_raw("this is not valid toml <<<\n");
-    let (r, g, b) = MOCHA_ACCENT;
-    assert!(
-        painted.contains(&fg_seq(r, g, b)),
-        "a broken config should fall back to the default Mocha chrome; saw {:?}",
-        fgs_in(&painted)
-    );
-}
-
-#[test]
-fn the_shipped_default_draws_the_inset_frames() {
-    // The skeleton is the only look: out of the box every column box is
-    // framed in the overlay color, with the focused box in the accent, and no
-    // config key is needed to get there.
-    let painted = paint_with_config_raw("");
-    let (r, g, b) = MOCHA_OVERLAY;
-    assert!(
-        painted.contains(&fg_seq(r, g, b)),
-        "default run painted no skeleton frames; saw {:?}",
-        fgs_in(&painted)
-    );
-    let (r, g, b) = MOCHA_ACCENT;
-    assert!(
-        painted.contains(&fg_seq(r, g, b)),
-        "the focused box's frame should be the accent; saw {:?}",
-        fgs_in(&painted)
-    );
-}
-
-#[test]
-fn white_phosphor_preset_paints_monochrome_chrome() {
-    let painted = paint_with_config("theme = \"white-phosphor\"\n");
-    assert!(painted.contains(&fg_seq(0xd8, 0xd8, 0xd0)));
-    assert!(painted.contains(&fg_seq(0x50, 0x50, 0x4c)));
-    assert!(!painted.contains(&fg_seq(0x74, 0xc7, 0xec)));
+    assert_terminal_native(&painted, "a broken config");
 }

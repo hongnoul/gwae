@@ -1,4 +1,4 @@
-//! Overlays: spawn-dir picker, theme picker, quit confirm (verbatim move from `tui/mod.rs`).
+//! Overlays: spawn-dir picker, quit confirm.
 
 use gwae_term::{CColor, Cell};
 
@@ -7,9 +7,8 @@ use crate::theme::Palette;
 
 /// Live state of the `⌥+d` spawn-directory picker.
 ///
-/// Mirrors the theme picker's grammar (open, step, ⏎ keep, esc cancel) and
-/// adds a typed filter, because the candidate list is dozens of repos rather
-/// than eight themes. `s` writes the highlighted directory back to the config
+/// Adds a typed filter, because the candidate list is dozens of repos.
+/// `s` writes the highlighted directory back to the config
 /// file, which is the difference between "this session" and "from now on".
 pub(crate) struct DirPicker {
     pub(crate) all: Vec<crate::spawndir::Candidate>,
@@ -57,8 +56,8 @@ impl DirPicker {
     pub(crate) fn current(&self) -> Option<crate::spawndir::Candidate> {
         self.shown().get(self.sel).cloned()
     }
-    /// Move the highlight, clamped to the filtered list. Wrapping matches the
-    /// theme picker, so a long repo list is reachable from either end.
+    /// Move the highlight, clamped to the filtered list, wrapping at either
+    /// end so a long repo list is reachable from both directions.
     pub(crate) fn step(&mut self, d: i32) {
         let n = self.shown().len();
         if n == 0 {
@@ -73,8 +72,7 @@ impl DirPicker {
 /// Draw the spawn-directory picker: the filter line, the matching directories
 /// with the selection highlighted, and the key legend.
 ///
-/// Unlike the theme picker there is nothing to preview live (a directory does
-/// not repaint the screen), so this panel has to actually show the list.
+/// A directory does not repaint the screen, so this panel shows the list.
 pub(crate) fn draw_dir_picker(out: &mut [Cell], cols: u16, rows: u16, pick: &DirPicker, pal: &Palette) {
     let shown = pick.shown();
     let rows_shown = shown.len().clamp(1, 10);
@@ -255,85 +253,6 @@ pub(crate) fn draw_dir_picker(out: &mut [Cell], cols: u16, rows: u16, pick: &Dir
     );
 }
 
-/// Draw the theme picker: a small centered panel naming the previewed theme.
-///
-/// The picker deliberately shows almost nothing, because the *whole screen*
-/// is already the preview: stepping through presets re-themes the live
-/// chrome behind this panel. All it has to answer is "which one am I looking
-/// at, and how do I keep it".
-pub(crate) fn draw_theme_picker(out: &mut [Cell], cols: u16, rows: u16, sel: usize, pal: &Palette) {
-    let names = Palette::NAMES;
-    let Some(name) = names.get(sel) else {
-        return;
-    };
-    let title = format!(" theme {}/{}: {} ", sel + 1, names.len(), name);
-    let help = " ←/→ preview   ⏎ keep   esc cancel ";
-    let bw = title.chars().count().max(help.chars().count()) + 2;
-    let bh = 4usize;
-    if (cols as usize) < bw + 2 || (rows as usize) < bh + 2 {
-        return;
-    }
-    let ox = ((cols as usize) - bw) / 2;
-    let oy = ((rows as usize) - bh) / 2;
-    // Panel background.
-    for y in 0..bh {
-        for x in 0..bw {
-            if let Some(c) = out.get_mut((oy + y) * cols as usize + ox + x) {
-                *c = Cell {
-                    ch: ' ',
-                    style: gwae_term::Style {
-                        fg: pal.text,
-                        bg: pal.surface,
-                        ..Default::default()
-                    },
-                    width: 1,
-                    ..Default::default()
-                };
-            }
-        }
-    }
-    // Accent border, so the picker itself demonstrates the previewed accent.
-    let mut edge = |x: usize, y: usize, ch: char| {
-        if let Some(c) = out.get_mut(y * cols as usize + x) {
-            c.ch = ch;
-            c.style.fg = pal.accent;
-            c.style.bg = pal.surface;
-            c.width = 1;
-        }
-    };
-    for x in 0..bw {
-        edge(ox + x, oy, '─');
-        edge(ox + x, oy + bh - 1, '─');
-    }
-    for y in 0..bh {
-        edge(ox, oy + y, '│');
-        edge(ox + bw - 1, oy + y, '│');
-    }
-    edge(ox, oy, '╭');
-    edge(ox + bw - 1, oy, '╮');
-    edge(ox, oy + bh - 1, '╰');
-    edge(ox + bw - 1, oy + bh - 1, '╯');
-
-    let mut text = |row: usize, s: &str, fg: CColor, bold: bool| {
-        let chars: Vec<char> = s.chars().collect();
-        let tx = ox + 1 + (bw - 2).saturating_sub(chars.len()) / 2;
-        for (i, ch) in chars.iter().enumerate() {
-            if tx + i >= ox + bw - 1 {
-                break;
-            }
-            if let Some(c) = out.get_mut(row * cols as usize + tx + i) {
-                c.ch = *ch;
-                c.style.fg = fg;
-                c.style.bg = pal.surface;
-                c.style.bold = bold;
-                c.width = 1;
-            }
-        }
-    };
-    text(oy + 1, &title, pal.accent, true);
-    text(oy + 2, help, pal.text, false);
-}
-
 /// Centered disclaimer for the force-quit chord (`⌥+Shift+q`).
 ///
 /// Quitting kills every pane and everything running in them, which is the one
@@ -380,7 +299,7 @@ pub(crate) fn draw_quit_confirm(out: &mut [Cell], cols: u16, rows: u16, panes: u
         }
     }
     // The border uses the failed tint: this is the destructive overlay, and it
-    // must not be mistaken at a glance for the theme picker.
+    // must not be mistaken at a glance for another overlay.
     let mut edge = |x: usize, y: usize, ch: char| {
         if let Some(c) = out.get_mut(y * cols as usize + x) {
             c.ch = ch;

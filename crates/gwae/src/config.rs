@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 use crate::keys;
-use crate::theme::{Palette, ThemeSpec};
+use crate::theme::Palette;
 use gwae_layout::Width;
 use serde::de::{self, Visitor};
 use serde::Deserialize;
@@ -78,12 +78,6 @@ pub struct Config {
     /// single quarter-width pane; the skeleton's placeholder boxes show the
     /// rest of the container).
     pub startup_panes: usize,
-    /// The chrome color theme. Either a built-in preset name
-    /// (`theme = "tokyo-night"`) or a `[theme]` table with a `preset` plus
-    /// per-key overrides. `theme = "terminal"` derives every color from the
-    /// host terminal's own ANSI 0-15 palette. Default: `catppuccin-mocha`.
-    /// See `docs/CONFIG.md` for the full key list.
-    pub theme: ThemeSpec,
     /// The minimap: a small bottom-right grid showing each strip (row) and its
     /// panes (columns), with the focused strip and column highlighted.
     pub minimap: Minimap,
@@ -123,10 +117,6 @@ impl Default for Config {
             agent_dir_roots: Vec::new(),
             agents: Vec::new(),
             startup_panes: 1,
-            // Colors all live in the theme now; the Catppuccin Mocha defaults
-            // come from `Palette::default()`. These legacy keys stay unset
-            // unless the user writes them, so they only ever *override*.
-            theme: ThemeSpec::default(),
             minimap: Minimap::default(),
             input_poll_ms: default_input_poll_ms(),
             keep_awake: default_keep_awake(),
@@ -147,36 +137,10 @@ impl Config {
             .join(".config/gwae/gwae.toml")
     }
 
-    /// The fully resolved chrome palette: the named preset (or the default
-    /// Catppuccin Mocha), then the `[theme]` per-key overrides, then the
-    /// The fully resolved chrome palette: the named preset (or the default
-    /// Catppuccin Mocha), then the `[theme]` per-key overrides.
+    /// The chrome palette: the host terminal's own colors. There is no
+    /// theme key; change the terminal's scheme and gwae follows.
     pub fn palette(&self) -> Palette {
-        let (p, bad) = self.palette_checked();
-        if let Some(name) = bad {
-            tracing::warn!(
-                "unknown theme {name:?}; using catppuccin-mocha. Available: {}",
-                Palette::NAMES.join(", ")
-            );
-        }
-        p
-    }
-
-    /// The configured theme name, for display. `"catppuccin-mocha"` when the
-    /// config does not name one, since that is the preset actually used.
-    pub fn theme_name(&self) -> String {
-        match self.theme.0.preset {
-            Some(n) => n.as_str().to_string(),
-            None => "catppuccin-mocha (default)".to_string(),
-        }
-    }
-
-    /// As [`Config::palette`], but also returns the offending name when the
-    /// configured theme was not recognized, so callers that can actually show
-    /// the user something (`gwae doctor`) can report it rather than
-    /// dropping it into a log nobody reads.
-    pub fn palette_checked(&self) -> (Palette, Option<String>) {
-        self.theme.0.resolve()
+        Palette::default()
     }
 
     /// Adopt the appearance settings from `new`, keeping everything that
@@ -188,8 +152,7 @@ impl Config {
     /// but only because nothing in the TUI reads it: the agent gateway loads
     /// the file itself in the new pane, so an edited value applies to the next
     /// agent pane regardless. Everything that is read afresh
-    /// every frame - colors, skeleton, minimap, scroll behavior - is adopted,
-    /// which is exactly the set a user edits when tweaking a theme.
+    /// every frame - minimap, scroll behavior - is adopted.
     pub fn adopt_appearance(&mut self, new: Config) {
         let Config {
             startup_panes,
@@ -203,13 +166,13 @@ impl Config {
             default_agent,
             // Kept for the same reason as `default_agent`: the running
             // session may have overridden it via `--dir` or `⌥+d`, and a
-            // theme edit must not yank panes back to the file's value.
+            // config edit must not yank panes back to the file's value.
             agent_dir,
             harness_dirs,
             ..new
         };
         // `keep_awake` rides along with the reload rather than being pinned:
-        // it is a behavior toggle like the theme, applied live to the running
+        // it is a behavior toggle applied live to the running
         // session (the guard is reconciled in the render loop). `startup_panes`
         // above stays pinned because it was consumed once at launch.
     }
@@ -258,7 +221,7 @@ impl Config {
     ///
     /// A missing file is not an error: it yields the defaults, same as
     /// [`Config::load`]. Live reload uses this so it can tell the user their
-    /// edit is broken rather than silently reverting their theme to the
+    /// edit is broken rather than silently reverting to the
     /// defaults, which would look like the reload itself had misbehaved.
     pub fn load_checked(path: &std::path::Path) -> Result<Config, String> {
         match std::fs::read_to_string(path) {
@@ -564,52 +527,22 @@ mod tests {
     fn defaults_apply_when_omitted() {
         let cfg = parse("");
         assert_eq!(cfg.startup_panes, 1);
-        // No color keys set: the palette is the default Catppuccin Mocha,
-        // exactly the colors that used to be hardcoded.
-        assert_eq!(cfg.palette(), Palette::CATPPUCCIN_MOCHA);
+        // Chrome is fixed to the terminal's own colors: no config key can
+        // change it.
+        assert_eq!(cfg.palette(), Palette::TERMINAL);
     }
 
     #[test]
-    fn retired_legacy_color_keys_no_longer_override_the_theme() {
-        // Pre-theme configs used top-level color keys; the `[theme]` table
-        // owns this now. Stale keys are ignored, not fatal, and the preset
-        // wins outright.
-        let cfg = parse("background = 235\nfocus_color = 36\nskeleton_color = \"#333333\"\n");
-        assert_eq!(cfg.palette(), Palette::CATPPUCCIN_MOCHA);
-    }
-
-    #[test]
-    fn theme_name_selects_a_preset() {
-        let cfg = parse("theme = \"nord\"");
-        assert_eq!(cfg.palette(), Palette::NORD);
-    }
-
-    #[test]
-    fn theme_table_overrides_layer_on_the_preset() {
+    fn retired_theme_keys_are_ignored_not_fatal() {
+        // Old configs still on disk must keep loading: `[theme]` tables,
+        // `theme = "..."` names, and legacy color keys are simply not read
+        // rather than a parse error.
+        let cfg = parse(
+            "theme = \"nord\"\nbackground = 235\nfocus_color = 36\nskeleton_color = \"#333333\"\n",
+        );
+        assert_eq!(cfg.startup_panes, 1);
+        assert_eq!(cfg.palette(), Palette::TERMINAL);
         let cfg = parse("[theme]\npreset = \"nord\"\naccent = \"#ff0000\"\n");
-        let p = cfg.palette();
-        assert_eq!(p.accent, CColor::Rgb(0xff, 0, 0));
-        assert_eq!(p.base, Palette::NORD.base);
-    }
-
-    #[test]
-    fn retired_flat_color_keys_are_ignored_in_favor_of_the_theme() {
-        // Pre-theme configs named colors at the top level; the `[theme]`
-        // table owns this now. Stale keys parse (old files keep loading)
-        // but no longer override the preset.
-        let cfg = parse("theme = \"nord\"\nbackground = \"#010203\"\n");
-        assert_eq!(cfg.palette(), Palette::NORD);
-    }
-
-    #[test]
-    fn unknown_theme_falls_back_to_the_default_palette() {
-        let cfg = parse("theme = \"no-such-theme\"");
-        assert_eq!(cfg.palette(), Palette::CATPPUCCIN_MOCHA);
-    }
-
-    #[test]
-    fn terminal_theme_inherits_the_ansi_palette() {
-        let cfg = parse("theme = \"terminal\"");
         assert_eq!(cfg.palette(), Palette::TERMINAL);
     }
 
