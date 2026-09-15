@@ -135,7 +135,7 @@ pub fn search_roots(configured: &[String]) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::path::{MAX_DEPTH, MAX_SCAN, PROJECT_MARKERS, SKIP_DIRS};
+    use super::super::path::{inherited, MAX_DEPTH, MAX_SCAN, PROJECT_MARKERS, SKIP_DIRS};
     use super::super::picker::{candidates, filter};
 
     
