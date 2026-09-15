@@ -13,7 +13,10 @@ Rule used: the product is scrolling multiplexer + fixed-width panes + PTYs + Alt
 - `prune(spawndir)` (305e214): one spawn-dir key (`agent_dir`), harness-aware variants gone, btm installer deleted.
 - `prune(config)` (f301a17): deleted `scroll_margin`, `center_focus`, `content_width`. One scroll behavior; panes wrap at visible width.
 - `prune(docs)` (56e2a69 + 69d9986): CONFIG/LAYOUT-SPEC/test fixtures cleaned; 12 stale plans + acceptance ledgers archived to `docs/archive/`.
-- Left for you (needs your call): graphics delete/flag (~3.4k), updater apply-paths.
+## DONE (P3, 2026-09-15) — 23,532 -> 23,393 lines
+
+- `prune(update)` (b705a83 + f9cfa87): `gwae upgrade` is check-only. Prints version/source/route/latest + exact command, never executes a package manager. `--check`/`--yes` flags deleted; apply-path tests rewritten as never-runs tests. Unit 349 + update_e2e 17 green.
+- Graphics: NOT cut. Active phase1/phase2 image work in flight (prepare cache, promotion/demotion, pdf idle-bytes test). Triage verdict stands (partial support is a liability) but cutting under active development would collide; revisit when image work lands: delete to zero or `--features graphics`.
 
 - `prune(cli)`: folded `gwae tune` into `setup --only latency`.
 - `theme`: removed all theming, chrome is terminal-native only (fixed ANSI palette, no presets/picker/config key/stage). `picker_e2e` deleted, `theme_e2e` asserts native chrome. Unit 355 green, all e2e green except pre-existing graphics-gated ignores.
