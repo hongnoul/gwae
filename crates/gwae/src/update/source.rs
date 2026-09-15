@@ -322,7 +322,8 @@ fn cargo_crates_toml() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use crate::update::plan::{plan, Plan};
+    use std::path::{Path, PathBuf};
 
     use super::*;
 
