@@ -1,6 +1,6 @@
 # TUI Split Plan — `tui.rs` (10,727 lines)
 
-Status: proposal. Complements `docs/NAV-REWRITE-PLAN.md` (which rewrites decode logic; this plan only moves code).
+Status: complete (commit `5a3d9ec`). Complements `docs/NAV-REWRITE-PLAN.md` (which rewrites decode logic; this plan only moved code).
 
 ## 0. Correction to the premise
 
