@@ -947,23 +947,38 @@ pub(crate) mod tests {
     use gwae_term::{CColor, Cell};
     use std::collections::{HashMap, HashSet};
 
-    /// A palette with a distinctive accent, everything else Mocha. Render
-    /// tests assert on the accent to prove focus chrome is drawn, so the
-    /// remaining colors just need to be stable.
+    /// A palette with a distinctive accent and RGB status tints. Render
+    /// tests assert on the accent to prove focus chrome is drawn and on
+    /// muted status tints for minimap tiles; indexed colors normalize to
+    /// the terminal default through `tile_colors`, so the statuses stay
+    /// RGB here to keep exercising the tint path.
     pub(crate) fn pal_accent(accent: CColor) -> Palette {
         Palette {
             accent,
+            running: CColor::Rgb(0x89, 0xb4, 0xfa),
+            idle: CColor::Rgb(0xfa, 0xb3, 0x87),
+            done: CColor::Rgb(0xa6, 0xe3, 0xa1),
+            failed: CColor::Rgb(0xf3, 0x8b, 0xa8),
             ..Palette::default()
         }
     }
 
     /// A palette built from the explicit colors a pre-theme render test used
     /// to pass positionally: background, focus accent, and skeleton overlay.
+    /// Statuses stay RGB so minimap tint tests keep exercising the tint path
+    /// (indexed colors normalize to the terminal default). The block-font
+    /// label stays a fixed gray for the same reason: identifier tests key
+    /// off its pixels.
     pub(crate) fn pal_of(base: CColor, accent: CColor, overlay: CColor) -> Palette {
         Palette {
             base,
             accent,
             overlay,
+            label: CColor::Rgb(0x58, 0x5b, 0x70),
+            running: CColor::Rgb(0x89, 0xb4, 0xfa),
+            idle: CColor::Rgb(0xfa, 0xb3, 0x87),
+            done: CColor::Rgb(0xa6, 0xe3, 0xa1),
+            failed: CColor::Rgb(0xf3, 0x8b, 0xa8),
             ..Palette::default()
         }
     }
@@ -1683,15 +1698,15 @@ pub(crate) mod tests {
     #[test]
     fn placeholder_boxes_are_not_dimmed_and_show_cell_identifiers() {
         // Empty placeholder boxes are chrome, not panes: their interiors carry
-        // the themed backdrop (`theme.base`, the same fill as the rest of the
-        // gwae background) rather than punching the terminal's own default
-        // background through, and a big block-font `strip.cell` identifier is
-        // centered in each.
+        // the palette base (the same fill as the rest of the gwae
+        // background) rather than punching a different background through,
+        // and a big block-font `strip.cell` identifier is centered in each.
         let layout = Layout::new(2); // boxes 3 and 4 are placeholders
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let cols: u16 = 80;
         let rows: u16 = 12;
         let dim = CColor::Idx(235);
+        // pal_of fixes the identifier to 0x585b70 (see helper docs).
         let label = CColor::Rgb(0x58, 0x5b, 0x70);
         let mut out = Vec::new();
         render_frame(

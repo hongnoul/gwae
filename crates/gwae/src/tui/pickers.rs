@@ -425,10 +425,12 @@ mod tests {
             "disclaimer says how to back out, got {lines:?}"
         );
         // Framed and centered: corners exist, and the painted rows sit around
-        // the middle of the screen rather than at an edge.
+        // the middle of the screen rather than at an edge. The panel fill
+        // uses the terminal-native surface (Default), so painted rows are
+        // detected by glyphs, not by background color.
         let painted: Vec<usize> = (0..rows as usize)
             .filter(|y| {
-                (0..cols as usize).any(|x| out[y * cols as usize + x].style.bg != CColor::Default)
+                (0..cols as usize).any(|x| out[y * cols as usize + x].ch != ' ')
             })
             .collect();
         assert!(

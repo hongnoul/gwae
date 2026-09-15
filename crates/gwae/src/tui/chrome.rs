@@ -1558,7 +1558,10 @@ mod tests {
 
     #[test]
     fn minimap_status_tints_use_the_palette() {
-        // Tiles carry the palette's status colors, muted.
+        // Indexed status colors normalize through `tile_colors`: tile
+        // backgrounds stay the terminal default while the status glyphs
+        // carry the color. (RGB statuses paint muted tint tiles; covered
+        // by `draw_minimap_status_colors_and_failed_glyph`.)
         use gwae_layout::Width;
         let mut layout = Layout::default(); // 4 quarter panes on strip 1
         let r2 = layout.new_row();
@@ -1585,26 +1588,28 @@ mod tests {
         );
         let cell = |x: usize, y: usize| out[y * cols + x];
         let (ox, y) = (8usize, 6usize);
+        // Focus stays visible without a fill: underline, not background.
         assert_eq!(
             cell(ox, y).style.bg,
-            term.accent,
-            "focused tile uses accent"
+            CColor::Default,
+            "focused tile keeps the terminal background"
         );
-        assert_eq!(
-            cell(ox + 8, y).style.bg,
-            Palette::muted(term.done),
-            "done tile uses the done tint"
-        );
-        assert_eq!(
-            cell(ox + 16, y).style.bg,
-            Palette::muted(term.failed),
-            "failed tile uses the failed tint"
-        );
-        assert_eq!(
-            cell(ox + 24, y).style.bg,
-            Palette::muted(term.idle),
-            "idle tile uses the idle tint"
-        );
+        assert!(cell(ox, y).style.underline, "focus is underlined");
+        for (dx, status) in [
+            (8, PaneStatus::Done),
+            (16, PaneStatus::Failed),
+            (24, PaneStatus::Idle),
+        ] {
+            assert_eq!(
+                cell(ox + dx, y).style.bg,
+                CColor::Default,
+                "{status:?} tile keeps the terminal background"
+            );
+        }
+        // ... and the status glyphs carry the palette colors.
+        assert_eq!(cell(ox + 15, y).style.fg, term.done, "done glyph");
+        assert_eq!(cell(ox + 23, y).style.fg, term.failed, "failed glyph");
+        assert_eq!(cell(ox + 31, y).style.fg, term.idle, "idle glyph");
     }
 
     #[test]
@@ -1962,9 +1967,11 @@ mod tests {
                 .bg
         };
         // Column 3 is lit at full status intensity; the columns the number
-        // does not address step back to the overlay tint.
+        // does not address step back to the overlay tint (an indexed
+        // overlay normalizes to the terminal default through `tile_colors`,
+        // so the dimming reads as Default here).
         assert_eq!(bg_of(&out, 2), pal.status(PaneStatus::Running));
-        assert_eq!(bg_of(&out, 3), pal.overlay);
+        assert_eq!(bg_of(&out, 3), CColor::Default);
         // Without a pending jump nothing is dimmed: tiles are their own
         // muted status tint again.
         let mut plain = vec![Cell::default(); 100 * 24];

@@ -748,6 +748,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         // chord again (or Enter) commits; anything else cancels,
                         // so a stray key can never quit by accident.
                         if quit_confirm {
+                            // A held chord repeats; the disclaimer must only
+                            // commit on a second deliberate press, never on
+                            // the auto-repeat of the chord that armed it.
+                            if ke.kind == KeyEventKind::Repeat {
+                                continue;
+                            }
                             let confirmed = matches!(handle_key(&ke), Some(Cmd::Quit))
                                 || matches!(ke.code, KeyCode::Enter);
                             if confirmed {
