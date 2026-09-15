@@ -592,10 +592,10 @@ pub(crate) fn render_frame_with_images(
                     for x in inset..boxr.w.saturating_sub(inset) {
                         if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
                             *c = Cell::default();
-                            // Keep the themed backdrop: a placeholder box is
+                            // Keep the terminal backdrop: a placeholder box is
                             // empty chrome, not a pane, so its interior must
-                            // blend with `theme.base` rather than punching a
-                            // hole of the terminal's own background through it.
+                            // blend with the terminal background rather than
+                            // punching a hole of a different color through it.
                             c.style.bg = background;
                         }
                     }
@@ -1723,7 +1723,7 @@ pub(crate) mod tests {
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
         // Placeholder interiors blend with the surrounding backdrop: every
-        // interior cell is either the themed base or the identifier's own
+        // interior cell is either the terminal base or the identifier's own
         // pixels, never the terminal's default background (which would read
         // as a differently colored rectangle punched into the grid).
         for x in 41..59 {
@@ -1884,7 +1884,7 @@ pub(crate) mod tests {
     #[test]
     fn hint_text_keeps_the_boxs_background() {
         // Regression: placeholder text once carried `CColor::Default` as its
-        // background and read as a gray rectangle floating over the themed
+        // background and read as a gray rectangle floating over the terminal
         // backdrop. Hint glyphs must inherit the box background.
         let cols: u16 = 120;
         let rows: u16 = 24;

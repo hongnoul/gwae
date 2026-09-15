@@ -71,7 +71,7 @@ pub(crate) fn refresh_size(cols: &mut u16, rows: &mut u16) -> bool {
 
 /// How often the config file is checked for edits.
 ///
-/// Fast enough that saving a theme feels immediate, slow enough that the
+/// Fast enough that saving the config feels immediate, slow enough that the
 /// `stat` never shows up next to the render loop's own work.
 pub(crate) const CONFIG_POLL: Duration = Duration::from_millis(400);
 

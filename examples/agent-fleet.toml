@@ -6,7 +6,6 @@ startup_panes = 4
 default_column_width = "quarter"
 default_agent = "claude"
 agents = ["claude", "jcode", "codex"]   # names offered by the agent selector
-theme = "catppuccin-mocha"
 scroll_margin = 2
 input_poll_ms = 1                        # recommended; setup applies this silently
 

@@ -120,10 +120,9 @@ Decisions, each with its reason:
   `[keys]` table. `keys_clear = true` is the escape hatch for people who want a
   blank slate; it is one line and it stops the "I want *only* my binds" issue.
 * **`"none"` unbinds.** Requirement 2, spelled the obvious way.
-* **Unknown command names warn and are skipped**, matching how an unknown theme
-  behaves (`Config::palette_checked`). `gwae doctor` reports them by name with
-  the list of valid verbs, because a warning on stderr under a TUI is a warning
-  nobody reads.
+* **Unknown command names warn and are skipped**. `gwae doctor` reports
+  them by name with the list of valid verbs, because a warning on stderr
+  under a TUI is a warning nobody reads.
 * **One file.** `gwae.toml`, hand-edit surface, not a `gwae init` question:
   CONFIG.md already splits "what setup asks" from "what you edit", and keys are
   firmly the latter.
@@ -153,7 +152,7 @@ The README test narrows to the default keymap, which is all it ever meant.
 
 ### 5. Modal keys stay fixed, on purpose
 
-The theme picker, the spawn-dir picker and the quit confirmation
+The spawn-dir picker and the quit confirmation
 read keys directly in `run_tui` (arrows, `hjkl`, Enter, Esc). They
 stay hard-coded in v1, because they are transient overlays that print their own
 legend on screen and their keys are not contested with panes. The one
@@ -210,7 +209,7 @@ The existing tests are the specification; they get generalized, not replaced.
 4. Config: `[keys]` merge, `"none"` unbind reaches the pane as `Cmd::Input`,
    unknown verb warns and keeps the default, malformed table leaves the running
    keymap intact.
-5. e2e (`tests/keys_e2e.rs`, modeled on `picker_e2e.rs`): real binary, real PTY,
+5. e2e (`tests/keys_e2e.rs`): real binary, real PTY,
    a config that rebinds kill-pane to `⌥+w` and unbinds `⌥+q`; assert `⌥+w`
    kills and `⌥+q` arrives at the child.
 6. Docs: cow hints and the HUD render the *rebound* chord, asserted against a

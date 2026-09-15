@@ -1,5 +1,5 @@
 # The smallest useful gwae config.
 # Everything not set here falls back to the documented defaults.
+# Chrome is always the host terminal's own colors: there is nothing to theme.
 
-theme = "tokyo-night"
 default_agent = "claude"

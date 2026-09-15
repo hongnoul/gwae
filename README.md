@@ -78,7 +78,7 @@ On macOS, use Option (`⌥`) instead of Alt. If it types special characters inst
 Use an already-installed CLI agent, or run your usual shell tools:
 
 ```bash
-gwae init             # theme and layout setup, safe to re-run
+gwae init             # guided setup, safe to re-run
 gwae run "claude"     # start with Claude Code in the first pane
 gwae run "codex"      # or Codex CLI
 gwae doctor           # check config and setup
@@ -123,8 +123,7 @@ All chords use `⌥` on macOS, `Alt` elsewhere. Other keys go to the focused pan
 ⌥+h/j/k/l      focus left/down/up/right
 ⌥+Shift+h/j/k/l move pane
 ⌥+g            jump to pane that needs attention
-⌥+t            theme picker
-⌥+w            keep Mac awake (focus ring turns red)
+⌥+w            keep Mac awake (coffee badge on the Option HUD)
 ⌥+/            help
 ⌥+q            kill pane
 click          focus pane
@@ -142,7 +141,7 @@ File: `~/.config/gwae/gwae.toml` (`$XDG_CONFIG_HOME/gwae/gwae.toml`). All keys o
 
 ```toml
 default_column_width = "quarter"
-theme = "catppuccin-mocha"
+startup_panes = 1
 default_agent = "claude"
 startup_panes = 1
 ```

@@ -4,4 +4,3 @@
 startup_panes = 2
 default_column_width = "half"
 center_focus = true
-theme = "gruvbox"

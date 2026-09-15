@@ -2,7 +2,7 @@
 
 Written for you by `gwae setup` (the guided first-run setup; `gwae init`
 is an alias). Everything below can equally be hand-edited, and
-gwae live-reloads appearance keys while it runs.
+gwae live-reloads the config file while it runs.
 
 Location: `$XDG_CONFIG_HOME/gwae/gwae.toml` (default
 `~/.config/gwae/gwae.toml`). TOML (ADR-008). All keys optional; missing
@@ -21,12 +21,6 @@ agent_dir = "~/git/gwae"          # directory new panes start in ("" = gwae's cw
 harness_dirs = { jcode = "~/git/gwae" } # per-harness override; key = default_agent, any harness works
 agent_dirs = ["~/notes"]          # always offered in the ⌥+d picker
 agent_dir_roots = ["~/work"]      # where ⌥+d searches projects/directories (default: home)
-theme = "catppuccin-mocha"   # preset: catppuccin-mocha (default), catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal, white-phosphor
-# or per-key overrides on top of a preset:
-# [theme]
-# preset = "nord"
-# accent = "#ff0000"
-# overlay = "#665c54"
 input_poll_ms = 1            # event-loop poll; 30ms backoff once the screen is quiet
 keep_awake = true            # macOS only: hold idle/display sleep via caffeinate (false lets it sleep)
 
@@ -72,10 +66,15 @@ Full reasoning: [`UPDATES.md`](UPDATES.md).
 
 ## What `gwae setup` covers
 
-`gwae setup` audits six stages (config file, theme, agent, updates,
-spawn dir, latency) and writes only gwae's own config file. Re-running it
-preserves your saved theme, including custom `[theme]` tables. Configs
-with no theme fall back to `catppuccin-mocha`.
+`gwae setup` audits its stages (config file, agent, updates,
+spawn dir, latency) and writes only gwae's own config file.
+
+## Colors
+
+gwae has no themes. Chrome is always the host terminal's own colors: the
+terminal's default foreground/background pair plus its ANSI 0-15 palette.
+Change the terminal's scheme and gwae follows. Retired `theme` keys in old
+configs are ignored, not errors.
 
 ## Keeping the Mac awake (`keep_awake`)
 
@@ -89,9 +88,10 @@ does nothing. Default `true`: agents keep working unless you opt out with
 session, with a one-line toast confirming the change.
 
 `⌥+w` toggles it mid-session and writes the choice back to the config, so
-the keypress survives a restart. While the assertion is held the focus ring
-paints red — the state is visible without opening anything, on every theme.
-Toggling off restores your theme exactly.
+the keypress survives a restart. While the assertion is held a small
+coffee badge (`~[_]o keep-awake`) is stamped on the Option HUD frame —
+hold Option to see it. The palette itself is never touched, so toggling
+off restores the chrome exactly.
 
 Honest limit: this does **not** defeat lid-close sleep. A closed lid still
 sleeps the machine unless it is in clamshell mode (power + external display
@@ -111,41 +111,29 @@ Everything else here is hand-edit only, deliberately:
 
 ## Live reload
 
-Saving the config file re-themes the **running** session: there is no restart,
+Saving the config file reloads the **running** session: there is no restart,
 so every pane and every agent keeps going. The file is polled for changes a
 few times a second, and a one-line toast confirms the reload along the bottom
 of the screen.
 
-Only appearance is adopted. `startup_panes` is consumed once at launch (the
-panes already exist), so changing it still needs a restart. `default_agent` is
-read fresh by the agent gateway each time `;` opens a pane, so editing it (or
-letting the gateway save your pick) applies to the *next* agent pane without a
-restart; panes already running a harness keep running it. Everything read every
-frame - colors, `[minimap]`, scroll behavior - takes effect
-immediately. `keep_awake` also applies live: flipping it starts or drops the
-`caffeinate` assertion at once, with the change named in the toast.
+`startup_panes` is consumed once at launch (the panes already exist), so
+changing it still needs a restart. `default_agent` is read fresh by the agent
+gateway each time `;` opens a pane, so editing it (or letting the gateway save
+your pick) applies to the *next* agent pane without a restart; panes already
+running a harness keep running it. Everything read every frame - `[minimap]`,
+scroll behavior - takes effect immediately. `keep_awake` also applies live:
+flipping it starts or drops the `caffeinate` assertion at once, with the
+change named in the toast.
 
 A config that fails to parse mid-edit (an editor saving between keystrokes)
 leaves the running settings alone and reports the error, rather than dropping
 you back to defaults.
 
-## Previewing themes (`⌥+t`)
-
-`⌥+t` opens the theme picker. `←`/`→` (or `h`/`l`) step through the built-in
-presets and each one is applied to the **live UI**, so the preview is the real
-thing rather than a swatch. `⏎` keeps the previewed theme for this session and
-shows the line to add to your config; `esc` restores whatever your config says.
-
-The picker never writes to your config file - it would have to own your
-formatting and comments to do that - so making a theme permanent is a
-copy-paste of the line it shows you.
-
 ## Checking your config
 
 A config file that fails to parse is **ignored entirely** (gwae falls back to
-defaults rather than refusing to launch), and an unknown `theme` name silently
-falls back to `catppuccin-mocha`. Both are easy to miss, so `doctor` reports
-them:
+defaults rather than refusing to launch). Retired `theme` keys are ignored
+without error. A broken file is easy to miss, so `doctor` reports it:
 
 ```sh
 gwae doctor
@@ -155,7 +143,6 @@ gwae doctor
 gwae doctor:
   config: /home/you/.config/gwae/gwae.toml
   config file: parses [ok]
-  theme: nord [ok]
   agent: claude [ok]
   updates: brew (detected from path) · checks daily · latest is 1.0.1 · `gwae upgrade` -> brew upgrade gwae [ok]
   spawn dir: /home/you/git/foo [ok]
@@ -174,7 +161,7 @@ stage list.
 
 ## Unified setup (`gwae setup`)
 
-One flow owns every machine concern: appearance, harness, latency,
+One flow owns every machine concern: harness, latency,
 keyboard path, kitty focus repair, per-terminal snippets, companions, and
 the update route. Each concern is an independent stage; adding or removing
 one is one file plus one registry line, and doctor renders each stage's
@@ -192,14 +179,7 @@ Only gwae's own config is ever written silently. kitty.conf and
 LaunchAgents print their diff first; macOS globals are printed as exact
 commands and never applied. `GWAE_NO_INSTALL=1` disables all writes.
 
-A typo'd theme name is called out along with the valid names:
-
-```
-  theme: UNKNOWN "tokyonight-storm" -> falling back to catppuccin-mocha
-    available: catppuccin-mocha, catppuccin-latte, tokyo-night, gruvbox, nord, rose-pine, dracula, terminal, white-phosphor
-```
-
-and a config file that is not being applied at all points at the syntax error:
+A config file that is not being applied at all points at the syntax error:
 
 ```
   config file: INVALID, so it is being ignored entirely: TOML parse error at line 2, column 6
@@ -216,18 +196,6 @@ and a config file that is not being applied at all points at the syntax error:
 | `default_agent` | string | `""` (unset) | The agent harness `;` launches, and what the **first pane** opens on at startup. When unset, or not on `PATH`, you get the **agent selector** instead: it lists harnesses it knows, anything agent-shaped found on your `PATH`, and anything in `agents`; pick one (or type any command) and it is saved here, so every later launch goes straight to it. With nothing found it opens a plain `$SHELL`. `gwae run <cmd>` overrides the first pane. See `gwae agent --print`. |
 | `agents` | array of strings | `[]` | Extra agent commands to offer in the selector, for a harness whose name gwae cannot guess (or a wrapper script of your own). Entries that are not installed are simply not listed. |
 | `startup_panes` | integer | `1` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (shown as skeleton placeholder boxes). The default `1` opens a single terminal in the leftmost quarter. |
-| `theme` | string or table | `catppuccin-mocha` | Chrome color theme. A bare preset name (`theme = "tokyo-night"`) or a `[theme]` table with `preset` plus per-key overrides (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`). Presets: `catppuccin-mocha` (default), `catppuccin-latte`, `tokyo-night`, `gruvbox`, `nord`, `rose-pine`, `dracula`, `terminal` (inherits the host terminal's ANSI 0-15 palette; single-word aliases `mocha`, `latte`, `tokyo`, `gruvbox`, `nord`, `dracula`, `ansi` also accepted). Colors accept a 256-color index (`235`), hex RGB (`"#1e1e2e"`), or `"default"`. |
-| `[theme].preset` | string | `catppuccin-mocha` | Which built-in palette to start from (see `theme`). Unknown names fall back to `catppuccin-mocha` with a warning. |
-| `[theme].base` | color | preset | Empty (uncovered) background behind the panes. |
-| `[theme].surface` | color | preset | Background of the HUD and centered minimap panels. |
-| `[theme].overlay` | color | preset | Skeleton frames around unfocused boxes. |
-| `[theme].accent` | color | preset | Accent frame around the focused box. |
-| `[theme].text` | color | preset | HUD and minimap text. |
-| `[theme].label` | color | preset | Big block-font `strip.cell` label in placeholder boxes. |
-| `[theme].running` | color | preset | Pane status tint: running. |
-| `[theme].idle` | color | preset | Pane status tint: idle / wants attention. |
-| `[theme].done` | color | preset | Pane status tint: succeeded. |
-| `[theme].failed` | color | preset | Pane status tint: failed. |
 | `input_poll_ms` | integer | `1` | Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. gwae sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. The loop backs off to 30ms once the screen has been quiet for 750ms, so an idle session stays cheap. Run `gwae setup --only latency` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
 | `keep_awake` | bool | `true` | macOS-only: hold a `caffeinate` assertion (idle/display sleep) while gwae runs, so agents keep working with the display asleep. On unless you write `keep_awake = false` or toggle it off with `⌥+w`; never asked by setup. Does **not** defeat lid-close sleep outside clamshell mode (power + external display + input) or `sudo pmset disablesleep 1`. Applies live on save. `GWAE_NO_KEEP_AWAKE=1` forces it off. |
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit (the same digit `⌥+1..9` jumps to). Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
@@ -261,27 +229,18 @@ is nothing to triage, so the hold shows the key hints alone.
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.
-### Terminal-theme readability
+### Terminal-native chrome readability
 
-`theme = "terminal"` uses the terminal's default foreground and background for
-HUD panels and text. ANSI colors remain on status glyphs and focus borders.
-Minimap tiles with indexed/default colors use neutral backgrounds and default
-text, with underlines marking the focused column and pending jump target.
-This avoids assuming a remappable ANSI color (such as bright yellow) is dark.
-The terminal's own default foreground/background should be a readable pair.
+HUD panels and text use the terminal's default foreground and background.
+ANSI colors remain on status glyphs and focus borders. Minimap tiles use
+neutral backgrounds and default text, with underlines marking the focused
+column and pending jump target. This avoids assuming a remappable ANSI
+color (such as bright yellow) is dark. The terminal's own default
+foreground/background should be a readable pair.
 
-Explicit RGB tile backgrounds retain their fill, with black or white text
-chosen by WCAG relative luminance for at least 4.5:1 contrast. This applies to
-both minimaps, including focused and pending-jump tiles. ANSI palette queries
-are not required, so the fallback also works on terminals without OSC color
-query support. Colored status glyphs still depend on the host ANSI palette,
-and their shapes distinguish status without relying on color alone.
-
-## White phosphor CRT
-
-Set `theme = "white-phosphor"` (alias `monochrome`) for soft-white focus
-frames and HUD text on true black, subdued gray borders, and grayscale status
-tints. Status glyphs distinguish pane states without relying on color. Bright
-HUD tiles use contrast-selected dark text rather than white-on-white. This
-only themes gwae chrome, not programs inside panes. The keep-awake indicator
-still takes precedence with a red focus ring when enabled.
+ANSI palette queries are not required, so this works on terminals without
+OSC color query support. Colored status glyphs still depend on the host
+ANSI palette, and their shapes distinguish status without relying on color
+alone. This only covers gwae chrome, not programs inside panes. While
+the keep-awake assertion is held a small coffee badge (`~[_]o keep-awake`)
+is stamped on the Option HUD frame instead.
