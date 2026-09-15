@@ -3,7 +3,7 @@
 //! `input_poll_ms` is ours to write; kitty and macOS settings are reported
 //! with the exact command, never silently applied.
 
-use super::super::{Ctx, StageKind, SetupStage};
+use super::super::{Ctx, SetupStage, StageKind};
 
 /// Stage for the `latency` doctor line.
 pub struct LatencyStage;
@@ -36,7 +36,12 @@ impl SetupStage for LatencyStage {
         let (ours, theirs) = crate::latency::ours_and_theirs(&refs);
         let mut out = Vec::new();
         for s in ours {
-            out.push(format!("set {} = {} in {}", s.key, s.want, ctx.cfg_path.display()));
+            out.push(format!(
+                "set {} = {} in {}",
+                s.key,
+                s.want,
+                ctx.cfg_path.display()
+            ));
         }
         for s in theirs {
             if let Some(fix) = &s.fix {

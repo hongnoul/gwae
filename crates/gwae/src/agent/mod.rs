@@ -21,15 +21,7 @@ mod detect;
 mod picker;
 mod run;
 
-pub use config::{
-    fallback_shell, plan,
-    save_default_agent, set_default_agent_text, set_scalar_text,
-    toml_string_pub,
-};
-pub use detect::{
-    command_available, detect_with, looks_like_agent, scannable_dir, which, Found,
-    KNOWN_AGENTS,
-};
-pub use picker::{parse_choice, render, render_at, Choice};
-pub use run::run;
 pub use config::Plan;
+pub use config::{plan, set_scalar_text, toml_string_pub};
+pub use detect::{detect_with, which};
+pub use run::run;

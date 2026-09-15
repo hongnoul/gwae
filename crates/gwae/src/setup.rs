@@ -35,11 +35,6 @@ use std::path::Path;
 pub enum StageKind {
     /// Writes only gwae's own TOML. Safe to apply silently or with `--yes`.
     Config,
-    /// Touches other programs' files, LaunchAgents, or package managers.
-    /// Always shows a diff and asks, unless `--yes`.
-    Machine,
-    /// Prints exact commands only. Never writes.
-    Manual,
     /// Read-only facts for `doctor`. Never applies.
     Info,
 }
@@ -127,20 +122,16 @@ pub fn doctor_body(ctx: &Ctx) -> Vec<(String, String)> {
 ///   writes, for scripts and dotfile CI.
 /// * `print`: print every stage's planned steps. No writes.
 /// * `only`: restrict to one stage id; unknown ids are an error.
-/// * Otherwise apply `Config` stages silently and report `Machine`/`Manual`
-///   steps for the user. The interactive question loop arrives in P4; until
-///   then this is the non-interactive path (`--yes` or nothing to confirm).
+/// * Otherwise apply `Config` stages silently and report `Info`
+///   steps for the user. Until there is something to confirm, this is the
+///   non-interactive path (`--yes` or nothing to confirm).
 pub fn run_setup(ctx: &Ctx, check: bool, yes: bool, only: Option<&str>, print: bool) -> i32 {
     let all = stages();
     let picked: Vec<&Box<dyn SetupStage>> = match only {
         Some(want) => {
-            let found: Vec<&Box<dyn SetupStage>> =
-                all.iter().filter(|s| s.id() == want).collect();
+            let found: Vec<&Box<dyn SetupStage>> = all.iter().filter(|s| s.id() == want).collect();
             if found.is_empty() {
-                eprintln!(
-                    "unknown stage {want:?}; valid: {}",
-                    stage_ids().join(", ")
-                );
+                eprintln!("unknown stage {want:?}; valid: {}", stage_ids().join(", "));
                 return 2;
             }
             found
@@ -194,7 +185,7 @@ pub fn run_setup(ctx: &Ctx, check: bool, yes: bool, only: Option<&str>, print: b
                     println!("{}: {line}", s.id());
                 }
             }
-            StageKind::Machine | StageKind::Manual | StageKind::Info => {
+            StageKind::Info => {
                 println!("{}: {}", s.id(), s.doctor_line(ctx));
                 for step in s.steps(ctx) {
                     println!("  -> {step}");
@@ -208,8 +199,6 @@ pub fn run_setup(ctx: &Ctx, check: bool, yes: bool, only: Option<&str>, print: b
 fn kind_name(k: StageKind) -> &'static str {
     match k {
         StageKind::Config => "config",
-        StageKind::Machine => "machine",
-        StageKind::Manual => "manual",
         StageKind::Info => "info",
     }
 }
@@ -247,13 +236,7 @@ mod tests {
     fn registry_lists_every_shipped_stage_in_doctor_order() {
         assert_eq!(
             stage_ids(),
-            vec![
-                "config file",
-                "agent",
-                "updates",
-                "spawn dir",
-                "latency",
-            ]
+            vec!["config file", "agent", "updates", "spawn dir", "latency",]
         );
     }
 

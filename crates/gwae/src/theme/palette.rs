@@ -68,24 +68,6 @@ impl Palette {
         failed: rgb(0xff0000),
     };
 
-    /// The host terminal's own colors: default fg/bg plus ANSI 0-15 indices.
-    ///
-    /// Kept for tests and as the meaning of the `"default"` override value,
-    /// which restores terminal passthrough for a single key. Nothing in the
-    /// default session uses it.
-    pub const TERMINAL: Palette = Palette {
-        base: CColor::Default,
-        surface: CColor::Default,
-        overlay: CColor::Idx(8),
-        accent: CColor::Idx(6),
-        text: CColor::Default,
-        label: CColor::Idx(8),
-        running: CColor::Idx(12),
-        idle: CColor::Idx(11),
-        done: CColor::Idx(10),
-        failed: CColor::Idx(9),
-    };
-
     /// The tint used for minimap tiles: the status color at 60% intensity, so
     /// a grid of tiles reads as a dim wash and the focused/summary row at full
     /// intensity stands out against it.
@@ -141,21 +123,6 @@ mod tests {
         }
         assert_ne!(p.accent, p.running, "focus and running must differ");
         assert_ne!(p.done, p.failed, "done and failed must differ");
-    }
-
-    #[test]
-    fn terminal_const_stays_native() {
-        // The passthrough const still exists for the `"default"` override
-        // value and for tests that pin terminal behavior.
-        let p = Palette::TERMINAL;
-        assert_eq!(p.base, CColor::Default);
-        assert_eq!(p.surface, CColor::Default);
-        assert_eq!(p.text, CColor::Default);
-        for c in [
-            p.overlay, p.accent, p.label, p.running, p.idle, p.done, p.failed,
-        ] {
-            assert!(matches!(c, CColor::Idx(_)), "{c:?} is not an ANSI index");
-        }
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! This is the same decision the gateway makes, so doctor can never disagree
 //! with the live behavior.
 
-use super::super::{Ctx, StageKind, SetupStage};
+use super::super::{Ctx, SetupStage, StageKind};
 
 /// Stage for the `agent` doctor line.
 pub struct HarnessStage;
@@ -16,7 +16,10 @@ impl SetupStage for HarnessStage {
         StageKind::Config
     }
     fn doctor_line(&self, ctx: &Ctx) -> String {
-        match crate::agent::plan(&ctx.cfg.default_agent, crate::agent::detect_with(&ctx.cfg.agents)) {
+        match crate::agent::plan(
+            &ctx.cfg.default_agent,
+            crate::agent::detect_with(&ctx.cfg.agents),
+        ) {
             crate::agent::Plan::Configured(cmd) => format!("{cmd} [ok]"),
             crate::agent::Plan::Choose(found) => format!(
                 "unset; ⌥+; will offer {} [ok]",
@@ -41,7 +44,10 @@ impl SetupStage for HarnessStage {
     }
     fn check(&self, ctx: &Ctx) -> bool {
         !matches!(
-            crate::agent::plan(&ctx.cfg.default_agent, crate::agent::detect_with(&ctx.cfg.agents)),
+            crate::agent::plan(
+                &ctx.cfg.default_agent,
+                crate::agent::detect_with(&ctx.cfg.agents)
+            ),
             crate::agent::Plan::Missing { .. }
         )
     }

@@ -252,10 +252,9 @@ mod tests {
         struct W {
             theme: ThemeConfig,
         }
-        let w: W = toml::from_str(
-            "[theme]\naccent = \"#ff00ff\"\nrunning = 12\ntext = \"default\"\n",
-        )
-        .unwrap();
+        let w: W =
+            toml::from_str("[theme]\naccent = \"#ff00ff\"\nrunning = 12\ntext = \"default\"\n")
+                .unwrap();
         let p = w.theme.resolve();
         assert_eq!(p.accent, CColor::Rgb(0xff, 0x00, 0xff));
         assert_eq!(p.running, CColor::Idx(12));

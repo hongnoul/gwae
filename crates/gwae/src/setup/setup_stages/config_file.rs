@@ -4,7 +4,7 @@
 //! defaults rather than refusing to launch), so `doctor` is the only place a
 //! user can find out their config is not being applied.
 
-use super::super::{Ctx, StageKind, SetupStage};
+use super::super::{Ctx, SetupStage, StageKind};
 
 /// Stage for the `config file` doctor line.
 pub struct ConfigFileStage;

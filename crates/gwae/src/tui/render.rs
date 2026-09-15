@@ -1017,7 +1017,7 @@ pub(crate) mod tests {
     #[test]
     fn promoted_pane_without_host_images_explains_itself() {
         use crate::tui::pty::{feed_pane_output, PaneIo, PaneProc, PtyPane};
-        use gwae_layout::{Preset, Width};
+        use gwae_layout::Width;
         let mut layout = Layout::new(1);
         // Full width: the message needs room (rect.w >= 10); the default
         // quarter-width box at 80 cols is too narrow to hold it.

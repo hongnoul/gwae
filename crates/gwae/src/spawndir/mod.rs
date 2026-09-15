@@ -15,11 +15,9 @@
 //! integration it deliberately does not require, so there is nothing here to
 //! keep in sync.
 
-
 mod path;
 mod picker;
 mod scan;
 
 pub use path::{check, expand, inherited, resolve};
 pub use picker::{candidates, filter, tilde, Candidate};
-pub use scan::{is_project, scan, search_roots, zoxide_dirs};

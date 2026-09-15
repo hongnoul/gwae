@@ -85,15 +85,9 @@ fn strip_marker(buf: &mut Vec<u8>, marker: &[u8]) {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::selection::Selection;
 
-    use super::*;
-    use gwae_term::{Size, Vt100Grid};
-
-    
     #[test]
     fn paste_is_bracketed_only_when_the_child_asked() {
         assert_eq!(paste_bytes("ls -la", true), b"\x1b[200~ls -la\x1b[201~");
@@ -101,7 +95,6 @@ mod tests {
         // into a program that doesn't parse them prints `[200~` as text.
         assert_eq!(paste_bytes("ls -la", false), b"ls -la");
     }
-
 
     #[test]
     fn newlines_become_carriage_returns() {
@@ -115,7 +108,6 @@ mod tests {
             b"\x1b[200~one\rtwo\rthree\x1b[201~"
         );
     }
-
 
     #[test]
     fn blank_lines_survive_paste_normalization() {

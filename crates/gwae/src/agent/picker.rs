@@ -208,7 +208,6 @@ pub(super) fn prompt(n: usize) -> Choice {
 }
 
 /// `gwae agent`: resolve, maybe ask, save, and exec. Never returns.
-
 #[cfg(test)]
 mod tests {
     use super::super::config::{fallback_shell, plan, Plan};

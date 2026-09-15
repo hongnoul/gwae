@@ -12,6 +12,6 @@ mod clipboard;
 mod paste;
 mod selection;
 
-pub use clipboard::{copy_to_clipboard, CopyOutcome};
+pub use clipboard::copy_to_clipboard;
 pub use paste::{paste_bytes, PASTE_CHUNK};
 pub use selection::{selected_text, Point, Selection};

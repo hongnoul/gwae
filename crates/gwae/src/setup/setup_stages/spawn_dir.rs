@@ -3,7 +3,7 @@
 //! Reports the same decision `run_tui` makes, including the fallback, so a
 //! typo'd `agent_dir` is findable instead of silently ignored.
 
-use super::super::{Ctx, StageKind, SetupStage};
+use super::super::{Ctx, SetupStage, StageKind};
 
 /// Stage for the `spawn dir` doctor line.
 pub struct SpawnDirStage;

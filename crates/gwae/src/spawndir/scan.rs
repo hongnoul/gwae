@@ -134,11 +134,10 @@ pub fn search_roots(configured: &[String]) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::path::{inherited, MAX_DEPTH, MAX_SCAN, PROJECT_MARKERS, SKIP_DIRS};
+    use super::super::path::inherited;
     use super::super::picker::{candidates, filter};
+    use super::*;
 
-    
     /// A throwaway tree, so scan tests never touch the real machine.
     fn tree(name: &str, dirs: &[&str]) -> PathBuf {
         let root = std::env::temp_dir().join(format!("gwae-scan-{name}-{}", std::process::id()));
@@ -177,7 +176,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-
     #[test]
     fn the_scan_stops_at_a_project_and_skips_dependency_trees() {
         let root = tree(
@@ -195,7 +193,6 @@ mod tests {
         assert!(got[0].ends_with("app"));
         let _ = std::fs::remove_dir_all(&root);
     }
-
 
     #[test]
     fn reopening_finds_unversioned_scaffolds_under_the_current_spawn_directory() {
@@ -218,7 +215,6 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&root);
     }
-
 
     #[test]
     fn directory_search_reaches_inside_other_projects_and_keeps_skipping_dependencies() {
@@ -258,7 +254,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-
     #[test]
     fn depth_and_budget_bound_the_walk() {
         let root = tree("deep", &["a/b/c/d/e/deep-one/.git", "top/.git"]);
@@ -276,7 +271,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-
     #[test]
     fn directory_search_is_bounded_and_deduplicates_overlapping_roots() {
         let root = tree("directory-bounds", &["a/child", "b/child"]);
@@ -289,7 +283,6 @@ mod tests {
         assert_eq!(scan_directories(&roots, 9, 2).len(), 2);
         let _ = std::fs::remove_dir_all(&root);
     }
-
 
     #[test]
     #[cfg(unix)]
@@ -306,7 +299,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-
     #[test]
     fn hidden_and_system_directories_are_never_descended() {
         assert!(descendable("git"));
@@ -317,7 +309,6 @@ mod tests {
         // Case-insensitively, because macOS filesystems are.
         assert!(!descendable("library"));
     }
-
 
     #[test]
     fn scanning_a_real_home_is_fast_enough_for_a_keypress() {
@@ -337,7 +328,6 @@ mod tests {
             found.len()
         );
     }
-
 
     #[test]
     fn search_roots_default_to_home_and_are_overridable() {

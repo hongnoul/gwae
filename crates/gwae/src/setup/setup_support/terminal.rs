@@ -26,20 +26,6 @@ pub fn in_kitty() -> bool {
             .unwrap_or(false)
 }
 
-/// Short human name of the host terminal, for doctor and hints.
-pub fn terminal_name() -> &'static str {
-    if in_kitty() {
-        return "kitty";
-    }
-    match std::env::var("TERM_PROGRAM").as_deref() {
-        Ok("iTerm.app") => "iTerm2",
-        Ok("WezTerm") => "WezTerm",
-        Ok("ghostty") => "Ghostty",
-        Ok("Apple_Terminal") => "Apple Terminal",
-        _ => "unknown",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

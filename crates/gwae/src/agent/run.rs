@@ -1,10 +1,12 @@
 //! Gateway entry: decide, paint, and exec the chosen harness.
 
-use super::config::{fallback_shell, plan, save_default_agent, set_default_agent_text, Plan};
-use super::detect::{detect_with, which, Found};
-use super::picker::{parse_choice, prompt, render, render_at, Choice, BOLD, CYAN, DIM, RESET, YELLOW};
+#[cfg(test)]
+use super::config::set_default_agent_text;
+use super::config::{fallback_shell, plan, save_default_agent, Plan};
+use super::detect::{detect_with, which};
+use super::picker::{prompt, render, Choice, DIM, RESET, YELLOW};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 fn exec(cmd: &str) -> ! {
     use std::os::unix::process::CommandExt;
@@ -118,6 +120,7 @@ pub fn run(
     exec(&cmd)
 }
 
+#[cfg(test)]
 mod save_edge_cases {
     use super::*;
 

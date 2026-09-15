@@ -1,6 +1,6 @@
 //! Spawn path primitives: expansion, resolution, and validation.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Markers that identify a directory as a *project*, whatever it is called
 /// and wherever it lives.
@@ -177,14 +177,10 @@ pub fn check(raw: &str) -> Result<PathBuf, String> {
 }
 
 /// True when `dir` is itself a project (holds one of [`PROJECT_MARKERS`]).
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use super::*;
-
-    
     #[test]
     fn tilde_paths_expand_to_home() {
         let home = std::env::var("HOME").unwrap();
@@ -195,7 +191,6 @@ mod tests {
         assert_eq!(expand("~other/x"), PathBuf::from("~other/x"));
     }
 
-
     #[test]
     fn env_vars_expand_like_a_shell() {
         std::env::set_var("GWAE_TEST_DIR", "/tmp/zzz");
@@ -204,7 +199,6 @@ mod tests {
         assert_eq!(expand("$GWAE_UNSET_XYZ/a"), PathBuf::from("/a"));
         assert_eq!(expand("100$"), PathBuf::from("100$"));
     }
-
 
     #[test]
     fn cli_beats_config_and_missing_dirs_are_ignored() {
@@ -222,7 +216,6 @@ mod tests {
         assert_eq!(resolve(None, ""), cwd);
     }
 
-
     #[test]
     fn check_explains_itself() {
         assert!(check("").is_err());
@@ -230,7 +223,6 @@ mod tests {
         let e = check("/definitely/not/here").unwrap_err();
         assert!(e.contains("does not exist"), "{e}");
     }
-
 
     #[test]
     fn cli_beats_config_and_missing_config_falls_back() {
@@ -240,22 +232,13 @@ mod tests {
         let a = tmp.join("gwae-harness-test-a");
         let b = tmp.join("gwae-harness-test-b");
         // config dir resolves
-        assert_eq!(
-            resolve(None, a.to_str().unwrap()),
-            Some(a.clone())
-        );
+        assert_eq!(resolve(None, a.to_str().unwrap()), Some(a.clone()));
         // cli > config
         assert_eq!(
-            resolve(
-                Some(b.to_str().unwrap()),
-                a.to_str().unwrap()
-            ),
+            resolve(Some(b.to_str().unwrap()), a.to_str().unwrap()),
             Some(b.clone())
         );
         // missing config falls through to cwd
-        assert_eq!(
-            resolve(None, "/no/such/dir"),
-            inherited()
-        );
+        assert_eq!(resolve(None, "/no/such/dir"), inherited());
     }
 }

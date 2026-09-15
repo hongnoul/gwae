@@ -97,11 +97,10 @@ pub fn selected_text<G: TermGrid>(grid: &G, sel: &Selection<impl Copy + Eq>) -> 
 
 #[cfg(test)]
 mod tests {
+    use super::super::paste::paste_bytes;
     use super::*;
-    use super::super::paste::{paste_bytes, PASTE_CHUNK};
     use gwae_term::{Size, Vt100Grid};
 
-    
     fn sel(anchor: (u16, u16), cursor: (u16, u16)) -> Selection<u8> {
         Selection {
             pane: 1,
@@ -125,7 +124,6 @@ mod tests {
         assert_eq!(forward.ends().0, Point::new(2, 0));
     }
 
-
     #[test]
     fn contains_spans_whole_intermediate_rows() {
         let s = sel((5, 0), (2, 2));
@@ -138,13 +136,11 @@ mod tests {
         assert!(!s.contains(1, 3, 2));
     }
 
-
     #[test]
     fn single_cell_selection_is_empty() {
         assert!(sel((3, 1), (3, 1)).is_empty());
         assert!(!sel((3, 1), (4, 1)).is_empty());
     }
-
 
     #[test]
     fn selected_text_trims_grid_padding_and_spans_rows() {
@@ -153,20 +149,17 @@ mod tests {
         assert_eq!(selected_text(&g, &s), "hello world\nsecond");
     }
 
-
     #[test]
     fn selected_text_takes_a_partial_single_row() {
         let g = grid(&["hello world"]);
         assert_eq!(selected_text(&g, &sel((6, 0), (10, 0))), "world");
     }
 
-
     #[test]
     fn selected_text_skips_wide_glyph_continuation_cells() {
         let g = grid(&["日本語"]);
         assert_eq!(selected_text(&g, &sel((0, 0), (5, 0))), "日本語");
     }
-
 
     #[test]
     fn an_embedded_end_marker_cannot_escape_the_bracket() {
@@ -192,7 +185,6 @@ mod tests {
         assert_eq!(s.matches("\x1b[200~").count(), 1);
     }
 
-
     #[test]
     fn an_empty_paste_writes_nothing_at_all() {
         // Not even the markers: an empty bracketed paste still makes some
@@ -200,5 +192,4 @@ mod tests {
         assert!(paste_bytes("", true).is_empty());
         assert!(paste_bytes("", false).is_empty());
     }
-
 }

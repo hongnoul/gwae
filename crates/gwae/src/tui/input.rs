@@ -102,11 +102,13 @@ impl Cmd {
     /// a held quit chord must not confirm its own disclaimer.
     /// Everything else (focus moves, scrolls, plain input) repeats as before.
     pub(crate) fn is_repeatable(&self) -> bool {
-        match self {
-            Cmd::Act(Action::KillPane) | Cmd::Act(Action::ClosePane(_)) => false,
-            Cmd::Quit | Cmd::ToggleHud => false,
-            _ => true,
-        }
+        !matches!(
+            self,
+            Cmd::Act(Action::KillPane)
+                | Cmd::Act(Action::ClosePane(_))
+                | Cmd::Quit
+                | Cmd::ToggleHud
+        )
     }
 }
 

@@ -57,9 +57,15 @@ fn check_writes_nothing_and_reports_latency() {
     let dir = sandbox(Some("input_poll_ms = 10\n"));
     let (out, _, code) = setup(&dir, &["--check"]);
     assert_ne!(code, 0, "check should fail on untuned latency");
-    assert!(out.contains("latency"), "check should name the stage:\n{out}");
+    assert!(
+        out.contains("latency"),
+        "check should name the stage:\n{out}"
+    );
     let after = std::fs::read_to_string(dir.join("gwae/gwae.toml")).unwrap();
-    assert!(after.contains("input_poll_ms = 10"), "check must not write:\n{after}");
+    assert!(
+        after.contains("input_poll_ms = 10"),
+        "check must not write:\n{after}"
+    );
 }
 
 #[test]
@@ -74,8 +80,14 @@ fn only_latency_scopes_the_audit() {
     let dir = sandbox(Some("input_poll_ms = 10\n"));
     let (out, _, code) = setup(&dir, &["--check", "--only", "latency"]);
     assert_ne!(code, 0, "scoped check should still fail");
-    assert!(out.contains("latency"), "scoped check names its stage:\n{out}");
-    assert!(!out.contains("keep-awake"), "scoped check stays scoped:\n{out}");
+    assert!(
+        out.contains("latency"),
+        "scoped check names its stage:\n{out}"
+    );
+    assert!(
+        !out.contains("keep-awake"),
+        "scoped check stays scoped:\n{out}"
+    );
 }
 
 #[test]
@@ -84,7 +96,10 @@ fn yes_applies_config_stages_without_prompting() {
     let (out, _, code) = setup(&dir, &["--yes"]);
     assert_eq!(code, 0, "yes should exit cleanly:\n{out}");
     let after = std::fs::read_to_string(dir.join("gwae/gwae.toml")).unwrap();
-    assert!(after.contains("input_poll_ms = 1"), "yes writes our own key:\n{after}");
+    assert!(
+        after.contains("input_poll_ms = 1"),
+        "yes writes our own key:\n{after}"
+    );
 }
 
 #[test]

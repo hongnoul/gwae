@@ -1,7 +1,7 @@
 //! Picker candidates: ranked directories for the spawn picker.
 
-use super::path::{expand, inherited, MAX_DEPTH, MAX_SCAN};
-use super::scan::{is_project, scan, scan_directories, search_roots, zoxide_dirs, ZOXIDE_LIMIT};
+use super::path::{expand, MAX_DEPTH, MAX_SCAN};
+use super::scan::{scan, scan_directories, search_roots, zoxide_dirs, ZOXIDE_LIMIT};
 use std::path::{Path, PathBuf};
 
 /// A directory offered by the `⌥+d` picker.
@@ -189,14 +189,9 @@ fn subsequence(hay: &str, needle: &str) -> bool {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::scan::scan;
 
-    use super::*;
-
-    
     #[test]
     fn candidates_lead_with_the_current_directory() {
         let tmp = std::env::temp_dir();
@@ -209,17 +204,6 @@ mod tests {
             assert!(seen.insert(x.path.clone()), "duplicate {:?}", x.path);
         }
     }
-
-    /// A throwaway tree, so scan tests never touch the real machine.
-    fn tree(name: &str, dirs: &[&str]) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("gwae-scan-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        for d in dirs {
-            std::fs::create_dir_all(root.join(d)).expect("make tree");
-        }
-        root
-    }
-
 
     #[test]
     fn filter_prefers_substring_over_subsequence() {
@@ -235,7 +219,6 @@ mod tests {
         assert!(filter(&cands, "zzzz").is_empty());
         assert_eq!(filter(&cands, "  ").len(), 2);
     }
-
 
     #[test]
     fn candidates_leads_with_current_then_config() {
@@ -253,5 +236,4 @@ mod tests {
         let labels: Vec<&str> = c.iter().map(|x| x.origin).collect();
         assert!(labels.contains(&"config"));
     }
-
 }

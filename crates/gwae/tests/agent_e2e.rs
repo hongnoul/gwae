@@ -179,7 +179,6 @@ impl Pty {
     }
 
     /// No guided setup remains: the gateway picker execs straight after a pick.
-
     /// Accumulate output until `done` holds, nudging the TUI with `poke` each
     /// second. The startup HUD covers the middle of the screen and only lifts
     /// on a keypress, so a test that needs the pane underneath has to ask more
