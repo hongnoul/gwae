@@ -379,6 +379,9 @@ pub fn maybe_run(cfg_path: &Path, input_poll_ms: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::questions::{all_questions_for, questions, with_existing, Answer, Question};
+    use super::super::screen::{render_screen, render_sized, Key, Step};
+    use crate::theme::Palette;
 
     use super::*;
     use crate::config::Config;

@@ -415,18 +415,8 @@ pub fn all_questions_for_with_extra(f: crate::install::Facts, extra: &[String]) 
 /// One keystroke, already decoded from whatever the terminal sent.
 ///
 /// Naming the *intent* rather than the byte sequence is what lets [`step`] be
-/// tested directly: `↓` and `j` are the same `Key`, as are `→`, `l` and Enter,
-/// so the several ways of driving the flow can never diverge.
-///
-/// The axes are deliberately separate: **up/down picks an option**, **left/
-/// right moves between questions**. That is why `h`/`←`/backspace all mean the
-/// same thing (go back a question) and `l`/`→`/Enter all mean the next one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use super::*;
     use crate::config::Config;
 
