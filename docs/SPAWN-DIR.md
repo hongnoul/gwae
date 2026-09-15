@@ -20,8 +20,6 @@ Three layers, cheapest first, each one able to stand alone:
    session. This is what a shell alias or a project-local script uses.
 3. **Keybind** — `⌥+d` opens a directory picker: type to filter, `↵` to use
    it for the rest of the session, `⌥+s` to write it back to `gwae.toml`.
-   Same interaction grammar as the `⌥+t` theme picker, so it costs the user
-   no new muscle memory.
 
 The picker discovers suggestions and searches directory names as you type.
 An existing literal path can also be typed or pasted and takes the top spot.

@@ -157,12 +157,12 @@
         <p class="tagline">A scrolling terminal multiplexer.<br /><strong>Panes never shrink.</strong></p>
         <p class="intro">Run coding agents, shells, and TUIs side by side. Open more panes and the viewport scrolls instead of squeezing them. Inspired by niri's scrolling tiling.</p>
         <div class="install">
-          <code id="install-cmd">curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash</code>
+          <code id="install-cmd">brew install hongnoul/tap/gwae</code>
           <button id="install-copy" type="button" aria-label="Copy install command">copy</button>
         </div>
         <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
         <p class="links">
-          <a href="#install">macOS / Linux / Windows</a> ·
+          <a href="#install">macOS · Homebrew</a> ·
           <a href="#try">Try it in 30 seconds</a> ·
           <a class="star-link" href="https://github.com/hongnoul/gwae">Star on GitHub</a> ·
           <a href="https://github.com/hongnoul/gwae/releases/latest">Releases</a> · MIT
@@ -175,29 +175,20 @@
 
       <section id="install">
         <h2>Install</h2>
-        <p><strong>macOS</strong></p>
+        <p>macOS only. Homebrew is the one supported install.</p>
         <pre><code>brew install hongnoul/tap/gwae</code></pre>
-        <p><strong>Linux</strong> (also works on macOS)</p>
-        <pre><code>curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash</code></pre>
-        <p>Installs to <code>~/.local/bin</code> and adds it to your shell PATH. Override with <code>GWAE_INSTALL_DIR</code>, or set <code>GWAE_NO_MODIFY_PATH=1</code> to leave your shell config alone.</p>
-        <p><strong>Windows</strong> (experimental native build via ConPTY)</p>
-        <pre><code>irm https://hongnoul.github.io/gwae/install.ps1 | iex</code></pre>
-        <details>
-          <summary>Other methods</summary>
-          <pre><code>cargo install gwae</code></pre>
-          <p>Or download a binary from <a href="https://github.com/hongnoul/gwae/releases/latest">Releases</a>.</p>
-        </details>
+        <p>Upgrade with <code>brew upgrade gwae</code>. Windows and Linux are sunset: no builds ship.</p>
       </section>
 
       <section id="try">
         <h2>Try it in 30 seconds</h2>
         <p>After installing, run <code>gwae</code>. On first launch, dismiss the help overlay with Escape and finish the setup in the first pane. No agent account needed: skip the agent choice for a shell-only test.</p>
         <ol>
-          <li>Press <code>Alt+Enter</code> a few times to add shell panes. Keep going past the screen edge: the viewport scrolls, the panes keep their width.</li>
-          <li>Use <code>Alt+h</code> / <code>Alt+l</code> to move left / right. Press <code>Alt+r</code> to cycle the focused column's width.</li>
-          <li>Press <code>Alt+/</code> for help. Type <code>exit</code> in each shell when you're done.</li>
+          <li>Press <code>⌥+Enter</code> a few times to add shell panes. Keep going past the screen edge: the viewport scrolls, the panes keep their width.</li>
+          <li>Use <code>⌥+h</code> / <code>⌥+l</code> to move left / right. Press <code>⌥+r</code> to cycle the focused column's width.</li>
+          <li>Press <code>⌥+/</code> for help. Type <code>exit</code> in each shell when you're done.</li>
         </ol>
-        <p>On macOS, use Option (<code>⌥</code>) instead of Alt. If it types special characters instead of triggering shortcuts, configure Option as Alt/Meta in your terminal's settings. <code>gwae doctor</code> checks gwae's configuration.</p>
+        <p>If <code>⌥</code> types special characters instead of triggering shortcuts, set Option to act as Meta in your terminal's settings. <code>gwae doctor</code> checks gwae's configuration.</p>
         <h3>Bring your agents</h3>
         <p>Use an already-installed CLI agent, or run your usual shell tools:</p>
         <pre><code>gwae init             # theme and layout setup
@@ -219,7 +210,7 @@ gwae doctor           # check config</code></pre>
           <li>Fixed width columns (<code>1/4</code> default, <code>⌥+r</code> to cycle). Rows scroll past the edge, they do not squeeze.</li>
           <li>Scroll snaps to column boundaries. No slivers.</li>
           <li>One process. No daemon, no socket. Agent persistence is <code>claude --resume</code> or <code>jcode --resume</code>.</li>
-          <li>Any terminal on macOS and Linux. Windows via ConPTY, experimental.</li>
+          <li>macOS native: any macOS terminal, pbcopy clipboard, caffeinate keep-awake.</li>
           <li>Kitty graphics support is partial: pane-local direct RGB/RGBA placements and replies enable tdf's image and zoom path. Quiet Unicode-placeholder images are validated and remapped.</li>
         </ul>
       </section>
@@ -237,14 +228,13 @@ gwae doctor           # check config</code></pre>
 
       <section>
         <h2>Keys</h2>
-        <p><code>⌥</code> is Option on macOS, Alt elsewhere. Other keys go to the focused pane.</p>
+        <p>All chords use <code>⌥</code> (Option). Other keys go to the focused pane.</p>
         <pre><code>⌥+Enter        new column to right of focus
 ⌥+Shift+Enter  new strip below
 ⌥+;            spawn agent
 ⌥+h/j/k/l      focus left/down/up/right
 ⌥+Shift+h/j/k/l move pane
 ⌥+g            jump to pane that needs attention
-⌥+t            theme picker
 ⌥+/            help
 ⌥+q            kill pane
 click          focus pane
