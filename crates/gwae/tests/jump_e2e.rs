@@ -133,12 +133,9 @@ fn two_digits_address_a_column_past_nine() {
         out.contains("column 12"),
         "two digits should build column 12; got:\n{out:?}"
     );
-    // And focus really lands there: the focused minimap tile is the one drawn
-    // on the accent background, and it must now be tile 12.
-    let accent_tile_12 = out
-        .split("48;2;116;199;236")
-        .skip(1)
-        .any(|seg| seg[..seg.len().min(24)].contains("12"));
+    // And focus really lands there: the focused minimap tile is underlined,
+    // and it must now be tile 12.
+    let accent_tile_12 = out.contains("[4m12") || out.contains("[1m[4m12");
     assert!(
         accent_tile_12,
         "column 12 should be the focused tile; got:\n{out:?}"

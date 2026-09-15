@@ -377,7 +377,12 @@ pub(crate) fn render_frame_with_images(
         // Grid text (status lines, hidden TUI chrome) stays out of the frame
         // so stale glyphs never compete with the page texture. The PTY and
         // grid stay live underneath: demotion restores text with no redraw.
+        //
+        // Without a host image channel there are no tiles to paint. Say so
+        // instead of leaving a blank rectangle: the viewer is still running
+        // and taking input underneath, but its pixels have nowhere to go.
         let image_only = pane.image_view.is_some() && !v.peek;
+        let image_blind = image_only && images.is_none();
         for gy in 0..v.rect.h {
             pane.legacy_images.begin_row();
             if images.is_some() && !v.peek && !image_only {
