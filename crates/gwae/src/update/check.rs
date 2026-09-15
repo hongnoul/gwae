@@ -1,10 +1,10 @@
 //! Freshness checks: is there anything to upgrade to?
 
-use super::plan::{plan, Plan, is_newer, parse_version, tag_from_url};
-use super::source::{detect, probe, same_dir, state_dir, CargoOrigin, Facts, Receipt, Source};
-use super::{CHECK_INTERVAL, CURRENT, NET_TIMEOUT_SECS, NO_CHECK_ENV, REPO, SOURCE_ENV};
-use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use super::plan::{is_newer, parse_version, plan, tag_from_url, Plan};
+use super::source::{detect, probe, same_dir, state_dir, Facts, Receipt, Source};
+use super::{CHECK_INTERVAL, CURRENT, NET_TIMEOUT_SECS, NO_CHECK_ENV, REPO};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Ask GitHub which release is current.
 ///
@@ -55,13 +55,9 @@ pub fn latest_version() -> Result<String, String> {
     tag_from_url(&url).ok_or_else(|| format!("unexpected release URL: {url}"))
 }
 
-/// The platform's bit bucket, for `curl -o`.
+/// The platform's bit bucket, for `curl -o`. macOS-only: `/dev/null`.
 fn devnull() -> &'static str {
-    if cfg!(windows) {
-        "NUL"
-    } else {
-        "/dev/null"
-    }
+    "/dev/null"
 }
 
 // ---------------------------------------------------------------------------
@@ -369,24 +365,9 @@ pub fn doctor_line(configured: Option<Source>, startup_enabled: bool) -> String 
 }
 
 #[cfg(test)]
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::update::plan::Plan;
-    use crate::update::source::Source;
-    use std::path::PathBuf;
 
-    use super::*;
-
-    fn facts(exe: &str) -> Facts {
-        Facts {
-            exe: PathBuf::from(exe),
-            ..Default::default()
-        }
-    }
-
-    
     #[test]
     fn the_cache_round_trips_and_expires_after_a_day() {
         let c = Cache {
@@ -402,7 +383,6 @@ mod tests {
         assert_eq!(Cache::parse("garbage {"), Cache::default());
     }
 
-
     #[test]
     fn the_env_kill_switch_beats_an_enabled_config() {
         let stale = Cache::default();
@@ -410,5 +390,4 @@ mod tests {
         assert!(!should_check(true, true, &stale, now_unix()));
         assert!(!should_check(false, false, &stale, now_unix()));
     }
-
 }

@@ -6,6 +6,12 @@ this file is the decision and its reasoning (ADR-016).
 
 ## The rule
 
+**Homebrew is the absolute source of truth for deployments.**
+`brew install hongnoul/tap/gwae` is the one supported install;
+`brew upgrade gwae` is the one supported upgrade. Every other route below is
+legacy: detection still tells the truth about old installs, but new installs
+should use Homebrew.
+
 **gwae updates itself the way it was installed, or not at all.**
 
 There is no in-place self-replacing binary, and there is never an upgrade the
@@ -42,17 +48,18 @@ five differently-installed machines.
 Path heuristics, after resolving symlinks (Homebrew links `bin/gwae` into the
 Cellar, and the unresolved path hides the one marker that identifies it):
 
-- `/nix/store/...` → `nix`. Checked first: a store path can *contain* any other marker.
-- `**/.cargo/bin/**` → `cargo`, refined to `cargo-git` or `source` by the entry in `~/.cargo/.crates.toml`, which records whether the install came from the registry, a `--git` URL, or a `--path`.
-- `/opt/homebrew/**`, `**/Cellar/**`, `**/linuxbrew/**` → `brew`.
+- `/opt/homebrew/**`, `**/Cellar/**` → `brew` (canonical).
 - `**/target/{release,debug}/**` → `source` (someone running their own checkout).
-- `/usr/bin`, `/bin`, `/usr/local/bin` → `system`, i.e. **someone else's file**.
+- `**/linuxbrew/**` → `brew` (legacy Linuxbrew reading).
+- `**/.cargo/bin/**` → `cargo`, refined to `cargo-git` or `source` by the entry in `~/.cargo/.crates.toml` (legacy).
+- `/nix/store/...` → `nix` (legacy). Checked before cargo so a store path containing other markers still reads as Nix.
+- `/usr/bin`, `/bin`, `/usr/local/bin` → `system`, i.e. **someone else's file** (legacy).
 - Anything else → `unknown`, which is admitted rather than guessed at.
+- Windows spellings (`windows`, `scoop`, `winget`, `zip`) in old configs resolve to `unknown` so detection runs instead. Windows is sunset: no zip ships, no route prints.
 
-`/usr/local/bin` deserves its own note: it is Homebrew on Intel macOS, hand-built
-software on Linux, and some distro packages. It is only read as Homebrew when a
+`/usr/local/bin` deserves its own note: it is Homebrew on Intel macOS. It is only read as Homebrew when a
 brew prefix says so; otherwise the safe reading is "owned by something else", so
-gwae explains instead of acting. This ambiguity is exactly why the receipt exists.
+gwae explains instead of acting.
 
 ### 2. What would upgrading take?
 
@@ -60,14 +67,13 @@ gwae explains instead of acting. This ambiguity is exactly why the receipt exist
 
 | Source | Route | gwae runs it? |
 |---|---|---|
-| `install.sh` | Re-run the installer with `GWAE_INSTALL_DIR` pinned to the current directory | yes |
-| `brew` | `brew upgrade gwae` | yes |
-| `cargo` | `cargo install gwae --locked --force` | yes |
-| `cargo-git` | `cargo install --git .../gwae gwae --locked --force` | yes |
+| `brew` | `brew upgrade gwae` | yes (canonical) |
+| `install.sh` | Re-run the legacy installer with `GWAE_INSTALL_DIR` pinned to the current directory | yes (legacy) |
+| `cargo` | `cargo install gwae --locked --force` | yes (legacy) |
+| `cargo-git` | `cargo install --git .../gwae gwae --locked --force` | yes (legacy) |
 | `source` | `git pull && make install` | **no**, printed |
-| `nix` | `nix flake update` / `nix profile upgrade gwae` | **no**, printed |
-| `system` | your package manager, e.g. `paru -Syu gwae-bin` | **no**, printed |
-| `windows` | download the zip from the latest release | **no**, printed |
+| `nix` | `nix flake update` / `nix profile upgrade gwae` | **no**, printed (legacy) |
+| `system` | your package manager | **no**, printed (legacy) |
 | `unknown` | refuse and name the config key that fixes it | **no** |
 
 The four `no` rows are the point of the whole design. `Plan::commands()`
@@ -75,10 +81,9 @@ returns an empty vector for them, so "will this run something?" is one
 `is_empty()` at the call site rather than a match that has to be kept in sync
 with a growing enum.
 
-Re-running `install.sh` *is* the upgrade for the script route, deliberately:
-download, checksum verification, and atomic install already live there and
-having a second implementation inside the binary would mean two places where
-checksum verification can be forgotten.
+Re-running the legacy `install.sh` *is* the upgrade for the script route,
+deliberately: download, checksum verification, and atomic install already live
+there. New installs should use Homebrew instead.
 
 ### 3. Is there anything to upgrade to?
 
@@ -89,8 +94,7 @@ redirect target.
 Not `api.github.com`: the API allows 60 unauthenticated requests per hour **per
 IP**, which is a budget shared by everyone behind one office NAT. Being
 silently rate-limited into "no updates, ever" is the worst failure this feature
-could have, and the redirect has no such limit. It is the same endpoint
-`install.sh` already uses, for the same reason.
+could have, and the redirect has no such limit.
 
 What that request carries: nothing. No auth, no query string, no body, no
 version, no machine identifier, no user agent beyond curl's default. The
@@ -119,19 +123,20 @@ response is a URL. gwae cannot count its users this way, and that is fine.
   `GWAE_NO_UPDATE_CHECK=1` in the environment. The env var wins, so a CI runner
   or a shared machine can be made quiet without editing a file it may not own.
 
-## The install receipt
+## The install receipt (legacy)
 
-`scripts/install.sh` writes `$XDG_STATE_HOME/gwae/install.toml`:
+The removed `scripts/install.sh` wrote `$XDG_STATE_HOME/gwae/install.toml`:
 
 ```toml
 source = "install.sh"
-dir = "/home/u/.local/bin"
+dir = "/Users/u/.local/bin"
 version = "1.0.1"
 ```
 
-`make install` writes the same file with `source = "source"`, so a checkout
-build knows it is a checkout even when `target/` detection cannot see it (e.g.
-the binary was copied to a `bin` dir on `PATH`).
+Detection still honours surviving receipts while the binary sits in the
+directory they name. `make install` writes the same file with
+`source = "source"`. New installs should use Homebrew, which needs no receipt:
+the Cellar path identifies the install on its own.
 
 State, not config: it is machine-written bookkeeping, so it stays out of
 `~/.config/gwae`, which is a directory the user is invited to hand-edit.
@@ -164,8 +169,8 @@ people will actually see it.
 ```toml
 [update]
 check = true      # daily check + one-line notice; false to go quiet
-source = ""       # "" detects; or pin: install.sh, brew, cargo, cargo-git,
-                  # source, nix, system, windows
+source = ""       # "" detects; or pin: brew, install.sh, cargo, cargo-git,
+                  # source, nix, system (brew is canonical)
 ```
 
 An unrecognized `source` is reported by `gwae doctor` and otherwise ignored, and

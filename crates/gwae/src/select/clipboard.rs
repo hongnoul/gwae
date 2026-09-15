@@ -24,17 +24,10 @@ impl CopyOutcome {
 
 /// Copy only in response to a user selection. Over SSH, local helpers would
 /// write the remote computer's clipboard, so use the host terminal instead.
+///
+/// macOS-only: `pbcopy`, with OSC 52 fallback.
 pub fn copy_to_clipboard(text: &str, output: &mut impl std::io::Write) -> CopyOutcome {
-    #[cfg(target_os = "macos")]
     let helpers: &[(&str, &[&str])] = &[("pbcopy", &[])];
-    #[cfg(windows)]
-    let helpers: &[(&str, &[&str])] = &[("clip", &[])];
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let helpers: &[(&str, &[&str])] = &[
-        ("wl-copy", &[]),
-        ("xclip", &["-selection", "clipboard"]),
-        ("xsel", &["--clipboard", "--input"]),
-    ];
     let remote =
         std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some();
     copy_with_helpers(text, if remote { &[] } else { helpers }, output)
@@ -78,14 +71,7 @@ fn spawn_copy(program: &str, args: &[&str], text: &str) -> bool {
         return false;
     };
     let mut stdin = child.stdin.take().expect("piped clipboard stdin");
-    #[cfg(not(windows))]
     let bytes = text.as_bytes().to_vec();
-    // clip.exe recognizes UTF-16LE with a BOM independently of the code page.
-    #[cfg(windows)]
-    let bytes: Vec<u8> = [0xff, 0xfe]
-        .into_iter()
-        .chain(text.encode_utf16().flat_map(u16::to_le_bytes))
-        .collect();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let written = stdin.write_all(&bytes).is_ok();
@@ -140,17 +126,12 @@ fn osc52_sequence(text: &str) -> String {
 // --- paste ---------------------------------------------------------------
 
 /// The bracketed-paste delimiters (`DECSET 2004`).
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::selection::{selected_text, Point, Selection};
-    use gwae_term::TermGrid;
-
     use super::*;
-    use gwae_term::{Size, Vt100Grid};
+    use gwae_term::Size;
 
-    
     #[test]
     fn osc52_encodes_utf8_padding_and_control_bytes_as_data() {
         for (text, payload) in [
@@ -165,7 +146,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn blank_copy_leaves_all_clipboard_outputs_untouched() {
         for text in ["", "\n\n", " \t\n"] {
@@ -178,7 +158,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn empty_grid_dimensions_have_no_text_to_copy() {
         for size in [Size { cols: 0, rows: 3 }, Size { cols: 3, rows: 0 }] {
@@ -186,7 +165,6 @@ mod tests {
             assert_eq!(selected_text(&grid, &sel((0, 0), (2, 2))), "");
         }
     }
-
 
     #[test]
     fn absent_helper_sends_a_terminal_request_not_a_confirmed_copy() {
@@ -202,7 +180,6 @@ mod tests {
         assert_eq!(CopyOutcome::Copied.note("foo"), "copied 1 line");
         assert_eq!(CopyOutcome::Copied.note("foo\nbar"), "copied 2 lines");
     }
-
 
     #[test]
     fn failed_terminal_write_or_flush_reports_unavailable() {
@@ -232,7 +209,6 @@ mod tests {
     }
 
     #[cfg(unix)]
-
     #[test]
     fn native_helper_consumes_utf8_and_eof_without_a_second_terminal_write() {
         let mut output = Vec::new();
@@ -249,7 +225,6 @@ mod tests {
     }
 
     #[cfg(unix)]
-
     #[test]
     fn a_helper_that_never_reads_cannot_block_a_pipe_sized_copy_forever() {
         let started = std::time::Instant::now();
@@ -268,11 +243,5 @@ mod tests {
             cursor: Point::new(cursor.0, cursor.1),
             dragging: false,
         }
-    }
-
-    fn grid(lines: &[&str]) -> Vt100Grid {
-        let mut g = Vt100Grid::new(Size { cols: 20, rows: 5 });
-        g.feed(lines.join("\r\n").as_bytes());
-        g
     }
 }

@@ -60,6 +60,8 @@ const SYSTEM_DIRS: &[&str] = &[
     "/Library",
     "/var",
     "/etc",
+    // Legacy: the agent scan once ran on Windows too. Kept so the constant
+    // stays a complete denylist if the scan ever sees such a path.
     "C:\\Windows",
 ];
 
@@ -291,33 +293,7 @@ pub fn detect() -> Vec<Found> {
 mod tests {
     use super::*;
 
-    /// Drop SGR escapes so assertions read the text a user sees.
-    fn strip_ansi(s: &str) -> String {
-        let mut out = String::new();
-        let mut chars = s.chars();
-        while let Some(c) = chars.next() {
-            if c == '\x1b' {
-                for c in chars.by_ref() {
-                    if c == 'm' {
-                        break;
-                    }
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    }
-
-    fn found(cmd: &str) -> Found {
-        Found {
-            cmd: cmd.into(),
-            label: cmd.into(),
-            path: PathBuf::from("/usr/bin").join(cmd),
-        }
-    }
-
-        #[test]
+    #[test]
     fn which_resolves_path_names_and_rejects_missing_or_non_executable() {
         assert!(which("sh").is_some());
         assert!(which("gwae-no-such-agent-xyz").is_none());
@@ -449,5 +425,4 @@ mod tests {
             );
         }
     }
-
 }

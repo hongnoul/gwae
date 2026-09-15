@@ -8,7 +8,7 @@
 [![CI](https://github.com/hongnoul/gwae/actions/workflows/ci.yml/badge.svg)](https://github.com/hongnoul/gwae/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-**A scrolling terminal multiplexer. Panes never shrink.**
+**A scrolling terminal multiplexer for macOS. Panes never shrink.**
 
 Run coding agents, shells, and TUIs side by side. Open more panes and the viewport scrolls instead of squeezing them. Inspired by niri's scrolling tiling.
 
@@ -22,56 +22,31 @@ Add columns beyond the screen edge, then move between them without shrinking the
 
 ## Install
 
-### macOS
+macOS only. Homebrew is the one supported install and the absolute source of truth for deployments.
 
 ```bash
 brew install hongnoul/tap/gwae
 ```
 
-### Linux
+Upgrade the same way:
 
 ```bash
-curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
+brew upgrade gwae
 ```
 
-The script also works on macOS. It installs to `~/.local/bin` and adds it
-to your shell PATH, so `gwae` works in a fresh terminal. Override with
-`GWAE_INSTALL_DIR`; `GWAE_NO_MODIFY_PATH=1` skips the PATH change.
+`gwae doctor` prints the detected install source and the upgrade route. Building from source (`cargo build`, `cargo install --path`) works for development but is not a supported install.
 
-### Windows
-
-Experimental native build via ConPTY.
-
-```powershell
-irm https://hongnoul.github.io/gwae/install.ps1 | iex
-```
-
-Installs to `~/bin` and adds it to your user PATH.
-
-<details>
-<summary>Other install methods</summary>
-
-```bash
-cargo install gwae
-```
-
-```powershell
-scoop bucket add gwae https://github.com/hongnoul/scoop-bucket; scoop install gwae
-```
-
-Or download from [Releases](https://github.com/hongnoul/gwae/releases/latest).
-
-</details>
+> Windows and Linux are sunset. The ConPTY build, scoop bucket, install scripts, AUR, and nix flake are removed. Old binaries keep running but get no updates. Mac-only lets every shortcut, clipboard path, and focus fix assume macOS.
 
 ## Try it in 30 seconds
 
 After installing, run `gwae`. On first launch, dismiss the help overlay with Escape and finish the setup in the first pane. No agent account needed: skip the agent choice for a shell-only test.
 
-1. Press `Alt+Enter` a few times to add shell panes. Keep going past the screen edge: the viewport scrolls, the panes keep their width.
-2. Use `Alt+h` / `Alt+l` to move left / right. Press `Alt+r` to cycle the focused column's width.
-3. Press `Alt+/` for help. Type `exit` in each shell when you're done.
+1. Press `⌥+Enter` a few times to add shell panes. Keep going past the screen edge: the viewport scrolls, the panes keep their width.
+2. Use `⌥+h` / `⌥+l` to move left / right. Press `⌥+r` to cycle the focused column's width.
+3. Press `⌥+/` for help. Type `exit` in each shell when you're done.
 
-On macOS, use Option (`⌥`) instead of Alt. If it types special characters instead of triggering shortcuts, configure Option as Alt/Meta in your terminal's settings. `gwae doctor` checks gwae's configuration.
+If `⌥` types special characters instead of triggering shortcuts, set Option to act as Meta in your terminal (Terminal.app: Preferences → Profiles → Keyboard → Use Option as Meta Key; iTerm2 / Ghostty / WezTerm have the equivalent). `gwae doctor` checks gwae's configuration.
 
 ### Bring your agents
 
@@ -97,7 +72,7 @@ Choose gwae when you want readable panes that scroll beyond the screen, rather t
 * Panes keep fixed width (`1/4` default, `⌥+r` to cycle). Rows scroll past the edge, they do not squeeze.
 * Scroll snaps to column boundaries. No slivers.
 * One process. No daemon, no socket. Agent persistence is `claude --resume` or `jcode --resume`.
-* Any terminal on macOS and Linux. Windows builds natively via ConPTY, experimental.
+* macOS native: `pbcopy` clipboard, `caffeinate` keep-awake, CoreGraphics Option-key poll, macOS focus fixes.
 * Kitty graphics support is partial: pane-local direct RGB/RGBA placements and replies enable tdf's image and zoom path. Quiet Unicode-placeholder images are validated and remapped. See [terminal compatibility](docs/TERMINAL-COMPATIBILITY.md) for limits and verification status.
 
 ## Agent status
@@ -114,7 +89,7 @@ Hold `⌥` for dashboard. `⌥+g` jumps to the pane that needs you.
 
 ## Keys
 
-All chords use `⌥` on macOS, `Alt` elsewhere. Other keys go to the focused pane.
+All chords use `⌥` (Option). Other keys go to the focused pane.
 
 ```
 ⌥+Enter        new column to right of focus
@@ -123,7 +98,7 @@ All chords use `⌥` on macOS, `Alt` elsewhere. Other keys go to the focused pan
 ⌥+h/j/k/l      focus left/down/up/right
 ⌥+Shift+h/j/k/l move pane
 ⌥+g            jump to pane that needs attention
-⌥+w            keep Mac awake (coffee badge on the Option HUD)
+⌥+w            keep Mac awake (keep-awake badge on the Option HUD)
 ⌥+/            help
 ⌥+q            kill pane
 click          focus pane
@@ -143,7 +118,6 @@ File: `~/.config/gwae/gwae.toml` (`$XDG_CONFIG_HOME/gwae/gwae.toml`). All keys o
 default_column_width = "quarter"
 startup_panes = 1
 default_agent = "claude"
-startup_panes = 1
 ```
 
 See [docs/CONFIG.md](docs/CONFIG.md).
@@ -154,7 +128,7 @@ See [docs/CONFIG.md](docs/CONFIG.md).
 
 ## Help gwae grow
 
-If gwae fits your workflow, [give it a star](https://github.com/hongnoul/gwae). Found a rough edge? [Report it](https://github.com/hongnoul/gwae/issues/new/choose) with your OS and terminal so we can improve the next person's first run.
+If gwae fits your workflow, [give it a star](https://github.com/hongnoul/gwae). Found a rough edge? [Report it](https://github.com/hongnoul/gwae/issues/new/choose) with your macOS version and terminal so we can improve the next person's first run.
 
 ## License
 

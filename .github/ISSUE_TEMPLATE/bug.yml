@@ -22,11 +22,12 @@ body:
       placeholder: Ghostty 1.0
     validations:
       required: true
-  - type: dropdown
+  - type: input
     id: os
     attributes:
-      label: OS
-      options: [macOS, Linux, Windows]
+      label: macOS version
+      description: e.g. Sonoma 14.5 (gwae is macOS-only, via Homebrew).
+      placeholder: Sonoma 14.5
     validations:
       required: true
   - type: textarea

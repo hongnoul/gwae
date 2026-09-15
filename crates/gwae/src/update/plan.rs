@@ -1,7 +1,7 @@
 //! Upgrade plans: what would upgrading take on this machine?
 
-use super::REPO;
 use super::source::Source;
+use super::REPO;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -95,10 +95,9 @@ impl Plan {
 
 /// Decide the upgrade route from the source. Pure.
 ///
-/// The `Managed` arms are the point of this whole module: three of the ways
-/// gwae is installed are owned by something that would be actively damaged by
-/// us writing over the file, so those turn into instructions rather than
-/// actions.
+/// Homebrew is the canonical route. The `Managed` arms are the legacy
+/// installs owned by something that would be actively damaged by us writing
+/// over the file, so those turn into instructions rather than actions.
 pub fn plan(source: Source, exe: &Path) -> Plan {
     match source {
         Source::Script => Plan::Script {
@@ -115,15 +114,11 @@ pub fn plan(source: Source, exe: &Path) -> Plan {
         },
         Source::Nix => Plan::Managed {
             how: "Nix owns this store path: `nix flake update` in your flake, \
-                  or `nix profile upgrade gwae`",
+                  or `nix profile upgrade gwae`. New installs should use `brew install hongnoul/tap/gwae`.",
         },
         Source::System => Plan::Managed {
-            how: "your package manager owns this file: e.g. `paru -Syu gwae-bin`, \
-                  or reinstall via install.sh",
-        },
-        Source::Windows => Plan::Managed {
-            how: "download gwae-x86_64-pc-windows-msvc.zip from \
-                  https://github.com/hongnoul/gwae/releases/latest and replace gwae.exe",
+            how: "your package manager owns this file: e.g. `paru -Syu gwae-bin`. \
+                  New installs should use `brew install hongnoul/tap/gwae`.",
         },
         Source::Unknown => Plan::Ask,
     }
@@ -185,24 +180,13 @@ pub fn tag_from_url(url: &str) -> Option<String> {
     parse_version(v).map(|_| v.to_string())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::update::check::notice;
     use crate::update::source::Source;
-    use crate::update::{notice, Cache, Facts};
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
-    use super::*;
-
-    fn facts(exe: &str) -> Facts {
-        Facts {
-            exe: PathBuf::from(exe),
-            ..Default::default()
-        }
-    }
-
-    
     #[test]
     fn the_script_plan_pins_the_install_dir_and_quotes_it() {
         let p = plan(Source::Script, Path::new("/Users/my name/.local/bin/gwae"));
@@ -215,7 +199,6 @@ mod tests {
         assert!(script.contains("scripts/install.sh"));
     }
 
-
     #[test]
     fn versions_compare_on_numbers_not_strings() {
         assert!(is_newer("1.0.9", "1.0.10"));
@@ -227,14 +210,12 @@ mod tests {
         assert!(!is_newer("banana", "1.0.2"));
     }
 
-
     #[test]
     fn a_version_string_may_be_spelled_as_the_binary_prints_it() {
         assert_eq!(parse_version("gwae 1.2.3"), Some((1, 2, 3)));
         assert_eq!(parse_version("v1.2.3-rc.1"), Some((1, 2, 3)));
         assert_eq!(parse_version("1.2"), Some((1, 2, 0)));
     }
-
 
     #[test]
     fn the_release_tag_comes_out_of_the_redirect_url() {
@@ -251,7 +232,6 @@ mod tests {
         assert_eq!(tag_from_url(""), None);
     }
 
-
     #[test]
     fn the_notice_always_ends_in_a_command_for_this_machine() {
         let n = notice("1.0.1", "1.0.2", &Plan::Brew);
@@ -263,15 +243,9 @@ mod tests {
         assert!(n.ends_with("run: gwae upgrade"), "{n}");
     }
 
-
     #[test]
     fn every_managed_source_refuses_to_run_anything() {
-        for s in [
-            Source::Nix,
-            Source::System,
-            Source::Windows,
-            Source::Source_,
-        ] {
+        for s in [Source::Nix, Source::System, Source::Source_] {
             let p = plan(s, Path::new("/usr/bin/gwae"));
             assert!(
                 p.commands().is_empty(),
@@ -281,4 +255,3 @@ mod tests {
         }
     }
 }
-

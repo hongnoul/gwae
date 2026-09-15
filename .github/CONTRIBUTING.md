@@ -37,4 +37,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-CI runs all three on macOS and Linux. Keep it green.
+CI runs all three on macOS (Linux stays as a compile sanity net). Keep it green.
+
+gwae is macOS-only and ships via Homebrew (`brew install hongnoul/tap/gwae`).
+Do not add other platforms or package channels.

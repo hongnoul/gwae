@@ -8,29 +8,36 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 /// How gwae got onto this machine, which decides how it may leave.
+///
+/// gwae is macOS-only and ships via Homebrew (`brew install
+/// hongnoul/tap/gwae`). The other variants exist so a binary installed any
+/// other way is still told the truth about its own route instead of being
+/// guessed at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
     /// `scripts/install.sh` put a release binary in a plain directory. We own
     /// that file outright, so re-running the installer is the upgrade.
+    /// Legacy: new installs should use Homebrew.
     Script,
-    /// Homebrew (a formula in the tap). `brew upgrade`.
+    /// Homebrew (the tap). `brew upgrade gwae`. The canonical route.
     Homebrew,
-    /// `cargo install gwae` from crates.io.
+    /// `cargo install gwae` from crates.io. Legacy: new installs should use
+    /// Homebrew.
     Cargo,
     /// `cargo install --git https://github.com/hongnoul/gwae gwae`.
+    /// Legacy: new installs should use Homebrew.
     CargoGit,
     /// Built in a checkout and installed by `make install` / `cargo install
     /// --path`. Upgrading means pulling and rebuilding, which is the user's
     /// call, not ours.
     Source_,
     /// A Nix store path. Immutable by design; the flake input is what moves.
+    /// Legacy: new installs should use Homebrew.
     Nix,
     /// A distro package manager owns this file (`/usr/bin`, `/usr/local/bin`
     /// on Linux). AUR, apt, whatever it is: it is not ours to overwrite.
+    /// Legacy: new installs should use Homebrew.
     System,
-    /// Windows, where the release ships as a zip and there is no installer
-    /// script to re-run yet.
-    Windows,
     /// We could not tell. Never guessed *at*: the user is shown the routes
     /// and asked to pick one, and the answer can be written to the config.
     Unknown,
@@ -47,7 +54,6 @@ impl Source {
             Source::Source_ => "source",
             Source::Nix => "nix",
             Source::System => "system",
-            Source::Windows => "windows",
             Source::Unknown => "unknown",
         }
     }
@@ -64,22 +70,27 @@ impl Source {
             "source" | "make" | "checkout" | "path" => Some(Source::Source_),
             "nix" => Some(Source::Nix),
             "system" | "apt" | "aur" | "pacman" | "dnf" | "distro" => Some(Source::System),
-            "windows" | "winget" | "scoop" | "zip" => Some(Source::Windows),
+            // Windows is sunset: old configs spelling it pin nothing. Fall
+            // through to detection, which on this macOS-only tree will say
+            // what it sees.
+            "windows" | "winget" | "scoop" | "zip" => Some(Source::Unknown),
             "unknown" | "auto" | "" => Some(Source::Unknown),
             _ => None,
         }
     }
 
     /// Every name a user may write, for error messages.
+    /// Brew first: the canonical route is listed first and the docs point
+    /// there. The rest are legacy routes detection still understands.
     pub const NAMES: &'static [&'static str] = &[
-        "install.sh",
         "brew",
+        "install.sh",
         "cargo",
         "cargo-git",
         "source",
         "nix",
         "system",
-        "windows",
+        "unknown",
     ];
 }
 
@@ -98,9 +109,8 @@ pub struct Facts {
     /// What `~/.cargo/.crates.toml` says about a `gwae` entry, when the
     /// binary lives in a cargo bin directory. Distinguishes a crates.io
     /// install from a `--git` one, which need different upgrade commands.
+    /// (Legacy: new installs should use Homebrew.)
     pub cargo_origin: Option<CargoOrigin>,
-    /// This is a Windows build.
-    pub windows: bool,
 }
 
 /// Which cargo route installed gwae, read out of `.crates.toml`.
@@ -166,11 +176,6 @@ pub fn state_dir() -> Option<PathBuf> {
     if let Some(x) = std::env::var_os("XDG_STATE_HOME").filter(|s| !s.is_empty()) {
         return Some(PathBuf::from(x).join("gwae"));
     }
-    if cfg!(windows) {
-        if let Some(l) = std::env::var_os("LOCALAPPDATA").filter(|s| !s.is_empty()) {
-            return Some(PathBuf::from(l).join("gwae"));
-        }
-    }
     let home = std::env::var_os("HOME").filter(|s| !s.is_empty())?;
     Some(PathBuf::from(home).join(".local/state/gwae"))
 }
@@ -193,7 +198,7 @@ pub fn detect(f: &Facts) -> Source {
             return r.source;
         }
     }
-    source_from_path(&f.exe, f.cargo_origin, f.windows)
+    source_from_path(&f.exe, f.cargo_origin)
 }
 
 /// Whether the binary's directory and the receipt's directory are the same
@@ -226,7 +231,11 @@ pub fn same_dir(exe_dir: Option<&Path>, receipt_dir: &Path) -> bool {
 }
 
 /// The path heuristics, split out so their exact edges are pinned by tests.
-fn source_from_path(exe: &Path, cargo: Option<CargoOrigin>, windows: bool) -> Source {
+///
+/// macOS-only tree: `/opt/homebrew` and the Cellar are the canonical
+/// markers. Linuxbrew and Linux system prefixes are kept as legacy
+/// readings so old installs still get a truthful answer.
+fn source_from_path(exe: &Path, cargo: Option<CargoOrigin>) -> Source {
     let p = exe.to_string_lossy().replace('\\', "/");
     // Nix first: a store path can *contain* any of the other markers.
     if p.starts_with("/nix/store/") {
@@ -253,9 +262,6 @@ fn source_from_path(exe: &Path, cargo: Option<CargoOrigin>, windows: bool) -> So
     // checkout, and telling them to `brew upgrade` would be absurd.
     if p.contains("/target/release/") || p.contains("/target/debug/") {
         return Source::Source_;
-    }
-    if windows {
-        return Source::Windows;
     }
     // `/usr/local/bin` is shared ground: Homebrew on Intel macOS, hand-built
     // software on Linux, and some distro packages. It is claimed by the brew
@@ -306,7 +312,6 @@ pub fn probe(configured: Option<Source>) -> Facts {
         exe,
         configured,
         receipt: Receipt::load(),
-        windows: cfg!(windows),
     }
 }
 
@@ -318,15 +323,12 @@ fn cargo_crates_toml() -> Option<String> {
     std::fs::read_to_string(base.join(".crates.toml")).ok()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::update::check::{ignored_receipt, provenance};
     use crate::update::plan::{plan, Plan};
     use std::path::{Path, PathBuf};
-
-    use super::*;
 
     fn facts(exe: &str) -> Facts {
         Facts {
@@ -335,7 +337,6 @@ mod tests {
         }
     }
 
-    
     #[test]
     fn homebrew_is_detected_through_the_cellar_symlink() {
         // `brew` links `bin/gwae` into the Cellar, and `probe` canonicalizes,
@@ -349,14 +350,12 @@ mod tests {
         );
     }
 
-
     #[test]
     fn nix_store_paths_are_never_something_we_write_to() {
         let f = facts("/nix/store/abc123-gwae-1.0.1/bin/gwae");
         assert_eq!(detect(&f), Source::Nix);
         assert!(plan(Source::Nix, &f.exe).commands().is_empty());
     }
-
 
     #[test]
     fn cargo_bin_splits_by_what_the_manifest_says() {
@@ -368,7 +367,6 @@ mod tests {
         assert_eq!(detect(&f), Source::Source_);
     }
 
-
     #[test]
     fn a_system_prefix_is_treated_as_someone_elses_file() {
         assert_eq!(detect(&facts("/usr/bin/gwae")), Source::System);
@@ -378,7 +376,6 @@ mod tests {
             .is_empty());
     }
 
-
     #[test]
     fn a_build_tree_is_a_checkout_not_a_package() {
         assert_eq!(
@@ -387,13 +384,11 @@ mod tests {
         );
     }
 
-
     #[test]
     fn an_unrecognized_path_is_admitted_as_unknown() {
         assert_eq!(detect(&facts("/Users/x/.local/bin/gwae")), Source::Unknown);
         assert_eq!(plan(Source::Unknown, Path::new("/x")), Plan::Ask);
     }
-
 
     #[test]
     #[cfg(unix)]
@@ -442,7 +437,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-
     #[test]
     fn the_receipt_beats_the_path_but_only_where_it_points() {
         let receipt = Receipt {
@@ -477,7 +471,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn config_beats_everything_including_a_receipt() {
         let mut f = facts("/nix/store/abc-gwae/bin/gwae");
@@ -490,7 +483,6 @@ mod tests {
         assert_eq!(detect(&f), Source::Homebrew);
     }
 
-
     #[test]
     fn the_installer_receipt_round_trips() {
         let text = "source = \"install.sh\"\ndir = \"/home/u/.local/bin\"\nversion = \"1.0.1\"\n";
@@ -501,7 +493,6 @@ mod tests {
         assert!(Receipt::parse("not = [toml").is_none());
         assert!(Receipt::parse("source = \"martians\"").is_none());
     }
-
 
     #[test]
     fn source_names_parse_back_to_themselves() {
@@ -514,6 +505,14 @@ mod tests {
         assert_eq!(Source::parse("nonsense"), None);
     }
 
+    #[test]
+    fn windows_spellings_no_longer_pin_a_route() {
+        // Windows is sunset: old configs spelling it must not pin a dead
+        // route. They resolve to Unknown so detection runs instead.
+        for name in ["windows", "winget", "scoop", "zip"] {
+            assert_eq!(Source::parse(name), Some(Source::Unknown), "{name}");
+        }
+    }
 
     #[test]
     fn cargo_origin_reads_the_crates_manifest_key() {
@@ -528,5 +527,4 @@ mod tests {
         let other = "[v1]\n\"ripgrep 14.0.0 (git+https://github.com/x/y)\" = [\"rg\"]\n";
         assert_eq!(cargo_origin(other), None);
     }
-
 }

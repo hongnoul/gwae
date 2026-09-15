@@ -15,10 +15,10 @@ What gwae is deliberately *not*: an Orca-in-a-TTY. Feature parity on diff review
 
 ### The pitch
 
-**macOS and Windows can have Linux niri-level native spatial canvas.**
+**macOS gets a Linux niri-level native spatial canvas.**
 
-- tmux is POSIX-bound: on Windows it requires WSL, Cygwin, or MSYS2, and it has no infinite canvas.[^8] The entire tmux-based orchestrator tier (Claude Squad, dmux, workmux, amux, uzi) inherits that ceiling.[^9] gwae hosts its own PTYs and builds natively for Windows via ConPTY (runtime verification lands in M3), giving you the full 2D plane: orchestrate freely on grids, the 2D is yours to draw.[^5]
-- macOS is unfriendly to tiling WMs by design (real tiling via yabai requires partially disabling SIP) and niri itself is Wayland-only.[^10] gwae delivers the niri layout model inside any macOS or Windows terminal instead.
+- tmux divides a fixed screen and has no infinite canvas. The entire tmux-based orchestrator tier (Claude Squad, dmux, workmux, amux, uzi) inherits that ceiling. gwae hosts its own PTYs and scrolls a 2D strip grid instead: orchestrate freely on grids, the 2D is yours to draw.
+- macOS is unfriendly to tiling WMs by design (real tiling via yabai requires partially disabling SIP) and niri itself is Wayland-only.[^10] gwae delivers the niri layout model inside any macOS terminal instead.
 - GUI ADEs cannot copy the structural properties of a terminal tool: runs over SSH, inside any terminal, on the machine the agents already run on, no daemon, no Electron.[^1]
 - gwae runs over SSH, including on headless machines, if you want to allocate every resource to your agents.
 - **The only bottleneck should be your brain.** Between your keystroke and the pane there is one process and no daemon round-trip: 2.5 ms echo RTT measured, ~1/6 of a 60 Hz frame.[^11]
@@ -44,7 +44,7 @@ Every mux runs headless in a real PTY, driven the way a terminal drives it, on t
 TL;DR:
 - **vs Zellij**: gwae is 5x lower echo latency, 13x less memory, 16x smaller binary, 4x faster to first paint. "Lightweight spatial canvas" is measured, not marketing.
 - **vs tmux**: tmux wins raw echo RTT (event-driven C vs gwae's 1ms poll loop) and idle CPU. Both are invisible in practice (2.5 ms is ~1/6 of a 60 Hz frame) but tmux earns the row. gwae wins memory at 4 panes and needs no daemon.
-- So **why gwae over tmux, if tmux echoes faster?** Because the comparison tmux cannot enter is the capability table below: layout and Windows. tmux crams N panes into one screen; gwae's panes never shrink. tmux needs WSL on Windows;[^8] gwae builds natively (ConPTY runtime verification is M3).[^5]
+- So **why gwae over tmux, if tmux echoes faster?** Because the comparison tmux cannot enter is the capability table below: layout. tmux crams N panes into one screen; gwae's panes never shrink.
 
 ### The capability axis
 
@@ -55,7 +55,7 @@ TL;DR:
 | In a terminal / over SSH | ✓ | ✓ | ✓ | ✓ | ✗ GUI-bound | **✓** |
 | At-a-glance fleet state | ✗ | session list | kanban + push | ✗ | ✗ | **✓ OSC 133 minimap** |
 | Extra daemons/deps | daemon | tmux + gh | server + SQLite + tmux | tmux + git | GTK / macOS app | **none, single process** |
-| Windows without WSL | tmux ✗ / Zellij ✓[^5] | ✗ | ✗ | ✗ | ✗ | **✓ builds (ConPTY = M3)** |
+| macOS-native layout | tmux partial (no infinite canvas) | ✗ | ✗ | ✗ | ✗ | **✓ no-shrink strips** |
 | License | ISC / MIT | AGPL | MIT | MIT | MIT / MIT | MIT |
 | Survives disconnect | ✓ | ✓ tmux | ✓ server | ✓ tmux | socket / workspaces | ✗ by design → nest in tmux |
 
@@ -78,11 +78,11 @@ gwae is general, but it pairs best with service layers that share the same visio
 [^2]: DeepSeek V4 Flash official API: $0.14 in / $0.28 out per 1M tokens, $0.0028 on cache hits. Prices as of 2026-08-25, verified against [v4flash.com/pricing](https://v4flash.com/pricing/) and [benchlm.ai](https://benchlm.ai/deepseek/api-pricing); they will drift.
 [^3]: `--resume` restores *conversation* state, not *process* state. It covers desk work (close the laptop, come back later) but not unattended runs, non-agent panes, or layout. See the FAQ: a shell that must survive the terminal belongs in tmux, inside a gwae pane.
 [^4]: Claude Squad, amux, dmux, workmux, and uzi all render through tmux or a single-agent TUI list. Their competition is on watchdogs, kanban boards, and YAML, not layout. Details in [`docs/COMPARISON.md`](COMPARISON.md).
-[^5]: Honest scope of the Windows/layout moat: Zellij 0.44.0+ ships native Windows ([zellij.dev/news](https://zellij.dev/news/remote-sessions-windows-cli/)) and psmux is a native ConPTY tmux reimplementation ([github.com/psmux/psmux](https://github.com/psmux/psmux)), so the moat is against the tmux *orchestrators*, not all multiplexers. Séance (Linux/GTK) and tairi (macOS app) own the niri strip model but are GUI-bound. And compiling is not running: gwae's Windows build passes CI, ConPTY runtime verification is [M3](ROADMAP.md). Until then: "builds for Windows", not "Windows supported".
+[^5]: Scope of the layout moat: Séance (Linux/GTK) and tairi (macOS app) own the niri strip model but are GUI-bound. Zellij and tmux divide a fixed screen.
 [^6]: Feature parity with GUI ADEs (browser, diff review, PR boards, mobile) is unwinnable for a sole developer and off-mission. See [Non-goals](ROADMAP.md).
 [^7]: Against plain kitty splits, gwae's only argument is layout: no-shrink strips past the screen edge plus the minimap. That argument is worthless at 2 agents and decisive at 6.
-[^8]: tmux is POSIX-bound (ptys, signals, termios). Windows install guides offer only WSL2, Cygwin, or MSYS2: [tmux.app/install/windows](https://tmux.app/install/windows/).
-[^9]: The entire tmux-orchestrator tier is Unix-or-WSL-only; none can be Windows-native without replacing their whole runtime. See [`docs/COMPARISON.md`](COMPARISON.md).
+[^8]: tmux divides a fixed screen and has no infinite canvas.
+[^9]: The tmux-orchestrator tier renders through tmux or a single-agent list and owns no layout. See [`docs/COMPARISON.md`](COMPARISON.md).
 [^10]: yabai requires partially disabling System Integrity Protection for full tiling (yabai wiki); niri is a Wayland compositor, Linux-only.
 [^11]: Method: each mux spawned headless in a 120x30 PTY (`pty.fork`), macOS aarch64, same machine, same run, 2026-08-25. Startup = exec-to-first-byte and exec-to-first-echoed-keystroke. Echo RTT = write 1 char to the mux PTY, wait for it to appear in output; 150 samples after 20 warmup, through `/bin/sh` in the focused pane; the mux sits on this path twice (input in, echo out). RSS = mux's own processes only, shells excluded, via `ps` on the spawned process tree. Idle CPU = cputime delta over 10 s with no input. gwae ran with `input_poll_ms = 1`, tmux with `-f /dev/null`, Zellij with default config plus tips disabled. Raw output: [`docs/bench-2026-08-25.json`](bench-2026-08-25.json). Caveats: single machine, single run, release binaries as installed (no debug builds); tmux's echo RTT advantage is real and reproducible; the idle CPU row is gwae's poll loop and is fixable (event-driven wakeup is on the roadmap).
 [^12]: Zellij's 4-pane layout session did not become interactive under the harness (it opened its session-resurrect screen instead). Rather than hand-tune it, the cells are n/a; its 1-pane numbers stand.

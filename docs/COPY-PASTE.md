@@ -9,8 +9,7 @@
   with gwae instead. Once that drag starts, releasing Shift before the mouse
   does not lose the selection. If the host terminal intercepts Shift-drag,
   its own native selection/copy behavior applies instead.
-- **Clipboard transport:** native `pbcopy` (macOS), `wl-copy` / `xclip` / `xsel`
-  (Linux), or `clip` (Windows) is preferred. Helpers have a bounded wait. Over
+- **Clipboard transport:** native `pbcopy` is preferred, with a bounded wait. Over
   SSH, or if native helpers fail, gwae sends an OSC 52 request to the host
   terminal. The toast says `copy sent to terminal`, not `copied`, because the
   terminal may reject clipboard writes. Enable OSC 52 in the host if necessary.

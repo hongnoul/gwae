@@ -59,9 +59,6 @@ impl Guard {
     /// exec replaces this process and the new image acquires its own guard
     /// from the handed-over config. `-w` ends the old `caffeinate` once this
     /// pid is gone, so no orphan survives even if the kill races the exec.
-    ///
-    /// Unix-only, like the hot-reload exec path that calls it: Windows has
-    /// no exec handover, so no caller there.
     #[cfg(unix)]
     pub fn release(&mut self) {
         if let Some(mut c) = self.child.take() {
@@ -149,24 +146,19 @@ fn argv(pid: u32) -> Vec<String> {
     ]
 }
 
-/// The `gwae doctor` line for `keep_awake`.
-pub fn doctor_line(enabled: bool) -> String {
-    line_for(enabled, &availability())
-}
-
-/// Small coffee badge stamped onto the Option HUD chrome while the
+/// Small text badge stamped onto the Option HUD chrome while the
 /// assertion is held.
 ///
 /// A fixed annotation rather than a palette key, because it is a *state*
-/// signal, not a taste: `~[_]o` is a steaming cup in pure ASCII (steam,
-/// cup, handle) followed by the label, and it reads the same whatever the
+/// signal, not a taste: plain text that reads the same whatever the
 /// terminal colors are. It lives only on the HUD, so the palette itself —
 /// focus ring included — is never touched and toggling off restores every
 /// color exactly.
-pub const COFFEE_BADGE: &str = " ~[_]o keep-awake ";
+pub const KEEP_AWAKE_BADGE: &str = " keep-awake ";
 
-/// [`doctor_line`] against a described machine, so tests never depend on
-/// what happens to be installed on the one running them.
+/// The `gwae doctor` line against a described machine, so tests never
+/// depend on what happens to be installed on the one running them.
+#[cfg(test)]
 fn line_for(enabled: bool, avail: &Availability) -> String {
     if !enabled {
         return match avail {
@@ -228,7 +220,7 @@ mod tests {
         );
         assert!(
             line_for(false, &Availability::WrongOs).contains("macOS"),
-            "a Linux user should learn the key is not for them"
+            "a non-macOS checkout should learn the key is not for it"
         );
         // On always names what happens next, including the lid caveat.
         let ready = line_for(true, &Availability::Ready);
@@ -251,25 +243,23 @@ mod tests {
     #[test]
     fn probing_the_real_machine_never_panics() {
         let _ = availability();
-        let _ = doctor_line(false);
-        let _ = doctor_line(true);
     }
 
     #[test]
-    fn coffee_badge_is_small_plain_ascii() {
+    fn keep_awake_badge_is_small_plain_text() {
         // The badge is stamped onto box-drawing chrome cell by cell, so it
-        // must be short and pure ASCII: no wide glyphs, no emoji.
+        // must be short and pure ASCII: no wide glyphs, no emoji, no art.
         assert!(
-            COFFEE_BADGE.chars().count() <= 24,
-            "badge must stay small: {COFFEE_BADGE:?}"
+            KEEP_AWAKE_BADGE.chars().count() <= 24,
+            "badge must stay small: {KEEP_AWAKE_BADGE:?}"
         );
         assert!(
-            COFFEE_BADGE.is_ascii(),
-            "badge must be ASCII art, got {COFFEE_BADGE:?}"
+            KEEP_AWAKE_BADGE.is_ascii(),
+            "badge must be plain ASCII, got {KEEP_AWAKE_BADGE:?}"
         );
         assert!(
-            COFFEE_BADGE.contains("~[_]o"),
-            "badge must carry the coffee cup, got {COFFEE_BADGE:?}"
+            KEEP_AWAKE_BADGE.contains("keep-awake"),
+            "badge must name the state, got {KEEP_AWAKE_BADGE:?}"
         );
     }
 }

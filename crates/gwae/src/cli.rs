@@ -13,9 +13,9 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "gwae",
     version,
-    about = "gwae: niri's scrolling tiling for your CLI agents, in any terminal",
-    long_about = "A terminal-native, daemon-free multiplexer. Panes live on an infinite 2D \
-                  grid of strips; Alt+hjkl moves focus. macOS, Windows, Linux."
+    about = "gwae: a scrolling terminal multiplexer for macOS. Panes never shrink.",
+    long_about = "A terminal-native, daemon-free multiplexer for macOS. Panes live on an infinite 2D \
+                  grid of strips; Option+hjkl moves focus. Install with Homebrew: brew install hongnoul/tap/gwae."
 )]
 pub struct Cli {
     #[command(subcommand)]

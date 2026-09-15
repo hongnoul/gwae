@@ -7,12 +7,14 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Changed
+- **Homebrew is the absolute source of truth for deployments.** `brew install hongnoul/tap/gwae` is the one supported install and `brew upgrade gwae` the one supported upgrade. Releases build the two macOS bottles only and bump the tap. The repo is macOS-only: every shortcut, clipboard path, and doc assumes Option on a Mac.
 - **Retro chrome is enforced.** gwae paints its own colors instead of inheriting the terminal scheme: true-black panels with high-contrast functional colors (cyan focus, blue running, amber idle, green done, red failed, white text). Focus tiles keep an underline on top of the fill, so focus never depends on color alone.
 - **Manual `[theme]` overrides, no picker.** Any chrome key (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`) can be overridden with a 256-color index, a hex RGB string, or `"default"` for the terminal's own color. Unset keys keep retro, a save repaints the running session, and retired preset names parse as "no overrides".
 - **Keep-awake is on by default.** The Mac stays up while gwae runs with no onboarding question. Opt out with `keep_awake = false`, `⌥+w`, or `GWAE_NO_KEEP_AWAKE=1`. Teardown is unchanged: exiting gwae still kills every pane process and releases the assertion.
 - **Keep-awake shows a text badge, not a red ring.** While the `caffeinate` assertion is held a small `keep-awake` badge is stamped on the Option HUD frame (hold Option to see it) instead of recoloring the focus ring. The palette is never touched, so toggling `⌥+w` off restores every color exactly.
 
 ### Removed
+- **Windows and Linux support.** No Windows zip, no Linux bottles, no scoop bucket, no AUR, no nix flake, no install scripts. Old configs spelling `windows` / `scoop` / `winget` / `zip` as the update source resolve to `unknown` so detection runs instead. Old binaries keep running but get no updates.
 - **Option+number column jump.** `⌥+1..9` (and multi-digit `⌥+1 2`) no longer focuses columns. Nobody used it, and it stole digits the focused pane owns (readline word ops, vim counts). Option+digits now reach the child as Meta `ESC+digit`. Includes the jump accumulator, the `JumpToColumn` layout action, and the dashboard pending-number preview.
 
 ## [1.4.1] - 2026-09-13
