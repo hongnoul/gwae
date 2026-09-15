@@ -1,6 +1,6 @@
 //! Command-line interface for the `gwae` binary.
 //!
-//! Single binary, subcommands: `run` (default), `new`, `agent`, `init`, `tune`,
+//! Single binary, subcommands: `run` (default), `agent`, `init`, `tune`,
 //! `setup`, `upgrade`, `doctor`.
 //! There is deliberately no `server`/`ctl`/`ls`/`kill-server`: gwae is
 //! daemon-free (ADR-003 reversed, ADR-011).
@@ -31,12 +31,6 @@ pub enum Command {
     Run {
         /// Optional command to launch in the first pane instead of $SHELL.
         command: Option<String>,
-    },
-    /// Start a new column running a command in a fresh session.
-    New {
-        /// The command (with args) to run in the new column.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        command: Vec<String>,
     },
     /// The agent gateway that `⌥+;` runs: resolve `default_agent`, offer the
     /// harnesses found on PATH when it is unset or missing, save the choice,

@@ -57,10 +57,6 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
     let dir = cli.dir.clone();
     match cli.command.unwrap_or(Command::Run { command: None }) {
         Command::Run { command } => tui::run_tui(command, cfg, dir),
-        Command::New { command } => {
-            tracing::info!(command = ?command, "new column (PTY spawn lands in M0 spike)");
-            Ok(())
-        }
         Command::Agent { print } => agent::run(
             &cfg.default_agent,
             &cfg.agents,
