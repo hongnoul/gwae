@@ -7,7 +7,11 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventState, KeyModifiers, ModifierKeyCode};
 
 use gwae_layout::{Action, Layout, PaneId, PaneStatus};
-use super::KEYBOARD_SCROLL_LINES;
+
+/// Ctrl+Shift+J/K step in plain panes, matching jcode's default
+/// `keybindings.scroll_lines` (3). Keep independent of wheel tuning, and
+/// leave agent panes to the harness's own configured speed at dispatch.
+const KEYBOARD_SCROLL_LINES: i32 = 3;
 
 pub(crate) fn is_alt_modifier(ev: &KeyEvent) -> bool {
     matches!(

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use gwae_layout::{Action, FollowScroll, Layout, PaneId, Viewport, Width};
 use gwae_term::{CColor, Cell, Size as GridSize, TermGrid, Vt100Grid};
 
+use crate::config::Config;
 use crate::select::Selection;
 use crate::theme::Palette;
 
@@ -12,7 +13,16 @@ use super::input::focused_pane;
 use super::pty::PtyPane;
 use super::Rect;
 use super::chrome::{draw_big_label, draw_edge_ticks, draw_minimap, draw_placeholder_contents, strip_number};
-use super::{MIN_VISIBLE_PANE_WIDTH, PEEK_SLIVER_WIDTH};
+
+/// Peek-sliver rendering: a neighbour clipped to fewer than this many
+/// visible columns is not drawn as truncated text.
+pub(crate) const MIN_VISIBLE_PANE_WIDTH: u16 = 10;
+pub(crate) const PEEK_SLIVER_WIDTH: u16 = 3;
+
+pub(crate) fn chrome_rows(_cfg: &Config) -> u16 {
+    // Bottom status row has been removed; chrome is always 0.
+    0
+}
 
 /// One visible pane on screen: where to draw it and which grid slice to show.
 #[derive(Debug)]

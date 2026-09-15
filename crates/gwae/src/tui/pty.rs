@@ -12,7 +12,7 @@ use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterP
 use crate::config::Config;
 use crate::geometry::CellPixels;
 use super::render::column_grid_sizes;
-use crate::tui::chrome_rows;
+use super::render::chrome_rows;
 
 use super::shell::agent_gateway_cmd;
 use super::shell::shell_split;
@@ -597,6 +597,470 @@ mod tests {
         .pty_size(78, 28);
         inherited.resize(next).unwrap();
         assert_eq!(master.get_size().unwrap(), next);
+    }
+
+    // Exercise the actual pane event path without launching a child or writing
+    // to the host terminal. The inert inherited handles are never accessed.
+    #[cfg(unix)]
+    mod graphics_feed_tests {
+        use super::*;
+        use super::super::super::input::focused_pane;
+        use super::super::super::render::tests::{no_cow, no_map};
+        use super::super::super::render::{render_frame, render_frame_with_images};
+        use crate::geometry::CellPixels;
+        use crate::theme::Palette;
+        use gwae_term::{Size as GridSize, TermGrid, Vt100Grid};
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use std::time::Instant;
+
+        #[derive(Clone, Default)]
+        struct Replies(Arc<Mutex<Vec<u8>>>);
+
+        impl Replies {
+            fn bytes(&self) -> Vec<u8> {
+                self.0.lock().unwrap().clone()
+            }
+        }
+
+        impl Write for Replies {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        fn pane_with_replies() -> (PtyPane, Replies) {
+            let replies = Replies::default();
+            let mut grid = Vt100Grid::new(GridSize { cols: 20, rows: 10 });
+            grid.set_cell_size(8, 16);
+            (
+                PtyPane {
+                    master: PaneIo::Inherited(-1),
+                    writer: Box::new(replies.clone()),
+                    child: PaneProc::Adopted(None),
+                    grid,
+                    pty_size: CellPixels {
+                        width: 8,
+                        height: 16,
+                    }
+                    .pty_size(20, 10),
+                    alive: true,
+                    h_scroll: 0,
+                    last_output: Instant::now(),
+                    saw_osc133: false,
+                    graphics_stream: Default::default(),
+                    graphics: Default::default(),
+                    legacy_images: Default::default(),
+                },
+                replies,
+            )
+        }
+
+        #[test]
+        fn native_overlay_is_visible_over_styled_text_and_no_host_means_no_placeholders() {
+            let (mut pane, _) = pane_with_replies();
+            feed_pane_output(
+                &mut pane,
+                b"\x1b[?25l\x1b[1;4;7mX\x1b[H\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            let layout = Layout::new(1);
+            let pid = focused_pane(&layout).unwrap();
+            let mut panes = HashMap::from([(pid, pane)]);
+            let mut out = Vec::new();
+            let mut host = crate::graphics_host::Host::default();
+            host.begin();
+            render_frame_with_images(
+                &mut out,
+                &layout,
+                &mut panes,
+                80,
+                24,
+                0,
+                &Palette::default(),
+                &no_map(),
+                &no_cow(),
+                false,
+                None,
+                Some(&mut host),
+            );
+            let cell = out[81];
+            assert_eq!(cell.ch, crate::graphics_host::PLACEHOLDER);
+            assert!(!cell.style.bold && !cell.style.underline && !cell.style.inverse);
+            // Unmapped child placeholders must never be interpreted as a host ID,
+            // including disabled graphics and test/preview renders without a host.
+            panes
+                .get_mut(&pid)
+                .unwrap()
+                .grid
+                .feed("\x1b[H\u{10eeee}\u{305}\u{305}".as_bytes());
+            render_frame(
+                &mut out,
+                &layout,
+                &mut panes,
+                80,
+                24,
+                0,
+                &Palette::default(),
+                &no_map(),
+                &no_cow(),
+                false,
+                None,
+            );
+            assert!(out
+                .iter()
+                .all(|c| c.ch != crate::graphics_host::PLACEHOLDER));
+        }
+
+        #[test]
+        fn dispatcher_replaces_native_source_only_after_successful_legacy_commit() {
+            let (mut pane, _) = pane_with_replies();
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,U=1,q=2,i=7,p=1,f=24,s=1,v=2,c=1,r=1,m=1;AAAA\x1b\\",
+                true,
+            );
+            assert!(pane.graphics.source(7).is_some());
+            feed_pane_output(&mut pane, b"\x1b_Gm=0;BAUG\x1b\\", true);
+            assert!(pane.graphics.source(7).is_none());
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            assert!(pane.graphics.source(7).is_some());
+            pane.grid
+                .feed("\x1b[H\x1b[38;2;0;0;7m\x1b[58;2;0;0;1m\u{10eeee}\u{305}\u{305}".as_bytes());
+            let mut host = crate::graphics_host::Host::default();
+            host.begin();
+            pane.legacy_images.begin_row();
+            assert_eq!(
+                pane.legacy_images.cell(pane.grid.cell(0, 0), &mut host).ch,
+                ' '
+            );
+            assert!(
+                host.pending.is_empty(),
+                "replaced legacy source cannot be uploaded"
+            );
+        }
+
+        #[test]
+        fn mixed_text_and_apcs_use_each_command_cursor_at_every_split() {
+            let input = concat!(
+                "aé",
+                "\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AAAA\x1b\\",
+                "XY\x1b[4;6H",
+                "\x1b_Ga=T,i=2,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                "Z"
+            )
+            .as_bytes();
+            for split in 0..=input.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, &input[..split], true);
+                feed_pane_output(&mut pane, &input[split..], true);
+                let placements = pane.graphics.placements();
+                assert_eq!(placements.len(), 2, "split {split}");
+                assert_eq!(
+                    (placements[0].row, placements[0].col),
+                    (0, 2),
+                    "split {split}"
+                );
+                assert_eq!(
+                    (placements[1].row, placements[1].col),
+                    (3, 5),
+                    "split {split}"
+                );
+                assert_eq!(pane.grid.cursor_position(), (3, 6), "split {split}");
+                assert_eq!(pane.grid.cell(0, 0).ch, 'a');
+                assert_eq!(pane.grid.cell(1, 0).ch, 'é');
+                assert_eq!(pane.grid.cell(2, 0).ch, 'X');
+                assert_eq!(pane.grid.cell(3, 0).ch, 'Y');
+                assert_eq!(pane.grid.cell(5, 3).ch, 'Z');
+                assert_eq!(&**pane.graphics.source(2).unwrap().pixels, &[1, 2, 3]);
+                assert_eq!(
+                    replies.bytes(),
+                    b"\x1b_Gi=1;OK\x1b\\\x1b_Gi=2;OK\x1b\\",
+                    "split {split}"
+                );
+                assert!(pane.grid.take_pty_replies().is_empty());
+            }
+        }
+
+        #[test]
+        fn graphics_cursor_advance_precedes_following_text_and_cursor_query() {
+            let input = b"ab\x1b_Ga=T,i=4,f=24,s=1,v=1,c=3,r=2;AAAA\x1b\\Z\x1b[6n";
+            for split in 0..=input.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, &input[..split], true);
+                feed_pane_output(&mut pane, &input[split..], true);
+                let placement = &pane.graphics.placements()[0];
+                assert_eq!((placement.row, placement.col), (0, 2), "split {split}");
+                assert_eq!((placement.pixel_width, placement.pixel_height), (24, 32));
+                assert_eq!(pane.grid.cell(5, 2).ch, 'Z', "split {split}");
+                assert_eq!(pane.grid.cursor_position(), (2, 6), "split {split}");
+                assert_eq!(
+                    replies.bytes(),
+                    b"\x1b_Gi=4;OK\x1b\\\x1b[3;7R",
+                    "split {split}"
+                );
+            }
+        }
+
+        #[test]
+        fn final_image_chunk_uses_final_cursor_and_only_then_acknowledges() {
+            let first = b"\x1b[2;3H\x1b_Ga=T,i=9,f=24,s=2,v=2,C=1,m=1;AAAA\x1b\\BEFORE";
+            let last = b"\x1b[8;12H\x1b_Gm=0;/wAAAP8AAAD/\x1b\\!\x1b[6n";
+            for split in 0..=last.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, first, true);
+                assert!(replies.bytes().is_empty());
+                assert!(pane.graphics.source(9).is_none());
+                assert!(pane.graphics.placements().is_empty());
+                feed_pane_output(&mut pane, &last[..split], true);
+                feed_pane_output(&mut pane, &last[split..], true);
+                let placement = &pane.graphics.placements()[0];
+                assert_eq!((placement.row, placement.col), (7, 11), "split {split}");
+                assert_eq!(pane.graphics.source(9).unwrap().pixels.len(), 12);
+                assert_eq!(pane.grid.cell(11, 7).ch, '!');
+                assert_eq!(pane.grid.cursor_position(), (7, 12));
+                assert_eq!(
+                    replies.bytes(),
+                    b"\x1b_Gi=9;OK\x1b\\\x1b[8;13R",
+                    "split {split}"
+                );
+            }
+        }
+
+        #[test]
+        fn graphics_and_terminal_query_replies_keep_exact_stream_order() {
+            let input = concat!(
+                "\x1b[14t",
+                "\x1b_Ga=q,i=31,f=24,s=1,v=1;AAAA\x1b\\",
+                "\x1b[16t\x1b[18t\x1b[c\x1b[5n\x1b[3;7H\x1b[6n",
+                "\x1b_Ga=t,i=2,f=24,s=1,v=1;AQID\x1b\\",
+                "\x1b[16tXY\x1b[6n",
+                "\x1b_Ga=q,i=32,f=24,s=1,v=1;AAAA\x1b\\"
+            )
+            .as_bytes();
+            let expected = concat!(
+                "\x1b[4;160;160t\x1b_Gi=31;OK\x1b\\",
+                "\x1b[6;16;8t\x1b[8;10;20t\x1b[?6c\x1b[0n\x1b[3;7R",
+                "\x1b_Gi=2;OK\x1b\\\x1b[6;16;8t\x1b[3;9R\x1b_Gi=32;OK\x1b\\"
+            )
+            .as_bytes();
+            for split in 0..=input.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, &input[..split], true);
+                feed_pane_output(&mut pane, &input[split..], true);
+                assert_eq!(replies.bytes(), expected, "split {split}");
+                assert!(pane.grid.take_pty_replies().is_empty());
+            }
+            let (mut pane, replies) = pane_with_replies();
+            for byte in input {
+                feed_pane_output(&mut pane, std::slice::from_ref(byte), true);
+            }
+            assert_eq!(replies.bytes(), expected, "one byte per read");
+        }
+
+        #[test]
+        fn exact_tdf_probe_is_acknowledged_only_when_graphics_are_enabled() {
+            let input = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c\x1b[16t\x1b[5n";
+            for enabled in [false, true] {
+                for split in 0..=input.len() {
+                    let (mut pane, replies) = pane_with_replies();
+                    feed_pane_output(&mut pane, &input[..split], enabled);
+                    feed_pane_output(&mut pane, &input[split..], enabled);
+                    let expected: &[u8] = if enabled {
+                        b"\x1b_Gi=31;OK\x1b\\\x1b[?6c\x1b[6;16;8t\x1b[0n"
+                    } else {
+                        b"\x1b[?6c\x1b[6;16;8t\x1b[0n"
+                    };
+                    assert_eq!(
+                        replies.bytes(),
+                        expected,
+                        "enabled={enabled}, split {split}"
+                    );
+                    assert!(
+                        pane.graphics.source(31).is_none(),
+                        "a query never stores pixels"
+                    );
+                    assert!(pane.graphics.placements().is_empty());
+                    assert_eq!(pane.grid.cursor_position(), (0, 0));
+                    assert_eq!(pane.grid.visible_text(), "");
+                }
+            }
+        }
+
+        #[test]
+        fn separate_panes_reuse_ids_without_cross_routing_partial_streams_or_replies() {
+            let (first, first_replies) = pane_with_replies();
+            let (second, second_replies) = pane_with_replies();
+            let mut panes = HashMap::from([(11u64, first), (22u64, second)]);
+            feed_pane_output(
+                panes.get_mut(&11).unwrap(),
+                b"\x1b_Ga=T,i=7,f=24,s=1,v=2,C=1,m=1;AA",
+                true,
+            );
+            feed_pane_output(
+                panes.get_mut(&22).unwrap(),
+                b"\x1b[5;7H\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\\x1b[6n",
+                true,
+            );
+            assert!(first_replies.bytes().is_empty());
+            assert!(panes[&11].graphics.source(7).is_none());
+            let second_expected = b"\x1b_Gi=7;OK\x1b\\\x1b[5;7R";
+            assert_eq!(second_replies.bytes(), second_expected);
+            feed_pane_output(panes.get_mut(&11).unwrap(), b"AA\x1b\\", true);
+            assert!(
+                first_replies.bytes().is_empty(),
+                "a non-final chunk never acknowledges"
+            );
+            feed_pane_output(
+                panes.get_mut(&11).unwrap(),
+                b"\x1b[3;4H\x1b_Gm=0;BAUG\x1b\\\x1b[6n",
+                true,
+            );
+            assert_eq!(first_replies.bytes(), b"\x1b_Gi=7;OK\x1b\\\x1b[3;4R");
+            assert_eq!(second_replies.bytes(), second_expected);
+            assert_eq!(
+                &**panes[&11].graphics.source(7).unwrap().pixels,
+                &[0, 0, 0, 4, 5, 6]
+            );
+            assert_eq!(&**panes[&22].graphics.source(7).unwrap().pixels, &[1, 2, 3]);
+            let first_placement = &panes[&11].graphics.placements()[0];
+            let second_placement = &panes[&22].graphics.placements()[0];
+            assert_eq!((first_placement.row, first_placement.col), (2, 3));
+            assert_eq!((second_placement.row, second_placement.col), (4, 6));
+            feed_pane_output(panes.get_mut(&11).unwrap(), b"\x1b_Ga=d,d=A;\x1b\\", true);
+            assert!(panes[&11].graphics.source(7).is_none());
+            assert!(panes[&11].graphics.placements().is_empty());
+            assert!(panes[&22].graphics.source(7).is_some());
+            assert_eq!(panes[&22].graphics.placements().len(), 1);
+            assert_eq!(second_replies.bytes(), second_expected);
+        }
+
+        #[test]
+        fn alternate_screen_enter_and_leave_in_one_text_event_clear_graphics() {
+            for mode in [47, 1047, 1049] {
+                let (mut pane, _) = pane_with_replies();
+                feed_pane_output(
+                    &mut pane,
+                    b"\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AAAA\x1b\\",
+                    true,
+                );
+                feed_pane_output(
+                    &mut pane,
+                    b"\x1b_Ga=T,i=9,f=24,s=1,v=2,C=1,m=1;AAAA\x1b\\",
+                    true,
+                );
+                assert!(pane.graphics.source(1).is_some());
+                assert_eq!(pane.graphics.placements().len(), 1);
+                let text = format!("\x1b[?{mode}hALT\x1b[?{mode}l");
+                let events = crate::graphics_stream::Stream::default().feed(text.as_bytes());
+                assert_eq!(
+                    events,
+                    vec![crate::graphics_stream::Event::Text(
+                        text.as_bytes().to_vec()
+                    )]
+                );
+                let epoch = pane.grid.screen_epoch();
+                feed_pane_output(&mut pane, text.as_bytes(), true);
+                assert!(!pane.grid.alternate_screen(), "mode {mode}");
+                assert_ne!(pane.grid.screen_epoch(), epoch, "mode {mode}");
+                assert!(pane.graphics.source(1).is_none(), "mode {mode}");
+                assert!(pane.graphics.placements().is_empty(), "mode {mode}");
+                // Alternate-screen invalidation must discard partial transfers,
+                // not just remove the already-visible placement.
+                feed_pane_output(&mut pane, b"\x1b_Gm=0;AQID\x1b\\", true);
+                assert!(pane.graphics.source(9).is_none(), "mode {mode}");
+                assert!(pane.graphics.placements().is_empty(), "mode {mode}");
+            }
+        }
+
+        #[test]
+        fn ris_clears_visible_and_pending_graphics_at_every_split() {
+            let reset = b"\x1bc";
+            for split in 0..=reset.len() {
+                let (mut pane, _) = pane_with_replies();
+                feed_pane_output(
+                    &mut pane,
+                    b"\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AAAA\x1b\\",
+                    true,
+                );
+                feed_pane_output(
+                    &mut pane,
+                    b"\x1b_Ga=T,i=9,f=24,s=1,v=2,C=1,m=1;AAAA\x1b\\",
+                    true,
+                );
+                assert!(pane.graphics.source(1).is_some());
+                feed_pane_output(&mut pane, &reset[..split], true);
+                feed_pane_output(&mut pane, &reset[split..], true);
+                assert!(pane.graphics.source(1).is_none(), "split {split}");
+                assert!(pane.graphics.placements().is_empty(), "split {split}");
+                feed_pane_output(&mut pane, b"\x1b_Gm=0;AQID\x1b\\", true);
+                assert!(pane.graphics.source(9).is_none(), "split {split}");
+                assert!(pane.graphics.placements().is_empty(), "split {split}");
+            }
+        }
+
+        #[test]
+        fn cancelling_an_opaque_apc_keeps_grid_and_graphics_parser_synchronized() {
+            let input = b"A\x1b_Xopaque\x1b_Ga=T,i=3,f=24,s=1,v=1,C=1;AAAA\x1b\\B\x1b[6n";
+            for split in 0..=input.len() {
+                let (mut pane, replies) = pane_with_replies();
+                feed_pane_output(&mut pane, &input[..split], true);
+                feed_pane_output(&mut pane, &input[split..], true);
+                assert_eq!(pane.grid.visible_text(), "AB", "split {split}");
+                let placement = &pane.graphics.placements()[0];
+                assert_eq!((placement.row, placement.col), (0, 1));
+                assert_eq!(
+                    replies.bytes(),
+                    b"\x1b_Gi=3;OK\x1b\\\x1b[1;3R",
+                    "split {split}"
+                );
+            }
+        }
+
+        #[test]
+        fn discarded_oversized_continuation_cannot_commit_a_partial_image() {
+            let (mut pane, replies) = pane_with_replies();
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            feed_pane_output(&mut pane, b"\x1b_Ga=t,i=9,f=24,s=1,v=1,m=1;\x1b\\", true);
+            let mut oversized = b"\x1b_Gm=1;".to_vec();
+            oversized.extend(std::iter::repeat_n(b'A', 64 * 1024));
+            oversized.extend_from_slice(b"\x1b\\");
+            feed_pane_output(&mut pane, &oversized, true);
+            feed_pane_output(&mut pane, b"\x1b_Gm=0;AAAA\x1b\\Z\x1b[6n", true);
+            assert!(
+                pane.graphics.source(9).is_none(),
+                "dropping an oversized continuation must invalidate the pending transfer"
+            );
+            assert!(
+                !replies
+                    .bytes()
+                    .windows(b"\x1b_Gi=9;OK".len())
+                    .any(|s| s == b"\x1b_Gi=9;OK"),
+                "an image with discarded payload cannot be acknowledged as successful"
+            );
+            assert_eq!(&**pane.graphics.source(1).unwrap().pixels, &[1, 2, 3]);
+            assert_eq!(pane.graphics.placements().len(), 1);
+            assert_eq!(pane.grid.visible_text(), "Z");
+            assert!(replies.bytes().ends_with(b"\x1b[1;2R"));
+        }
     }
 
 }

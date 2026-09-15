@@ -561,6 +561,13 @@ pub(crate) fn plan_center_minimap(
 
 /// The key-hint line under the dashboard. Spelled from [`crate::keys`] so it
 /// reads `⌥` on macOS and `Alt` everywhere else.
+pub(crate) fn has_attention(layout: &Layout) -> bool {
+    layout
+        .panes
+        .values()
+        .any(|p| matches!(p.status, PaneStatus::Idle | PaneStatus::Failed))
+}
+
 pub(crate) fn hud_hint() -> String {
     format!(
         "{n}1-9 col · {n}g attention · {n}hjkl move · {n}/ keys",
