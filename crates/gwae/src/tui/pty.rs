@@ -810,6 +810,91 @@ mod tests {
         }
 
         #[test]
+        fn sustained_native_commits_promote_to_image_view() {
+            let (mut pane, _) = pane_with_replies();
+            assert_eq!(pane.image_view, None);
+            // First commit: streak 1, below threshold, no promotion.
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            assert_eq!(pane.image_view, None);
+            assert_eq!(pane.promote_streak(), 1);
+            // Second commit with no text-screen change between: promoted.
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=8,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            assert_eq!(
+                pane.image_view,
+                Some(ImageView {
+                    promoted_at: pane.image_activity.unwrap(),
+                    commits: 2,
+                })
+            );
+            // Further commits keep the promotion; the fired-at count stays.
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=9,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            assert_eq!(pane.image_view.unwrap().commits, 2);
+        }
+
+        #[test]
+        fn queries_placements_and_single_thumbnails_never_promote() {
+            let (mut pane, _) = pane_with_replies();
+            // One commit alone is a thumbnail, not a viewer.
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
+            );
+            // Queries and placements change image state but are not commits:
+            // the streak holds at 1 and no promotion fires.
+            feed_pane_output(&mut pane, b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\", true);
+            feed_pane_output(&mut pane, b"\x1b_Ga=p,i=7,C=1\x1b\\", true);
+            assert_eq!(pane.image_view, None);
+            assert_eq!(pane.promote_streak(), 1);
+            // Legacy placeholder traffic never promotes either.
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,U=1,q=2,i=7,p=1,f=24,s=1,v=1,c=1,r=1;AQID\x1b\\",
+                true,
+            );
+            assert_eq!(pane.image_view, None);
+        }
+
+        #[test]
+        fn text_screen_change_demotes_and_resets_the_streak() {
+            let (mut pane, _) = pane_with_replies();
+            for id in [7, 8] {
+                feed_pane_output(
+                    &mut pane,
+                    format!("\x1b_Ga=T,i={id},f=24,s=1,v=1,C=1;AQID\x1b\\").as_bytes(),
+                    true,
+                );
+            }
+            assert!(pane.image_view.is_some());
+            // Alternate-screen entry clears graphics, demotes, resets streak.
+            feed_pane_output(&mut pane, b"\x1b[?1049h", true);
+            assert_eq!(pane.image_view, None);
+            assert_eq!(pane.promote_streak(), 0);
+            assert_eq!(pane.image_activity, None);
+            // A fresh streak can promote again after demotion.
+            for id in [7, 8] {
+                feed_pane_output(
+                    &mut pane,
+                    format!("\x1b_Ga=T,i={id},f=24,s=1,v=1,C=1;AQID\x1b\\").as_bytes(),
+                    true,
+                );
+            }
+            assert!(pane.image_view.is_some());
+        }
+
+        #[test]
         fn dispatcher_replaces_native_source_only_after_successful_legacy_commit() {
             let (mut pane, _) = pane_with_replies();
             feed_pane_output(
