@@ -156,16 +156,17 @@ pub fn doctor_line(enabled: bool) -> String {
 
 /// The focus-ring color while the assertion is held: unmissable red.
 ///
-/// A fixed color rather than a theme key, because it is a *state* signal,
-/// not a taste: red means "this machine is deliberately not sleeping", and
-/// that must read the same on every preset.
-pub const ACTIVE_ACCENT: gwae_term::CColor = gwae_term::CColor::Rgb(0xff, 0x40, 0x40);
+/// ANSI bright red rather than a hardcoded RGB, because it is a *state*
+/// signal, not a taste: red means "this machine is deliberately not
+/// sleeping", and it follows the terminal's own red.
+pub const ACTIVE_ACCENT: gwae_term::CColor = gwae_term::CColor::Idx(9);
 
-/// The palette this frame should paint with: the configured one, with the
-/// accent swapped for [`ACTIVE_ACCENT`] while the guard holds an assertion.
+/// The palette this frame should paint with: the terminal-native one, with
+/// the accent swapped for [`ACTIVE_ACCENT`] while the guard holds an
+/// assertion.
 ///
 /// Layered at render time rather than stored, so toggling off restores the
-/// theme exactly and a config reload can never bake the red in.
+/// chrome exactly and a config reload can never bake the red in.
 pub fn effective_palette(base: &crate::theme::Palette, guard: &Guard) -> crate::theme::Palette {
     let mut pal = *base;
     if guard.active() {
