@@ -114,7 +114,6 @@ impl Session {
         cmd.env("TERM", "xterm-256color");
         cmd.env("SHELL", "/bin/sh");
         cmd.env("LC_ALL", "en_US.UTF-8");
-        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
         cmd.env("GWAE_KITTY_KEYBOARD", "0");
         // The whole point: the host image path must be live.
@@ -301,6 +300,49 @@ fn sustained_page_turning_keeps_up_with_input() {
         bytes < 4 * 1024 * 1024,
         "{bytes} bytes for 20 page turns is not streamable \
          (this cost ~16.4 MB before uploads were compressed)"
+    );
+}
+
+/// Phase 1 image isolation: once a page is up, idle frames must not push
+/// image bytes. The per-pane prepare cache (keyed by the pane's
+/// image-activity token) means a still page reuses its host tiles instead of
+/// rewalking sources and reuploading. Without the cache every frame would
+/// carry tile traffic and one image pane would eat the whole session budget.
+#[test]
+#[ignore]
+fn still_page_emits_no_image_bytes_on_idle_frames() {
+    let mut s = Session::start();
+    let startup = s.drain_until_quiet(Duration::from_millis(1500));
+    let startup_packets = startup
+        .windows(6)
+        .filter(|w| **w == b"\x1b_Ga=T"[..])
+        .count();
+    assert!(
+        startup_packets > 0,
+        "no host image transfer was emitted, so this ran the text fallback \
+         and measures nothing: {} bytes of startup output",
+        startup.len()
+    );
+    // Settle, then capture a quiet window with no input. Any image transfer
+    // here is a re-upload of an unchanged page: the cache failed.
+    let _ = s.drain_until_quiet(Duration::from_millis(500));
+    let idle = s.drain_until_quiet(Duration::from_millis(2000));
+    let idle_packets = idle.windows(6).filter(|w| **w == b"\x1b_Ga=T"[..]).count();
+    eprintln!("idle 2s window: {} bytes, {idle_packets} image transfers", idle.len());
+    assert_eq!(
+        idle_packets, 0,
+        "a still page re-uploaded {idle_packets} image transfers on idle frames"
+    );
+    // A genuine page turn must still produce exactly one page worth of new
+    // image traffic: the cache isolates idle frames, it does not freeze them.
+    s.writer.write_all(b"l").unwrap();
+    s.writer.flush().unwrap();
+    let turn = s.drain_until_quiet(Duration::from_millis(700));
+    let turn_packets = turn.windows(6).filter(|w| **w == b"\x1b_Ga=T"[..]).count();
+    eprintln!("page turn: {} bytes, {turn_packets} image transfers", turn.len());
+    assert!(
+        turn_packets > 0,
+        "page turn produced no image traffic; the viewer did not navigate"
     );
 }
 
