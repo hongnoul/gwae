@@ -418,8 +418,8 @@ pub fn all_questions_for_with_extra(f: crate::install::Facts, extra: &[String]) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::persist::{apply_answers, fill_defaults};
-    use super::super::screen::{banner_palette, render_question, render_screen, step, Key, Step};
+    use super::super::persist::{answered, apply_answers, fill_defaults};
+    use super::super::screen::{banner_palette, render_question, render_screen, step, swatch, Key, Step};
     use crate::theme::Palette;
     use crate::config::Config;
 

@@ -318,7 +318,7 @@ fn fill_defaults(qs: &[Question], chosen: &mut [Option<Answer>], from: usize) {
 }
 
 /// The `(key, value)` pairs for the questions that were actually answered.
-fn answered(qs: &[Question], chosen: &[Option<Answer>]) -> Vec<(String, String)> {
+pub(super) fn answered(qs: &[Question], chosen: &[Option<Answer>]) -> Vec<(String, String)> {
     qs.iter()
         .zip(chosen)
         .filter_map(|(q, a)| match a {

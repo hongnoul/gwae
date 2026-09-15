@@ -479,6 +479,7 @@ pub fn draw_with_banner(banner_step: usize, pal: &Palette, cols: u16, rows: u16,
 mod tests {
     use super::*;
     use super::super::persist::apply_answers;
+    use super::super::questions::questions;
     use crate::theme::Palette;
 
     use super::*;
