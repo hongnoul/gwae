@@ -1,7 +1,7 @@
 //! Picker candidates: ranked directories for the spawn picker.
 
 use super::path::{expand, inherited, MAX_DEPTH, MAX_SCAN};
-use super::scan::{is_project, scan, search_roots, zoxide_dirs, ZOXIDE_LIMIT};
+use super::scan::{is_project, scan, scan_directories, search_roots, zoxide_dirs, ZOXIDE_LIMIT};
 use std::path::{Path, PathBuf};
 
 /// A directory offered by the `⌥+d` picker.
@@ -207,6 +207,7 @@ fn subsequence(hay: &str, needle: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::scan::scan;
 
     use super::*;
 

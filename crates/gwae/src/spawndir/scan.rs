@@ -1,6 +1,6 @@
 //! Project discovery: marker-based directory scan with bounds.
 
-use super::path::expand;
+use super::path::{expand, PROJECT_MARKERS, SKIP_DIRS};
 use std::path::{Path, PathBuf};
 
 pub fn is_project(dir: &Path) -> bool {
@@ -27,7 +27,7 @@ pub fn scan(roots: &[PathBuf], max_depth: usize, budget: usize) -> Vec<PathBuf> 
 
 /// Searchable directories, including unversioned scaffolds and repo children.
 /// Unlike project suggestions, these are only shown once the user types.
-fn scan_directories(roots: &[PathBuf], max_depth: usize, budget: usize) -> Vec<PathBuf> {
+pub(super) fn scan_directories(roots: &[PathBuf], max_depth: usize, budget: usize) -> Vec<PathBuf> {
     walk(roots, max_depth, budget, false)
 }
 
@@ -135,6 +135,8 @@ pub fn search_roots(configured: &[String]) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::path::{MAX_DEPTH, MAX_SCAN, PROJECT_MARKERS, SKIP_DIRS};
+    use super::super::picker::{candidates, filter};
 
     
     #[test]
