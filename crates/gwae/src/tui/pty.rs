@@ -150,8 +150,9 @@ pub struct PtyPane {
     /// for input; demotion restores full text painting with no state loss.
     pub image_view: Option<ImageView>,
     /// Phase 2 streak accumulator: consecutive native commits with no grid
-    /// text-screen change between them.
-    promote_streak: u32,
+    /// text-screen change between them. Crate-visible so render tests can
+    /// build promoted-pane fixtures; production code uses the accessors.
+    pub(crate) promote_streak: u32,
 }
 
 /// Phase 2 viewer promotion state.

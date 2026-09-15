@@ -236,6 +236,54 @@ pub(crate) fn pane_window(col_x0: u16, h_scroll: i32, w: u16, grid_cols: u16) ->
     }
 }
 
+/// Fallback message for a promoted image pane on a host without Kitty
+/// graphics: centered lines explaining the pane is image-only and how to
+/// get pixels. Painted over the blank cells the pane loop laid down, so
+/// tiny rects degrade to nothing rather than a clipped fragment.
+fn paint_image_fallback(out: &mut [Cell], cols: u16, rect: Rect, pal: &Palette) {
+    const LINES: &[&str] = &[
+        "image pane needs Kitty graphics",
+        "run under kitty / ghostty, or set GWAE_KITTY_GRAPHICS=1",
+    ];
+    if rect.w < 10 || rect.h < 2 {
+        return;
+    }
+    let mut wrapped: Vec<String> = Vec::new();
+    for line in LINES {
+        let mut cur = String::new();
+        for word in line.split_whitespace() {
+            if cur.is_empty() {
+                cur.push_str(word);
+            } else if cur.chars().count() + 1 + word.chars().count() <= rect.w as usize {
+                cur.push(' ');
+                cur.push_str(word);
+            } else {
+                wrapped.push(std::mem::take(&mut cur));
+                cur.push_str(word);
+            }
+        }
+        if !cur.is_empty() {
+            wrapped.push(cur);
+        }
+    }
+    if wrapped.iter().any(|l| l.chars().count() > rect.w as usize) {
+        return;
+    }
+    let y0 = rect.y + rect.h.saturating_sub(wrapped.len() as u16) / 2;
+    super::chrome::draw_art(
+        out,
+        cols,
+        Rect {
+            x: rect.x,
+            y: y0,
+            w: rect.w,
+            h: rect.h.min(wrapped.len() as u16),
+        },
+        &wrapped,
+        pal.label,
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 #[cfg(test)]
 pub(crate) fn render_frame(
@@ -472,6 +520,9 @@ pub(crate) fn render_frame_with_images(
                     };
                 }
                 out[idx] = cell;
+            }
+            if image_blind {
+                paint_image_fallback(out, cols, v.rect, pal);
             }
         }
     }
@@ -1000,6 +1051,103 @@ pub(crate) mod tests {
     /// screen rows the map would otherwise overlay.
     pub(crate) fn no_hints() -> bool {
         false
+    }
+
+    /// Promoted image pane without a host image channel: the frame must say
+    /// why the pane is blank instead of leaving an empty rectangle. With a
+    /// channel the same pane paints tiles and no message.
+    #[test]
+    fn promoted_pane_without_host_images_explains_itself() {
+        use crate::tui::pty::{feed_pane_output, PaneIo, PaneProc, PtyPane};
+        use gwae_layout::{Preset, Width};
+        let mut layout = Layout::new(1);
+        // Full width: the message needs room (rect.w >= 10); the default
+        // quarter-width box at 80 cols is too narrow to hold it.
+        // Full-width column holding a fresh pane id: Layout::new leaves
+        // the strip empty after clearing, so allocate after rebuilding.
+        let row = layout.focus.row;
+        if let Some(r) = layout.row_mut(row) {
+            r.columns.clear();
+        }
+        let pid = layout.alloc_pane();
+        layout.add_column(row, Width::Cells(80), vec![pid]);
+        let mut grid = gwae_term::Vt100Grid::new(gwae_term::Size { cols: 40, rows: 12 });
+        grid.set_cell_size(8, 16);
+        let mut pane = PtyPane {
+            master: PaneIo::Inherited(-1),
+            writer: Box::new(std::io::sink()),
+            child: PaneProc::Adopted(None),
+            grid,
+            pty_size: crate::geometry::CellPixels { width: 8, height: 16 }.pty_size(40, 12),
+            alive: true,
+            h_scroll: 0,
+            last_output: std::time::Instant::now(),
+            saw_osc133: false,
+            graphics_stream: Default::default(),
+            graphics: Default::default(),
+            legacy_images: Default::default(),
+            image_activity: None,
+            image_view: None,
+            promote_streak: 0,
+        };
+        // Two 1x1 native commits in separate feeds (the shape the committed
+        // promotion tests prove promotes; APC-only feeds do not bump the
+        // grid epoch, so the streak survives across them).
+        feed_pane_output(&mut pane, b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\", true);
+        feed_pane_output(&mut pane, b"\x1b_Ga=T,i=8,f=24,s=1,v=1,C=1;AQID\x1b\\", true);
+        assert!(pane.image_view.is_some(), "fixture must promote the pane");
+        let mut panes = HashMap::from([(pid, pane)]);
+        // Blind: no host image channel. Message appears, no placeholders.
+        let mut out = Vec::new();
+        render_frame_with_images(
+            &mut out,
+            &layout,
+            &mut panes,
+            80,
+            24,
+            0,
+            &Palette::default(),
+            &no_map(),
+            no_hints(),
+            None,
+            None,
+        );
+        let text: String = out.iter().map(|c| c.ch).collect();
+        assert!(
+            text.contains("needs Kitty graphics"),
+            "blind promoted pane must explain itself"
+        );
+        assert!(
+            !out.iter().any(|c| c.ch == crate::graphics_host::PLACEHOLDER),
+            "blind pane must not leak placeholders"
+        );
+        // Sighted: the same promoted pane with a channel paints tiles.
+        let mut host = crate::graphics_host::Host::default();
+        host.begin();
+        let mut out2 = Vec::new();
+        render_frame_with_images(
+            &mut out2,
+            &layout,
+            &mut panes,
+            80,
+            24,
+            0,
+            &Palette::default(),
+            &no_map(),
+            no_hints(),
+            None,
+            Some(&mut host),
+        );
+        host.finish();
+        assert!(
+            out2.iter().any(|c| c.ch == crate::graphics_host::PLACEHOLDER),
+            "sighted promoted pane must paint image tiles"
+        );
+        let text2: String = out2.iter().map(|c| c.ch).collect();
+        assert!(
+            !text2.contains("needs Kitty graphics"),
+            "sighted pane must not show the fallback"
+        );
     }
 
     /// Render a 2-column layout and return the placeholder box region as text,
