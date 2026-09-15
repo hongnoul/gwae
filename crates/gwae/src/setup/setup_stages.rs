@@ -6,8 +6,11 @@
 //! plus one line in [`crate::setup::stages`]. Nothing else changes.
 
 mod behavior;
+mod bindings;
 mod config_file;
+mod focus;
 mod harness;
+mod keyboard;
 mod latency;
 mod layout;
 mod onboarding;
@@ -16,8 +19,11 @@ mod theme;
 mod updates;
 
 pub use behavior::KeepAwakeStage;
+pub use bindings::BindingsStage;
 pub use config_file::ConfigFileStage;
+pub use focus::FocusStage;
 pub use harness::HarnessStage;
+pub use keyboard::KeyboardStage;
 pub use latency::LatencyStage;
 pub use layout::LayoutSmokeStage;
 pub use onboarding::OnboardingStage;
