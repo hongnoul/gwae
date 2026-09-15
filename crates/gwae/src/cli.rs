@@ -65,8 +65,24 @@ pub enum Command {
         #[arg(long)]
         print_splash: bool,
     },
-    /// Install optional per-terminal bindings (e.g. Cmd+hjkl on iTerm2/kitty).
-    Setup,
+    /// Run the unified setup flow: every stage in order, with confirmation
+    /// before anything outside gwae's own config is touched.
+    Setup {
+        /// Audit only: report what would change and exit nonzero when any
+        /// stage is unhealthy. No writes.
+        #[arg(long)]
+        check: bool,
+        /// Apply without prompting (for scripts and dotfile bootstraps).
+        /// Machine-owned files still print their diff first.
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Run one stage by id (see `gwae setup --print` for ids).
+        #[arg(long, value_name = "STAGE")]
+        only: Option<String>,
+        /// Print every stage's planned steps instead of running anything.
+        #[arg(long)]
+        print: bool,
+    },
     /// Move this gwae to the latest release, using the same route it was
     /// installed by (installer script, Homebrew, cargo), or print the command
     /// for the package manager that owns it (Nix, AUR, distro).

@@ -96,13 +96,17 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
                 code => Err(code),
             }
         }
-        Command::Setup => {
-            println!("gwae setup: no per-terminal bindings installed yet (M4).");
-            println!(
-                "  {} is the universal $mod and needs no config.",
-                keys::mod_key()
-            );
-            Ok(())
+        Command::Setup { check, yes, only, print } => {
+            let path = Config::default_path();
+            let ctx = setup::Ctx {
+                cfg: &cfg,
+                cfg_path: &path,
+                dir: dir.as_deref(),
+            };
+            match setup::run_setup(&ctx, check, yes, only.as_deref(), print) {
+                0 => Ok(()),
+                code => Err(code),
+            }
         }
         Command::Doctor => {
             println!("gwae doctor:");

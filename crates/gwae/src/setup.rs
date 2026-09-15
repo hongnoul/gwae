@@ -25,6 +25,7 @@
 //! `setup` command loop land in later phases.
 
 pub mod setup_stages;
+pub mod setup_support;
 
 use crate::config::Config;
 use std::path::Path;
@@ -55,11 +56,20 @@ pub struct Ctx<'a> {
     pub dir: Option<&'a str>,
 }
 
+/// What applying one stage decided to do, in plain language for the
+/// summary screen. Stages with nothing to change return an empty vec.
+pub type Steps = Vec<String>;
+
 /// One machine concern in the setup flow.
 ///
 /// Implementations must keep `probe` side-effect free, `plan` pure, and
 /// `doctor_line` in agreement with the live behavior: doctor renders the
 /// same decision the flow would act on, so the two can never disagree.
+///
+/// Lifecycle for `gwae setup`: `probe` the machine, `plan` from the facts,
+/// `render` the plan as a screen, `apply` the accepted plan. `doctor_line`
+/// and `check` are the read-only projection used by `gwae doctor` and
+/// `gwae setup --check`.
 pub trait SetupStage {
     /// Stable id used by `--only <id>`. Lowercase, single word.
     fn id(&self) -> &'static str;
@@ -69,6 +79,18 @@ pub trait SetupStage {
     fn doctor_line(&self, ctx: &Ctx) -> String;
     /// True when there is nothing for the user to do.
     fn check(&self, ctx: &Ctx) -> bool;
+    /// The human-readable steps this stage would take, for `--print` and
+    /// the confirm screen. Empty when there is nothing to do.
+    fn steps(&self, ctx: &Ctx) -> Steps {
+        let _ = ctx;
+        Vec::new()
+    }
+    /// Carry out the plan. Only called after the user confirms (or with
+    /// `--yes` for `Config` stages). Returns lines for the summary screen.
+    fn apply(&self, ctx: &Ctx, _yes: bool) -> Vec<String> {
+        let _ = ctx;
+        Vec::new()
+    }
 }
 
 /// Every stage, in the order `gwae setup` runs them and `gwae doctor`
@@ -101,6 +123,108 @@ pub fn doctor_body(ctx: &Ctx) -> Vec<(String, String)> {
         .iter()
         .map(|s| (s.id().to_string(), s.doctor_line(ctx)))
         .collect()
+}
+
+/// `gwae setup`: audit, print, or apply the stages.
+///
+/// * `check`: print each unhealthy stage and return 1 when any fails. No
+///   writes, for scripts and dotfile CI.
+/// * `print`: print every stage's planned steps. No writes.
+/// * `only`: restrict to one stage id; unknown ids are an error.
+/// * Otherwise apply `Config` stages silently and report `Machine`/`Manual`
+///   steps for the user. The interactive question loop arrives in P4; until
+///   then this is the non-interactive path (`--yes` or nothing to confirm).
+pub fn run_setup(ctx: &Ctx, check: bool, yes: bool, only: Option<&str>, print: bool) -> i32 {
+    let all = stages();
+    let picked: Vec<&Box<dyn SetupStage>> = match only {
+        Some(want) => {
+            let found: Vec<&Box<dyn SetupStage>> =
+                all.iter().filter(|s| s.id() == want).collect();
+            if found.is_empty() {
+                eprintln!(
+                    "unknown stage {want:?}; valid: {}",
+                    stage_ids().join(", ")
+                );
+                return 2;
+            }
+            found
+        }
+        None => all.iter().collect(),
+    };
+
+    if print {
+        for s in &picked {
+            println!("{} [{}]", s.id(), kind_name(s.kind()));
+            for step in s.steps(ctx) {
+                println!("  {step}");
+            }
+        }
+        return 0;
+    }
+
+    if check {
+        let mut bad = 0;
+        for s in &picked {
+            if !s.check(ctx) {
+                println!("{}: {}", s.id(), s.doctor_line(ctx));
+                for step in s.steps(ctx) {
+                    println!("  -> {step}");
+                }
+                bad += 1;
+            }
+        }
+        if bad > 0 {
+            return 1;
+        }
+        println!("all stages healthy [ok]");
+        return 0;
+    }
+
+    // Non-interactive apply: Config stages write their own file; everything
+    // else is reported for the user to run. Honors GWAE_NO_INSTALL.
+    if std::env::var_os(crate::install::SKIP_ENV).is_some() {
+        println!("setup: {} is set; no writes performed", crate::install::SKIP_ENV);
+        return 0;
+    }
+    let mut code = 0;
+    for s in &picked {
+        if s.check(ctx) {
+            continue;
+        }
+        match s.kind() {
+            StageKind::Config => {
+                if !yes && !at_tty() {
+                    println!("{}: needs confirmation; re-run with --yes", s.id());
+                    code = 1;
+                    continue;
+                }
+                for line in s.apply(ctx, yes) {
+                    println!("{}: {line}", s.id());
+                }
+            }
+            StageKind::Machine | StageKind::Manual | StageKind::Info => {
+                println!("{}: {}", s.id(), s.doctor_line(ctx));
+                for step in s.steps(ctx) {
+                    println!("  -> {step}");
+                }
+            }
+        }
+    }
+    code
+}
+
+fn kind_name(k: StageKind) -> &'static str {
+    match k {
+        StageKind::Config => "config",
+        StageKind::Machine => "machine",
+        StageKind::Manual => "manual",
+        StageKind::Info => "info",
+    }
+}
+
+fn at_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
 }
 
 #[cfg(test)]
