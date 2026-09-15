@@ -143,6 +143,7 @@ fn osc52_sequence(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::selection::{selected_text, Selection};
 
     use super::*;
     use gwae_term::{Size, Vt100Grid};
