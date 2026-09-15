@@ -28,10 +28,10 @@ pub enum Trigger {
     ShiftChord(char),
     /// Ctrl + Shift + this character (the jcode-style transcript scroll).
     /// Labelled from [`crate::keys::ctrl_shift_chord`] so it reads `⌃+⇧+K`
-    /// on macOS and `Ctrl+Shift+K` elsewhere.
+    /// on macOS.
     CtrlShift(char),
     /// `$mod` + Return, optionally with Shift. Spelled by the platform module
-    /// so it reads `⌥+↵` on macOS and `Alt+Enter` elsewhere. Machine-checkable
+    /// so it reads `⌥+↵` on macOS. Machine-checkable
     /// like the character chords: the dispatcher only produces these commands
     /// with the modifier held, so the label must say so.
     EnterChord { shift: bool },
@@ -93,8 +93,7 @@ pub struct Bind {
 }
 
 impl Bind {
-    /// How the binding is spelled for the user, platform-aware (`⌥+g` on
-    /// macOS, `Alt+g` elsewhere).
+    /// How the binding is spelled for the user (`⌥+g`).
     pub fn label(&self) -> String {
         match self.trigger {
             Trigger::Chord(c) => keys::chord(&c.to_string()),

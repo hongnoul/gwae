@@ -77,9 +77,9 @@ Two honest caveats to document rather than paper over:
   types through to the pane instead of being eaten — strictly better than the
   current unconditional match arms.
 
-`Chord` also gets `FromStr` and `Display`, sharing `keys.rs`'s platform naming
-so `Chord::mod_('h').to_string()` is `⌥+h` on macOS and `Alt+h` elsewhere. That
-is what the HUD and the cow print.
+`Chord` also gets `FromStr` and `Display`, so `Chord::mod_('h').to_string()`
+is `⌥+h`. That is what the HUD and the cow print. gwae is macOS-only, so
+there is no Alt-elsewhere spelling.
 
 ### 2. Keymap as data
 

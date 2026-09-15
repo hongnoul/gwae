@@ -81,8 +81,8 @@ pub struct Config {
     #[serde(default = "default_input_poll_ms")]
     pub input_poll_ms: u64,
     /// Hold a macOS `caffeinate` assertion while gwae runs, so idle and
-    /// display sleep never pause the panes. macOS-only; elsewhere this key
-    /// does nothing. Default `true`: agents keep working while you are away;
+    /// display sleep never pause the panes. macOS-only by construction.
+    /// Default `true`: agents keep working while you are away;
     /// set `keep_awake = false` to let the machine sleep as normal.
     /// Note the honest limit: a closed
     /// lid still sleeps outside clamshell mode (power + external
@@ -405,23 +405,18 @@ mod tests {
     #[test]
     fn cheat_sheet_labels_name_the_platform_modifier() {
         // The cheat-sheet is the only keybinding doc most users ever read,
-        // so its labels must speak the local keyboard's vocabulary: `⌥` on
-        // macOS, `Alt` elsewhere, never both and never the wrong one. The
-        // two Ctrl+Shift scroll rows and the host's native paste are
-        // exceptions: they name their own platform-appropriate modifier.
+        // so its labels must speak the Mac keyboard's vocabulary: `⌥`, never
+        // `Alt`. gwae is macOS-only. The two ⌃+⇧ scroll rows and the host's
+        // native paste are exceptions: they name their own modifier.
         let m = keys::mod_key();
         let ctrl = keys::ctrl_key();
-        let other = if cfg!(target_os = "macos") {
-            "Alt"
-        } else {
-            "\u{2325}"
-        };
+        assert_eq!(m, "⌥");
         let mut chords = 0;
         for b in crate::binds::BINDS {
             let label = b.label();
             assert!(
-                !label.contains(other),
-                "label {label:?} uses the other platform's modifier name"
+                !label.contains("Alt"),
+                "label {label:?} uses the wrong platform's modifier name"
             );
             match b.trigger {
                 crate::binds::Trigger::Chord(_)

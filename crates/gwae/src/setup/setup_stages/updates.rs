@@ -1,11 +1,10 @@
 //! How this gwae would upgrade.
 //!
 //! Worth a line even when everything is fine: "how do I update this" is the
-//! question every user of a curl-to-bash install asks eventually, and the
-//! honest answer depends on facts (install path, receipt) only the binary
-//! itself can see.
+//! question every Homebrew user asks eventually, and the honest answer
+//! depends on facts (install path, receipt) only the binary itself can see.
 
-use super::super::{Ctx, StageKind, SetupStage};
+use super::super::{Ctx, SetupStage, StageKind};
 
 /// Stage for the `updates` doctor line.
 pub struct UpdatesStage;

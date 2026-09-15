@@ -10,7 +10,7 @@ block below into your `AGENTS.md` / `CLAUDE.md`.
 ```markdown
 ## gwae
 
-gwae: niri's scrolling tiling for CLI agents, in any terminal (daemon-free, MIT).
+gwae: niri's scrolling tiling for CLI agents on macOS (daemon-free, MIT, Homebrew).
 Panes never shrink: columns keep a fixed width on an infinite 2D grid of strips
 and the viewport scrolls instead of cramming.
 

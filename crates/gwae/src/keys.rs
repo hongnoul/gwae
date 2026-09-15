@@ -1,83 +1,52 @@
-//! Platform-aware naming for the one modifier gwae uses.
+//! macOS key naming for the one modifier gwae uses.
 //!
-//! Most gwae bindings are chords on a single `$mod` key. That key is
-//! physically the same key everywhere, but its *name* is not: macOS keyboards
-//! label it `⌥` (Option) and users look for that glyph, while on Linux and
-//! Windows the same key is `Alt` and the `⌥` glyph is meaningless (and often
-//! not even present in the terminal font). Hard-coding either name makes the
-//! cheat-sheet wrong on half the platforms, so all user-facing
-//! strings go through here.
-//!
-//! Resolution is `cfg!(target_os = "macos")` at compile time: gwae runs on
-//! the machine whose keyboard the user is typing on, so the build target is
-//! the right answer, and it costs nothing at runtime.
+//! gwae is macOS-only, so every user-facing string uses the macOS glyphs:
+//! `⌥` (Option), `↵` (Return), `⇧` (Shift), `⌃` (Control), `Cmd+V` for
+//! paste. All bindings go through here so the cheat-sheet HUD spells every
+//! chord the same way.
 
-/// The modifier's display name: `⌥` on macOS, `Alt` elsewhere.
+/// The modifier's display name: `⌥` (Option).
 pub fn mod_key() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "⌥"
-    } else {
-        "Alt"
-    }
+    "⌥"
 }
 
-/// The Return key's display name: `↵` on macOS (matching how macOS itself
-/// renders it in menus), spelled out as `Enter` elsewhere, where keycaps say
-/// "Enter" and the glyph is unfamiliar.
+/// The Return key's display name: `↵` (matching how macOS itself renders it
+/// in menus).
 pub fn enter_key() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "↵"
-    } else {
-        "Enter"
-    }
+    "↵"
 }
 
-/// The host terminal's normal paste shortcut, not an Option/Alt binding.
+/// The host terminal's normal paste shortcut: `Cmd+V`.
 /// The terminal emits a paste event; gwae never needs a second clipboard key.
 pub const fn paste_key() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Cmd+V"
-    } else {
-        "Ctrl+Shift+V"
-    }
+    "Cmd+V"
 }
 
-/// The Shift key's display name: `⇧` on macOS, `Shift` elsewhere.
+/// The Shift key's display name: `⇧`.
 pub fn shift_key() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "⇧"
-    } else {
-        "Shift"
-    }
+    "⇧"
 }
 
-/// A chord, rendered as the platform's modifier plus `key` (e.g. `⌥+g` or
-/// `Alt+g`). Used by the cheat-sheet HUD so every binding is spelled
-/// the same way everywhere.
+/// A chord, rendered as the modifier plus `key` (e.g. `⌥+g`). Used by the
+/// cheat-sheet HUD so every binding is spelled the same way everywhere.
 pub fn chord(key: &str) -> String {
     format!("{}+{}", mod_key(), key)
 }
 
-/// The Control key's display name: `⌃` on macOS (matching how macOS itself
-/// renders it in menus), spelled out as `Ctrl` elsewhere, where keycaps say
-/// "Ctrl" and the glyph is unfamiliar.
+/// The Control key's display name: `⌃` (matching how macOS itself renders it
+/// in menus).
 pub fn ctrl_key() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "⌃"
-    } else {
-        "Ctrl"
-    }
+    "⌃"
 }
 
-/// A Control chord with Shift, e.g. `⌃+⇧+K` on macOS or `Ctrl+Shift+K`
-/// elsewhere. Used for the jcode-style transcript scroll bindings, which are
-/// Control chords rather than the `$mod` (Option/Alt) chords the rest of
-/// gwae's bindings use.
+/// A Control chord with Shift, e.g. `⌃+⇧+K`. Used for the jcode-style
+/// transcript scroll bindings, which are Control chords rather than the
+/// `$mod` (Option) chords the rest of gwae's bindings use.
 pub fn ctrl_shift_chord(key: &str) -> String {
     format!("{}+{}+{}", ctrl_key(), shift_key(), key)
 }
 
-/// A shifted chord, e.g. `⌥+⇧+q` on macOS or `Alt+Shift+q` elsewhere.
+/// A shifted chord, e.g. `⌥+⇧+q`.
 pub fn shift_chord(key: &str) -> String {
     format!("{}+{}+{}", mod_key(), shift_key(), key)
 }
@@ -87,28 +56,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_match_the_build_target() {
-        if cfg!(target_os = "macos") {
-            assert_eq!(mod_key(), "⌥");
-            assert_eq!(chord("g"), "⌥+g");
-            assert_eq!(ctrl_shift_chord("K"), "⌃+⇧+K");
-            assert_eq!(paste_key(), "Cmd+V");
-        } else {
-            assert_eq!(mod_key(), "Alt");
-            assert_eq!(chord("g"), "Alt+g");
-            assert_eq!(ctrl_shift_chord("K"), "Ctrl+Shift+K");
-            assert_eq!(paste_key(), "Ctrl+Shift+V");
-        }
-    }
-
-    #[test]
-    fn non_macos_names_are_ascii_words() {
-        // The point of the fallback: no glyphs that a Linux/Windows terminal
-        // font may not have, and no macOS-only vocabulary.
-        if !cfg!(target_os = "macos") {
-            for s in [mod_key(), enter_key(), shift_key(), ctrl_key()] {
-                assert!(s.is_ascii(), "{s:?} should be plain ASCII off macOS");
-            }
-        }
+    fn names_are_macos_glyphs() {
+        assert_eq!(mod_key(), "⌥");
+        assert_eq!(enter_key(), "↵");
+        assert_eq!(shift_key(), "⇧");
+        assert_eq!(ctrl_key(), "⌃");
+        assert_eq!(chord("g"), "⌥+g");
+        assert_eq!(ctrl_shift_chord("K"), "⌃+⇧+K");
+        assert_eq!(paste_key(), "Cmd+V");
     }
 }
