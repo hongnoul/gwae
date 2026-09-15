@@ -3,6 +3,13 @@
 Baseline: ~29.2k lines in `crates/gwae/src`, 23 e2e files, 30 docs.
 Rule used: the product is scrolling multiplexer + fixed-width panes + PTYs + Alt+hjkl + agent panes. Everything else had to earn its place. Verdicts are final unless you override.
 
+## DONE (P0, committed 2026-09-15) — 29,238 -> 24,781 lines (-4,457)
+
+- `prune(cli)`: deleted dead `gwae new` stub.
+- `prune(onboard)`: deleted `onboard/` + `preview/` + `splash` + focus daemon + 6 stub stages + `preview/splash` e2e; `init` is a `setup` alias; gateway asks/saves alone; registry 12 -> 6 stages. Unit 383 green, agent_e2e 24 green, setup/doctor green.
+- `prune(chrome)`: deleted cowsay art + `cell_labels` + legacy color keys; empty boxes show identifier + one wrapped key hint via `key_hints()`. Unit 364 green, hud 6 green.
+- Left for you (needs your call): graphics delete/flag (~3.4k), updater apply-paths, `install.rs` btm installer, spawndir 3-key collapse, `content_width` + `scroll_margin`/`center_focus` removal, docs archive 30 -> 5.
+
 ## CUT now (dead, stub, or scope creep) — ~6k lines
 
 | Feature | Size | Why it dies |
