@@ -1,7 +1,11 @@
-//! Chrome palette: the fixed terminal-native colors.
+//! Chrome palette: the enforced retro default plus manual overrides.
 //!
-//! gwae has no theming. This module exists only to name the palette type.
+//! gwae paints its own chrome colors. Anything under `[theme]` in the config
+//! overrides the retro default key by key; there are no presets and no
+//! picker.
 
+mod config;
 mod palette;
 
+pub use config::ThemeConfig;
 pub use palette::Palette;

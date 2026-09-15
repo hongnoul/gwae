@@ -30,8 +30,8 @@ show_counts = true
 
 [update]
 check = true                 # daily "a new gwae is out" notice; false = silent
-source = ""                  # "" detects; or pin: install.sh, brew, cargo,
-                             # cargo-git, source, nix, system, windows
+source = ""                  # "" detects; or pin: brew, install.sh, cargo,
+                             # cargo-git, source, nix, system (brew is canonical)
 ```
 
 ## Responsive Yazi panels
@@ -44,10 +44,11 @@ Yazi unchanged. Panes wrap at the visible width, so Yazi sees the pane width.
 
 ## Staying up to date (`[update]`)
 
-gwae upgrades **the way it was installed, or not at all**: `gwae upgrade` runs
-the installer / `brew upgrade` / `cargo install` for routes it owns, and only
-*prints* the command for routes another package manager owns (Nix, AUR, a
-distro package, a checkout you built yourself).
+Homebrew is the canonical install: `brew install hongnoul/tap/gwae`, upgraded
+with `brew upgrade gwae`. gwae upgrades **the way it was installed, or not at
+all**: `gwae upgrade` prints the exact command for this machine and runs it
+for routes it owns, and only *prints* the command for routes another package
+manager owns (a checkout you built yourself, or a legacy Nix / distro install).
 
 `check = true` asks GitHub once a day whether a newer release exists and shows a
 one-line notice naming the exact command for your machine. The request is an
@@ -68,10 +69,26 @@ spawn dir, latency) and writes only gwae's own config file.
 
 ## Colors
 
-gwae has no themes. Chrome is always the host terminal's own colors: the
-terminal's default foreground/background pair plus its ANSI 0-15 palette.
-Change the terminal's scheme and gwae follows. Retired `theme` keys in old
-configs are ignored, not errors.
+gwae paints its own retro chrome: true-black panels with high-contrast
+functional colors (cyan focus, blue running, amber idle, green done, red
+failed, white text). The chrome reads the same whatever the host terminal
+is themed as.
+
+Hand-edit escape hatch, no picker: any key can be overridden under
+`[theme]`, and a save repaints the running session.
+
+```toml
+[theme]
+accent = "#ff00ff"  # RGB hex (with or without the #)
+running = 12        # 256-color index
+text = "default"    # the terminal's own color for this key
+```
+
+Keys: `base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`,
+`idle`, `done`, `failed`. Unset keys keep the retro default. A retired
+`theme = "name"` preset string (or a `preset` key inside the table) parses
+as "no overrides". Any other unknown key is a parse error, so a typo fails
+loudly instead of painting a silently wrong chrome.
 
 ## Keeping the Mac awake (`keep_awake`)
 
@@ -86,7 +103,7 @@ session, with a one-line toast confirming the change.
 
 `⌥+w` toggles it mid-session and writes the choice back to the config, so
 the keypress survives a restart. While the assertion is held a small
-coffee badge (`~[_]o keep-awake`) is stamped on the Option HUD frame —
+`keep-awake` badge is stamped on the Option HUD frame —
 hold Option to see it. The palette itself is never touched, so toggling
 off restores the chrome exactly.
 
@@ -118,7 +135,7 @@ changing it still needs a restart. `default_agent` is read fresh by the agent
 gateway each time `;` opens a pane, so editing it (or letting the gateway save
 your pick) applies to the *next* agent pane without a restart; panes already
 running a harness keep running it. Everything read every frame - `[minimap]`,
-scroll behavior - takes effect immediately. `keep_awake` also applies live:
+`[theme]`, scroll behavior - takes effect immediately. `keep_awake` also applies live:
 flipping it starts or drops the `caffeinate` assertion at once, with the
 change named in the toast.
 
@@ -129,8 +146,9 @@ you back to defaults.
 ## Checking your config
 
 A config file that fails to parse is **ignored entirely** (gwae falls back to
-defaults rather than refusing to launch). Retired `theme` keys are ignored
-without error. A broken file is easy to miss, so `doctor` reports it:
+defaults rather than refusing to launch). Retired preset names (`theme =
+"nord"`, `[theme] preset`) parse as "no overrides". A broken file is easy
+to miss, so `doctor` reports it:
 
 ```sh
 gwae doctor
@@ -217,22 +235,17 @@ questions you actually hold the modifier to ask, and carries more per tile:
 Tiles degrade gracefully as they narrow: the status glyph and the column digit
 always survive, the title is dropped before the age (a name cut to two letters
 says nothing; how long a pane has waited is the news). With a single pane there
-is nothing to triage, so the hold shows the key hints alone.
+is nothing to triage, so the hold paints no dashboard; key help lives only in
+the `⌥+/` cheat-sheet.
 
 Generated from the config structs' doc comments; keep this file in sync when the
 schema changes.
-### Terminal-native chrome readability
+### Retro chrome readability
 
-HUD panels and text use the terminal's default foreground and background.
-ANSI colors remain on status glyphs and focus borders. Minimap tiles use
-neutral backgrounds and default text, with underlines marking the focused
-column and pending jump target. This avoids assuming a remappable ANSI
-color (such as bright yellow) is dark. The terminal's own default
-foreground/background should be a readable pair.
-
-ANSI palette queries are not required, so this works on terminals without
-OSC color query support. Colored status glyphs still depend on the host
-ANSI palette, and their shapes distinguish status without relying on color
-alone. This only covers gwae chrome, not programs inside panes. While
-the keep-awake assertion is held a small coffee badge (`~[_]o keep-awake`)
+HUD panels are true black with white text. Minimap tiles carry muted status
+tints with black/white contrast ink, and the focused tile keeps an
+underline on top of the cyan fill, so focus never depends on color alone.
+Status glyphs (`» ! ✓ ✗`) distinguish state by shape as well as hue. This
+only covers gwae chrome, not programs inside panes. While
+the keep-awake assertion is held a small `keep-awake` badge
 is stamped on the Option HUD frame instead.

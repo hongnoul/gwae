@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 use crate::keys;
-use crate::theme::Palette;
+use crate::theme::{Palette, ThemeConfig};
 use gwae_layout::Width;
 use serde::de::{self, Visitor};
 use serde::Deserialize;
@@ -60,6 +60,12 @@ pub struct Config {
     /// single quarter-width pane; the skeleton's placeholder boxes show the
     /// rest of the container).
     pub startup_panes: usize,
+    /// Chrome color overrides, layered key by key on the enforced retro
+    /// default (true-black panels, high-contrast functional colors). Every
+    /// key accepts a 256-color index (`12`), a hex RGB string (`"#00ffff"`),
+    /// or `"default"` for the terminal's own color. Unset keys keep retro.
+    /// No presets, no picker: hand-edit only, applied live on save.
+    pub theme: ThemeConfig,
     /// Image-pane promotion: `auto` (default) or `off`. Unknown values fail
     /// the config check the same way other mistyped keys do.
     pub image_pane: ImagePane,
@@ -96,6 +102,7 @@ impl Default for Config {
             agent_dir: String::new(),
             agents: Vec::new(),
             startup_panes: 1,
+            theme: ThemeConfig::default(),
             image_pane: ImagePane::default(),
             minimap: Minimap::default(),
             input_poll_ms: default_input_poll_ms(),
@@ -117,10 +124,11 @@ impl Config {
             .join(".config/gwae/gwae.toml")
     }
 
-    /// The chrome palette: the host terminal's own colors. There is no
-    /// theme key; change the terminal's scheme and gwae follows.
+    /// The chrome palette: the enforced retro default, plus whatever the
+    /// user overrode under `[theme]`. There is no preset and no `theme`
+    /// name key; the default is always [`Palette::RETRO`].
     pub fn palette(&self) -> Palette {
-        Palette::default()
+        self.theme.resolve()
     }
 
     /// Adopt the appearance settings from `new`, keeping everything that
@@ -208,8 +216,8 @@ pub enum MinimapMode {
     Overlay,
     /// Single-cell ticks on the outer frame (no box).
     EdgeTicks,
-    /// No minimap/status chrome at all. Hold ⌥/Alt to see the centered HUD
-    /// (attention hint + cheat-sheet) and centered minimap.
+    /// No minimap/status chrome at all. Hold ⌥/Alt to see the centered
+    /// dashboard, or `⌥+/` for the cheat-sheet.
     #[default]
     Off,
 }
@@ -270,8 +278,9 @@ pub struct Update {
     /// `GWAE_NO_UPDATE_CHECK=1` turns it off without editing this file.
     pub check: bool,
     /// How this gwae was installed, when the automatic detection is wrong or
-    /// cannot tell. One of `install.sh`, `brew`, `cargo`, `cargo-git`,
-    /// `source`, `nix`, `system`, `windows`. Empty (the default) means
+    /// cannot tell. `brew` is the canonical route; the rest are legacy
+    /// routes detection still understands. One of `brew`, `install.sh`,
+    /// `cargo`, `cargo-git`, `source`, `nix`, `system`. Empty (the default) means
     /// "detect it", which uses the installer's receipt when there is one and
     /// the binary's path otherwise. `gwae doctor` prints what it decided and
     /// whether it was a fact or a guess.
@@ -394,84 +403,76 @@ mod tests {
     }
 
     #[test]
-    fn key_hints_come_from_the_binding_table() {
-        let hints = crate::binds::key_hints();
-        assert!(!hints.is_empty(), "hint list must exist");
-        assert_eq!(
-            hints.len(),
-            crate::binds::BINDS.len(),
-            "one hint per binding"
-        );
-    }
-
-    #[test]
-    fn key_hints_name_the_platform_modifier() {
-        // The hints are the only keybinding docs many users ever read, so they
-        // must speak the local keyboard's vocabulary: `⌥` on macOS, `Alt`
-        // elsewhere, never both and never the wrong one. The two Ctrl+Shift
-        // scroll hints and the host's native paste are exceptions: they name
-        // their own platform-appropriate modifier instead of `$mod`.
+    fn cheat_sheet_labels_name_the_platform_modifier() {
+        // The cheat-sheet is the only keybinding doc most users ever read,
+        // so its labels must speak the local keyboard's vocabulary: `⌥` on
+        // macOS, `Alt` elsewhere, never both and never the wrong one. The
+        // two Ctrl+Shift scroll rows and the host's native paste are
+        // exceptions: they name their own platform-appropriate modifier.
         let m = keys::mod_key();
         let ctrl = keys::ctrl_key();
-        // Chord hints must name the modifier. A few bindings are mouse or
-        // key-range prose (`1-9`, `click`, `↑/↓`) and correctly have no
-        // modifier to name.
-        let chord_hints = crate::binds::key_hints()
-            .iter()
-            .filter(|msg| !msg.starts_with(['1', 'c', 'w', '←', '↵', '⇧']))
-            .count();
-        assert!(chord_hints > 0, "some hints are chords");
-        for msg in &crate::binds::key_hints() {
-            if msg.starts_with(['1', 'c', 'w', '←', '↵', '⇧', 'E', 'S']) {
-                continue;
-            }
-            if msg.contains(ctrl) || msg.starts_with(keys::paste_key()) {
-                continue;
-            }
-            assert!(msg.contains(m), "hint {msg:?} does not mention {m:?}");
-        }
         let other = if cfg!(target_os = "macos") {
             "Alt"
         } else {
-            "⌥"
+            "\u{2325}"
         };
-        for msg in &crate::binds::key_hints() {
+        let mut chords = 0;
+        for b in crate::binds::BINDS {
+            let label = b.label();
             assert!(
-                !msg.contains(other),
-                "hint {msg:?} uses the other platform's modifier name"
+                !label.contains(other),
+                "label {label:?} uses the other platform's modifier name"
             );
+            match b.trigger {
+                crate::binds::Trigger::Chord(_)
+                | crate::binds::Trigger::ShiftChord(_)
+                | crate::binds::Trigger::EnterChord { .. }
+                | crate::binds::Trigger::ModProse(_) => {
+                    chords += 1;
+                    assert!(label.contains(m), "label {label:?} does not mention {m:?}");
+                }
+                crate::binds::Trigger::CtrlShift(_) => {
+                    chords += 1;
+                    assert!(
+                        label.contains(ctrl),
+                        "label {label:?} does not mention {ctrl:?}"
+                    );
+                }
+                crate::binds::Trigger::Prose(_) => {}
+            }
         }
+        assert!(chords > 0, "some labels are chords");
     }
 
     #[test]
-    fn key_hints_do_not_teach_dead_keys() {
-        // Regressions guarded: the hints once advertised `⌥+c` ("new pane"),
-        // which was never implemented, and once told users to "press c"/
-        // "press ;" with no modifier at all, which just types the letter into
-        // the focused pane.
-        //
-        // `⌥+c` is now a real binding (copy), so the check is no longer "this
-        // one chord is forbidden" — it is the general property that made that
-        // bug possible: every hint must name a chord the dispatcher really
-        // handles. `binds.rs` owns that end to end (hints are generated from
-        // `BINDS`, and `advertised_bindings_match_the_dispatcher` feeds every
-        // entry through the real `handle_key`), so what is left to assert here
-        // is that the default list is in fact the generated one and has not
-        // been hand-edited back into a liability.
+    fn cheat_sheet_does_not_teach_dead_keys() {
+        // Every machine-checkable cheat-sheet row must name a chord the
+        // dispatcher really handles (`advertised_bindings_match_the_dispatcher`
+        // feeds each entry through the real `handle_key`). What is left to
+        // assert here is the shape of the prose rows: they must not read as
+        // bare key presses that would just type into the focused pane.
         let m = keys::mod_key();
         let ctrl = keys::ctrl_key();
-        for msg in &crate::binds::key_hints() {
+        for b in crate::binds::BINDS {
+            let label = b.label();
             assert!(
-                !msg.to_lowercase().starts_with("press "),
-                "hint {msg:?} omits the modifier"
+                !label.to_lowercase().starts_with("press "),
+                "label {label:?} omits the modifier"
             );
-            assert!(
-                msg.contains(m)
-                    || msg.contains(ctrl)
-                    || msg.starts_with(keys::paste_key())
-                    || msg.contains("click"),
-                "hint {msg:?} names no modifier and is not a mouse hint"
-            );
+            match b.trigger {
+                crate::binds::Trigger::Prose(_) => {
+                    assert!(
+                        label == keys::paste_key() || label == "click",
+                        "prose label {label:?} names no modifier and is not a known exception"
+                    );
+                }
+                _ => {
+                    assert!(
+                        label.contains(m) || label.contains(ctrl),
+                        "label {label:?} names no modifier"
+                    );
+                }
+            }
         }
     }
 
@@ -487,23 +488,29 @@ mod tests {
     fn defaults_apply_when_omitted() {
         let cfg = parse("");
         assert_eq!(cfg.startup_panes, 1);
-        // Chrome is fixed to the terminal's own colors: no config key can
-        // change it.
-        assert_eq!(cfg.palette(), Palette::TERMINAL);
+        // Chrome is the enforced retro default unless overridden.
+        assert_eq!(cfg.palette(), Palette::RETRO);
+    }
+
+    #[test]
+    fn theme_overrides_layer_on_retro() {
+        let cfg = parse("[theme]\naccent = \"#ff00ff\"\n");
+        assert_eq!(cfg.palette().accent, CColor::Rgb(0xff, 0x00, 0xff));
+        assert_eq!(cfg.palette().base, Palette::RETRO.base);
     }
 
     #[test]
     fn retired_theme_keys_are_ignored_not_fatal() {
-        // Old configs still on disk must keep loading: `[theme]` tables,
-        // `theme = "..."` names, and legacy color keys are simply not read
-        // rather than a parse error.
+        // Old configs still on disk must keep loading: bare `theme = "..."`
+        // names, `[theme] preset`, and legacy color keys are simply not read
+        // as overrides rather than a parse error.
         let cfg = parse(
             "theme = \"nord\"\nbackground = 235\nfocus_color = 36\nskeleton_color = \"#333333\"\n",
         );
         assert_eq!(cfg.startup_panes, 1);
-        assert_eq!(cfg.palette(), Palette::TERMINAL);
-        let cfg = parse("[theme]\npreset = \"nord\"\naccent = \"#ff0000\"\n");
-        assert_eq!(cfg.palette(), Palette::TERMINAL);
+        assert_eq!(cfg.palette(), Palette::RETRO);
+        let cfg = parse("[theme]\naccent = \"#ff0000\"\n");
+        assert_eq!(cfg.palette().accent, CColor::Rgb(0xff, 0, 0));
     }
 
     #[test]

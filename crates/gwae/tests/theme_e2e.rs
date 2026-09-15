@@ -1,11 +1,11 @@
-//! End-to-end: gwae paints the host terminal's own colors.
+//! End-to-end: gwae paints the enforced retro chrome by default.
 //!
-//! gwae has no theming. Chrome is always the terminal's default
-//! foreground/background pair plus ANSI 0-15 indices, so this drives the
+//! The default session paints explicit RGB colors (true-black panels,
+//! high-contrast functional colors) regardless of the host terminal scheme.
+//! A `[theme]` override changes exactly the named keys. This drives the
 //! *shipped executable* through a PTY with a config file it discovers on its
 //! own via `XDG_CONFIG_HOME`, and asserts on the SGR sequences that actually
-//! reach the terminal: ANSI indices present, no 24-bit chrome colors, and no
-//! config key able to change that.
+//! reach the terminal.
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::Read;
@@ -136,6 +136,11 @@ fn fg_seq(r: u8, g: u8, b: u8) -> String {
     format!("38;2;{r};{g};{b}")
 }
 
+/// The SGR *background* sequence emitted for a 24-bit color.
+fn bg_seq(r: u8, g: u8, b: u8) -> String {
+    format!("48;2;{r};{g};{b}")
+}
+
 /// All distinct 24-bit foreground colors in a capture, for failure messages.
 fn fgs_in(painted: &str) -> Vec<String> {
     let mut v: Vec<String> = painted
@@ -148,59 +153,73 @@ fn fgs_in(painted: &str) -> Vec<String> {
     v
 }
 
-/// Colors no terminal-native chrome may ever emit: the old presets'
-/// accents and overlays. If any of these appear, gwae painted a hardcoded
-/// RGB instead of the host terminal's palette.
-const RETIRED_RGB: &[(&str, (u8, u8, u8))] = &[
-    ("Mocha accent", (0x74, 0xc7, 0xec)),
-    ("Mocha overlay", (0x6c, 0x70, 0x86)),
-    ("Nord accent", (0x88, 0xc0, 0xd0)),
-    ("Nord overlay", (0x4c, 0x56, 0x6a)),
-    ("Latte accent", (0x20, 0x9f, 0xb5)),
-    ("white phosphor", (0xd8, 0xd8, 0xd0)),
-    ("keep-awake red", (0xff, 0x40, 0x40)),
-];
-
-fn assert_terminal_native(painted: &str, ctx: &str) {
-    for (name, (r, g, b)) in RETIRED_RGB {
-        assert!(
-            !painted.contains(&fg_seq(*r, *g, *b)),
-            "{ctx} must not paint the retired hardcoded {name}; saw {fgs:?}",
-            fgs = fgs_in(painted),
-        );
-    }
+/// The enforced retro default: true-black panels with high-contrast
+/// functional colors (cyan focus, blue running, amber idle, green done,
+/// red failed, white text). A default run must paint these RGB values, not
+/// the host terminal's palette indices.
+fn assert_retro_chrome(painted: &str, ctx: &str) {
+    // Cyan focus accent and true-black panel background must reach the wire.
     assert!(
-        painted.contains("38;5;"),
-        "{ctx} should paint chrome as ANSI palette indices; saw {fgs:?}",
+        painted.contains(&fg_seq(0x00, 0xff, 0xff)),
+        "{ctx} must paint the retro cyan focus accent; saw {fgs:?}",
+        fgs = fgs_in(painted),
+    );
+    assert!(
+        painted.contains(&bg_seq(0x00, 0x00, 0x00)),
+        "{ctx} must paint true-black panel backgrounds",
+    );
+    // The terminal-native chrome must be gone: no ANSI-index chrome colors.
+    assert!(
+        !painted.contains("38;5;6"),
+        "{ctx} must not inherit the terminal cyan for focus; saw {fgs:?}",
         fgs = fgs_in(painted),
     );
 }
 
 #[test]
-fn default_config_paints_terminal_native_chrome() {
+fn default_config_paints_retro_chrome() {
     let painted = paint_with_config("");
-    assert_terminal_native(&painted, "a default run");
+    assert_retro_chrome(&painted, "a default run");
 }
 
 #[test]
-fn retired_theme_keys_do_not_change_the_painted_chrome() {
-    // Old configs name presets and overrides gwae no longer reads. They
-    // must be ignored, not fatal, and the screen must look exactly like a
-    // default run: terminal-native chrome.
+fn theme_overrides_repaint_only_the_named_keys() {
+    // An accent override swaps the focus ring to magenta while the black
+    // panels stay.
+    let painted = paint_with_config("[theme]\naccent = \"#ff00ff\"\n");
+    assert!(
+        painted.contains(&fg_seq(0xff, 0x00, 0xff)),
+        "the accent override must reach the wire; saw {fgs:?}",
+        fgs = fgs_in(&painted),
+    );
+    assert!(
+        !painted.contains(&fg_seq(0x00, 0xff, 0xff)),
+        "retro cyan must be gone once overridden; saw {fgs:?}",
+        fgs = fgs_in(&painted),
+    );
+    assert!(
+        painted.contains(&bg_seq(0x00, 0x00, 0x00)),
+        "unrelated keys keep the retro default",
+    );
+}
+
+#[test]
+fn retired_preset_names_still_start_on_retro() {
+    // Old configs naming retired presets must be ignored, not fatal, and the
+    // screen must look exactly like a default run: retro chrome.
     for config in [
         "theme = \"nord\"\n",
-        "[theme]\npreset = \"nord\"\naccent = \"#010203\"\n",
-        "focus_color = \"#040506\"\nskeleton_color = \"#070809\"\n",
-        "theme = \"white-phosphor\"\n",
+        "[theme]\npreset = \"nord\"\n",
+        "focus_color = \"#040506\"\n",
     ] {
         let painted = paint_with_config(config);
-        assert_terminal_native(&painted, &format!("config {config:?}"));
+        assert_retro_chrome(&painted, &format!("config {config:?}"));
     }
 }
 
 #[test]
-fn an_unparseable_config_still_starts_with_terminal_chrome() {
+fn an_unparseable_config_still_starts_on_retro() {
     // Bad TOML falls back to defaults rather than refusing to launch.
     let painted = paint_with_config_raw("this is not valid toml <<<\n");
-    assert_terminal_native(&painted, "a broken config");
+    assert_retro_chrome(&painted, "a broken config");
 }

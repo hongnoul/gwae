@@ -3,7 +3,6 @@
 use super::config::Plan;
 use super::detect::{command_available, shell_exe, Found, KNOWN_AGENTS};
 use std::io::{IsTerminal, Write};
-use std::path::{Path, PathBuf};
 
 pub(super) const DIM: &str = "\x1b[2m";
 pub(super) const BOLD: &str = "\x1b[1m";
@@ -212,12 +211,11 @@ pub(super) fn prompt(n: usize) -> Choice {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::config::{fallback_shell, plan, Plan};
     use super::super::detect::Found;
     use super::Choice;
-
     use super::*;
+    use std::path::PathBuf;
 
     /// Drop SGR escapes so assertions read the text a user sees.
     fn strip_ansi(s: &str) -> String {
@@ -245,7 +243,7 @@ mod tests {
         }
     }
 
-        #[test]
+    #[test]
     fn a_resolvable_configured_agent_short_circuits_every_prompt() {
         // The common case must never paint: config wins, no detection UI.
         assert_eq!(
@@ -392,5 +390,4 @@ mod tests {
     fn fallback_shell_is_never_empty() {
         assert!(!fallback_shell().is_empty());
     }
-
 }

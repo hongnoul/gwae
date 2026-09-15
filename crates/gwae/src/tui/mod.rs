@@ -5,13 +5,10 @@ use std::io::Write;
 use std::sync::mpsc::channel;
 use std::time::Instant;
 
-use crate::theme::Palette;
 use crossterm::cursor;
 use crossterm::event::{
-    self, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
-    MouseButton, MouseEventKind,
-    PushKeyboardEnhancementFlags,
+    self, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    KeyboardEnhancementFlags, MouseButton, MouseEventKind, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -33,15 +30,13 @@ mod pickers;
 mod render;
 
 pub(crate) use chrome::{
-    draw_center_hud, draw_toast, draw_toast_at, has_attention, hud_pane_at,
-    paint_center_minimap, plan_center_minimap, HudFacts, HudPlan,
+    draw_center_hud, draw_toast_at, has_attention, hud_pane_at, paint_center_minimap,
+    plan_center_minimap, HudFacts, HudPlan,
 };
 pub(crate) use pickers::{draw_dir_picker, draw_quit_confirm, DirPicker};
-pub(crate) use render::{
-    focused_pane_views, focused_pane_views_with_chrome, render_frame_with_images, PaneView,
-};
 #[cfg(test)]
 pub(crate) use render::render_frame;
+pub(crate) use render::{focused_pane_views_with_chrome, render_frame_with_images, PaneView};
 
 mod config_io;
 mod input;
@@ -101,14 +96,13 @@ mod tests {
 
     #[test]
     fn keep_awake_badge_shows_only_while_the_guard_is_active() {
-        // The state signal is a coffee badge on the Option HUD, never a
+        // The state signal is a text badge on the Option HUD, never a
         // palette change: toggling off must mean plain chrome everywhere.
         let off = crate::keepawake::Guard::acquire(false);
         assert!(!off.active(), "a disabled guard holds no assertion");
         assert!(
-            !crate::keepawake::COFFEE_BADGE.is_empty(),
+            !crate::keepawake::KEEP_AWAKE_BADGE.is_empty(),
             "the active badge must exist to stamp onto the HUD"
         );
     }
-
 }

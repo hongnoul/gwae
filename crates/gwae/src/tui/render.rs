@@ -2,17 +2,17 @@
 
 use std::collections::HashMap;
 
-use gwae_layout::{Action, FollowScroll, Layout, PaneId, Viewport, Width};
-use gwae_term::{CColor, Cell, Size as GridSize, TermGrid, Vt100Grid};
+use gwae_layout::{Layout, PaneId, Width};
+use gwae_term::{CColor, Cell, Size as GridSize, TermGrid};
 
 use crate::config::Config;
 use crate::select::Selection;
 use crate::theme::Palette;
 
+use super::chrome::{draw_edge_ticks, draw_minimap};
 use super::input::focused_pane;
 use super::pty::PtyPane;
 use super::Rect;
-use super::chrome::{draw_big_label, draw_edge_ticks, draw_minimap, draw_placeholder_contents, strip_number};
 
 /// Peek-sliver rendering: a neighbour clipped to fewer than this many
 /// visible columns is not drawn as truncated text.
@@ -28,13 +28,13 @@ pub(crate) fn chrome_rows(_cfg: &Config) -> u16 {
 #[derive(Debug)]
 pub(crate) struct PaneView {
     pub(crate) pid: PaneId,
-    pub(crate) col: usize,     // index of the owning column in the focused strip
-    pub(crate) rect: Rect,     // screen rect (already clipped to viewport horizontally)
-    pub(crate) col_x0: u16,    // grid column at the left edge of `rect` (before content scroll)
-    pub(crate) h_scroll: i32,  // pane content scroll in cells
+    pub(crate) col: usize,    // index of the owning column in the focused strip
+    pub(crate) rect: Rect,    // screen rect (already clipped to viewport horizontally)
+    pub(crate) col_x0: u16,   // grid column at the left edge of `rect` (before content scroll)
+    pub(crate) h_scroll: i32, // pane content scroll in cells
     pub(crate) grid_cols: u16, // full logical content width of the grid
     pub(crate) grid_rows: u16, // vertical size of the grid
-    pub(crate) peek: bool,     // squished neighbour shown as a 3-cell faded hint
+    pub(crate) peek: bool,    // squished neighbour shown as a 3-cell faded hint
 }
 
 /// Compute visible pane views for the focused row.
@@ -222,7 +222,12 @@ pub(crate) fn focused_pane_views_with_chrome(
 /// screen cells, given the viewport column offset `col_x0`, the pane content
 /// scroll `h_scroll`, and the content width `grid_cols`. Returns `None` when
 /// the window is fully clipped (offscreen or past the content).
-pub(crate) fn pane_window(col_x0: u16, h_scroll: i32, w: u16, grid_cols: u16) -> Option<(u16, u16)> {
+pub(crate) fn pane_window(
+    col_x0: u16,
+    h_scroll: i32,
+    w: u16,
+    grid_cols: u16,
+) -> Option<(u16, u16)> {
     let start = col_x0 as i32 + h_scroll;
     if start < 0 || start >= grid_cols as i32 {
         return None;
@@ -295,7 +300,6 @@ pub(crate) fn render_frame(
     content_width: u16,
     pal: &Palette,
     mm: &crate::config::Minimap,
-    hints: bool,
     selection: Option<&Selection<PaneId>>,
 ) {
     render_frame_with_images(
@@ -307,7 +311,6 @@ pub(crate) fn render_frame(
         content_width,
         pal,
         mm,
-        hints,
         selection,
         None,
     );
@@ -323,7 +326,6 @@ pub(crate) fn render_frame_with_images(
     content_width: u16,
     pal: &Palette,
     mm: &crate::config::Minimap,
-    hints: bool,
     selection: Option<&Selection<PaneId>>,
     mut images: Option<&mut crate::graphics_host::Host>,
 ) {
@@ -555,9 +557,9 @@ pub(crate) fn render_frame_with_images(
         .and_then(|r| r.columns.get(layout.focus.column))
         .map(|c| c.panes.len() > 1)
         .unwrap_or(false);
-    // Placeholder boxes tile the empty right side: an empty grid must show
-    // where the next pane will go, and advertise the key that
-    // puts one there.
+    // Empty boxes tile the empty right side with bare frames so the grid
+    // reads while strips fill. Their interiors stay blank: no identifiers,
+    // no hints. The only key help is the `⌥+/` cheat-sheet.
     {
         let sk = pal.overlay;
         let inset: u16 = 1;
@@ -574,12 +576,9 @@ pub(crate) fn render_frame_with_images(
             .unwrap_or(0)
             .clamp(0, max_scroll);
         // Window-anchored ranges (see focused_pane_views): frames land on the
-        // same on-screen boundaries at every scroll stop. Placeholder boxes
-        // for the empty right side come from the *same* accumulator, so cell
-        // `1.2` is the identical span of screen columns whether it holds a
-        // PTY or not and the grid never jitters as strips fill or as you
-        // move between strips with different occupancy.
-        let strip_no = strip_number(layout);
+        // same on-screen boundaries at every scroll stop. Empty boxes come
+        // from the *same* accumulator, so the grid never jitters as strips
+        // fill or as you move between strips with different occupancy.
         let (ranges, live) = layout
             .visible_grid_x_ranges(layout.focus.row, cols, scroll, Width::DEFAULT)
             .unwrap_or_default();
@@ -641,49 +640,17 @@ pub(crate) fn render_frame_with_images(
             if placeholder {
                 // Interior only: the ring is painted from the canvas below,
                 // and clearing it here would also wipe the left neighbour's
-                // shared edge. Reset to the default (pane) background so an
-                // empty box reads exactly like a live one.
+                // shared edge. Blank interior: no identifier, no hint.
                 for y in inset..boxr.h.saturating_sub(inset) {
                     let row = (boxr.y + y) as usize * cols as usize;
                     for x in inset..boxr.w.saturating_sub(inset) {
                         if let Some(c) = out.get_mut(row + (boxr.x + x) as usize) {
                             *c = Cell::default();
-                            // Keep the terminal backdrop: a placeholder box is
-                            // empty chrome, not a pane, so its interior must
-                            // blend with the terminal background rather than
-                            // punching a hole of a different color through it.
                             c.style.bg = background;
                         }
                     }
                 }
                 canvas.rect(boxr, color, prio);
-                let inner = Rect {
-                    x: boxr.x + inset,
-                    y: boxr.y + inset,
-                    w: boxr.w.saturating_sub(inset * 2),
-                    h: boxr.h.saturating_sub(inset * 2),
-                };
-                // Ordinal among *empty* boxes, not the absolute column,
-                // so the pinned cheat-sheet hint sits where the eye lands
-                // whatever the layout.
-                let all_hints;
-                let hint = if hints {
-                    all_hints = crate::binds::key_hints();
-                    all_hints
-                        .get(ci - live)
-                        .or(all_hints.first())
-                        .map(String::as_str)
-                } else {
-                    None
-                };
-                draw_placeholder_contents(
-                    out,
-                    cols,
-                    inner,
-                    &format!("{}.{}", strip_no, ci + 1),
-                    pal.label,
-                    hint,
-                );
                 continue;
             }
             canvas.rect(boxr, color, prio);
@@ -994,13 +961,12 @@ pub(crate) fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: C
     put(out, y1 * stride + x1, '╯', color);
 }
 
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::theme::Palette;
-    use gwae_layout::{Layout, PaneId};
-    use gwae_term::{CColor, Cell};
+    use gwae_layout::{Action, FollowScroll, Layout, PaneId, Viewport};
+    use gwae_term::{CColor, Cell, Vt100Grid};
     use std::collections::{HashMap, HashSet};
 
     /// A palette with a distinctive accent and RGB status tints. Render
@@ -1022,9 +988,7 @@ pub(crate) mod tests {
     /// A palette built from the explicit colors a pre-theme render test used
     /// to pass positionally: background, focus accent, and skeleton overlay.
     /// Statuses stay RGB so minimap tint tests keep exercising the tint path
-    /// (indexed colors normalize to the terminal default). The block-font
-    /// label stays a fixed gray for the same reason: identifier tests key
-    /// off its pixels.
+    /// (indexed colors normalize to the terminal default).
     pub(crate) fn pal_of(base: CColor, accent: CColor, overlay: CColor) -> Palette {
         Palette {
             base,
@@ -1045,12 +1009,6 @@ pub(crate) mod tests {
             mode: crate::config::MinimapMode::Overlay,
             ..Default::default()
         }
-    }
-
-    /// A disabled minimap config for geometry tests that assert the bottom
-    /// screen rows the map would otherwise overlay.
-    pub(crate) fn no_hints() -> bool {
-        false
     }
 
     /// Promoted image pane without a host image channel: the frame must say
@@ -1078,7 +1036,11 @@ pub(crate) mod tests {
             writer: Box::new(std::io::sink()),
             child: PaneProc::Adopted(None),
             grid,
-            pty_size: crate::geometry::CellPixels { width: 8, height: 16 }.pty_size(40, 12),
+            pty_size: crate::geometry::CellPixels {
+                width: 8,
+                height: 16,
+            }
+            .pty_size(40, 12),
             alive: true,
             h_scroll: 0,
             last_output: std::time::Instant::now(),
@@ -1118,7 +1080,6 @@ pub(crate) mod tests {
             0,
             &Palette::default(),
             &no_map(),
-            no_hints(),
             None,
             None,
         );
@@ -1128,7 +1089,8 @@ pub(crate) mod tests {
             "blind promoted pane must explain itself"
         );
         assert!(
-            !out.iter().any(|c| c.ch == crate::graphics_host::PLACEHOLDER),
+            !out.iter()
+                .any(|c| c.ch == crate::graphics_host::PLACEHOLDER),
             "blind pane must not leak placeholders"
         );
         // Sighted: the same promoted pane with a channel paints tiles.
@@ -1144,13 +1106,13 @@ pub(crate) mod tests {
             0,
             &Palette::default(),
             &no_map(),
-            no_hints(),
             None,
             Some(&mut host),
         );
         host.finish();
         assert!(
-            out2.iter().any(|c| c.ch == crate::graphics_host::PLACEHOLDER),
+            out2.iter()
+                .any(|c| c.ch == crate::graphics_host::PLACEHOLDER),
             "sighted promoted pane must paint image tiles"
         );
         let text2: String = out2.iter().map(|c| c.ch).collect();
@@ -1161,8 +1123,8 @@ pub(crate) mod tests {
     }
 
     /// Render a 2-column layout and return the placeholder box region as text,
-    /// one string per screen row, so hint assertions can just look for text.
-    pub(crate) fn placeholder_rows(cols: u16, rows: u16, hints: bool) -> Vec<String> {
+    /// one string per screen row.
+    pub(crate) fn placeholder_rows(cols: u16, rows: u16) -> Vec<String> {
         let layout = Layout::new(2); // boxes 3 and 4 are placeholders
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let mut out = Vec::new();
@@ -1179,7 +1141,6 @@ pub(crate) mod tests {
                 CColor::Rgb(0xff, 0xff, 0xff),
             ),
             &no_map(),
-            hints,
             None,
         );
         (0..rows)
@@ -1512,7 +1473,6 @@ pub(crate) mod tests {
                 0,
                 &pal_of(CColor::Default, red, white),
                 &no_map(),
-                no_hints(),
                 None,
             );
             out
@@ -1595,7 +1555,6 @@ pub(crate) mod tests {
             0,
             &pal_of(CColor::Default, red, white),
             &no_map(),
-            no_hints(),
             None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
@@ -1655,7 +1614,6 @@ pub(crate) mod tests {
             0,
             &pal_of(CColor::Default, red, white),
             &no_map(),
-            no_hints(),
             None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
@@ -1705,7 +1663,6 @@ pub(crate) mod tests {
             0,
             &pal_of(CColor::Default, red, white),
             &no_map(),
-            no_hints(),
             None,
         );
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
@@ -1821,7 +1778,6 @@ pub(crate) mod tests {
             0,
             &pal_of(CColor::Default, CColor::Rgb(0xff, 0, 0), white),
             &no_map(),
-            no_hints(),
             None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
@@ -1859,18 +1815,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn placeholder_boxes_are_not_dimmed_and_show_cell_identifiers() {
-        // Empty placeholder boxes are chrome, not panes: their interiors carry
-        // the palette base (the same fill as the rest of the gwae
-        // background) rather than punching a different background through,
-        // and a big block-font `strip.cell` identifier is centered in each.
-        let layout = Layout::new(2); // boxes 3 and 4 are placeholders
+    fn placeholder_boxes_are_blank_frames() {
+        // Empty boxes are bare frames: their interiors carry the palette
+        // base and contain no identifiers, no hints, no text at all. The
+        // only key help is the `\u{2325}+/` cheat-sheet.
+        let layout = Layout::new(2); // boxes 3 and 4 are empty
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let cols: u16 = 80;
         let rows: u16 = 12;
         let dim = CColor::Idx(235);
-        // pal_of fixes the identifier to 0x585b70 (see helper docs).
-        let label = CColor::Rgb(0x58, 0x5b, 0x70);
         let mut out = Vec::new();
         render_frame(
             &mut out,
@@ -1881,236 +1834,81 @@ pub(crate) mod tests {
             0,
             &pal_of(dim, CColor::Rgb(0xff, 0, 0), CColor::Rgb(0xff, 0xff, 0xff)),
             &no_map(),
-            no_hints(),
             None,
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
-        // Placeholder interiors blend with the surrounding backdrop: every
-        // interior cell is either the terminal base or the identifier's own
-        // pixels, never the terminal's default background (which would read
-        // as a differently colored rectangle punched into the grid).
-        for x in 41..59 {
-            for y in 1..rows - 1 {
-                let b = bg(x, y);
+        // Empty-box interiors blend with the surrounding backdrop (boxes 3
+        // and 4 live at screen columns 41..59 and 61..79; the shared rules
+        // themselves use the default background).
+        for (x0, x1) in [(42u16, 58u16), (62, 78)] {
+            for x in x0..x1 {
+                for y in 1..rows - 1 {
+                    assert_eq!(
+                        bg(x, y),
+                        dim,
+                        "empty-box interior does not blend at ({x},{y})"
+                    );
+                }
+            }
+        }
+        // ... and carry no text of any kind.
+        let text: String = out.iter().map(|c| c.ch).collect();
+        let non_frame: String = text
+            .chars()
+            .filter(|c| {
+                !matches!(
+                    c,
+                    ' ' | '\u{2800}'
+                        | '\u{2502}'
+                        | '\u{2500}'
+                        | '\u{256d}'
+                        | '\u{256e}'
+                        | '\u{2570}'
+                        | '\u{256f}'
+                        | '\u{251c}'
+                        | '\u{2524}'
+                        | '\u{252c}'
+                        | '\u{2534}'
+                        | '\u{253c}'
+                )
+            })
+            .collect();
+        assert!(
+            non_frame.is_empty(),
+            "empty boxes must paint nothing but frames, got {non_frame:?}"
+        );
+    }
+
+    #[test]
+    fn empty_boxes_are_identical_across_repaints() {
+        // The frame differ compares against the previous frame, so the empty
+        // boxes must render deterministically (blank).
+        let a = placeholder_rows(120, 24);
+        let b = placeholder_rows(120, 24);
+        assert_eq!(a, b, "empty boxes changed between identical renders");
+    }
+
+    #[test]
+    fn empty_boxes_carry_no_text_at_any_size() {
+        // Whatever the box geometry, no identifier or hint may appear: the
+        // only key help is the cheat-sheet.
+        for (cols, rows) in [(120u16, 24u16), (120, 6), (30, 24), (160, 40)] {
+            let text = placeholder_rows(cols, rows).join("\n");
+            for token in [
+                "moves focus",
+                "toggles",
+                "spawns",
+                "1-9",
+                "attention",
+                "1.3",
+                "1.4",
+            ] {
                 assert!(
-                    b == dim || b == label,
-                    "placeholder interior does not blend at ({x},{y}): {b:?}"
+                    !text.contains(token),
+                    "empty box must not contain {token:?} at {cols}x{rows}:\n{text}"
                 );
             }
         }
-        // The identifier is drawn in the label color somewhere inside each
-        // placeholder box (boxes 3 and 4 -> labels "1.3" and "1.4").
-        for (x0, x1) in [(41u16, 59u16), (61, 79)] {
-            let painted = (x0..x1)
-                .flat_map(|x| (1..rows - 1).map(move |y| (x, y)))
-                .filter(|&(x, y)| bg(x, y) == label)
-                .count();
-            assert!(
-                painted >= 11,
-                "expected a block-font identifier in box [{x0},{x1}), found {painted} cells"
-            );
-        }
-        // Live (non-placeholder) box interiors carry no identifier.
-        let painted_live = (1..19u16)
-            .flat_map(|x| (1..rows - 1).map(move |y| (x, y)))
-            .filter(|&(x, y)| bg(x, y) == label)
-            .count();
-        assert_eq!(painted_live, 0, "live boxes must not show identifiers");
-    }
-
-    /// A full strip has no placeholder to pin to. The user's next empty box
-    /// is `n+1.1`, the first cell of the strip below, so the cheat-sheet hint
-    /// must appear there rather than being lost until a pane is closed.
-    #[test]
-    fn a_full_strip_moves_the_pinned_hint_to_the_next_strip() {
-        // Four panes fill the strip: no empty box remains beside them.
-        let mut layout = Layout::new(4);
-        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
-        let render = |layout: &Layout, panes: &mut HashMap<PaneId, PtyPane>| -> String {
-            let mut out = Vec::new();
-            render_frame(
-                &mut out,
-                layout,
-                panes,
-                160,
-                40,
-                0,
-                &pal_of(
-                    CColor::Idx(235),
-                    CColor::Rgb(0xff, 0, 0),
-                    CColor::Rgb(0xff, 0xff, 0xff),
-                ),
-                &no_map(),
-                true,
-                None,
-            );
-            (0..40)
-                .map(|y| {
-                    (0..160)
-                        .map(|x| out[y as usize * 160 + x as usize].ch)
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        // The full strip itself has nowhere to put the hint.
-        let full = render(&layout, &mut panes);
-        let pinned = crate::binds::key_hints()[0].clone();
-        let needle = pinned.split_whitespace().next().unwrap();
-        assert!(
-            !full.contains(needle),
-            "a full strip has no placeholder to pin to:\n{full}"
-        );
-        // Moving down past the last strip creates an empty one (niri
-        // workspace semantics); its first cell is the newly-visible empty box
-        // and must carry the pinned hint.
-        let _ = layout.apply(
-            Action::FocusDown,
-            Viewport::new(160),
-            FollowScroll::default(),
-        );
-        let next = render(&layout, &mut panes);
-        assert!(
-            next.contains(needle),
-            "the pinned hint should move to the next strip's first cell:\n{next}"
-        );
-    }
-
-    #[test]
-    fn placeholder_boxes_show_a_hint_when_there_is_room() {
-        // A tall, wide-enough box gets the key hint under its identifier.
-        let text = placeholder_rows(120, 24, true).join("\n");
-        let pinned = crate::binds::key_hints()[0].clone();
-        let needle = pinned.split_whitespace().next().unwrap();
-        assert!(
-            text.contains(needle),
-            "expected the pinned hint in a roomy box:\n{text}"
-        );
-    }
-
-    #[test]
-    fn hint_never_displaces_the_cell_identifier() {
-        // The identifier is the addressing affordance and must survive: in a
-        // box with the hint, the block-font label is still painted.
-        let cols: u16 = 120;
-        let rows: u16 = 24;
-        let layout = Layout::new(2);
-        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
-        let label = CColor::Rgb(0x58, 0x5b, 0x70);
-        let mut out = Vec::new();
-        render_frame(
-            &mut out,
-            &layout,
-            &mut panes,
-            cols,
-            rows,
-            0,
-            &pal_of(CColor::Idx(235), CColor::Rgb(0xff, 0, 0), label),
-            &no_map(),
-            true,
-            None,
-        );
-        let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
-        let painted = (61..89u16)
-            .flat_map(|x| (1..rows - 1).map(move |y| (x, y)))
-            .filter(|&(x, y)| bg(x, y) == label)
-            .count();
-        assert!(
-            painted >= 11,
-            "identifier missing from a box with a hint, found {painted} cells"
-        );
-    }
-
-    #[test]
-    fn short_boxes_drop_the_hint_and_keep_the_identifier() {
-        // Not enough vertical room for label + spacer + hint: degrade to the
-        // label alone rather than painting a clipped hint.
-        let text = placeholder_rows(120, 6, true).join("\n");
-        let pinned = crate::binds::key_hints()[0].clone();
-        assert!(
-            !text.contains(&pinned),
-            "a short box must not draw a clipped hint:\n{text}"
-        );
-    }
-
-    #[test]
-    fn narrow_boxes_drop_the_hint() {
-        // An 8-wide box cannot fit a wrapped hint: it is skipped entirely.
-        let text = placeholder_rows(30, 24, true).join("\n");
-        let pinned = crate::binds::key_hints()[0].clone();
-        assert!(
-            !text.contains(&pinned),
-            "a narrow box must not draw a clipped hint:\n{text}"
-        );
-    }
-
-    #[test]
-    fn hint_text_keeps_the_boxs_background() {
-        // Regression: placeholder text once carried `CColor::Default` as its
-        // background and read as a gray rectangle floating over the terminal
-        // backdrop. Hint glyphs must inherit the box background.
-        let cols: u16 = 120;
-        let rows: u16 = 24;
-        let layout = Layout::new(2);
-        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
-        let base = CColor::Idx(235);
-        let mut out = Vec::new();
-        render_frame(
-            &mut out,
-            &layout,
-            &mut panes,
-            cols,
-            rows,
-            0,
-            &pal_of(base, CColor::Rgb(0xff, 0, 0), CColor::Rgb(0xff, 0xff, 0xff)),
-            &no_map(),
-            true,
-            None,
-        );
-        let text = placeholder_rows(120, 24, true).join("\n");
-        let pinned = crate::binds::key_hints()[0].clone();
-        assert!(text.contains(pinned.split_whitespace().next().unwrap()));
-        let hint: Vec<Cell> = out
-            .iter()
-            .copied()
-            .filter(|c| c.ch != ' ' && c.ch != '\u{2800}' && c.style.bg == base)
-            .collect();
-        assert!(!hint.is_empty(), "no hint was painted");
-    }
-
-    #[test]
-    fn disabled_hints_paint_nothing_extra() {
-        let text = placeholder_rows(120, 24, no_hints()).join("\n");
-        let pinned = crate::binds::key_hints()[0].clone();
-        assert!(!text.contains(&pinned), "hint drawn while disabled:\n{text}");
-    }
-
-    #[test]
-    fn hints_are_identical_across_repaints() {
-        // The frame differ compares against the previous frame, so an unstable
-        // (e.g. randomly chosen) message would force a repaint every frame.
-        let a = placeholder_rows(120, 24, true);
-        let b = placeholder_rows(120, 24, true);
-        assert_eq!(a, b, "placeholder hint changed between identical renders");
-    }
-
-    #[test]
-    fn big_label_skipped_when_rect_too_small() {
-        // A rect too small for the 3x5 font stays untouched instead of
-        // rendering a clipped, unreadable fragment.
-        let cols: u16 = 10;
-        let mut out = vec![Cell::default(); (cols as usize) * 4];
-        let rect = Rect {
-            x: 0,
-            y: 0,
-            w: 6,
-            h: 4,
-        };
-        draw_big_label(&mut out, cols, rect, "1.1", CColor::Rgb(0x58, 0x5b, 0x70));
-        assert!(
-            out.iter().all(|c| c.style.bg == CColor::Default),
-            "no partial label may be painted"
-        );
     }
 
     #[test]
@@ -2219,5 +2017,4 @@ pub(crate) mod tests {
         };
         assert_eq!(Vt100Grid::new(size).size(), size);
     }
-
 }

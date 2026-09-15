@@ -2,7 +2,6 @@
 //!
 //! `handle_key` logic is untouched; the NAV rewrite lands here, not in the monolith.
 
-
 use crossterm::event::{KeyCode, KeyEvent, KeyEventState, KeyModifiers, ModifierKeyCode};
 
 use gwae_layout::{Action, Layout, PaneId, PaneStatus};
@@ -1214,14 +1213,7 @@ mod tests {
     }
 
     #[test]
-    fn only_native_paste_is_advertised_in_hud_and_cow() {
-        let hints = crate::binds::key_hints();
-        assert!(
-            hints
-                .iter()
-                .any(|h| h.starts_with(crate::keys::paste_key())),
-            "key hints must name native paste: {hints:?}"
-        );
+    fn only_native_paste_is_advertised_in_the_cheat_sheet() {
         let rows: Vec<_> = crate::binds::group(crate::binds::Group::Panes)
             .filter(|b| b.desc == "paste")
             .collect();

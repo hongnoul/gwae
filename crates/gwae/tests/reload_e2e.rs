@@ -122,15 +122,35 @@ fn editing_the_config_reloads_the_running_session() {
 }
 
 #[test]
-fn retired_theme_keys_do_not_repaint_the_running_session() {
-    // A retired `[theme]` key must be ignored: no "unknown theme" warning.
+fn retired_theme_keys_do_not_break_the_running_session() {
+    // A retired `theme = "..."` preset name parses as "no overrides": no
+    // parse error, the session confirms the reload.
     let s = Session::start("");
     let _ = s.drain(3);
     s.write_config("theme = \"nord\"\n");
     let after = s.drain(4);
     assert!(
-        !after.contains("unknown theme"),
-        "a retired theme key should be ignored silently; got:\n{after:?}"
+        after.contains("reloaded"),
+        "a retired theme key should reload cleanly; got:\n{after:?}"
+    );
+    s.kill();
+}
+
+#[test]
+fn theme_overrides_reload_the_running_session() {
+    // A `[theme]` edit repaints the chrome live: the session confirms and the
+    // new accent reaches the wire.
+    let s = Session::start("");
+    let _ = s.drain(3);
+    s.write_config("[theme]\naccent = \"#ff00ff\"\n");
+    let after = s.drain(4);
+    assert!(
+        after.contains("reloaded"),
+        "a theme edit should confirm the reload; got:\n{after:?}"
+    );
+    assert!(
+        after.contains("38;2;255;0;255"),
+        "the new accent should reach the wire; got:\n{after:?}"
     );
     s.kill();
 }

@@ -1,7 +1,7 @@
 //! Config text editing: comment-preserving TOML key writes.
 
 use super::detect::{command_available, Found};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Plan {
@@ -151,33 +151,7 @@ pub fn save_default_agent(path: &Path, agent: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    /// Drop SGR escapes so assertions read the text a user sees.
-    fn strip_ansi(s: &str) -> String {
-        let mut out = String::new();
-        let mut chars = s.chars();
-        while let Some(c) = chars.next() {
-            if c == '\x1b' {
-                for c in chars.by_ref() {
-                    if c == 'm' {
-                        break;
-                    }
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    }
-
-    fn found(cmd: &str) -> Found {
-        Found {
-            cmd: cmd.into(),
-            label: cmd.into(),
-            path: PathBuf::from("/usr/bin").join(cmd),
-        }
-    }
-
-        #[test]
+    #[test]
     fn saving_replaces_an_existing_key_and_preserves_comments_and_order() {
         let before = "# my config\nstartup_panes = 1\ndefault_agent = \"jcode\"\nmouse = true\n";
         let after = set_default_agent_text(before, "claude");
@@ -241,5 +215,4 @@ mod tests {
         assert!(text.contains("claude"));
         let _ = std::fs::remove_dir_all(&dir);
     }
-
 }

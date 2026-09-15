@@ -17,10 +17,11 @@ const QUIET_AFTER: Duration = Duration::from_secs(4);
 pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) -> Result<(), i32> {
     use std::io;
     // Config is re-resolved whenever the config file changes on disk (see
-    // the reload check in the render loop). The palette is fixed: the host
-    // terminal's own colors. Every chrome color painted below reads from it.
+    // the reload check in the render loop). The palette follows `[theme]`
+    // overrides through the same reload. Every chrome color painted below
+    // reads from it.
     let mut cfg = cfg;
-    let pal = cfg.palette();
+    let mut pal = cfg.palette();
     let mut stdout = io::stdout();
     // Arm signal handlers + panic hook before the first pane exists, and hold
     // a drop guard so every early return below still reaps. Quitting gwae is
@@ -491,8 +492,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         // Keep the panes and their harnesses exactly as they
                         // are; only adopt what is re-read every frame.
                         // The keep-awake guard follows silently: no
-                        // bottom-left toast, the HUD coffee badge carries it.
+                        // bottom-left toast, the HUD keep-awake badge carries it.
+                        // The palette is re-read too, so a `[theme]` edit
+                        // repaints the chrome on the next frame.
                         cfg.adopt_appearance(new);
+                        pal = cfg.palette();
                         keep_awake.refresh(cfg.keep_awake);
                         reload_note_anchor = None;
                         reload_note = Some("config reloaded".to_string());
@@ -873,7 +877,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 Cmd::ToggleKeepAwake => {
                                     // Silent toggle: no bottom-left text. The
                                     // guard still flips and persists; state
-                                    // reads on the HUD coffee badge.
+                                    // reads on the HUD keep-awake badge.
                                     if !cfg!(target_os = "macos") {
                                         reload_note_anchor = None;
                                         reload_note = None;
@@ -1419,7 +1423,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
 
 #[cfg(test)]
 mod tests {
+    use super::super::render::focused_pane_views;
     use super::*;
+    use crate::theme::Palette;
 
     #[test]
     fn content_scroll_reveals_overflow_e2e() {
@@ -1462,7 +1468,6 @@ mod tests {
             240,
             &Palette::default(),
             &crate::config::Minimap::default(),
-            false,
             None,
         );
         // Content is inset 1 cell inside the column frame: grid (x,0) is at
@@ -1483,7 +1488,6 @@ mod tests {
             240,
             &Palette::default(),
             &crate::config::Minimap::default(),
-            false,
             None,
         );
         assert_eq!(at(&out, 0), '1'); // content col 60
@@ -1501,7 +1505,6 @@ mod tests {
             240,
             &Palette::default(),
             &crate::config::Minimap::default(),
-            false,
             None,
         );
         assert_eq!(at(&out, 0), '1'); // content col 200
@@ -1585,7 +1588,6 @@ mod tests {
             0,
             &Palette::default(),
             &crate::config::Minimap::default(),
-            false,
             None,
         );
         // The first content row shows each pane's letter across its column's
@@ -1762,7 +1764,6 @@ mod tests {
                 0,
                 &Palette::default(),
                 &crate::config::Minimap::default(),
-                false,
                 None,
             );
             let y = 2usize;

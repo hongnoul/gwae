@@ -8,150 +8,13 @@ use gwae_term::{CColor, Cell};
 
 use crate::theme::Palette;
 
-use super::Rect;
 use super::render::draw_focus_frame;
+use super::Rect;
 
-/// 3x5 block-font glyphs for the characters a cell identifier can contain
-/// (digits and the `,`/`.` separators). Each glyph is 5 rows of 3 bits, MSB left.
-pub(crate) fn big_glyph(ch: char) -> Option<[u8; 5]> {
-    Some(match ch {
-        '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
-        '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
-        '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
-        '3' => [0b111, 0b001, 0b011, 0b001, 0b111],
-        '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
-        '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
-        '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
-        '7' => [0b111, 0b001, 0b010, 0b010, 0b010],
-        '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
-        '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
-        ',' => [0b000, 0b000, 0b000, 0b010, 0b100],
-        '.' => [0b000, 0b000, 0b000, 0b000, 0b010],
-        _ => return None,
-    })
-}
-
-/// Paint `label` centered in `rect` using the 3x5 block font, one screen cell
-/// per font pixel (glyphs separated by a 1-cell gap). Pixels are painted as
-/// background-colored blanks in `color`. Skipped entirely when the rect is too
-/// small to fit the label, so tiny boxes stay clean.
-pub(crate) fn draw_big_label(out: &mut [Cell], cols: u16, rect: Rect, label: &str, color: CColor) {
-    let glyphs: Vec<[u8; 5]> = label.chars().filter_map(big_glyph).collect();
-    if glyphs.is_empty() {
-        return;
-    }
-    let gw = (glyphs.len() * 3 + (glyphs.len() - 1)) as u16; // 3 wide + 1 gap
-    let gh = 5u16;
-    if rect.w < gw || rect.h < gh {
-        return;
-    }
-    let x0 = rect.x + (rect.w - gw) / 2;
-    let y0 = rect.y + (rect.h - gh) / 2;
-    for (gi, glyph) in glyphs.iter().enumerate() {
-        let gx = x0 + (gi as u16) * 4;
-        for (ry, bits) in glyph.iter().enumerate() {
-            for rx in 0..3u16 {
-                if bits & (0b100 >> rx) == 0 {
-                    continue;
-                }
-                let idx = (y0 as usize + ry) * cols as usize + (gx + rx) as usize;
-                if let Some(c) = out.get_mut(idx) {
-                    *c = Cell::default();
-                    c.style.bg = color;
-                }
-            }
-        }
-    }
-}
-
-/// Fill the interior of an empty placeholder box: the big block-font cell
-/// identifier, and (room permitting) one key hint under it.
+/// Paint a block of pre-wrapped text centered in `rect`.
 ///
-/// The identifier is the box's *addressing* affordance and always wins: the
-/// hint is only drawn when it fits underneath without crowding the label, so
-/// narrow or short boxes silently degrade to the label alone rather than to a
-/// clipped mess. Vertically the pair is centered as a unit, so the box doesn't
-/// look top-heavy.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_placeholder_contents(
-    out: &mut [Cell],
-    cols: u16,
-    rect: Rect,
-    label: &str,
-    color: CColor,
-    hint: Option<&str>,
-) {
-    let hint_lines: Vec<String> = hint
-        .map(|m| wrap_hint(m, rect.w))
-        .unwrap_or_default();
-    // 5 rows of block font, then a blank spacer row, then the hint.
-    const LABEL_H: u16 = 5;
-    let hint_h = hint_lines.len() as u16;
-    let fits = !hint_lines.is_empty() && rect.h >= LABEL_H + 1 + hint_h;
-    if !fits {
-        draw_big_label(out, cols, rect, label, color);
-        return;
-    }
-    let total = LABEL_H + 1 + hint_h;
-    let top = rect.y + (rect.h - total) / 2;
-    draw_big_label(
-        out,
-        cols,
-        Rect {
-            x: rect.x,
-            y: top,
-            w: rect.w,
-            h: LABEL_H,
-        },
-        label,
-        color,
-    );
-    draw_art(
-        out,
-        cols,
-        Rect {
-            x: rect.x,
-            y: top + LABEL_H + 1,
-            w: rect.w,
-            h: hint_h,
-        },
-        &hint_lines,
-        color,
-    );
-}
-
-/// Word-wrap one hint line to the box width, centered by the caller.
-fn wrap_hint(text: &str, max_w: u16) -> Vec<String> {
-    if max_w < 8 {
-        return Vec::new();
-    }
-    let max = max_w as usize;
-    let mut lines = Vec::new();
-    let mut cur = String::new();
-    for word in text.split_whitespace() {
-        if cur.is_empty() {
-            cur.push_str(word);
-        } else if cur.chars().count() + 1 + word.chars().count() <= max {
-            cur.push(' ');
-            cur.push_str(word);
-        } else {
-            lines.push(std::mem::take(&mut cur));
-            cur.push_str(word);
-        }
-    }
-    if !cur.is_empty() {
-        lines.push(cur);
-    }
-    lines
-}
-
-/// Paint a block of pre-wrapped ASCII art centered in `rect`.
-///
-/// Unlike [`draw_big_label`], which paints background-colored blanks, this
-/// writes real glyphs in `color`. The block is centered as a unit (each line
-/// keeps its relative indentation, so the cow doesn't shear), and any line
-/// that would run past the rect is clipped rather than wrapping into the
-/// neighbouring box.
+/// Each line keeps its relative indentation and any line that would run past
+/// the rect is clipped rather than wrapping into the neighbouring box.
 pub(crate) fn draw_art(out: &mut [Cell], cols: u16, rect: Rect, lines: &[String], color: CColor) {
     let bw = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
     if bw == 0 || bw > rect.w {
@@ -235,13 +98,13 @@ pub(crate) fn stamp_keep_awake_badge(
     rect: super::Rect,
     pal: &Palette,
 ) {
-    let badge = crate::keepawake::COFFEE_BADGE;
+    let badge = crate::keepawake::KEEP_AWAKE_BADGE;
     let n = badge.chars().count();
     if n == 0 || rect.w as usize <= n + 2 || rect.h == 0 {
         return;
     }
     let y = rect.y as usize;
-    let start = rect.x as usize + rect.w as usize - 1 - n;
+    let start = rect.x as usize + (rect.w as usize - n) / 2;
     for (i, ch) in badge.chars().enumerate() {
         let idx = y * cols as usize + start + i;
         let Some(c) = out.get_mut(idx) else { continue };
@@ -373,7 +236,11 @@ pub(crate) fn tile_text(w: u16, addr: &str, target: bool, glyph: char) -> String
 /// The inclusive column-index range of a strip that is currently on screen,
 /// or `None` when the whole strip fits (in which case there is nothing to
 /// point out: the viewport *is* the strip).
-pub(crate) fn visible_column_range(layout: &Layout, row_idx: usize, cols: u16) -> Option<(usize, usize)> {
+pub(crate) fn visible_column_range(
+    layout: &Layout,
+    row_idx: usize,
+    cols: u16,
+) -> Option<(usize, usize)> {
     let row = layout.rows.get(row_idx)?;
     let ranges = layout.column_x_ranges(row.id, cols)?;
     let total = ranges.last().map(|r| r.1).unwrap_or(0);
@@ -421,9 +288,8 @@ pub(crate) struct HudPlan {
     /// Inner width, and the first inner row/column.
     pub(crate) inner_w: usize,
     pub(crate) inner_ox: usize,
-    /// Screen y of the tally row and of the key-hint row.
+    /// Screen y of the tally row.
     pub(crate) tally_y: Option<u16>,
-    pub(crate) hint_y: Option<u16>,
 }
 
 /// The status tally shown in the dashboard footer: the pane count, then one
@@ -459,17 +325,14 @@ pub(crate) fn plan_center_minimap(
     rows: u16,
     layout: &Layout,
     mm: &crate::config::Minimap,
-    show_hints: bool,
 ) -> Option<HudPlan> {
     use gwae_layout::minimap;
     if !mm.show || cols < 20 || rows < 8 {
         return None;
     }
-    // A single pane has no grid to triage, but the hold must still answer
-    // *something*: silence taught first-run users that ⌥ does nothing at all.
-    // Fall back to the key hints alone.
+    // A single pane has no grid to triage: nothing to show.
     let single = layout.panes.len() <= 1 && layout.rows.len() <= 1;
-    if single && !show_hints {
+    if single {
         return None;
     }
 
@@ -535,20 +398,14 @@ pub(crate) fn plan_center_minimap(
         shown_rows as usize + ruler_rows + usize::from(hidden > 0)
     };
     let has_summary = mm.show_counts && !single;
-    let footer_rows = usize::from(has_summary) + usize::from(show_hints);
+    let footer_rows = usize::from(has_summary);
 
     let map_row_w = (gutter_w + u16::from(gutter_w > 0) + map.width) as usize;
     let tally_w: usize = status_tally(layout)
         .iter()
         .map(|(t, _)| t.chars().count())
         .sum();
-    let inner_w = map_row_w
-        .max(if show_hints {
-            hud_hint().chars().count()
-        } else {
-            0
-        })
-        .max(if has_summary { tally_w } else { 0 });
+    let inner_w = map_row_w.max(if has_summary { tally_w } else { 0 });
     let bw = inner_w + 2;
     let bh = body_rows + footer_rows + 2;
     if bw as u16 >= cols || bh as u16 >= rows {
@@ -594,24 +451,14 @@ pub(crate) fn plan_center_minimap(
         inner_w,
         inner_ox,
         tally_y,
-        hint_y: show_hints.then_some(fy as u16),
     })
 }
 
-/// The key-hint line under the dashboard. Spelled from [`crate::keys`] so it
-/// reads `⌥` on macOS and `Alt` everywhere else.
 pub(crate) fn has_attention(layout: &Layout) -> bool {
     layout
         .panes
         .values()
         .any(|p| matches!(p.status, PaneStatus::Idle | PaneStatus::Failed))
-}
-
-pub(crate) fn hud_hint() -> String {
-    format!(
-        "{n}1-9 col · {n}g attention · {n}hjkl move · {n}/ keys",
-        n = crate::keys::mod_key()
-    )
 }
 
 /// Cells the centered dashboard would like per column — spatial-only tiles
@@ -669,7 +516,7 @@ pub(crate) fn draw_center_minimap(
     pal: &Palette,
     facts: &HudFacts,
 ) {
-    if let Some(plan) = plan_center_minimap(cols, rows, layout, mm, true) {
+    if let Some(plan) = plan_center_minimap(cols, rows, layout, mm) {
         paint_center_minimap(out, cols, rows, layout, &plan, pal, facts);
     }
 }
@@ -689,7 +536,6 @@ pub(crate) fn paint_center_minimap(
     let status_bg = |s: PaneStatus| pal.status_muted(s);
     let status_fg = |s: PaneStatus| pal.status(s);
     let status_glyph = status_glyph_for;
-    let hint = hud_hint();
     let tally: Vec<(String, CColor)> = status_tally(layout)
         .into_iter()
         .map(|(t, s)| {
@@ -794,9 +640,11 @@ pub(crate) fn paint_center_minimap(
                 fg
             };
             put(out, x as u16, gy as u16, ch, ink, bgc, sig);
-            if neutral {
+            // The focused tile keeps its underline on top of the fill, so
+            // focus never depends on color alone (retro RGB fills included).
+            if tile.focus_col {
                 if let Some(cell) = out.get_mut(gy * cols as usize + x) {
-                    cell.style.underline = tile.focus_col;
+                    cell.style.underline = true;
                 }
             }
         }
@@ -840,17 +688,13 @@ pub(crate) fn paint_center_minimap(
         write(
             out,
             inner_ox,
-            plan.tally_y
-                .or(plan.hint_y)
-                .unwrap_or(plan.rect.y + plan.rect.h - 1) as usize
-                - 1,
+            plan.tally_y.unwrap_or(plan.rect.y + plan.rect.h - 1) as usize - 1,
             &more,
             Palette::muted(pal.text),
             false,
         );
     }
-    // Footer: tallies centred on their own row, then the key hints
-    // centred on the last inner row.
+    // Footer: tallies centred on their own row.
     if let Some(fy) = plan.tally_y {
         let mut x = plan.inner_ox + (plan.inner_w.saturating_sub(tally_w)) / 2;
         for (text, fg) in &tally {
@@ -860,50 +704,19 @@ pub(crate) fn paint_center_minimap(
             }
         }
     }
-    let hint_len = hint.chars().count();
-    if let Some(hint_y) = plan.hint_y.filter(|_| hint_len <= plan.inner_w) {
-        write(
-            out,
-            inner_ox + (plan.inner_w - hint_len) / 2,
-            hint_y as usize,
-            &hint,
-            Palette::muted(pal.text),
-            false,
-        );
-    }
     if facts.keep_awake {
         stamp_keep_awake_badge(out, cols, plan.rect, pal);
     }
 }
 
-/// Build the full frame (cols x rows).
-#[allow(clippy::too_many_arguments)]
-/// The 1-based *position* of the focused strip in the stack, used for the
-/// `strip.cell` addresses. Deliberately not the `RowId`: ids are monotonic
-/// allocation counters, so creating and discarding strips with j/k would make
-/// the visible label of the second strip climb (2, 3, 4, ...) forever.
-pub(crate) fn strip_number(layout: &Layout) -> usize {
-    layout
-        .rows
-        .iter()
-        .position(|r| r.id == layout.focus.row)
-        .unwrap_or(0)
-        + 1
-}
-
-/// Draw a one-line toast along the bottom of the screen.
+/// Draw a one-line toast, optionally anchored to the bottom-left of a rect
+/// (a pane) instead of the bottom-left of the screen. A drag-copy note belongs
+/// to the pane the text came from, so with several panes on screen it is
+/// obvious which pane's selection was copied.
 ///
 /// Used to report config reloads. It is a single row so it never covers a
 /// pane's working area meaningfully, and it sits on the terminal `surface` so
 /// it reads as chrome rather than as pane output.
-pub(crate) fn draw_toast(out: &mut [Cell], cols: u16, rows: u16, text: &str, pal: &Palette, ok: bool) {
-    draw_toast_at(out, cols, rows, text, pal, ok, None)
-}
-
-/// Like [`draw_toast`] but optionally anchored to the bottom-left of a rect
-/// (a pane) instead of the bottom-left of the screen. A drag-copy note belongs
-/// to the pane the text came from, so with several panes on screen it is
-/// obvious which pane's selection was copied.
 pub(crate) fn draw_toast_at(
     out: &mut [Cell],
     cols: u16,
@@ -1193,7 +1006,7 @@ pub(crate) fn draw_edge_ticks(
 /// (columns subdivided by their stacks) with width proportional to the
 /// column's real width share. Every tile is painted in its *status* color
 /// (working / wants-attention / done / failed), carries the pane's column
-/// digit (the same digit `⌥+1..9` jumps to) and, when wide enough, a status
+/// digit and, when wide enough, a status
 /// glyph. The focused pane's tile is painted in the focus accent and the
 /// focused strip gets a `❯` chevron in the gutter. An optional one-line
 /// summary above the map counts panes by status: `4 »2 !1 ✓1`.
@@ -1284,9 +1097,9 @@ pub(crate) fn draw_minimap(
                 bg,
                 tile.focus_col || (dx == 0 && tile.pane_idx == 0),
             );
-            if neutral {
+            if tile.focus_col {
                 if let Some(cell) = out.get_mut(y as usize * cols as usize + x as usize) {
-                    cell.style.underline = tile.focus_col;
+                    cell.style.underline = true;
                 }
             }
         }
@@ -1328,14 +1141,13 @@ pub(crate) fn draw_minimap(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::input::smart_jump_target;
     use super::super::pty::PtyPane;
-    use super::super::render::tests::{no_hints, no_map, pal_accent, pal_of};
     use super::super::render::render_frame;
+    use super::super::render::tests::{no_map, pal_accent, pal_of};
+    use super::*;
     use crate::theme::Palette;
     use gwae_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport};
     use gwae_term::{CColor, Cell};
@@ -1367,7 +1179,15 @@ mod tests {
         assert_eq!(row.find('c'), Some(21), "starts at the pane's left edge");
         // Screen-anchored toasts still land on the last row at column 0.
         let mut frame = vec![Cell::default(); cols as usize * rows as usize];
-        draw_toast(&mut frame, cols, rows, "hi", &Palette::default(), true);
+        draw_toast_at(
+            &mut frame,
+            cols,
+            rows,
+            "hi",
+            &Palette::default(),
+            true,
+            None,
+        );
         assert_eq!(frame[9 * cols as usize + 1].ch, 'h');
     }
 
@@ -1668,9 +1488,8 @@ mod tests {
             all.contains('✗') || all.contains('»'),
             "status glyph present, got {all:?}"
         );
-        // A single pane has no grid to triage, but holding ⌥ must still do
-        // something visible or the gesture teaches the user it is broken:
-        // the panel degrades to the key hints alone.
+        // A single pane has no grid to triage: the panel stays hidden and
+        // the hold is a no-op rather than a wall of hints.
         let single = Layout::new(1);
         let (sc, sr) = (80u16, 24u16);
         let mut out2 = vec![Cell::default(); sc as usize * sr as usize];
@@ -1683,51 +1502,47 @@ mod tests {
             &pal_accent(CColor::Idx(36)),
             &HudFacts::default(),
         );
-        let solo: String = out2.iter().map(|c| c.ch).collect();
         assert!(
-            solo.contains(&format!("{}g", crate::keys::mod_key())),
-            "one pane still gets the key hints, got {solo:?}"
-        );
-        assert!(
-            !solo.contains('»'),
-            "...but no tiles, since there is nothing to compare: {solo:?}"
+            out2.iter().all(|c| c.ch == ' '),
+            "one pane paints no dashboard"
         );
     }
 
     #[test]
-    fn center_minimap_respects_disabled_keybinding_hints() {
+    fn center_minimap_footer_is_tally_only() {
+        // No key-hint row: the footer is the status tally, or nothing when
+        // counts are off. The panel carries no key help; `\u{2325}+/` owns that.
         let layout = Layout::default();
         for show_counts in [true, false] {
             let mm = crate::config::Minimap {
                 show_counts,
                 ..Default::default()
             };
-            let enabled = plan_center_minimap(100, 24, &layout, &mm, true).unwrap();
-            let disabled = plan_center_minimap(100, 24, &layout, &mm, false).unwrap();
-            assert!(disabled.hint_y.is_none());
-            assert_eq!(disabled.rect.h + 1, enabled.rect.h);
-            assert!(disabled.rect.w <= enabled.rect.w);
-            assert_eq!(disabled.tally_y.is_some(), show_counts);
-            for (plan, expected) in [(&enabled, true), (&disabled, false)] {
-                let mut out = vec![Cell::default(); 100 * 24];
-                paint_center_minimap(
-                    &mut out,
-                    100,
-                    24,
-                    &layout,
-                    plan,
-                    &Palette::default(),
-                    &HudFacts::default(),
+            let plan = plan_center_minimap(100, 24, &layout, &mm).unwrap();
+            assert_eq!(plan.tally_y.is_some(), show_counts);
+            let mut out = vec![Cell::default(); 100 * 24];
+            paint_center_minimap(
+                &mut out,
+                100,
+                24,
+                &layout,
+                &plan,
+                &Palette::default(),
+                &HudFacts::default(),
+            );
+            let text: String = out.iter().map(|c| c.ch).collect();
+            assert!(text.contains('\u{256d}'), "map remains visible");
+            for token in ["1-9", "attention", "hjkl", "keys", "⌥+/"] {
+                assert!(
+                    !text.contains(token),
+                    "dashboard must not carry hints, found {token:?}"
                 );
-                let text: String = out.iter().map(|c| c.ch).collect();
-                assert_eq!(text.contains(&hud_hint()), expected);
-                assert!(text.contains('╭'), "map remains visible without hints");
             }
         }
+        // A single pane has no grid to triage: no plan at all.
         let single = Layout::new(1);
         let mm = crate::config::Minimap::default();
-        assert!(plan_center_minimap(100, 24, &single, &mm, false).is_none());
-        assert!(plan_center_minimap(100, 24, &single, &mm, true).is_some());
+        assert!(plan_center_minimap(100, 24, &single, &mm).is_none());
     }
 
     #[test]
@@ -1854,33 +1669,25 @@ mod tests {
         ]) {
             layout.panes.get_mut(id).unwrap().status = status;
         }
-        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
-            .unwrap();
-        for pending_jump in [None, Some(3)] {
-            let mut out = vec![Cell::default(); 100 * 24];
-            paint_center_minimap(
-                &mut out,
-                100,
-                24,
-                &layout,
-                &plan,
-                &Palette::TERMINAL,
-                &HudFacts {
-                    pending_jump,
-                    ..HudFacts::default()
-                },
-            );
-            for tile in &plan.map.cells {
-                let y = plan.row_y[tile.y as usize] as usize;
-                let cells = &out[y * 100 + (plan.map_ox + tile.x) as usize..][..tile.w as usize];
-                assert!(cells.iter().all(|c| c.style.bg == CColor::Default));
-                for c in cells.iter().filter(|c| c.ch.is_ascii_digit()) {
-                    assert_eq!(c.style.fg, CColor::Default);
-                    assert_eq!(
-                        c.style.underline,
-                        tile.focus_col || pending_jump == Some(tile.column + 1)
-                    );
-                }
+        let plan =
+            plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default()).unwrap();
+        let mut out = vec![Cell::default(); 100 * 24];
+        paint_center_minimap(
+            &mut out,
+            100,
+            24,
+            &layout,
+            &plan,
+            &Palette::TERMINAL,
+            &HudFacts::default(),
+        );
+        for tile in &plan.map.cells {
+            let y = plan.row_y[tile.y as usize] as usize;
+            let cells = &out[y * 100 + (plan.map_ox + tile.x) as usize..][..tile.w as usize];
+            assert!(cells.iter().all(|c| c.style.bg == CColor::Default));
+            for c in cells.iter().filter(|c| c.ch.is_ascii_digit()) {
+                assert_eq!(c.style.fg, CColor::Default);
+                assert_eq!(c.style.underline, tile.focus_col);
             }
         }
         let mut out = vec![Cell::default(); 100 * 24];
@@ -1909,7 +1716,6 @@ mod tests {
         layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Idle;
         let facts = HudFacts {
             jump_target: smart_jump_target(&layout),
-            pending_jump: None,
             ..HudFacts::default()
         };
         assert_eq!(facts.jump_target, Some(ids[2]), "the idle pane wants you");
@@ -1935,7 +1741,7 @@ mod tests {
         // Eight quarter-width columns: only four fit, so the strip scrolls
         // and the map has something to point at.
         let (mut layout, _) = dashboard_layout(8);
-        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
+        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
             .expect("dashboard fits");
         assert_eq!(plan.rulers.len(), 1, "one strip");
         let (first, last) = plan.rulers[0].expect("an overflowing strip gets a ruler");
@@ -1946,7 +1752,7 @@ mod tests {
         for _ in 0..5 {
             let _ = layout.apply(Action::FocusRight, v, f);
         }
-        let plan2 = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
+        let plan2 = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
             .expect("dashboard fits");
         let (f2, l2) = plan2.rulers[0].expect("still overflowing");
         assert!(
@@ -1955,63 +1761,15 @@ mod tests {
         );
         // A strip that fits entirely has nothing to point out.
         let (small, _) = dashboard_layout(2);
-        let plan3 = plan_center_minimap(100, 24, &small, &crate::config::Minimap::default(), true)
+        let plan3 = plan_center_minimap(100, 24, &small, &crate::config::Minimap::default())
             .expect("dashboard fits");
         assert_eq!(plan3.rulers[0], None, "no ruler when the strip fits");
     }
 
     #[test]
-    fn a_pending_jump_lights_the_column_it_addresses() {
-        let (layout, _) = dashboard_layout(4);
-        let pal = pal_accent(CColor::Idx(36));
-        let facts = HudFacts {
-            pending_jump: Some(3),
-            ..HudFacts::default()
-        };
-        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
-            .expect("dashboard fits");
-        let mut out = vec![Cell::default(); 100 * 24];
-        paint_center_minimap(&mut out, 100, 24, &layout, &plan, &pal, &facts);
-        let bg_of = |out: &[Cell], col: usize| {
-            let tile = plan
-                .map
-                .cells
-                .iter()
-                .find(|c| c.column == col)
-                .expect("tile exists");
-            out[plan.row_y[0] as usize * 100 + (plan.map_ox + tile.x) as usize]
-                .style
-                .bg
-        };
-        // Column 3 is lit at full status intensity; the columns the number
-        // does not address step back to the overlay tint (an indexed
-        // overlay normalizes to the terminal default through `tile_colors`,
-        // so the dimming reads as Default here).
-        assert_eq!(bg_of(&out, 2), pal.status(PaneStatus::Running));
-        assert_eq!(bg_of(&out, 3), CColor::Default);
-        // Without a pending jump nothing is dimmed: tiles are their own
-        // muted status tint again.
-        let mut plain = vec![Cell::default(); 100 * 24];
-        paint_center_minimap(
-            &mut plain,
-            100,
-            24,
-            &layout,
-            &plan,
-            &pal,
-            &HudFacts::default(),
-        );
-        assert_eq!(
-            bg_of(&plain, 3),
-            pal.status_muted(PaneStatus::Running),
-            "no pending number, no dimming"
-        );
-    }
-
-    #[test]
     fn clicking_a_tile_resolves_to_the_pane_it_draws() {
         let (layout, ids) = dashboard_layout(4);
-        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
+        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
             .expect("dashboard fits");
         let y = plan.row_y[0];
         // Every cell of a tile belongs to that tile's pane, so a click
@@ -2027,13 +1785,11 @@ mod tests {
             }
         }
         assert_eq!(hud_pane_at(&plan, plan.map_ox, y), Some(ids[0]));
-        // The frame and the footer are not tiles.
+        // The frame and the tally row are not tiles.
         assert_eq!(hud_pane_at(&plan, plan.rect.x, y), None, "frame");
-        assert_eq!(
-            hud_pane_at(&plan, plan.map_ox, plan.hint_y.unwrap()),
-            None,
-            "footer"
-        );
+        if let Some(tally_y) = plan.tally_y {
+            assert_eq!(hud_pane_at(&plan, plan.map_ox, tally_y), None, "footer");
+        }
     }
 
     #[test]
@@ -2048,7 +1804,7 @@ mod tests {
             max_rows: 3,
             ..Default::default()
         };
-        let plan = plan_center_minimap(100, 24, &layout, &mm, true).expect("dashboard fits");
+        let plan = plan_center_minimap(100, 24, &layout, &mm).expect("dashboard fits");
         assert_eq!(plan.row_y.len(), 3, "capped at max_rows");
         assert_eq!(plan.hidden, 7, "the rest are counted, not forgotten");
         let mut out = vec![Cell::default(); 100 * 24];
@@ -2074,34 +1830,10 @@ mod tests {
         let r3 = layout.new_row();
         let p2 = layout.alloc_pane();
         layout.add_column(r3, gwae_layout::Width::Cells(20), vec![p2]);
-        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default(), true)
+        let plan = plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default())
             .expect("dashboard fits");
         assert_eq!(plan.gutter[1], "2");
         assert_eq!(plan.gutter[2], "3");
-    }
-
-    #[test]
-    fn strip_number_tracks_position_not_row_id() {
-        let v = Viewport::new(80);
-        let f = FollowScroll::default();
-        let mut layout = Layout::new(1);
-        assert_eq!(strip_number(&layout), 1);
-        // Down into a fresh strip: it is the second strip, so "2".
-        let _ = layout.apply(Action::FocusDown, v, f);
-        assert_eq!(strip_number(&layout), 2);
-        // Bouncing up and down repeatedly allocates new row ids each time, but
-        // the label must stay 2 rather than drifting to 3, 4, 5 ...
-        for _ in 0..4 {
-            let _ = layout.apply(Action::FocusUp, v, f);
-            assert_eq!(strip_number(&layout), 1);
-            let _ = layout.apply(Action::FocusDown, v, f);
-            assert_eq!(strip_number(&layout), 2);
-        }
-        // A populated second strip plus a new third one keeps counting by
-        // position.
-        let _ = layout.apply(Action::NewColumn, v, f);
-        let _ = layout.apply(Action::FocusDown, v, f);
-        assert_eq!(strip_number(&layout), 3);
     }
 
     #[test]
@@ -2120,7 +1852,7 @@ mod tests {
                 &pal_accent(CColor::Idx(36)),
                 &HudFacts::default(),
             );
-            let plan = plan_center_minimap(cols, rows, &layout, &mm, true);
+            let plan = plan_center_minimap(cols, rows, &layout, &mm);
             let r = plan.as_ref().map(|p| p.rect).unwrap_or(Rect {
                 x: 0,
                 y: 0,
@@ -2172,7 +1904,6 @@ mod tests {
                     0,
                     &pal_of(CColor::Default, red, white),
                     &no_map(),
-                    no_hints(),
                     None,
                 );
                 let b = frame_boundaries(&out, cols, rows);
@@ -2399,7 +2130,7 @@ mod tests {
     }
 
     #[test]
-    fn coffee_badge_stamps_the_dashboard_frame_only_while_awake() {
+    fn keep_awake_badge_stamps_the_dashboard_frame_only_while_awake() {
         // The keep-awake state reads on the Option HUD chrome: the badge is
         // stamped onto the panel frame while the guard is active, and the
         // frame is plain box-drawing when it is not.
@@ -2412,7 +2143,7 @@ mod tests {
             let out = paint_dashboard(&layout, &facts, 100, 24);
             let text = screen_rows(&out, 100).join("\n");
             assert_eq!(
-                text.contains("~[_]o"),
+                text.contains("keep-awake"),
                 keep_awake,
                 "badge reads on the HUD frame iff awake:\n{text}"
             );
@@ -2420,7 +2151,7 @@ mod tests {
     }
 
     #[test]
-    fn coffee_badge_stamps_the_center_help_frame_only_while_awake() {
+    fn keep_awake_badge_stamps_the_center_help_frame_only_while_awake() {
         // Same promise for the startup / `⌥+/` help panel.
         let (cols, rows) = (80u16, 24u16);
         for keep_awake in [false, true] {
@@ -2428,11 +2159,43 @@ mod tests {
             draw_center_hud(&mut out, cols, rows, &Palette::TERMINAL, keep_awake);
             let text: String = out.iter().map(|c| c.ch).collect();
             assert_eq!(
-                text.contains("~[_]o"),
+                text.contains("keep-awake"),
                 keep_awake,
                 "badge reads on the help frame iff awake: {text:?}"
             );
         }
+    }
+
+    #[test]
+    fn keep_awake_badge_sits_top_center_of_the_help_frame() {
+        // The badge interrupts the top frame row at its horizontal center,
+        // not tucked into a corner.
+        let (cols, rows) = (80u16, 24u16);
+        let mut out = vec![Cell::default(); cols as usize * rows as usize];
+        draw_center_hud(&mut out, cols, rows, &Palette::TERMINAL, true);
+        let lines = screen_rows(&out, cols);
+        let badge = crate::keepawake::KEEP_AWAKE_BADGE;
+        let badge_w = badge.chars().count();
+        let row = lines
+            .iter()
+            .find(|l| l.contains("keep-awake"))
+            .expect("badge must stamp one row");
+        // Char-based indexing: the rounded corners are multi-byte, so byte
+        // offsets would misplace the expectation.
+        let chars: Vec<char> = row.chars().collect();
+        let frame_start = chars.iter().position(|&c| c == '╭').unwrap();
+        let frame_end = chars.iter().position(|&c| c == '╮').unwrap();
+        let frame_w = frame_end - frame_start + 1;
+        let needle: Vec<char> = "keep-awake".chars().collect();
+        let start_char = chars
+            .windows(needle.len())
+            .position(|w| w == needle.as_slice())
+            .expect("badge text must read in row chars");
+        let expected = frame_start + (frame_w - badge_w) / 2 + 1;
+        assert_eq!(
+            start_char, expected,
+            "badge must be centered on the top frame row:\n{row}"
+        );
     }
 
     /// The vertical rules of the skeleton grid, by screen column.
@@ -2445,5 +2208,4 @@ mod tests {
             })
             .collect()
     }
-
 }

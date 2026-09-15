@@ -1,8 +1,8 @@
 //! The single source of truth for gwae keybindings.
 //!
-//! Before this module existed the same bindings were spelled out in four
-//! places: the `handle_key` match in [`crate::tui`], the cheat-sheet HUD, the
-//! default key hints in the help overlay, and the README key list. They
+//! Before this module existed the same bindings were spelled out in three
+//! places: the `handle_key` match in [`crate::tui`], the cheat-sheet HUD,
+//! and the README key list. They
 //! drifted: the HUD advertised a `c` binding that never existed and claimed `q`
 //! quits when `⌥+q` kills a pane, because nothing forced them to agree.
 //!
@@ -89,13 +89,6 @@ pub struct Bind {
     pub group: Group,
     /// Short label for the cheat-sheet grid.
     pub desc: &'static str,
-    /// The binding as one line of natural language, used verbatim by the
-    /// key hints in empty placeholder boxes. Mandatory: every binding is
-    /// bijective with exactly one hint, so adding a keybinding necessarily
-    /// adds its help line and the helper can never fall behind the
-    /// dispatcher. Phrased to read after [`Bind::label`], e.g.
-    /// "⌥+b splits this column".
-    pub hint: &'static str,
     pub effect: Effect,
 }
 
@@ -108,8 +101,8 @@ impl Bind {
             Trigger::ShiftChord(c) => keys::shift_chord(&c.to_string()),
             Trigger::CtrlShift(c) => keys::ctrl_shift_chord(&c.to_string()),
             // The two Enter rows are `$mod` chords like everything else; the
-            // label has to carry the modifier or the cow tells the user to
-            // press a bare Return, which just goes to the focused pane.
+            // label has to carry the modifier or it would read as a bare
+            // Return, which just goes to the focused pane.
             Trigger::EnterChord { shift: false } => keys::chord(keys::enter_key()),
             Trigger::EnterChord { shift: true } => keys::shift_chord(keys::enter_key()),
             Trigger::ModProse(s) => keys::chord(s),
@@ -123,7 +116,6 @@ pub const BINDS: &[Bind] = &[
     // -- navigation ------------------------------------------------------
     Bind {
         trigger: Trigger::Chord('h'),
-        hint: "moves focus left a column",
         glyph: Some('\u{2d9}'),
         group: Group::Navigate,
         desc: "focus left",
@@ -131,7 +123,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('j'),
-        hint: "moves focus down a pane",
         glyph: Some('\u{2206}'),
         group: Group::Navigate,
         desc: "focus down",
@@ -139,7 +130,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('k'),
-        hint: "moves focus up a pane",
         glyph: Some('\u{2da}'),
         group: Group::Navigate,
         desc: "focus up",
@@ -147,7 +137,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('l'),
-        hint: "moves focus right a column",
         glyph: Some('\u{ac}'),
         group: Group::Navigate,
         desc: "focus right",
@@ -155,7 +144,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::ShiftChord('h'),
-        hint: "carries this pane left",
         glyph: Some('\u{d3}'),
         group: Group::Navigate,
         desc: "move pane left",
@@ -163,7 +151,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::ShiftChord('j'),
-        hint: "carries this pane down the stack",
         glyph: Some('\u{d4}'),
         group: Group::Navigate,
         desc: "move pane down",
@@ -171,7 +158,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::ShiftChord('k'),
-        hint: "carries this pane up the stack",
         glyph: Some('\u{f8ff}'),
         group: Group::Navigate,
         desc: "move pane up",
@@ -179,7 +165,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::ShiftChord('l'),
-        hint: "carries this pane right",
         glyph: Some('\u{d2}'),
         group: Group::Navigate,
         desc: "move pane right",
@@ -187,7 +172,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('g'),
-        hint: "jumps to the pane that needs you",
         glyph: Some('\u{a9}'),
         group: Group::Navigate,
         desc: "smart jump",
@@ -195,7 +179,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('['),
-        hint: "scrolls the strip left",
         glyph: None,
         group: Group::Navigate,
         desc: "view left",
@@ -217,7 +200,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::CtrlShift('K'),
-        hint: "scrolls this pane's history up three lines like jcode's default (an agent pane keeps it instead)",
         glyph: None,
         group: Group::Navigate,
         desc: "scroll up",
@@ -225,7 +207,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::CtrlShift('J'),
-        hint: "scrolls this pane's history down three lines like jcode's default (an agent pane keeps it instead)",
         glyph: None,
         group: Group::Navigate,
         desc: "scroll down",
@@ -233,7 +214,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::ModProse("←/→"),
-        hint: "pans wide content sideways",
         glyph: None,
         group: Group::Navigate,
         desc: "pan content",
@@ -241,7 +221,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Prose("click"),
-        hint: "focuses the pane you click",
         glyph: None,
         group: Group::Navigate,
         desc: "focus pane",
@@ -250,7 +229,6 @@ pub const BINDS: &[Bind] = &[
     // -- panes -----------------------------------------------------------
     Bind {
         trigger: Trigger::Chord(';'),
-        hint: "spawns an agent",
         glyph: Some('\u{2026}'),
         group: Group::Panes,
         desc: "new agent",
@@ -258,7 +236,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::ShiftChord(';'),
-        hint: "spawns an agent on a new strip",
         glyph: Some('\u{da}'),
         group: Group::Panes,
         desc: "new agent row",
@@ -266,7 +243,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('b'),
-        hint: "splits this column",
         glyph: Some('\u{222b}'),
         group: Group::Panes,
         desc: "split below",
@@ -274,7 +250,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('r'),
-        hint: "cycles this column's width",
         glyph: None,
         group: Group::Panes,
         desc: "cycle width",
@@ -282,7 +257,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('f'),
-        hint: "toggles full width",
         glyph: Some('\u{192}'),
         group: Group::Panes,
         desc: "full width",
@@ -290,7 +264,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('q'),
-        hint: "kills the focused pane",
         glyph: Some('\u{153}'),
         group: Group::Panes,
         desc: "kill pane",
@@ -298,7 +271,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::ShiftChord('q'),
-        hint: "force-quits after a confirmation",
         glyph: None,
         group: Group::Panes,
         desc: "force quit",
@@ -306,7 +278,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('d'),
-        hint: "picks the directory new panes start in",
         glyph: Some('\u{2202}'),
         group: Group::Panes,
         desc: "spawn dir",
@@ -316,7 +287,6 @@ pub const BINDS: &[Bind] = &[
         // Consumed by the host terminal and delivered as Event::Paste, not
         // a key event that handle_key can decode.
         trigger: Trigger::Prose(keys::paste_key()),
-        hint: "pastes with multiline handling for this pane",
         glyph: None,
         group: Group::Panes,
         desc: "paste",
@@ -324,7 +294,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('/'),
-        hint: "toggles this cheat-sheet",
         glyph: Some('\u{f7}'),
         group: Group::Panes,
         desc: "toggle help",
@@ -332,7 +301,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord('w'),
-        hint: "keeps the Mac awake while gwae runs",
         glyph: Some('\u{2211}'),
         group: Group::Panes,
         desc: "keep awake",
@@ -340,7 +308,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::EnterChord { shift: false },
-        hint: "opens a column here as well",
         glyph: None,
         group: Group::Panes,
         desc: "new column",
@@ -348,7 +315,6 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::EnterChord { shift: true },
-        hint: "starts a new strip below",
         glyph: None,
         group: Group::Panes,
         desc: "new row",
@@ -359,34 +325,6 @@ pub const BINDS: &[Bind] = &[
 /// The bindings of one cheat-sheet group, in declaration order.
 pub fn group(g: Group) -> impl Iterator<Item = &'static Bind> {
     BINDS.iter().filter(move |b| b.group == g)
-}
-
-/// Every binding as one line of natural language, in declaration order, with
-/// the cheat-sheet toggle hoisted to the front.
-///
-/// This is exactly `BINDS.len()` strings: the mapping is bijective by
-/// construction, because [`Bind::hint`] is a required field. Adding a
-/// keybinding therefore adds its cow hint automatically, and there is no way
-/// Every binding rendered as one line of natural language, for the help
-/// overlay and empty placeholder boxes.
-///
-/// Index `0` is special: it opens the cheat-sheet, so it is pinned to the
-/// first empty box on screen. Everything else is a bonus the user
-/// discovers while glancing around the skeleton.
-pub fn key_hints() -> Vec<String> {
-    let render = |b: &Bind| format!("{} {}", b.label(), b.hint);
-    let pinned = BINDS
-        .iter()
-        .find(|b| b.effect == Effect::ToggleHud)
-        .expect("a binding opens the cheat-sheet");
-    std::iter::once(render(pinned))
-        .chain(
-            BINDS
-                .iter()
-                .filter(|b| b.effect != Effect::ToggleHud)
-                .map(render),
-        )
-        .collect()
 }
 
 #[cfg(test)]
@@ -411,54 +349,6 @@ mod tests {
         for key in ["⌥+q", "⌥+;", "⌥+g", "⌥+h", "⌥+Enter"] {
             assert!(readme.contains(key), "README documents {key}");
         }
-    }
-
-    #[test]
-    fn hints_are_bijective_with_bindings() {
-        // Exactly one hint per binding, no duplicates, none empty. A new binding cannot compile
-        // without a hint (the field is required), and this catches the other
-        // failure mode: copy-pasting an existing hint onto a new key.
-        let hints = key_hints();
-        assert_eq!(
-            hints.len(),
-            BINDS.len(),
-            "one hint per binding, got {hints:?}"
-        );
-        let mut seen = std::collections::HashSet::new();
-        for b in BINDS {
-            assert!(!b.hint.is_empty(), "{} has an empty hint", b.label());
-            assert!(
-                !b.hint.ends_with('.'),
-                "{}: hints are phrases, not sentences: {:?}",
-                b.label(),
-                b.hint
-            );
-            assert!(
-                seen.insert(b.hint),
-                "{} reuses the hint {:?}; every binding needs its own",
-                b.label(),
-                b.hint
-            );
-        }
-        // Each rendered hint starts with some binding's label.
-        for h in &hints {
-            assert!(
-                BINDS.iter().any(|b| h.starts_with(&b.label())),
-                "hint {h:?} should lead with a key label"
-            );
-        }
-        // The pinned slot must be the cheat-sheet toggle: it is the only hint
-        // guaranteed a visible box, so it has to be the one that opens the
-        // full list.
-        let toggle = BINDS
-            .iter()
-            .find(|b| b.effect == Effect::ToggleHud)
-            .unwrap();
-        assert_eq!(
-            hints[0],
-            format!("{} {}", toggle.label(), toggle.hint),
-            "the first empty box must advertise the cheat-sheet"
-        );
     }
 
     #[test]

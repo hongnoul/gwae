@@ -235,10 +235,7 @@ fn focusing_attention_panes_never_turns_redraws_into_work() {
             format!("pane-{pane}"),
             "focus must actually move"
         );
-        assert!(
-            s.screen.visible_text().contains("attention"),
-            "HUD must be visible"
-        );
+        assert!(s.screen.visible_text().contains('╭'), "HUD must be visible");
         assert!(
             s.screen.visible_text().contains("!1"),
             "idle pane tiles must be visible"
@@ -307,6 +304,15 @@ fn visible(raw: &str) -> String {
     out
 }
 
+/// Whether the centered dashboard frame is on screen. Pane frames start at
+/// column 0; the dashboard is centered, so its `╭` sits at x > 0. Reads the
+/// emulator grid (which tracks cursor positioning) rather than the raw byte
+/// stream (which has no newlines).
+fn panel_up(s: &Session) -> bool {
+    use gwae_term::TermGrid;
+    (0..30).any(|y| (1..140).any(|x| s.screen.cell(x, y).ch == '╭'))
+}
+
 #[test]
 fn holding_the_modifier_reveals_a_dashboard_that_names_its_panes() {
     // Spatial-only: the panel shows geometry (color + address + marker), not
@@ -320,44 +326,47 @@ fn holding_the_modifier_reveals_a_dashboard_that_names_its_panes() {
     s.send(&alt(b'h'));
     let shown = visible(&s.peek(150));
     assert!(
-        shown.contains("attention"),
-        "the hold should reveal the key hints; got:\n{shown:?}"
+        panel_up(&s),
+        "the hold should reveal the dashboard frame; got:\n{shown:?}"
     );
-    // Spatial HUD no longer repeats pane titles on tiles; watchdog
-    // still lives in the pane itself, so visible() (panes+HUD) will
-    // contain it from pane chrome. Assert HUD geometry instead.
+    // Spatial-only tiles: status glyph + column address, no hint text.
     assert!(
         shown.contains("»") || shown.contains("!"),
         "dashboard should show spatial tiles (glyphs); got:\n{shown:?}"
     );
+    for token in ["attention", "1-9", "hjkl"] {
+        assert!(
+            !shown.contains(token),
+            "dashboard must not carry hints, found {token:?}:\n{shown:?}"
+        );
+    }
     // The panel is transient: once the hold lapses it must clean up after
     // itself rather than leaving a box painted over live panes.
     std::thread::sleep(Duration::from_millis(400));
     // A queued held-frame may arrive after peek's deadline. It is legitimate
     // as long as the later erase removes it from the final displayed screen.
-    // Concatenating repaint bytes would falsely keep that old footer forever.
+    // Concatenating repaint bytes would falsely keep that old frame forever.
     let _ = s.drain();
     let after = s.screen.visible_text();
     assert!(
-        !after.contains("attention"),
+        !panel_up(&s),
         "the panel must not outlive the hold; got:\n{after:?}"
     );
     s.kill();
 }
 
 #[test]
-fn a_lone_pane_still_answers_the_hold() {
-    // Regression: with one pane the panel used to draw nothing at all, which
-    // taught first-run users that holding ⌥ was broken. It now degrades to
-    // the key hints, which is exactly what a new user needs.
+fn a_lone_pane_ignores_the_hold() {
+    // One pane has no grid to triage: the hold paints no dashboard. The
+    // only key help is the `⌥+/` cheat-sheet.
     let mut s = Session::start("startup_panes = 1\n");
     let _ = s.drain();
 
     s.send(&alt(b'h'));
     let shown = visible(&s.peek(150));
     assert!(
-        shown.contains("attention"),
-        "one pane still gets the hints; got:\n{shown:?}"
+        !panel_up(&s),
+        "one pane paints no dashboard; got:\n{shown:?}"
     );
     s.kill();
 }
@@ -460,43 +469,47 @@ fn held_kill_repeats_cannot_outrun_the_dashboard() {
 }
 
 #[test]
-fn dashboard_footer_names_key_hints() {
+fn dashboard_footer_is_tally_not_key_hints() {
     let mut s = Session::start("");
     let _ = s.drain();
     widen(&mut s, 3);
     s.send(&alt(b'h'));
     let shown = visible(&s.peek(150));
-    s.kill();
-    assert!(shown.contains('╭'), "dashboard still appears: {shown:?}");
+    assert!(panel_up(&s), "dashboard still appears: {shown:?}");
     assert!(
         shown.contains('»') || shown.contains('!'),
         "tiles remain: {shown:?}"
     );
-    assert!(
-        !shown.contains("1-9 col"),
-        "column jump hint is gone: {shown:?}"
-    );
+    for token in ["attention", "1-9 col", "hjkl", "keys"] {
+        assert!(
+            !shown.contains(token),
+            "no hint footer, found {token:?}: {shown:?}"
+        );
+    }
+    s.kill();
 }
 
 /// Drive the real binary through the modifier reveal and inspect rendered cells,
-/// not just palette constants. No OSC color-query response is provided by this PTY.
+/// not just palette constants. Chrome is retro RGB unconditionally: a bare
+/// config paints explicit 24-bit colors, never the terminal palette.
 #[test]
 fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     use gwae_term::{CColor, Size, TermGrid, Vt100Grid};
-    // Chrome is terminal-native unconditionally: a bare config paints ANSI
-    // chrome from the host terminal's own palette.
+    // Chrome is retro unconditionally: a bare config paints cyan focus on
+    // true black, whatever the host terminal is themed as. No OSC color-query
+    // response is provided by this PTY.
     let mut s = Session::start("");
     let _ = s.drain();
     widen(&mut s, 3);
     // The panel paints over several frames; on a loaded runner one peek can
-    // catch it mid-paint (hints up, map tiles not yet), so re-reveal and
+    // catch it mid-paint (frame up, map tiles not yet), so re-reveal and
     // re-collect until the map row parses rather than asserting on the
     // first window. Each chord re-opens the hold, so resending is free.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     let raw = loop {
         s.send(&alt(b'h'));
         let raw = s.peek(150);
-        if visible(&raw).contains("attention") {
+        if visible(&raw).contains('╭') {
             let mut probe = Vt100Grid::new(Size {
                 cols: 140,
                 rows: 30,
@@ -523,7 +536,7 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     };
     s.kill();
     assert!(
-        visible(&raw).contains("attention"),
+        visible(&raw).contains('╭'),
         "dashboard must actually appear"
     );
     let mut grid = Vt100Grid::new(Size {
@@ -554,13 +567,19 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
                 && matches!(grid.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
             {
                 addresses += 1;
-                assert_eq!(
-                    c.style.fg,
-                    CColor::Default,
-                    "address ink at ({x}, {y}), background {:?}",
+                // Retro chrome: tiles carry explicit RGB fills (cyan focus,
+                // muted status tints) with black/white contrast ink, never
+                // the terminal default pair.
+                assert!(
+                    matches!(c.style.bg, CColor::Rgb(..)),
+                    "address at ({x}, {y}) should sit on a retro tint, got {:?}",
                     c.style.bg
                 );
-                assert_eq!(c.style.bg, CColor::Default, "no yellow or other ANSI fill");
+                assert!(
+                    matches!(c.style.fg, CColor::Rgb(..)),
+                    "address ink at ({x}, {y}) should be contrast ink, got {:?}",
+                    c.style.fg
+                );
                 focused += usize::from(c.style.underline);
             }
         }
@@ -569,5 +588,5 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
         addresses >= 2,
         "must inspect real minimap addresses, got {addresses}"
     );
-    assert!(focused > 0, "neutral focus must retain its underline");
+    assert!(focused > 0, "the focused tile keeps its underline");
 }

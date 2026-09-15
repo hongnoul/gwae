@@ -7,6 +7,8 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Changed
+- **Retro chrome is enforced.** gwae paints its own colors instead of inheriting the terminal scheme: true-black panels with high-contrast functional colors (cyan focus, blue running, amber idle, green done, red failed, white text). Focus tiles keep an underline on top of the fill, so focus never depends on color alone.
+- **Manual `[theme]` overrides, no picker.** Any chrome key (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`) can be overridden with a 256-color index, a hex RGB string, or `"default"` for the terminal's own color. Unset keys keep retro, a save repaints the running session, and retired preset names parse as "no overrides".
 - **Keep-awake is on by default.** The Mac stays up while gwae runs with no onboarding question. Opt out with `keep_awake = false`, `⌥+w`, or `GWAE_NO_KEEP_AWAKE=1`. Teardown is unchanged: exiting gwae still kills every pane process and releases the assertion.
 - **Keep-awake shows a text badge, not a red ring.** While the `caffeinate` assertion is held a small `keep-awake` badge is stamped on the Option HUD frame (hold Option to see it) instead of recoloring the focus ring. The palette is never touched, so toggling `⌥+w` off restores every color exactly.
 

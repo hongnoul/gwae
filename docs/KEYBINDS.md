@@ -10,12 +10,12 @@ Three places know about keys, and one of them is the boss:
 | File | Role today |
 |---|---|
 | `crates/gwae/src/tui.rs` `handle_key` (~line 2594) | **the authority**. A hand-written match: modifier tests, a US-layout Option-glyph fallback, then per-character arms producing a `Cmd`. |
-| `crates/gwae/src/binds.rs` | a *declarative mirror* of the above. Each `Bind` carries the trigger, the macOS glyph, a group, a cheat-sheet `desc` and a one-line `hint`. |
+| `crates/gwae/src/binds.rs` | a *declarative mirror* of the above. Each `Bind` carries the trigger, the macOS glyph, a group, and a cheat-sheet `desc`. |
 | `crates/gwae/src/keys.rs` | platform naming only (`⌥` vs `Alt`), so labels read right on both. |
 
 `binds.rs` is not a registry the dispatcher obeys; it is a claim the dispatcher
 is tested against (`tui.rs::advertised_bindings_match_the_dispatcher`). The
-cheat-sheet HUD, the key hints in empty boxes, and (by another test) the
+cheat-sheet HUD and (by another test) the
 README table all render from `BINDS`, so documentation cannot drift from code.
 That property is the most valuable thing in this area and **any keybinding
 config that breaks it is a regression**, however configurable it is.
@@ -134,18 +134,16 @@ Decisions, each with its reason:
 ### 4. Metadata moves from the binding to the command
 
 This is the part that keeps the anti-drift property alive. Today `Bind` carries
-`desc`/`hint`/`group` because binding and command are 1:1 forever. Once keys are
+`desc`/`group` because binding and command are 1:1 forever. Once keys are
 configurable, "kills the focused pane" is a fact about `KillPane`, not about
 `⌥+q`. So:
 
 ```rust
-struct CommandInfo { cmd: Command, group: Group, desc: &'static str, hint: &'static str }
+struct CommandInfo { cmd: Command, group: Group, desc: &'static str }
 ```
 
-The key hint becomes `format!("{} {}", chord, info.hint)` over the *resolved*
-keymap. `key_hints()` keeps its signature but takes a `&Keymap`. The
-bijectivity test moves from "one hint per binding" to "one hint per command",
-which is stronger: a new verb cannot ship without a description, and a rebound
+The cheat-sheet row becomes `format!("{} {}", chord, info.desc)` over the
+*resolved* keymap. A new verb cannot ship without a description, and a rebound
 verb explains itself with the user's own key.
 
 The README test narrows to the default keymap, which is all it ever meant.
@@ -212,5 +210,5 @@ The existing tests are the specification; they get generalized, not replaced.
 5. e2e (`tests/keys_e2e.rs`): real binary, real PTY,
    a config that rebinds kill-pane to `⌥+w` and unbinds `⌥+q`; assert `⌥+w`
    kills and `⌥+q` arrives at the child.
-6. Docs: cow hints and the HUD render the *rebound* chord, asserted against a
+6. Docs: the cheat-sheet renders the *rebound* chord, asserted against a
    non-default keymap.

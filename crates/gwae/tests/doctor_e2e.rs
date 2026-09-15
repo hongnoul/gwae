@@ -55,12 +55,13 @@ fn doctor_with_agents(config_body: Option<&str>, agents: &[&str]) -> String {
 
 #[test]
 fn retired_theme_keys_do_not_break_doctor() {
-    // Old configs name themes gwae no longer reads. They must be ignored,
-    // not fatal, and doctor must stay clean.
+    // Old configs name retired presets. They parse as "no overrides" (retro
+    // default), not fatal, and doctor must stay clean.
     for body in [
         "theme = \"nord\"\n",
         "theme = \"tokyonight-storm\"\n",
-        "[theme]\npreset = \"nord\"\naccent = \"#ff0000\"\n",
+        "[theme]\npreset = \"nord\"\n",
+        "[theme]\naccent = \"#ff0000\"\n",
         "focus_color = \"#ff0000\"\n",
         "startup_panes = 2\n",
     ] {
