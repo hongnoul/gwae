@@ -128,9 +128,8 @@ pub struct ThemeConfig {
 }
 
 /// The table form, with the retired `preset` key accepted and dropped.
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-#[derive(Default)]
 struct ThemeTable {
     #[allow(dead_code)]
     preset: Option<de::IgnoredAny>,
@@ -145,7 +144,6 @@ struct ThemeTable {
     done: Option<Color>,
     failed: Option<Color>,
 }
-
 
 impl<'de> Deserialize<'de> for ThemeConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -231,20 +229,6 @@ impl ThemeConfig {
         }
         p
     }
-
-    /// Whether any override was written at all.
-    pub fn is_empty(&self) -> bool {
-        self.base.is_none()
-            && self.surface.is_none()
-            && self.overlay.is_none()
-            && self.accent.is_none()
-            && self.text.is_none()
-            && self.label.is_none()
-            && self.running.is_none()
-            && self.idle.is_none()
-            && self.done.is_none()
-            && self.failed.is_none()
-    }
 }
 
 #[cfg(test)]
@@ -260,7 +244,6 @@ mod tests {
         }
         let w: W = toml::from_str("").unwrap();
         assert_eq!(w.theme.resolve(), Palette::RETRO);
-        assert!(w.theme.is_empty());
     }
 
     #[test]
