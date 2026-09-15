@@ -144,12 +144,44 @@ pub struct PtyPane {
     /// graphics clear. `Host::prepare_cached` skips panes whose token is
     /// unchanged since the last prepared frame.
     pub image_activity: Option<u64>,
+    /// Phase 2 promotion: `Some` once sustained native image commits prove
+    /// this pane is an image viewer (e.g. tdf). A promoted pane paints only
+    /// its image tiles; grid text hides until demotion. The PTY stays live
+    /// for input; demotion restores full text painting with no state loss.
+    pub image_view: Option<ImageView>,
+    /// Phase 2 streak accumulator: consecutive native commits with no grid
+    /// text-screen change between them.
+    promote_streak: u32,
 }
+
+/// Phase 2 viewer promotion state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageView {
+    /// Image-activity token at promotion time. Later token changes (new
+    /// page, zoom) keep the promotion; only explicit demote clears it.
+    pub promoted_at: u64,
+    /// Consecutive native commits observed when promotion fired (diagnostic).
+    pub commits: u32,
+}
+
+impl PtyPane {
+    pub(crate) fn promote_streak(&self) -> u32 {
+        self.promote_streak
+    }
+    pub(crate) fn set_promote_streak(&mut self, streak: u32) {
+        self.promote_streak = streak;
+    }
+}
+
+/// Native commits with no interleaving text-screen change needed to promote.
+/// A real viewer promotes on its first page; a pasted thumbnail never does.
+pub(crate) const IMAGE_PROMOTE_COMMITS: u32 = 2;
 
 /// Graphics placements use the cursor at their position in the byte stream,
 /// never the cursor after a whole PTY read. Replies go only to this child.
 pub(crate) fn feed_pane_output(pane: &mut PtyPane, bytes: &[u8], graphics_enabled: bool) {
     use crate::graphics_stream::Event;
+    let mut streak = pane.promote_streak();
     for event in pane.graphics_stream.feed(bytes) {
         let before = pane.grid.screen_epoch();
         match &event {
@@ -164,6 +196,8 @@ pub(crate) fn feed_pane_output(pane: &mut PtyPane, bytes: &[u8], graphics_enable
             pane.graphics.clear_all();
             pane.legacy_images = Default::default();
             pane.image_activity = None;
+            pane.image_view = None;
+            streak = 0;
         }
         let mut replies = pane.grid.take_pty_replies();
         if let Event::Apc(apc) = event {
@@ -199,6 +233,15 @@ pub(crate) fn feed_pane_output(pane: &mut PtyPane, bytes: &[u8], graphics_enable
                 {
                     pane.image_activity = Some(pane.image_activity.unwrap_or(0).wrapping_add(1));
                 }
+                if outcome.committed_image.is_some() {
+                    streak += 1;
+                    if streak >= IMAGE_PROMOTE_COMMITS && pane.image_view.is_none() {
+                        pane.image_view = Some(ImageView {
+                            promoted_at: pane.image_activity.unwrap_or(0),
+                            commits: streak,
+                        });
+                    }
+                }
                 replies.extend_from_slice(&outcome.replies);
             }
         }
@@ -207,6 +250,7 @@ pub(crate) fn feed_pane_output(pane: &mut PtyPane, bytes: &[u8], graphics_enable
             let _ = pane.writer.flush();
         }
     }
+    pane.set_promote_streak(streak);
 }
 
 /// Message a per-pane reader thread sends to the main loop.
@@ -390,6 +434,8 @@ pub(crate) fn spawn_pane(
         graphics_stream: Default::default(),
         graphics: Default::default(),
         legacy_images: Default::default(),
+        image_view: None,
+        promote_streak: 0,
         image_activity: None,
     })
 }
@@ -481,6 +527,8 @@ pub(crate) fn adopt_pane(
         graphics_stream: Default::default(),
         graphics: Default::default(),
         legacy_images: Default::default(),
+        image_view: None,
+        promote_streak: 0,
         image_activity: None,
     })
 }
@@ -671,6 +719,8 @@ mod tests {
                     graphics_stream: Default::default(),
                     graphics: Default::default(),
                     legacy_images: Default::default(),
+                    image_view: None,
+                    promote_streak: 0,
                     image_activity: None,
                 },
                 replies,
