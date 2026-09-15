@@ -175,8 +175,8 @@ reasoning: [`UPDATES.md`](UPDATES.md).
 
 Minimum 256-color + standard cursor addressing; wants truecolor, synchronized
 updates, kitty keyboard protocol, mouse SGR (passed through). `⌥` (the Option
-key on macOS, Alt elsewhere) is the universal `$mod` (ADR-014); macOS may add an
-optional `Cmd+hjkl` snippet via `gwae setup`.
+key) is the universal `$mod` (ADR-014); `gwae setup` may offer an optional
+`Cmd+hjkl` snippet.
 
 ## Emulator decision (ADR-004)
 

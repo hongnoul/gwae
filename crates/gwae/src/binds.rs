@@ -22,7 +22,7 @@ use gwae_layout::Action;
 /// cheat-sheet can still mention them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
-    /// `$mod` + this character (Option/Alt held).
+    /// `$mod` + this character (Option held).
     Chord(char),
     /// `$mod` + Shift + this character.
     ShiftChord(char),

@@ -40,7 +40,7 @@ coordinate.
 
 ## Verbs (default keys)
 
-`$mod` = `⌥` (the **Option** key on macOS, Alt elsewhere); `$mod` chords always
+`$mod` = `⌥` (the **Option** key); `$mod` chords always
 go to gwae, even with an agent focused.
 
 | Verb | Key | Semantics |

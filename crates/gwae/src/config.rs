@@ -216,7 +216,7 @@ pub enum MinimapMode {
     Overlay,
     /// Single-cell ticks on the outer frame (no box).
     EdgeTicks,
-    /// No minimap/status chrome at all. Hold ⌥/Alt to see the centered
+    /// No minimap/status chrome at all. Hold ⌥ to see the centered
     /// dashboard, or `⌥+/` for the cheat-sheet.
     #[default]
     Off,
