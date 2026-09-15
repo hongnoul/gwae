@@ -9,6 +9,7 @@ use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::time::Duration;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     /// Move the highlight up one option (`↑`, `k`).
     Up,
@@ -52,6 +53,7 @@ pub fn key_from_event(code: KeyCode, mods: KeyModifiers) -> Key {
 }
 
 /// What one keystroke does to a question that is currently on screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     /// Redraw with the highlight on this option.

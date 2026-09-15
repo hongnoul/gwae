@@ -76,7 +76,7 @@ impl Question {
     }
 
     /// The option whose value is `value`, for rendering a summary line.
-    fn label_for(&self, value: &str) -> &'static str {
+    pub(super) fn label_for(&self, value: &str) -> &'static str {
         self.options
             .iter()
             .find(|o| o.value == value)
