@@ -184,7 +184,7 @@ fn upgrade_names_the_receipt_it_is_ignoring() {
     let (out, _, code) = run(
         &dir,
         Some("[update]\nsource = \"unknown\"\n"),
-        &["upgrade", "--check"],
+        &["upgrade"],
     );
     assert_eq!(code, 1, "{out}");
     assert!(out.contains("will not guess"), "must still refuse: {out}");
@@ -204,7 +204,7 @@ fn upgrade_check_never_runs_an_upgrade_command() {
     let (out, err, code) = run(
         &dir,
         Some("[update]\nsource = \"nix\"\n"),
-        &["upgrade", "--check"],
+        &["upgrade"],
     );
     assert!(
         code == 0 || code == 1,
@@ -232,7 +232,7 @@ fn upgrade_refuses_to_guess_when_it_cannot_tell() {
     let (out, _, code) = run(
         &dir,
         Some("[update]\nsource = \"unknown\"\n"),
-        &["upgrade", "--check"],
+        &["upgrade"],
     );
     assert_eq!(code, 1, "an unresolvable route is a failure, not a no-op");
     assert!(
@@ -266,7 +266,7 @@ fn update_is_accepted_as_an_alias_for_upgrade() {
     let (out, _, _) = run(
         &dir,
         Some("[update]\nsource = \"nix\"\n"),
-        &["update", "--check"],
+        &["update"],
     );
     assert!(out.contains("source:  nix"), "{out}");
 }
@@ -320,7 +320,7 @@ fn with_a_newer_release_check_mode_still_runs_nothing() {
         &dir,
         "[update]\nsource = \"brew\"\n",
         "99.0.0",
-        &["upgrade", "--check"],
+        &["upgrade"],
     );
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("99.0.0"), "the new version is reported: {out}");
@@ -333,22 +333,22 @@ fn with_a_newer_release_check_mode_still_runs_nothing() {
 }
 
 #[test]
-fn with_a_newer_release_an_approved_upgrade_runs_exactly_the_printed_command() {
-    // The whole contract in one test: what gwae printed is what gwae ran.
+fn with_a_newer_release_upgrade_prints_but_never_runs_the_command() {
+    // Check-only by design: even an approved-looking invocation only prints.
     let dir = sandbox();
     let (out, err, code) = run_with_fake_release(
         &dir,
         "[update]\nsource = \"brew\"\n",
         "99.0.0",
-        &["upgrade", "-y"],
+        &["upgrade"],
     );
     assert_eq!(code, 0, "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.contains("brew upgrade gwae"), "prints the command: {out}");
     assert!(
-        out.contains("RAN-brew upgrade gwae"),
-        "the approved upgrade must actually run: {out}"
+        !out.contains("RAN-brew"),
+        "must never execute the upgrade: {out}"
     );
-    assert!(out.contains("upgraded."), "{out}");
-    // Nothing beyond the one printed command was executed.
+    assert!(!out.contains("upgraded."), "{out}");
     assert!(!out.contains("RAN-cargo"), "{out}");
 }
 
@@ -361,7 +361,7 @@ fn with_a_newer_release_a_managed_install_is_still_never_touched() {
         &dir,
         "[update]\nsource = \"nix\"\n",
         "99.0.0",
-        &["upgrade", "-y"],
+        &["upgrade"],
     );
     assert_eq!(code, 0, "{out}");
     assert!(
@@ -381,13 +381,14 @@ fn a_cargo_install_is_upgraded_with_locked_and_force() {
         &dir,
         "[update]\nsource = \"cargo\"\n",
         "99.0.0",
-        &["upgrade", "-y"],
+        &["upgrade"],
     );
     assert_eq!(code, 0, "{out}");
     assert!(
-        out.contains("RAN-cargo install gwae --locked --force"),
-        "{out}"
+        out.contains("cargo install gwae --locked --force"),
+        "prints the command: {out}"
     );
+    assert!(!out.contains("RAN-cargo"), "must never execute: {out}");
 }
 
 #[test]
@@ -398,7 +399,7 @@ fn the_check_writes_a_cache_so_the_next_session_stays_quiet() {
         &dir,
         "[update]\nsource = \"nix\"\n",
         "99.0.0",
-        &["upgrade", "--check"],
+        &["upgrade"],
     );
     let cache = std::fs::read_to_string(dir.join("state/gwae/update.toml"))
         .expect("the check must record what it found");
