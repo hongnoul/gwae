@@ -48,16 +48,12 @@ pub enum Command {
         #[arg(long)]
         apply: bool,
     },
-    /// Guided first-run setup: theme, layout, chrome, and an offer to install
-    /// btm. Safe to re-run; it only rewrites the keys you answer and keeps
-    /// your comments. Input latency is tuned silently, without asking.
+    /// Guided first-run setup (alias for `setup`).
+    /// Safe to re-run.
     Init {
-        /// Print every question and option instead of asking anything.
+        /// Print every stage's planned steps instead of running anything.
         #[arg(long)]
         print: bool,
-        /// Print every frame of the opening title card instead of playing it.
-        #[arg(long)]
-        print_splash: bool,
     },
     /// Run the unified setup flow: every stage in order, with confirmation
     /// before anything outside gwae's own config is touched.

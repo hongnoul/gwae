@@ -102,10 +102,7 @@ pub fn stages() -> Vec<Box<dyn SetupStage>> {
         Box::new(setup_stages::HarnessStage),
         Box::new(setup_stages::UpdatesStage),
         Box::new(setup_stages::SpawnDirStage),
-        Box::new(setup_stages::KeepAwakeStage),
-        Box::new(setup_stages::OnboardingStage),
         Box::new(setup_stages::LatencyStage),
-        Box::new(setup_stages::LayoutSmokeStage),
     ]
 }
 
@@ -261,10 +258,7 @@ mod tests {
                 "agent",
                 "updates",
                 "spawn dir",
-                "keep-awake",
-                "onboarding",
                 "latency",
-                "layout smoke",
             ]
         );
     }

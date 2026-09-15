@@ -19,14 +19,11 @@ mod install;
 mod keepawake;
 mod keys;
 mod latency;
-mod onboard;
-mod preview;
 mod reap;
 mod reload;
 mod select;
 mod setup;
 mod spawndir;
-mod splash;
 mod theme;
 mod tui;
 mod update;
@@ -72,19 +69,19 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
                 Err(code)
             }
         }
-        Command::Init {
-            print,
-            print_splash,
-        } => {
-            if print_splash {
-                let cols = crossterm::terminal::size().map(|(c, _)| c).unwrap_or(80);
-                print!("{}", splash::render_all(&cfg.palette(), cols));
-            } else if print {
-                print!("{}", onboard::render_all());
-            } else {
-                onboard::run(&cfg_path_for_agent(), cfg.input_poll_ms);
+        Command::Init { print, .. } => {
+            // `init` is a thin alias for the setup flow: one onboarding
+            // system, not two. `--print` shows the planned steps.
+            let path = Config::default_path();
+            let ctx = setup::Ctx {
+                cfg: &cfg,
+                cfg_path: &path,
+                dir: dir.as_deref(),
+            };
+            match setup::run_setup(&ctx, false, false, None, print) {
+                0 => Ok(()),
+                code => Err(code),
             }
-            Ok(())
         }
         Command::Upgrade { check, yes } => {
             match update::run_upgrade(cfg.update.source(), check, yes) {

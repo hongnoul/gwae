@@ -50,13 +50,7 @@ fn print_lists_every_stage_without_writing() {
         "agent",
         "updates",
         "spawn dir",
-        "keep-awake",
-        "onboarding",
         "latency",
-        "keyboard",
-        "focus",
-        "bindings",
-        "layout smoke",
     ] {
         assert!(out.contains(id), "print missing stage {id}:\n{out}");
     }
@@ -112,7 +106,7 @@ fn doctor_contains_one_line_per_stage() {
     let out = cmd.output().expect("run gwae doctor");
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    for id in ["focus:", "keyboard:", "bindings:", "latency:", "keep-awake:"] {
+    for id in ["config file:", "theme:", "agent:", "latency:"] {
         assert!(text.contains(id), "doctor missing {id}:\n{text}");
     }
 }

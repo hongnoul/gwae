@@ -3,7 +3,7 @@
 use super::config::{fallback_shell, plan, save_default_agent, set_default_agent_text, Plan};
 use super::detect::{detect_with, which, Found};
 use super::picker::{parse_choice, prompt, render, render_at, Choice, BOLD, CYAN, DIM, RESET, YELLOW};
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 fn exec(cmd: &str) -> ! {
@@ -41,7 +41,7 @@ fn exec(cmd: &str) -> ! {
 pub fn run(
     default_agent: &str,
     extra: &[String],
-    input_poll_ms: u64,
+    _input_poll_ms: u64,
     cfg_path: &Path,
     print_only: bool,
 ) -> ! {
@@ -63,29 +63,10 @@ pub fn run(
         std::process::exit(0);
     }
 
-    // At first run (not yet `onboarded`) the harness is asked exactly once,
-    // inside the onboarding flow (`harness_question_with` as the first
-    // question). The gateway's own numbered picker (`render` + `prompt`) and
-    // the onboarding harness would otherwise ask the same thing back-to-back.
-    // Skip the gateway picker here and let onboarding own the choice — but
-    // only when the gateway would have prompted; a `Configured` harness must
-    // still exec silently and not interrupt an already-configured user.
-    if !print_only && !matches!(p, Plan::Configured(_)) && std::io::stdin().is_terminal() {
-        let cfg_text = std::fs::read_to_string(cfg_path).unwrap_or_default();
-        if !crate::onboard::already_onboarded(&cfg_text) {
-            // Onboarding already saves `default_agent`; derive the exec target
-            // from what it wrote rather than re-prompting.
-            let _ = crate::onboard::run(cfg_path, input_poll_ms);
-            let new_text = std::fs::read_to_string(cfg_path).unwrap_or_default();
-            let new_cfg = toml::from_str::<crate::config::Config>(&new_text).unwrap_or_default();
-            let p2 = plan(new_cfg.default_agent.trim(), detect_with(&new_cfg.agents));
-            let cmd = match p2 {
-                Plan::Configured(c) => c,
-                _ => fallback_shell(),
-            };
-            exec(&cmd);
-        }
-    }
+    // First run with no saved choice: the gateway's own numbered picker
+    // (`render` + `prompt` below) asks and saves, with no other flow in
+    // between. A `Configured` harness execs silently and never interrupts
+    // an already-configured user.
 
     let cmd = match p {
         Plan::Configured(cmd) => cmd,
