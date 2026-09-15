@@ -2,7 +2,7 @@
 
 use super::questions::{all_questions_with_extra, with_existing, Answer, Question, BOLD, DIM, INSTALL_KEY, MARKER, RESET, YELLOW};
 use super::screen::{draw, render_summary, banner_lines, banner_palette, current_palette, draw_with_banner, extra_agents_from_text, key_from_event, palette_from_pairs, question_rows, render_sized, step, term_cols, term_size, Key, Step, summary_key};
-use crossterm::event::{Event, KeyEventKind};
+use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use std::io::IsTerminal;
 use std::path::Path;
@@ -309,7 +309,7 @@ fn park_cursor(q: &Question, cursor: &mut usize, a: &Answer) {
 }
 
 /// Take the default for every question from `from` on that is still unanswered.
-fn fill_defaults(qs: &[Question], chosen: &mut [Option<Answer>], from: usize) {
+pub(super) fn fill_defaults(qs: &[Question], chosen: &mut [Option<Answer>], from: usize) {
     for (j, c) in chosen.iter_mut().enumerate().skip(from) {
         if c.is_none() {
             *c = Some(qs[j].enter());
