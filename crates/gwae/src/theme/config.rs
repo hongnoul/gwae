@@ -289,4 +289,31 @@ mod tests {
         assert_eq!(p.base, CColor::Idx(235));
         assert_eq!(p.accent, Palette::default().accent);
     }
+
+    #[test]
+    fn color_accepts_index_hex_and_default() {
+        #[derive(Deserialize)]
+        struct W {
+            c: Color,
+        }
+        let w: W = toml::from_str("c = 235").unwrap();
+        assert_eq!(w.c.color(), CColor::Idx(235));
+        let w: W = toml::from_str(r##"c = "#1e1e2e""##).unwrap();
+        assert_eq!(w.c.color(), CColor::Rgb(0x1e, 0x1e, 0x2e));
+        let w: W = toml::from_str(r#"c = "1e1e2e""#).unwrap();
+        assert_eq!(w.c.color(), CColor::Rgb(0x1e, 0x1e, 0x2e));
+        let w: W = toml::from_str(r#"c = "default""#).unwrap();
+        assert_eq!(w.c.color(), CColor::Default);
+    }
+
+
+
+    #[test]
+    fn string2_truncates_on_a_char_boundary() {
+        let s = String2::new(&"é".repeat(40));
+        assert!(std::str::from_utf8(s.as_str().as_bytes()).is_ok());
+        assert!(s.as_str().len() <= 32);
+    }
+
+}
 }
