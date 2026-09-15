@@ -193,3 +193,4 @@ mod tests {
         assert!(paste_bytes("", false).is_empty());
     }
 
+}
