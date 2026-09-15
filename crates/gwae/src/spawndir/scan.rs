@@ -139,6 +139,16 @@ mod tests {
     use super::super::picker::{candidates, filter};
 
     
+    /// A throwaway tree, so scan tests never touch the real machine.
+    fn tree(name: &str, dirs: &[&str]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("gwae-scan-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for d in dirs {
+            std::fs::create_dir_all(root.join(d)).expect("make tree");
+        }
+        root
+    }
+
     #[test]
     fn projects_are_found_by_marker_not_by_directory_name() {
         // The whole point of the redesign: none of these parents is named
