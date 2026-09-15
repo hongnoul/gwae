@@ -363,27 +363,22 @@ fn a_lone_pane_still_answers_the_hold() {
 }
 
 #[test]
-fn typing_a_column_number_previews_it_on_the_dashboard() {
-    // A multi-digit jump is typed blind: the map is the only place that can
-    // show which column the number currently addresses.
+fn option_digits_reach_the_pane_instead_of_jumping() {
+    // Column jump is gone: Option+digits belong to the child (readline word
+    // ops, vim counts) and must not focus anything or echo a jump toast.
     let mut s = Session::start("");
     let _ = s.drain();
     widen(&mut s, 3);
 
+    let before = live_columns(&mut s);
     s.send(&alt(b'2'));
     let shown = visible(&s.peek(150));
-    assert!(
-        shown.contains("column 2"),
-        "the pending number is echoed; got:\n{shown:?}"
-    );
-    // The dashboard toast ("⌥ → column 2") can overlap the bottom hint
-    // ("⌥1-9 col · ⌥g attention …") on this 30-row PTY; either is proof the
-    // overlay is up and the number was accepted.
-    assert!(
-        shown.contains("attention") || shown.contains("column 2"),
-        "and the dashboard/toast is up; got:\n{shown:?}"
-    );
     s.kill();
+    assert!(
+        !shown.contains("column 2"),
+        "no jump toast for Option+2; got:\n{shown:?}"
+    );
+    assert_eq!(before.len(), 4, "four columns stay alive: {before:?}");
 }
 
 /// Count dashboard tiles by their column addresses: the first pane of each
@@ -478,10 +473,9 @@ fn dashboard_footer_names_key_hints() {
         "tiles remain: {shown:?}"
     );
     assert!(
-        shown.contains("attention"),
-        "hint footer is shown: {shown:?}"
+        !shown.contains("1-9 col"),
+        "column jump hint is gone: {shown:?}"
     );
-    assert!(shown.contains("1-9 col"), "column hint is shown: {shown:?}");
 }
 
 /// Drive the real binary through the modifier reveal and inspect rendered cells,

@@ -538,7 +538,6 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
     use gwae_layout::{Layout, PaneId};
-    use std::time::{Duration, Instant};
 
     #[test]
     fn handle_key_option_semicolon_spawns_agent() {

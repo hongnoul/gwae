@@ -16,7 +16,7 @@ Body: focus on the implementation; that sub stars implementations, not
 products. Talking points: gwae-layout is a pure proptest'd crate, quantized
 scroll invariant (pixel-identical paint at every scroll state, verified at
 hostile widths), one process hosting its own PTYs via portable-pty, bench
-methodology in scripts/bench_vs_muxes.py (2.5ms echo RTT, honest table where
+methodology in docs/bench-2026-08-25.json (2.5ms echo RTT, honest table where
 tmux wins raw RTT).
 
 ## r/commandline (day 4)
