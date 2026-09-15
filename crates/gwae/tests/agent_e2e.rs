@@ -58,14 +58,6 @@ impl Sandbox {
         Sandbox { dir, bin }
     }
 
-    /// As [`Sandbox::spawn`], but with the `btm` offer live, so a case can
-    /// drive the install against its own stubbed package manager.
-    fn spawn_allowing_install(&self, args: &[&str]) -> Pty {
-        let mut v = vec!["agent"];
-        v.extend_from_slice(args);
-        self.spawn_with_install(&v, true)
-    }
-
     fn config_path(&self) -> std::path::PathBuf {
         self.dir.join("gwae/gwae.toml")
     }
@@ -96,10 +88,6 @@ impl Sandbox {
     }
 
     fn spawn_with(&self, args: &[&str]) -> Pty {
-        self.spawn_with_install(args, false)
-    }
-
-    fn spawn_with_install(&self, args: &[&str], allow_install: bool) -> Pty {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: 24,
@@ -114,11 +102,6 @@ impl Sandbox {
         // `sh` must stay reachable: the gateway's last resort is $SHELL.
         cmd.env("PATH", format!("{}:/bin:/usr/bin", self.bin.display()));
         cmd.env("SHELL", "/bin/sh");
-        // Install offers default to yes; a test suite must never install
-        // software on the machine running it.
-        if !allow_install {
-            cmd.env("GWAE_NO_INSTALL", "1");
-        }
         for a in args {
             cmd.arg(a);
         }

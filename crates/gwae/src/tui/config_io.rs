@@ -35,28 +35,12 @@ pub(crate) fn write_keep_awake(path: &std::path::Path, on: bool) -> Result<(), S
     std::fs::write(path, out).map_err(|e| e.to_string())
 }
 
-/// Persist a per-harness spawn directory: `harness_dirs.<harness> = dir`
-/// when `harness` is non-empty, otherwise falls back to `agent_dir`.
+/// Persist the picked spawn directory as `agent_dir`.
 ///
-/// Table is written comment-preserving via raw TOML editing; this is the
-/// `⌥+s` path from the picker, so it must not reformat the rest of the file.
-pub(crate) fn write_harness_dir(path: &std::path::Path, harness: &str, dir: &str) -> Result<(), String> {
-    let h = harness.trim();
-    if h.is_empty() {
-        return write_agent_dir(path, dir);
-    }
-    // Use the exe word as key so `default_agent = "jcode --resume"` still
-    // writes `harness_dirs.jcode`, which is what the config doc shows.
-    let key = super::shell::shell_split(h)
-        .first()
-        .cloned()
-        .unwrap_or_else(|| h.to_string());
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    let out = crate::agent::set_harness_dir_text(&text, &key, dir);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(path, out).map_err(|e| e.to_string())
+/// The `harness` argument is accepted and ignored: per-harness spawn dirs
+/// were removed, so every pick lands in the one `agent_dir` key.
+pub(crate) fn write_harness_dir(path: &std::path::Path, _harness: &str, dir: &str) -> Result<(), String> {
+    write_agent_dir(path, dir)
 }
 
 /// Collect the state the next image of gwae needs, then replace this process

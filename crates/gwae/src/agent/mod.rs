@@ -23,7 +23,7 @@ mod run;
 
 pub use config::{
     fallback_shell, plan,
-    save_default_agent, set_default_agent_text, set_harness_dir_text, set_scalar_text,
+    save_default_agent, set_default_agent_text, set_scalar_text,
     toml_string_pub,
 };
 pub use detect::{

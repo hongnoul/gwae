@@ -104,7 +104,6 @@ impl Session {
         let mut cmd = CommandBuilder::new(&bin);
         cmd.env("XDG_CONFIG_HOME", &dir);
         cmd.env("TERM", "xterm-256color");
-        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.env("SHELL", "/bin/sh");
         cmd.env("GWAE_DEV_RELOAD", "1");
         // The ⌥+d project scan walks $HOME; point it at the temp tree so a

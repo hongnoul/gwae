@@ -101,7 +101,6 @@ impl Session {
         let mut cmd = CommandBuilder::new(executable());
         cmd.env("XDG_CONFIG_HOME", &dir);
         cmd.env("TERM", "xterm-256color");
-        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.env("PATH", format!("{}:/bin:/usr/bin", bin.display()));
         cmd.env("HARNESS_LOG", &log);
         cmd.arg("run");
@@ -163,7 +162,6 @@ impl Session {
         cmd.env("XDG_CONFIG_HOME", &dir);
         cmd.env("TERM", "xterm-256color");
         // Setup must not run, and must never install anything.
-        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.arg("run");
         cmd.arg("sh");
         let child = pair.slave.spawn_command(cmd).expect("spawn gwae");

@@ -177,11 +177,7 @@ pub fn run_setup(ctx: &Ctx, check: bool, yes: bool, only: Option<&str>, print: b
     }
 
     // Non-interactive apply: Config stages write their own file; everything
-    // else is reported for the user to run. Honors GWAE_NO_INSTALL.
-    if std::env::var_os(crate::install::SKIP_ENV).is_some() {
-        println!("setup: {} is set; no writes performed", crate::install::SKIP_ENV);
-        return 0;
-    }
+    // else is reported for the user to run.
     let mut code = 0;
     for s in &picked {
         if s.check(ctx) {

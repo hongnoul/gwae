@@ -132,23 +132,12 @@ fn expand_vars(s: &str) -> String {
 /// directory that does not exist resolves to `None`: a pane in the inherited
 /// directory is a visible, recoverable wrong; a pane that fails to spawn at
 /// all reads as a gwae bug.
-#[allow(dead_code)] // legacy single-dir API; new code uses resolve_for_harness
-pub fn resolve(cli: Option<&str>, cfg: &str) -> Option<PathBuf> {
-    resolve_for_harness(cli, cfg, "")
-}
-
-/// Harness-aware variant: `cli > harness_dir > fallback_dir > inherited`.
+/// Resolve where new panes start: `cli > agent_dir > inherited`.
 ///
-/// `harness_dir` is `harness_dirs[preferred_harness]` (e.g. `jcode = "~/git/gwae"`),
-/// `fallback_dir` is the generic `agent_dir`. Empty strings are ignored. This
-/// keeps old configs working while letting a user with `harness_dirs.jcode`
-/// have `⌥+;` open `~/git/gwae` without a global `agent_dir`.
-pub fn resolve_for_harness(
-    cli: Option<&str>,
-    harness_dir: &str,
-    fallback_dir: &str,
-) -> Option<PathBuf> {
-    for raw in [cli.unwrap_or(""), harness_dir, fallback_dir] {
+/// Empty strings are ignored. A configured directory that does not exist is
+/// skipped with a warning rather than breaking pane spawn.
+pub fn resolve(cli: Option<&str>, cfg: &str) -> Option<PathBuf> {
+    for raw in [cli.unwrap_or(""), cfg] {
         if raw.trim().is_empty() {
             continue;
         }
@@ -244,32 +233,29 @@ mod tests {
 
 
     #[test]
-    fn harness_dir_beats_fallback_and_cli_beats_all() {
-        let home = std::env::var("HOME").unwrap();
+    fn cli_beats_config_and_missing_config_falls_back() {
         let tmp = std::env::temp_dir();
         let _ = std::fs::create_dir_all(tmp.join("gwae-harness-test-a"));
         let _ = std::fs::create_dir_all(tmp.join("gwae-harness-test-b"));
         let a = tmp.join("gwae-harness-test-a");
         let b = tmp.join("gwae-harness-test-b");
-        // harness > fallback
+        // config dir resolves
         assert_eq!(
-            resolve_for_harness(None, a.to_str().unwrap(), b.to_str().unwrap()),
+            resolve(None, a.to_str().unwrap()),
             Some(a.clone())
         );
-        // cli > harness > fallback
+        // cli > config
         assert_eq!(
-            resolve_for_harness(
+            resolve(
                 Some(b.to_str().unwrap()),
-                a.to_str().unwrap(),
                 a.to_str().unwrap()
             ),
             Some(b.clone())
         );
-        // missing harness falls through to fallback
+        // missing config falls through to cwd
         assert_eq!(
-            resolve_for_harness(None, "/no/such/harness/dir", a.to_str().unwrap()),
-            Some(a.clone())
+            resolve(None, "/no/such/dir"),
+            inherited()
         );
-        let _ = home;
     }
 }

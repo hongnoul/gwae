@@ -62,6 +62,11 @@ pub(crate) fn is_harness_scroll_chord(ev: &KeyEvent) -> bool {
 }
 
 /// A decoded keyboard instruction.
+///
+/// `Cmd` is intentionally key-event shaped, not action shaped: some commands
+/// must know *how* they were typed, not just what was typed. Destructive
+/// verbs ignore auto-repeat (see `is_repeatable`), so a stuck key or a long
+/// hold can never kill panes faster than the HUD can repaint them.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Cmd {
     Act(Action),

@@ -129,7 +129,6 @@ impl Session {
         cmd.env("GWAE_LOG", "off");
         cmd.env("GWAE_KITTY_KEYBOARD", "0");
         cmd.env("GWAE_KITTY_GRAPHICS", "0");
-        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
         cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_RESIZE_LOG", dir.join("events.log"));

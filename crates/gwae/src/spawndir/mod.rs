@@ -20,6 +20,6 @@ mod path;
 mod picker;
 mod scan;
 
-pub use path::{check, expand, inherited, resolve, resolve_for_harness};
-pub use picker::{candidates, candidates_for_harness, filter, tilde, Candidate};
+pub use path::{check, expand, inherited, resolve};
+pub use picker::{candidates, filter, tilde, Candidate};
 pub use scan::{is_project, scan, search_roots, zoxide_dirs};

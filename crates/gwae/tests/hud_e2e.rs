@@ -80,7 +80,6 @@ impl Session {
         );
         cmd.env("PATH", "/usr/bin:/bin");
         cmd.env("ENV", "/dev/null");
-        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
         cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_LOG", "off");

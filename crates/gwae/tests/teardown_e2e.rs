@@ -56,7 +56,6 @@ impl Session {
         let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
         cmd.env("XDG_CONFIG_HOME", &dir);
         cmd.env("TERM", "xterm-256color");
-        cmd.env("GWAE_NO_INSTALL", "1");
         // A predictable POSIX shell, not whatever the developer running the
         // tests happens to use.
         cmd.env("SHELL", "/bin/sh");

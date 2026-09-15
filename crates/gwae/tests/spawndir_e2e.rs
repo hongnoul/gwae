@@ -56,7 +56,6 @@ impl Session {
         cmd.env("HOME", root);
         cmd.env("XDG_DATA_HOME", root.join("data"));
         cmd.env("SHELL", "/bin/sh");
-        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.cwd(cwd);
         for a in args {
             cmd.arg(a);

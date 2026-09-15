@@ -79,23 +79,11 @@ pub fn tilde(p: &Path) -> String {
 /// Nothing here is keyed off a directory *name*, which is the point: the
 /// same code finds `~/git/gwae`, `~/Documents/work/thing`, and `/srv/app`
 /// without knowing anything about the machine it is running on.
-#[allow(dead_code)] // kept for tests/docs; production uses harness-aware form
+/// Candidate directories for the spawn picker: the session dir, the cwd,
+/// the configured `agent_dir`, pins, recency, and the project scan.
 pub fn candidates(
     current: Option<&Path>,
     cfg_dir: &str,
-    pins: &[String],
-    roots: &[String],
-) -> Vec<Candidate> {
-    candidates_for_harness(current, cfg_dir, "", pins, roots)
-}
-
-/// Harness-aware candidate builder: treats `harness_dir` as the primary config
-/// origin (`"config:jcode"`), then `fallback_dir` as secondary. Order keeps
-/// both discoverable but preferred harness first.
-pub fn candidates_for_harness(
-    current: Option<&Path>,
-    harness_dir: &str,
-    fallback_dir: &str,
     pins: &[String],
     roots: &[String],
 ) -> Vec<Candidate> {
@@ -124,13 +112,10 @@ pub fn candidates_for_harness(
     if let Ok(cwd) = std::env::current_dir() {
         push(&mut out, &mut seen, cwd, "cwd");
     }
-    // Preferred harness first, then generic fallback, each as its own origin so
-    // the picker explains which config line contributed the entry.
-    if !harness_dir.trim().is_empty() {
-        push(&mut out, &mut seen, expand(harness_dir), "config");
-    }
-    if !fallback_dir.trim().is_empty() && fallback_dir.trim() != harness_dir.trim() {
-        push(&mut out, &mut seen, expand(fallback_dir), "config");
+    // The configured spawn dir, so the picker explains which config line
+    // contributed the entry.
+    if !cfg_dir.trim().is_empty() {
+        push(&mut out, &mut seen, expand(cfg_dir), "config");
     }
     for pin in pins {
         push(&mut out, &mut seen, expand(pin), "pinned");
@@ -253,28 +238,20 @@ mod tests {
 
 
     #[test]
-    fn candidates_for_harness_leads_with_current_then_harness_then_fallback() {
+    fn candidates_leads_with_current_then_config() {
         let tmp = std::env::temp_dir();
-        // Use temp dirs as harness/fallback so tilde/expand works.
         let h = tmp.join("gwae-harness-cand-h");
-        let f = tmp.join("gwae-harness-cand-f");
         let _ = std::fs::create_dir_all(&h);
-        let _ = std::fs::create_dir_all(&f);
-        let c = candidates_for_harness(
+        let c = candidates(
             Some(&tmp),
             h.to_str().unwrap(),
-            f.to_str().unwrap(),
             &[],
             &["/no/such/root".into()],
         );
-        // current first
+        // current first, then the configured dir
         assert_eq!(c[0].origin, "current");
-        // then harness config, then fallback, order preserved
         let labels: Vec<&str> = c.iter().map(|x| x.origin).collect();
-        let h_pos = labels.iter().position(|o| *o == "config").unwrap();
-        // Two config origins in order: both labeled "config", deduped by path.
-        assert!(labels.iter().filter(|o| **o == "config").count() >= 2 || h != f);
-        let _ = h_pos;
+        assert!(labels.contains(&"config"));
     }
 
 }

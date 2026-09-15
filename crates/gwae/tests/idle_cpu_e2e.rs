@@ -76,7 +76,6 @@ impl Idle {
         let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
         cmd.env("XDG_CONFIG_HOME", &dir);
         cmd.env("TERM", "xterm-256color");
-        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.arg("run");
         cmd.arg("sleep 120");
         let child = pair.slave.spawn_command(cmd).expect("spawn gwae");

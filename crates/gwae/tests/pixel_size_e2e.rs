@@ -339,7 +339,6 @@ impl Session {
             if graphics == Some(true) { "1" } else { "0" },
         );
         cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
-        cmd.env("GWAE_NO_INSTALL", "1");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
         cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_PIXEL_HELPER", "1");

@@ -14,7 +14,6 @@ mod graphics_diacritics;
 mod graphics_host;
 mod graphics_legacy;
 mod graphics_stream;
-mod install;
 mod keepawake;
 mod keys;
 mod latency;

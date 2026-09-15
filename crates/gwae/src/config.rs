@@ -11,7 +11,6 @@ use crate::theme::Palette;
 use gwae_layout::Width;
 use serde::de::{self, Visitor};
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -49,26 +48,6 @@ pub struct Config {
     /// `agent_dir = "~/git"` works as written. A path that does not exist is
     /// ignored with a warning rather than breaking pane spawn.
     pub agent_dir: String,
-    /// Per-harness default spawn directories. Key is the harness command name
-    /// as it appears in `default_agent` (`"jcode"`, `"claude"`, …). When set,
-    /// new panes that will run that harness start here; other harnesses fall
-    /// back to `agent_dir`. `~` and `$VAR` expand. Example:
-    /// `harness_dirs = { jcode = "~/git/gwae", Muse = "~/src/foo" }`.
-    /// Preferred harness = `default_agent`; any harness is a key, so the table
-    /// is not jcode-specific.
-    #[serde(default)]
-    pub harness_dirs: HashMap<String, String>,
-    /// Directories always offered in the `⌥+d` spawn-directory picker, on top
-    /// of the ones found by scanning `agent_dir_roots`.
-    pub agent_dirs: Vec<String>,
-    /// Where the `⌥+d` picker looks for projects and directories. Default: your home
-    /// directory. gwae finds projects by looking for `.git`/`.hg`/`.jj`
-    /// markers rather than by directory name, so it works whatever your
-    /// layout is; set this to narrow (or widen) the search, e.g.
-    /// `["~/work", "/srv/checkouts"]`. Roots that do not exist are skipped.
-    /// Typing also searches ordinary directories, including inside repos and
-    /// near the session's spawn directory, without requiring a project marker.
-    pub agent_dir_roots: Vec<String>,
     /// Extra agent commands to offer in the `;` picker, on top of the ones
     /// gwae knows and the ones it finds by scanning `PATH`. Use this to
     /// teach it a harness with a name it cannot guess, or a wrapper script.
@@ -112,9 +91,6 @@ impl Default for Config {
             content_width: 0,
             default_agent: String::new(),
             agent_dir: String::new(),
-            harness_dirs: HashMap::new(),
-            agent_dirs: Vec::new(),
-            agent_dir_roots: Vec::new(),
             agents: Vec::new(),
             startup_panes: 1,
             minimap: Minimap::default(),
@@ -158,7 +134,6 @@ impl Config {
             startup_panes,
             default_agent,
             agent_dir,
-            harness_dirs,
             ..
         } = self.clone();
         *self = Config {
@@ -168,7 +143,6 @@ impl Config {
             // session may have overridden it via `--dir` or `⌥+d`, and a
             // config edit must not yank panes back to the file's value.
             agent_dir,
-            harness_dirs,
             ..new
         };
         // `keep_awake` rides along with the reload rather than being pinned:
@@ -177,30 +151,8 @@ impl Config {
         // above stays pinned because it was consumed once at launch.
     }
 
-    /// Directory configured for a particular harness, falling back to `agent_dir`.
-    ///
-    /// `harness` is the `default_agent` value (`"jcode"`, `"claude"`, …). Lookup is
-    /// exact and case-sensitive on the stored key; arity matches what `agent.rs` saves.
-    pub fn dir_for_harness(&self, harness: &str) -> &str {
-        let h = harness.trim();
-        if h.is_empty() {
-            return &self.agent_dir;
-        }
-        // Keys come from `default_agent` which `agent.rs` stores verbatim; but
-        // tolerate `jcode --resume` style by stripping args for lookup, since a
-        // user writes `harness_dirs = { jcode = "..." }` not `harness_dirs = { "jcode --resume" = … }`.
-        let exe = crate::tui::shell_split(h)
-            .first()
-            .cloned()
-            .unwrap_or_default();
-        for key in [exe.as_str(), h] {
-            if key.is_empty() {
-                continue;
-            }
-            if let Some(v) = self.harness_dirs.get(key) {
-                return v;
-            }
-        }
+    /// Directory new panes start in: `agent_dir`, or "" when unset.
+    pub fn spawn_dir(&self) -> &str {
         &self.agent_dir
     }
 
@@ -553,47 +505,12 @@ mod tests {
     }
 
     #[test]
-    fn harness_dirs_parse_and_lookup() {
-        let cfg = parse("harness_dirs = { jcode = \"~/git/gwae\", Muse = \"/tmp\" }\n");
-        assert_eq!(
-            cfg.harness_dirs.get("jcode").map(|s| s.as_str()),
-            Some("~/git/gwae")
-        );
-        assert_eq!(cfg.dir_for_harness("jcode"), "~/git/gwae");
-        assert_eq!(cfg.dir_for_harness("claude"), "");
-        // dotted form and table form also parse via serde
-        let cfg = parse("harness_dirs.jcode = \"~/a\"\n");
-        assert_eq!(cfg.dir_for_harness("jcode"), "~/a");
-        let cfg = parse("[harness_dirs]\njcode = \"~/b\"\n");
-        assert_eq!(cfg.dir_for_harness("jcode"), "~/b");
-        // args stripped
-        let cfg = parse("harness_dirs = { jcode = \"~/x\" }\n");
-        assert_eq!(cfg.dir_for_harness("jcode --resume"), "~/x");
+    fn retired_spawndir_keys_are_ignored_not_fatal() {
+        // Old configs may name per-harness dirs or picker roots; those keys
+        // are gone, so they are simply not read rather than a parse error.
+        let cfg = parse("harness_dirs = { jcode = \"~/git/gwae\" }\nagent_dirs = [\"~/notes\"]\nagent_dir_roots = [\"~/work\"]\nagent_dir = \"~/git\"\n");
+        assert_eq!(cfg.spawn_dir(), "~/git");
     }
 
-    #[test]
-    fn harness_dir_writer_round_trips() {
-        let cases = [
-            ("", "jcode", "~/git/gwae"),
-            ("harness_dirs = { jcode = \"~/a\" }\n", "claude", "~/b"),
-            ("harness_dirs = { jcode = \"~/a\" }\n", "jcode", "~/new"),
-            ("harness_dirs.jcode = \"~/old\"\n", "jcode", "~/new2"),
-            ("[harness_dirs]\njcode = \"~/old\"\n", "jcode", "~/new3"),
-            (
-                "startup_panes = 1\n\n[theme]\npreset = \"nord\"\n",
-                "jcode",
-                "~/git/gwae",
-            ),
-        ];
-        for (before, key, dir) in cases {
-            let after = crate::agent::set_harness_dir_text(before, key, dir);
-            let v: toml::Value = toml::from_str(&after)
-                .unwrap_or_else(|e| panic!("broke toml {e:?} after={after:?} from {before:?}"));
-            assert_eq!(
-                v["harness_dirs"][key].as_str(),
-                Some(dir),
-                "after={after:?} before={before:?}"
-            );
-        }
-    }
+
 }

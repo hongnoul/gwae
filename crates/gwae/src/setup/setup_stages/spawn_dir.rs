@@ -16,41 +16,20 @@ impl SetupStage for SpawnDirStage {
         StageKind::Config
     }
     fn doctor_line(&self, ctx: &Ctx) -> String {
-        let harness_dir = ctx.cfg.dir_for_harness(&ctx.cfg.default_agent);
-        let resolved =
-            crate::spawndir::resolve_for_harness(ctx.dir, harness_dir, &ctx.cfg.agent_dir);
-        let h_label = if ctx.cfg.default_agent.trim().is_empty() {
-            String::new()
-        } else {
-            crate::tui::shell_split(&ctx.cfg.default_agent)
-                .first()
-                .cloned()
-                .unwrap_or_default()
-        };
-        let unset = harness_dir.trim().is_empty()
-            && ctx.cfg.agent_dir.trim().is_empty()
-            && ctx.dir.is_none();
+        let resolved = crate::spawndir::resolve(ctx.dir, &ctx.cfg.agent_dir);
+        let unset = ctx.cfg.agent_dir.trim().is_empty() && ctx.dir.is_none();
         match resolved {
             Some(p) if unset => {
                 format!("{} (gwae's cwd; unset, ⌥+d picks one) [ok]", p.display())
             }
             Some(p) if Some(&p) != crate::spawndir::inherited().as_ref() => {
-                if !h_label.is_empty() && !harness_dir.trim().is_empty() {
-                    format!("{} [{}] [ok]", p.display(), h_label)
-                } else {
-                    format!("{} [ok]", p.display())
-                }
+                format!("{} [ok]", p.display())
             }
             _ => {
                 let raw = ctx
                     .dir
                     .filter(|s| !s.trim().is_empty())
-                    .unwrap_or(harness_dir);
-                let raw = if raw.trim().is_empty() {
-                    &ctx.cfg.agent_dir
-                } else {
-                    raw
-                };
+                    .unwrap_or(&ctx.cfg.agent_dir);
                 match crate::spawndir::check(raw) {
                     Ok(p) => format!("{} [ok]", p.display()),
                     Err(e) => format!("INVALID {raw:?}: {e}; panes inherit gwae's cwd"),

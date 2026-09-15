@@ -136,15 +136,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     if std::env::var_os("GWAE_DEBUG_SIZE").is_some() {
         eprintln!("[gwae] initial terminal size -> {cols} cols x {rows} rows");
     }
-    // Where every pane in this session starts. `--dir` beats per-harness
-    // `harness_dirs[default_agent]` beats `agent_dir` beats gwae's inherited cwd;
-    // `⌥+d` rebinds it live for panes spawned from then on (existing panes keep
-    // whatever they were born with, since a process's cwd is not ours to change).
-    let mut spawn_dir: Option<std::path::PathBuf> = crate::spawndir::resolve_for_harness(
-        cli_dir.as_deref(),
-        cfg.dir_for_harness(&cfg.default_agent),
-        &cfg.agent_dir,
-    );
+    // Where every pane in this session starts. `--dir` beats `agent_dir`
+    // beats gwae's inherited cwd; `⌥+d` rebinds it live for panes spawned
+    // from then on (existing panes keep whatever they were born with, since
+    // a process's cwd is not ours to change).
+    let mut spawn_dir: Option<std::path::PathBuf> =
+        crate::spawndir::resolve(cli_dir.as_deref(), &cfg.agent_dir);
     // A configured directory that does not exist is a typo worth surfacing:
     // the panes silently opening in `~` is exactly the confusion this
     // feature exists to remove.
@@ -152,7 +149,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         let raw = cli_dir
             .as_deref()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or(cfg.dir_for_harness(&cfg.default_agent));
+            .unwrap_or(cfg.spawn_dir());
         let fell_back = spawn_dir == crate::spawndir::inherited();
         match (fell_back, raw.trim().is_empty()) {
             (true, false) => crate::spawndir::check(raw).err(),
@@ -968,12 +965,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             .cloned()
                                             .unwrap_or_default()
                                     };
-                                    let all = crate::spawndir::candidates_for_harness(
+                                    let all = crate::spawndir::candidates(
                                         spawn_dir.as_deref(),
-                                        cfg.dir_for_harness(&cfg.default_agent),
                                         &cfg.agent_dir,
-                                        &cfg.agent_dirs,
-                                        &cfg.agent_dir_roots,
+                                        &[],
+                                        &[],
                                     );
                                     dir_pick = Some(DirPicker {
                                         all,
@@ -1053,6 +1049,19 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         tracing::error!("sync panes: {e}");
                                     }
                                     dirty = true;
+                                    // A kill must paint before the next key is
+                                    // read: holding ⌥+q repeats faster than
+                                    // frames, so without this every queued
+                                    // repeat lands in the same drain batch. The
+                                    // layout would lose several panes while the
+                                    // HUD still showed the first frame, and the
+                                    // user — watching a stale dashboard — keeps
+                                    // holding into working panes. Yield to the
+                                    // render loop instead, so each kill gets its
+                                    // own frame and the dashboard tracks it.
+                                    if a == Action::KillPane {
+                                        break 'drain;
+                                    }
                                 }
                                 Cmd::Input(bytes) => {
                                     if let Some(pid) = focused_pane(&layout) {

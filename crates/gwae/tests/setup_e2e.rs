@@ -25,8 +25,7 @@ fn sandbox(config_body: Option<&str>) -> std::path::PathBuf {
 fn setup(dir: &std::path::Path, args: &[&str]) -> (String, String, i32) {
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_gwae"));
     cmd.arg("setup").args(args).env("XDG_CONFIG_HOME", dir);
-    // Never install software from a test, and never hold the Mac awake.
-    cmd.env("GWAE_NO_INSTALL", "1");
+    // Never hold the Mac awake from a test.
     cmd.env("GWAE_NO_KEEP_AWAKE", "1");
     // Deterministic PATH: no agent harnesses, no swiftc.
     cmd.env("PATH", "/bin:/usr/bin");
@@ -80,13 +79,12 @@ fn only_latency_scopes_the_audit() {
 }
 
 #[test]
-fn skip_env_disables_all_writes() {
+fn yes_applies_config_stages_without_prompting() {
     let dir = sandbox(Some("input_poll_ms = 10\n"));
     let (out, _, code) = setup(&dir, &["--yes"]);
-    assert_eq!(code, 0, "skip env should exit cleanly");
-    assert!(out.contains("GWAE_NO_INSTALL"), "should say why:\n{out}");
+    assert_eq!(code, 0, "yes should exit cleanly:\n{out}");
     let after = std::fs::read_to_string(dir.join("gwae/gwae.toml")).unwrap();
-    assert!(after.contains("input_poll_ms = 10"), "no writes under skip env:\n{after}");
+    assert!(after.contains("input_poll_ms = 1"), "yes writes our own key:\n{after}");
 }
 
 #[test]
