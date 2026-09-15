@@ -1093,8 +1093,18 @@ pub(crate) mod tests {
         // Two 1x1 native commits in separate feeds (the shape the committed
         // promotion tests prove promotes; APC-only feeds do not bump the
         // grid epoch, so the streak survives across them).
-        feed_pane_output(&mut pane, b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\", true);
-        feed_pane_output(&mut pane, b"\x1b_Ga=T,i=8,f=24,s=1,v=1,C=1;AQID\x1b\\", true);
+        feed_pane_output(
+            &mut pane,
+            b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+            true,
+            true,
+        );
+        feed_pane_output(
+            &mut pane,
+            b"\x1b_Ga=T,i=8,f=24,s=1,v=1,C=1;AQID\x1b\\",
+            true,
+            true,
+        );
         assert!(pane.image_view.is_some(), "fixture must promote the pane");
         let mut panes = HashMap::from([(pid, pane)]);
         // Blind: no host image channel. Message appears, no placeholders.

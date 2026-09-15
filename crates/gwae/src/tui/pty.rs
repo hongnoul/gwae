@@ -180,7 +180,12 @@ pub(crate) const IMAGE_PROMOTE_COMMITS: u32 = 2;
 
 /// Graphics placements use the cursor at their position in the byte stream,
 /// never the cursor after a whole PTY read. Replies go only to this child.
-pub(crate) fn feed_pane_output(pane: &mut PtyPane, bytes: &[u8], graphics_enabled: bool) {
+pub(crate) fn feed_pane_output(
+    pane: &mut PtyPane,
+    bytes: &[u8],
+    graphics_enabled: bool,
+    promote: bool,
+) {
     use crate::graphics_stream::Event;
     let mut streak = pane.promote_streak();
     for event in pane.graphics_stream.feed(bytes) {
@@ -234,7 +239,7 @@ pub(crate) fn feed_pane_output(pane: &mut PtyPane, bytes: &[u8], graphics_enable
                 {
                     pane.image_activity = Some(pane.image_activity.unwrap_or(0).wrapping_add(1));
                 }
-                if outcome.committed_image.is_some() {
+                if promote && outcome.committed_image.is_some() {
                     streak += 1;
                     if streak >= IMAGE_PROMOTE_COMMITS && pane.image_view.is_none() {
                         pane.image_view = Some(ImageView {
@@ -735,6 +740,7 @@ mod tests {
                 &mut pane,
                 b"\x1b[?25l\x1b[1;4;7mX\x1b[H\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
                 true,
+                true,
             );
             let layout = Layout::new(1);
             let pid = focused_pane(&layout).unwrap();
@@ -788,26 +794,46 @@ mod tests {
             // Fresh pane: no image traffic, so `prepare_cached` skips it.
             assert_eq!(pane.image_activity, None);
             // Plain text never advances the token.
-            feed_pane_output(&mut pane, b"hello", true);
+            feed_pane_output(&mut pane, b"hello", true, true);
             assert_eq!(pane.image_activity, None);
             // A native source commit advances it once.
             feed_pane_output(
                 &mut pane,
                 b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
                 true,
+                true,
             );
             assert_eq!(pane.image_activity, Some(1));
             // A no-op query changes no state: token holds.
-            feed_pane_output(&mut pane, b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\", true);
+            feed_pane_output(&mut pane, b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\", true, true);
             assert_eq!(pane.image_activity, Some(1));
             assert!(pane.graphics.source(7).is_some());
             // A re-display placement advances it again.
-            feed_pane_output(&mut pane, b"\x1b_Ga=p,i=7,C=1\x1b\\", true);
+            feed_pane_output(&mut pane, b"\x1b_Ga=p,i=7,C=1\x1b\\", true, true);
             assert_eq!(pane.image_activity, Some(2));
             // Alternate-screen entry clears graphics state: token resets so
             // the host cache cannot serve stale tiles.
-            feed_pane_output(&mut pane, b"\x1b[?1049h", true);
+            feed_pane_output(&mut pane, b"\x1b[?1049h", true, true);
             assert_eq!(pane.image_activity, None);
+        }
+
+        #[test]
+        fn promotion_disabled_never_promotes_even_on_sustained_commits() {
+            let (mut pane, _) = pane_with_replies();
+            // `image_pane = "off"`: commits still land (image_activity
+            // advances, tiles still paint inline), but no promotion fires.
+            for id in [7, 8, 9] {
+                feed_pane_output(
+                    &mut pane,
+                    format!("\x1b_Ga=T,i={id},f=24,s=1,v=1,C=1;AQID\x1b\\").as_bytes(),
+                    true,
+                    false,
+                );
+            }
+            assert_eq!(pane.image_view, None);
+            assert_eq!(pane.promote_streak(), 0);
+            assert!(pane.image_activity.is_some());
+            assert!(pane.graphics.source(9).is_some());
         }
 
         #[test]
@@ -819,6 +845,7 @@ mod tests {
                 &mut pane,
                 b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
                 true,
+                true,
             );
             assert_eq!(pane.image_view, None);
             assert_eq!(pane.promote_streak(), 1);
@@ -826,6 +853,7 @@ mod tests {
             feed_pane_output(
                 &mut pane,
                 b"\x1b_Ga=T,i=8,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
                 true,
             );
             assert_eq!(
@@ -840,6 +868,7 @@ mod tests {
                 &mut pane,
                 b"\x1b_Ga=T,i=9,f=24,s=1,v=1,C=1;AQID\x1b\\",
                 true,
+                true,
             );
             assert_eq!(pane.image_view.unwrap().commits, 2);
         }
@@ -852,17 +881,19 @@ mod tests {
                 &mut pane,
                 b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
                 true,
+                true,
             );
             // Queries and placements change image state but are not commits:
             // the streak holds at 1 and no promotion fires.
-            feed_pane_output(&mut pane, b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\", true);
-            feed_pane_output(&mut pane, b"\x1b_Ga=p,i=7,C=1\x1b\\", true);
+            feed_pane_output(&mut pane, b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\", true, true);
+            feed_pane_output(&mut pane, b"\x1b_Ga=p,i=7,C=1\x1b\\", true, true);
             assert_eq!(pane.image_view, None);
             assert_eq!(pane.promote_streak(), 1);
             // Legacy placeholder traffic never promotes either.
             feed_pane_output(
                 &mut pane,
                 b"\x1b_Ga=T,U=1,q=2,i=7,p=1,f=24,s=1,v=1,c=1,r=1;AQID\x1b\\",
+                true,
                 true,
             );
             assert_eq!(pane.image_view, None);
@@ -876,11 +907,12 @@ mod tests {
                     &mut pane,
                     format!("\x1b_Ga=T,i={id},f=24,s=1,v=1,C=1;AQID\x1b\\").as_bytes(),
                     true,
+                    true,
                 );
             }
             assert!(pane.image_view.is_some());
             // Alternate-screen entry clears graphics, demotes, resets streak.
-            feed_pane_output(&mut pane, b"\x1b[?1049h", true);
+            feed_pane_output(&mut pane, b"\x1b[?1049h", true, true);
             assert_eq!(pane.image_view, None);
             assert_eq!(pane.promote_streak(), 0);
             assert_eq!(pane.image_activity, None);
@@ -889,6 +921,7 @@ mod tests {
                 feed_pane_output(
                     &mut pane,
                     format!("\x1b_Ga=T,i={id},f=24,s=1,v=1,C=1;AQID\x1b\\").as_bytes(),
+                    true,
                     true,
                 );
             }
@@ -902,18 +935,21 @@ mod tests {
                 &mut pane,
                 b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
                 true,
+                true,
             );
             feed_pane_output(
                 &mut pane,
                 b"\x1b_Ga=T,U=1,q=2,i=7,p=1,f=24,s=1,v=2,c=1,r=1,m=1;AAAA\x1b\\",
                 true,
+                true,
             );
             assert!(pane.graphics.source(7).is_some());
-            feed_pane_output(&mut pane, b"\x1b_Gm=0;BAUG\x1b\\", true);
+            feed_pane_output(&mut pane, b"\x1b_Gm=0;BAUG\x1b\\", true, true);
             assert!(pane.graphics.source(7).is_none());
             feed_pane_output(
                 &mut pane,
                 b"\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                true,
                 true,
             );
             assert!(pane.graphics.source(7).is_some());
@@ -944,8 +980,8 @@ mod tests {
             .as_bytes();
             for split in 0..=input.len() {
                 let (mut pane, replies) = pane_with_replies();
-                feed_pane_output(&mut pane, &input[..split], true);
-                feed_pane_output(&mut pane, &input[split..], true);
+                feed_pane_output(&mut pane, &input[..split], true, true);
+                feed_pane_output(&mut pane, &input[split..], true, true);
                 let placements = pane.graphics.placements();
                 assert_eq!(placements.len(), 2, "split {split}");
                 assert_eq!(
@@ -979,8 +1015,8 @@ mod tests {
             let input = b"ab\x1b_Ga=T,i=4,f=24,s=1,v=1,c=3,r=2;AAAA\x1b\\Z\x1b[6n";
             for split in 0..=input.len() {
                 let (mut pane, replies) = pane_with_replies();
-                feed_pane_output(&mut pane, &input[..split], true);
-                feed_pane_output(&mut pane, &input[split..], true);
+                feed_pane_output(&mut pane, &input[..split], true, true);
+                feed_pane_output(&mut pane, &input[split..], true, true);
                 let placement = &pane.graphics.placements()[0];
                 assert_eq!((placement.row, placement.col), (0, 2), "split {split}");
                 assert_eq!((placement.pixel_width, placement.pixel_height), (24, 32));
@@ -1000,12 +1036,12 @@ mod tests {
             let last = b"\x1b[8;12H\x1b_Gm=0;/wAAAP8AAAD/\x1b\\!\x1b[6n";
             for split in 0..=last.len() {
                 let (mut pane, replies) = pane_with_replies();
-                feed_pane_output(&mut pane, first, true);
+                feed_pane_output(&mut pane, first, true, true);
                 assert!(replies.bytes().is_empty());
                 assert!(pane.graphics.source(9).is_none());
                 assert!(pane.graphics.placements().is_empty());
-                feed_pane_output(&mut pane, &last[..split], true);
-                feed_pane_output(&mut pane, &last[split..], true);
+                feed_pane_output(&mut pane, &last[..split], true, true);
+                feed_pane_output(&mut pane, &last[split..], true, true);
                 let placement = &pane.graphics.placements()[0];
                 assert_eq!((placement.row, placement.col), (7, 11), "split {split}");
                 assert_eq!(pane.graphics.source(9).unwrap().pixels.len(), 12);
@@ -1038,14 +1074,14 @@ mod tests {
             .as_bytes();
             for split in 0..=input.len() {
                 let (mut pane, replies) = pane_with_replies();
-                feed_pane_output(&mut pane, &input[..split], true);
-                feed_pane_output(&mut pane, &input[split..], true);
+                feed_pane_output(&mut pane, &input[..split], true, true);
+                feed_pane_output(&mut pane, &input[split..], true, true);
                 assert_eq!(replies.bytes(), expected, "split {split}");
                 assert!(pane.grid.take_pty_replies().is_empty());
             }
             let (mut pane, replies) = pane_with_replies();
             for byte in input {
-                feed_pane_output(&mut pane, std::slice::from_ref(byte), true);
+                feed_pane_output(&mut pane, std::slice::from_ref(byte), true, true);
             }
             assert_eq!(replies.bytes(), expected, "one byte per read");
         }
@@ -1056,8 +1092,8 @@ mod tests {
             for enabled in [false, true] {
                 for split in 0..=input.len() {
                     let (mut pane, replies) = pane_with_replies();
-                    feed_pane_output(&mut pane, &input[..split], enabled);
-                    feed_pane_output(&mut pane, &input[split..], enabled);
+                    feed_pane_output(&mut pane, &input[..split], enabled, true);
+                    feed_pane_output(&mut pane, &input[split..], enabled, true);
                     let expected: &[u8] = if enabled {
                         b"\x1b_Gi=31;OK\x1b\\\x1b[?6c\x1b[6;16;8t\x1b[0n"
                     } else {
@@ -1088,17 +1124,19 @@ mod tests {
                 panes.get_mut(&11).unwrap(),
                 b"\x1b_Ga=T,i=7,f=24,s=1,v=2,C=1,m=1;AA",
                 true,
+                true,
             );
             feed_pane_output(
                 panes.get_mut(&22).unwrap(),
                 b"\x1b[5;7H\x1b_Ga=T,i=7,f=24,s=1,v=1,C=1;AQID\x1b\\\x1b[6n",
+                true,
                 true,
             );
             assert!(first_replies.bytes().is_empty());
             assert!(panes[&11].graphics.source(7).is_none());
             let second_expected = b"\x1b_Gi=7;OK\x1b\\\x1b[5;7R";
             assert_eq!(second_replies.bytes(), second_expected);
-            feed_pane_output(panes.get_mut(&11).unwrap(), b"AA\x1b\\", true);
+            feed_pane_output(panes.get_mut(&11).unwrap(), b"AA\x1b\\", true, true);
             assert!(
                 first_replies.bytes().is_empty(),
                 "a non-final chunk never acknowledges"
@@ -1106,6 +1144,7 @@ mod tests {
             feed_pane_output(
                 panes.get_mut(&11).unwrap(),
                 b"\x1b[3;4H\x1b_Gm=0;BAUG\x1b\\\x1b[6n",
+                true,
                 true,
             );
             assert_eq!(first_replies.bytes(), b"\x1b_Gi=7;OK\x1b\\\x1b[3;4R");
@@ -1119,7 +1158,7 @@ mod tests {
             let second_placement = &panes[&22].graphics.placements()[0];
             assert_eq!((first_placement.row, first_placement.col), (2, 3));
             assert_eq!((second_placement.row, second_placement.col), (4, 6));
-            feed_pane_output(panes.get_mut(&11).unwrap(), b"\x1b_Ga=d,d=A;\x1b\\", true);
+            feed_pane_output(panes.get_mut(&11).unwrap(), b"\x1b_Ga=d,d=A;\x1b\\", true, true);
             assert!(panes[&11].graphics.source(7).is_none());
             assert!(panes[&11].graphics.placements().is_empty());
             assert!(panes[&22].graphics.source(7).is_some());
@@ -1135,10 +1174,12 @@ mod tests {
                     &mut pane,
                     b"\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AAAA\x1b\\",
                     true,
+                    true,
                 );
                 feed_pane_output(
                     &mut pane,
                     b"\x1b_Ga=T,i=9,f=24,s=1,v=2,C=1,m=1;AAAA\x1b\\",
+                    true,
                     true,
                 );
                 assert!(pane.graphics.source(1).is_some());
@@ -1152,14 +1193,14 @@ mod tests {
                     )]
                 );
                 let epoch = pane.grid.screen_epoch();
-                feed_pane_output(&mut pane, text.as_bytes(), true);
+                feed_pane_output(&mut pane, text.as_bytes(), true, true);
                 assert!(!pane.grid.alternate_screen(), "mode {mode}");
                 assert_ne!(pane.grid.screen_epoch(), epoch, "mode {mode}");
                 assert!(pane.graphics.source(1).is_none(), "mode {mode}");
                 assert!(pane.graphics.placements().is_empty(), "mode {mode}");
                 // Alternate-screen invalidation must discard partial transfers,
                 // not just remove the already-visible placement.
-                feed_pane_output(&mut pane, b"\x1b_Gm=0;AQID\x1b\\", true);
+                feed_pane_output(&mut pane, b"\x1b_Gm=0;AQID\x1b\\", true, true);
                 assert!(pane.graphics.source(9).is_none(), "mode {mode}");
                 assert!(pane.graphics.placements().is_empty(), "mode {mode}");
             }
@@ -1174,18 +1215,20 @@ mod tests {
                     &mut pane,
                     b"\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AAAA\x1b\\",
                     true,
+                    true,
                 );
                 feed_pane_output(
                     &mut pane,
                     b"\x1b_Ga=T,i=9,f=24,s=1,v=2,C=1,m=1;AAAA\x1b\\",
                     true,
+                    true,
                 );
                 assert!(pane.graphics.source(1).is_some());
-                feed_pane_output(&mut pane, &reset[..split], true);
-                feed_pane_output(&mut pane, &reset[split..], true);
+                feed_pane_output(&mut pane, &reset[..split], true, true);
+                feed_pane_output(&mut pane, &reset[split..], true, true);
                 assert!(pane.graphics.source(1).is_none(), "split {split}");
                 assert!(pane.graphics.placements().is_empty(), "split {split}");
-                feed_pane_output(&mut pane, b"\x1b_Gm=0;AQID\x1b\\", true);
+                feed_pane_output(&mut pane, b"\x1b_Gm=0;AQID\x1b\\", true, true);
                 assert!(pane.graphics.source(9).is_none(), "split {split}");
                 assert!(pane.graphics.placements().is_empty(), "split {split}");
             }
@@ -1196,8 +1239,8 @@ mod tests {
             let input = b"A\x1b_Xopaque\x1b_Ga=T,i=3,f=24,s=1,v=1,C=1;AAAA\x1b\\B\x1b[6n";
             for split in 0..=input.len() {
                 let (mut pane, replies) = pane_with_replies();
-                feed_pane_output(&mut pane, &input[..split], true);
-                feed_pane_output(&mut pane, &input[split..], true);
+                feed_pane_output(&mut pane, &input[..split], true, true);
+                feed_pane_output(&mut pane, &input[split..], true, true);
                 assert_eq!(pane.grid.visible_text(), "AB", "split {split}");
                 let placement = &pane.graphics.placements()[0];
                 assert_eq!((placement.row, placement.col), (0, 1));
@@ -1216,13 +1259,14 @@ mod tests {
                 &mut pane,
                 b"\x1b_Ga=T,i=1,f=24,s=1,v=1,C=1;AQID\x1b\\",
                 true,
+                true,
             );
-            feed_pane_output(&mut pane, b"\x1b_Ga=t,i=9,f=24,s=1,v=1,m=1;\x1b\\", true);
+            feed_pane_output(&mut pane, b"\x1b_Ga=t,i=9,f=24,s=1,v=1,m=1;\x1b\\", true, true);
             let mut oversized = b"\x1b_Gm=1;".to_vec();
             oversized.extend(std::iter::repeat_n(b'A', 64 * 1024));
             oversized.extend_from_slice(b"\x1b\\");
-            feed_pane_output(&mut pane, &oversized, true);
-            feed_pane_output(&mut pane, b"\x1b_Gm=0;AAAA\x1b\\Z\x1b[6n", true);
+            feed_pane_output(&mut pane, &oversized, true, true);
+            feed_pane_output(&mut pane, b"\x1b_Gm=0;AAAA\x1b\\Z\x1b[6n", true, true);
             assert!(
                 pane.graphics.source(9).is_none(),
                 "dropping an oversized continuation must invalidate the pending transfer"

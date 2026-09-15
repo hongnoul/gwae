@@ -372,7 +372,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 PaneMsg::Output(pid, bytes) => {
                     if let Some(p) = panes.get_mut(&pid) {
                         p.grid.set_cell_size(cell_pixels.width, cell_pixels.height);
-                        feed_pane_output(p, &bytes, host_kitty_graphics);
+                        feed_pane_output(
+                            p,
+                            &bytes,
+                            host_kitty_graphics,
+                            cfg.image_pane == crate::config::ImagePane::Auto,
+                        );
                         p.last_output = Instant::now();
                         // Explicit OSC 133 status beats the activity
                         // heuristic from the first marker onward.

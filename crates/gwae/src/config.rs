@@ -22,6 +22,19 @@ fn default_keep_awake() -> bool {
     true
 }
 
+/// Image panes: `auto` promotes a pane to an image viewer once sustained
+/// native image commits prove it is one (e.g. tdf); `off` never promotes,
+/// keeping the classic text-grid path with inline tiles for minimalists.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ImagePane {
+    /// Promote image-heavy panes automatically (default).
+    #[default]
+    Auto,
+    /// Never promote; panes stay text grids with inline image tiles.
+    Off,
+}
+
 /// The resolved view of the config file, with defaults filled in.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -47,6 +60,9 @@ pub struct Config {
     /// single quarter-width pane; the skeleton's placeholder boxes show the
     /// rest of the container).
     pub startup_panes: usize,
+    /// Image-pane promotion: `auto` (default) or `off`. Unknown values fail
+    /// the config check the same way other mistyped keys do.
+    pub image_pane: ImagePane,
     /// The minimap: a small bottom-right grid showing each strip (row) and its
     /// panes (columns), with the focused strip and column highlighted.
     pub minimap: Minimap,
@@ -80,6 +96,7 @@ impl Default for Config {
             agent_dir: String::new(),
             agents: Vec::new(),
             startup_panes: 1,
+            image_pane: ImagePane::default(),
             minimap: Minimap::default(),
             input_poll_ms: default_input_poll_ms(),
             keep_awake: default_keep_awake(),
@@ -380,7 +397,11 @@ mod tests {
     fn key_hints_come_from_the_binding_table() {
         let hints = crate::binds::key_hints();
         assert!(!hints.is_empty(), "hint list must exist");
-        assert_eq!(hints.len(), crate::binds::BINDS.len(), "one hint per binding");
+        assert_eq!(
+            hints.len(),
+            crate::binds::BINDS.len(),
+            "one hint per binding"
+        );
     }
 
     #[test]
@@ -492,12 +513,18 @@ mod tests {
     }
 
     #[test]
+    fn image_pane_defaults_to_auto_parses_off_and_rejects_unknown() {
+        assert_eq!(parse("").image_pane, ImagePane::Auto);
+        assert_eq!(parse("image_pane = \"auto\"").image_pane, ImagePane::Auto);
+        assert_eq!(parse("image_pane = \"off\"").image_pane, ImagePane::Off);
+        assert!(toml::from_str::<Config>("image_pane = \"tiles\"").is_err());
+    }
+
+    #[test]
     fn retired_spawndir_keys_are_ignored_not_fatal() {
         // Old configs may name per-harness dirs or picker roots; those keys
         // are gone, so they are simply not read rather than a parse error.
         let cfg = parse("harness_dirs = { jcode = \"~/git/gwae\" }\nagent_dirs = [\"~/notes\"]\nagent_dir_roots = [\"~/work\"]\nagent_dir = \"~/git\"\n");
         assert_eq!(cfg.spawn_dir(), "~/git");
     }
-
-
 }
