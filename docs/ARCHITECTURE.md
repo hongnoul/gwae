@@ -107,7 +107,7 @@ in the kernel log (`AMFI: ... has no CMS blob?`). Two defences:
 
 * `reload::is_loadable` runs the candidate binary in a throwaway child first,
   so a bad image is refused while this process is still alive to refuse it.
-* `make install` and `scripts/hot.sh` install atomically (write, `codesign
+* `make install` installs atomically (write, `codesign
   -f -s -`, `rename`) rather than writing over the running file.
 
 ## Crash / persistence (deliberately thin)
