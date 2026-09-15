@@ -559,7 +559,7 @@ pub(crate) fn pane_grid_sizes(layout: &Layout, host: GridSize, cfg: &Config) -> 
                 col.width,
                 col.panes.len(),
                 host,
-                cfg.content_width,
+                0,
                 true,
                 chrome_rows(cfg),
             );

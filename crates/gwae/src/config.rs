@@ -28,16 +28,6 @@ fn default_keep_awake() -> bool {
 pub struct Config {
     /// Default width of a newly created column (default: Half).
     pub default_column_width: Width,
-    /// Cells of context kept visible around the focused column when scrolling.
-    pub scroll_margin: u16,
-    /// Always center the focused column instead of scrolling minimally.
-    pub center_focus: bool,
-    /// Logical grid content width (cells) of every pane, decoupled from the
-    /// visible column width. Long lines up to this width do not wrap and can
-    /// be revealed with horizontal pane scroll (Alt+Left/Right). `0` (the
-    /// default) follows the visible column width so lines wrap normally and
-    /// there is no horizontal overflow to manage in a pane.
-    pub content_width: u16,
     /// The agent harness command that `;` (spawn-agent) launches. Empty (the
     /// default) means "not chosen yet": `;` then runs the agent gateway, which
     /// offers the harnesses found on PATH and writes the choice back here.
@@ -86,9 +76,6 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             default_column_width: Width::DEFAULT,
-            scroll_margin: 2,
-            center_focus: false,
-            content_width: 0,
             default_agent: String::new(),
             agent_dir: String::new(),
             agents: Vec::new(),
