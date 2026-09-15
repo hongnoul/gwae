@@ -2,7 +2,7 @@
 //!
 //! Before this module existed the same bindings were spelled out in four
 //! places: the `handle_key` match in [`crate::tui`], the cheat-sheet HUD, the
-//! default cowsay hints in [`crate::config`], and the README key list. They
+//! default key hints in the help overlay, and the README key list. They
 //! drifted: the HUD advertised a `c` binding that never existed and claimed `q`
 //! quits when `⌥+q` kills a pane, because nothing forced them to agree.
 //!
@@ -92,9 +92,9 @@ pub struct Bind {
     /// Short label for the cheat-sheet grid.
     pub desc: &'static str,
     /// The binding as one line of natural language, used verbatim by the
-    /// cowsay hints in empty placeholder boxes. Mandatory: every binding is
+    /// key hints in empty placeholder boxes. Mandatory: every binding is
     /// bijective with exactly one hint, so adding a keybinding necessarily
-    /// adds its cow hint and the helper can never fall behind the
+    /// adds its help line and the helper can never fall behind the
     /// dispatcher. Phrased to read after [`Bind::label`], e.g.
     /// "⌥+b splits this column".
     pub hint: &'static str,
@@ -387,13 +387,13 @@ pub fn group(g: Group) -> impl Iterator<Item = &'static Bind> {
 /// This is exactly `BINDS.len()` strings: the mapping is bijective by
 /// construction, because [`Bind::hint`] is a required field. Adding a
 /// keybinding therefore adds its cow hint automatically, and there is no way
-/// to ship a binding the cow does not know how to explain.
+/// Every binding rendered as one line of natural language, for the help
+/// overlay and empty placeholder boxes.
 ///
-/// Index `0` is special: [`crate::cowsay::message_for`] pins it to the first
-/// empty box on screen, so the one hint guaranteed to be read is the one that
-/// opens the full cheat-sheet. Everything else is a bonus the user discovers
-/// while glancing around the skeleton.
-pub fn cowsay_hints() -> Vec<String> {
+/// Index `0` is special: it opens the cheat-sheet, so it is pinned to the
+/// first empty box on screen. Everything else is a bonus the user
+/// discovers while glancing around the skeleton.
+pub fn key_hints() -> Vec<String> {
     let render = |b: &Bind| format!("{} {}", b.label(), b.hint);
     let pinned = BINDS
         .iter()
@@ -435,11 +435,10 @@ mod tests {
 
     #[test]
     fn hints_are_bijective_with_bindings() {
-        // The property this module exists to guarantee: exactly one hint per
-        // binding, no duplicates, none empty. A new binding cannot compile
+        // Exactly one hint per binding, no duplicates, none empty. A new binding cannot compile
         // without a hint (the field is required), and this catches the other
         // failure mode: copy-pasting an existing hint onto a new key.
-        let hints = cowsay_hints();
+        let hints = key_hints();
         assert_eq!(
             hints.len(),
             BINDS.len(),
@@ -461,8 +460,7 @@ mod tests {
                 b.hint
             );
         }
-        // Each rendered hint starts with some binding's label, so the cow
-        // always tells the user which keys to press.
+        // Each rendered hint starts with some binding's label.
         for h in &hints {
             assert!(
                 BINDS.iter().any(|b| h.starts_with(&b.label())),

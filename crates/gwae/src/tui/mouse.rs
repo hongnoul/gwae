@@ -180,7 +180,7 @@ pub(crate) fn sgr_mouse_report(ev: &MouseEvent, gx: u16, gy: u16) -> Option<Vec<
 mod tests {
     use super::*;
     use super::super::pty::{spawn_pane, PaneMsg, PtyPane};
-    use super::super::render::tests::{no_cow, no_map};
+    use super::super::render::tests::{no_hints, no_map};
     use super::super::render::{focused_pane_views, render_frame};
     use crate::geometry::CellPixels;
     use crate::select::{self, Selection};
@@ -438,8 +438,7 @@ mod tests {
             0,
             &Palette::default(),
             &no_map(),
-            &no_cow(),
-            false,
+            no_hints(),
             Some(&sel),
         );
         // Content is inset 1 cell inside the column frame, so grid (0,0)

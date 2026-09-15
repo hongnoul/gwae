@@ -5,7 +5,7 @@
 //! label it `⌥` (Option) and users look for that glyph, while on Linux and
 //! Windows the same key is `Alt` and the `⌥` glyph is meaningless (and often
 //! not even present in the terminal font). Hard-coding either name makes the
-//! HUD and the cowsay hints wrong on half the platforms, so all user-facing
+//! HUD and the key hints wrong on half the platforms, so all user-facing
 //! strings go through here.
 //!
 //! Resolution is `cfg!(target_os = "macos")` at compile time: gwae runs on
@@ -52,7 +52,7 @@ pub fn shift_key() -> &'static str {
 }
 
 /// A chord, rendered as the platform's modifier plus `key` (e.g. `⌥+g` or
-/// `Alt+g`). Used by both the cheat-sheet HUD and the cowsay hints so the two
+/// `Alt+g`). Used by both the cheat-sheet HUD and the key hints so the two
 /// can never disagree about how a binding is spelled.
 pub fn chord(key: &str) -> String {
     format!("{}+{}", mod_key(), key)

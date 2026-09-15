@@ -15,10 +15,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
-/// A color as written in the config. Re-exported from [`crate::theme`] under
-/// its historical name so existing `background = ...` handling is unchanged.
-pub use crate::theme::Color as Background;
-
 fn default_input_poll_ms() -> u64 {
     1
 }
@@ -88,31 +84,9 @@ pub struct Config {
     /// host terminal's own ANSI 0-15 palette. Default: `catppuccin-mocha`.
     /// See `docs/CONFIG.md` for the full key list.
     pub theme: ThemeSpec,
-    /// Color of the empty (uncovered) background behind the panes. Accepts a
-    /// 256-color index (`236`), a hex RGB (`"#1e1e2e"`), or `"default"`.
-    ///
-    /// Legacy alias for `theme.base`; when set it overrides the theme.
-    pub background: Option<Background>,
-    /// Color of the 1-cell accent frame drawn around the focused box. Accepts
-    /// a 256-color index (`196`), a hex RGB (`"#ff0000"`), or `"default"`.
-    ///
-    /// Legacy alias for `theme.accent`; when set it overrides the theme.
-    pub focus_color: Option<Background>,
-    /// Color of the skeleton frames around unfocused boxes. Accepts the same
-    /// forms as `background`.
-    ///
-    /// Legacy alias for `theme.overlay`; when set it overrides the theme.
-    pub skeleton_color: Option<Background>,
     /// The minimap: a small bottom-right grid showing each strip (row) and its
     /// panes (columns), with the focused strip and column highlighted.
     pub minimap: Minimap,
-    /// Cowsay art drawn in empty placeholder boxes, under the big cell
-    /// identifier.
-    pub cowsay: Cowsay,
-    /// Draw the big `strip.pane` identifier in empty placeholder boxes.
-    /// Default `true`: an empty box says which cell it is. Set to `false` for
-    /// a bare skeleton.
-    pub cell_labels: bool,
     /// Milliseconds to wait in `event::poll` before checking PTY output and
     /// repainting. Lower values reduce perceived typing and backspace latency
     /// at the cost of more frequent wakeups. Default is 1ms for minimum
@@ -153,12 +127,7 @@ impl Default for Config {
             // come from `Palette::default()`. These legacy keys stay unset
             // unless the user writes them, so they only ever *override*.
             theme: ThemeSpec::default(),
-            background: None,
-            focus_color: None,
-            skeleton_color: None,
             minimap: Minimap::default(),
-            cowsay: Cowsay::default(),
-            cell_labels: true,
             input_poll_ms: default_input_poll_ms(),
             keep_awake: default_keep_awake(),
             update: Update::default(),
@@ -180,9 +149,8 @@ impl Config {
 
     /// The fully resolved chrome palette: the named preset (or the default
     /// Catppuccin Mocha), then the `[theme]` per-key overrides, then the
-    /// legacy top-level `background` / `focus_color` / `skeleton_color` keys,
-    /// which win so that pre-theme config files keep behaving exactly as they
-    /// did.
+    /// The fully resolved chrome palette: the named preset (or the default
+    /// Catppuccin Mocha), then the `[theme]` per-key overrides.
     pub fn palette(&self) -> Palette {
         let (p, bad) = self.palette_checked();
         if let Some(name) = bad {
@@ -208,17 +176,7 @@ impl Config {
     /// the user something (`gwae doctor`) can report it rather than
     /// dropping it into a log nobody reads.
     pub fn palette_checked(&self) -> (Palette, Option<String>) {
-        let (mut p, bad) = self.theme.0.resolve();
-        if let Some(c) = self.background {
-            p.base = c.color();
-        }
-        if let Some(c) = self.focus_color {
-            p.accent = c.color();
-        }
-        if let Some(c) = self.skeleton_color {
-            p.overlay = c.color();
-        }
-        (p, bad)
+        self.theme.0.resolve()
     }
 
     /// Adopt the appearance settings from `new`, keeping everything that
@@ -450,40 +408,6 @@ impl Update {
     }
 }
 
-/// Cowsay art in empty placeholder boxes.
-///
-/// The default messages are *keybinding hints*, so an empty grid documents
-/// itself: a new user sees how to put something in the box they are looking
-/// at. Replace `messages` to say anything else (fortunes, reminders, ...).
-///
-/// Which box gets which message is chosen by hashing the cell's coordinates,
-/// never randomly, so a given box always says the same thing. That keeps the
-/// frame diff stable, so idle gwae does not repaint every frame.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct Cowsay {
-    /// Draw the cow at all. On by default: the hints are the cheat-sheet you
-    /// read by accident. Set `enabled = false` for quiet empty boxes.
-    pub enabled: bool,
-    /// The pool of messages. Each empty box picks one by position. An empty
-    /// list disables the cow just like `enabled = false`.
-    pub messages: Vec<String>,
-}
-
-impl Default for Cowsay {
-    fn default() -> Self {
-        // Every hint names a binding that `tui::handle_key` actually
-        // implements, spelled with the platform's own modifier name (`⌥` on
-        // macOS, `Alt` elsewhere) via [`crate::keys`], so an empty box never
-        // teaches a key that does nothing or a glyph the user's keyboard
-        // doesn't have.
-        Cowsay {
-            enabled: true,
-            messages: crate::binds::cowsay_hints(),
-        }
-    }
-}
-
 /// The minimap widget: which strips (rows) and panes (columns) exist and
 /// which is focused.
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -551,36 +475,30 @@ mod tests {
     }
 
     #[test]
-    fn cowsay_defaults_to_keybinding_hints() {
-        let cfg = parse("");
-        assert!(cfg.cowsay.enabled, "cow on by default");
-        assert!(
-            !cfg.cowsay.messages.is_empty(),
-            "default messages must exist or the cow never draws"
-        );
+    fn key_hints_come_from_the_binding_table() {
+        let hints = crate::binds::key_hints();
+        assert!(!hints.is_empty(), "hint list must exist");
+        assert_eq!(hints.len(), crate::binds::BINDS.len(), "one hint per binding");
     }
 
     #[test]
-    fn cowsay_defaults_name_the_platform_modifier() {
+    fn key_hints_name_the_platform_modifier() {
         // The hints are the only keybinding docs many users ever read, so they
         // must speak the local keyboard's vocabulary: `⌥` on macOS, `Alt`
         // elsewhere, never both and never the wrong one. The two Ctrl+Shift
         // scroll hints and the host's native paste are exceptions: they name
         // their own platform-appropriate modifier instead of `$mod`.
-        let cfg = parse("");
         let m = keys::mod_key();
         let ctrl = keys::ctrl_key();
         // Chord hints must name the modifier. A few bindings are mouse or
         // key-range prose (`1-9`, `click`, `↑/↓`) and correctly have no
         // modifier to name.
-        let chord_hints = cfg
-            .cowsay
-            .messages
+        let chord_hints = crate::binds::key_hints()
             .iter()
             .filter(|msg| !msg.starts_with(['1', 'c', 'w', '←', '↵', '⇧']))
             .count();
         assert!(chord_hints > 0, "some hints are chords");
-        for msg in &cfg.cowsay.messages {
+        for msg in &crate::binds::key_hints() {
             if msg.starts_with(['1', 'c', 'w', '←', '↵', '⇧', 'E', 'S']) {
                 continue;
             }
@@ -594,7 +512,7 @@ mod tests {
         } else {
             "⌥"
         };
-        for msg in &cfg.cowsay.messages {
+        for msg in &crate::binds::key_hints() {
             assert!(
                 !msg.contains(other),
                 "hint {msg:?} uses the other platform's modifier name"
@@ -603,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn cowsay_defaults_do_not_teach_dead_keys() {
+    fn key_hints_do_not_teach_dead_keys() {
         // Regressions guarded: the hints once advertised `⌥+c` ("new pane"),
         // which was never implemented, and once told users to "press c"/
         // "press ;" with no modifier at all, which just types the letter into
@@ -617,15 +535,9 @@ mod tests {
         // entry through the real `handle_key`), so what is left to assert here
         // is that the default list is in fact the generated one and has not
         // been hand-edited back into a liability.
-        let cfg = parse("");
         let m = keys::mod_key();
         let ctrl = keys::ctrl_key();
-        assert_eq!(
-            cfg.cowsay.messages,
-            crate::binds::cowsay_hints(),
-            "default hints must come from the binding table, not a hand-written list"
-        );
-        for msg in &cfg.cowsay.messages {
+        for msg in &crate::binds::key_hints() {
             assert!(
                 !msg.to_lowercase().starts_with("press "),
                 "hint {msg:?} omits the modifier"
@@ -638,34 +550,6 @@ mod tests {
                 "hint {msg:?} names no modifier and is not a mouse hint"
             );
         }
-    }
-
-    #[test]
-    fn cowsay_section_parses() {
-        // Exactly the shape documented in docs/CONFIG.md.
-        let cfg = parse("[cowsay]\nenabled = false\nmessages = [\"a\", \"b\"]\n");
-        assert!(!cfg.cowsay.enabled);
-        assert_eq!(cfg.cowsay.messages, vec!["a".to_string(), "b".to_string()]);
-    }
-
-    #[test]
-    fn cowsay_partial_section_keeps_other_defaults() {
-        // `#[serde(default)]`: naming only `enabled` must not wipe the
-        // built-in hint list out from under the user.
-        let cfg = parse("[cowsay]\nenabled = false\n");
-        assert!(!cfg.cowsay.enabled);
-        assert!(!cfg.cowsay.messages.is_empty(), "messages were cleared");
-    }
-
-    #[test]
-    fn cowsay_is_adopted_on_live_reload() {
-        // Cowsay is read afresh every frame, so editing it in the config file
-        // must take effect without a restart, like the other appearance keys.
-        let mut cfg = Config::default();
-        let new = parse("[cowsay]\nenabled = false\nmessages = [\"z\"]\n");
-        cfg.adopt_appearance(new);
-        assert!(!cfg.cowsay.enabled, "cowsay.enabled not adopted");
-        assert_eq!(cfg.cowsay.messages, vec!["z".to_string()]);
     }
 
     #[test]
@@ -686,43 +570,12 @@ mod tests {
     }
 
     #[test]
-    fn focus_color_parses() {
-        let cfg = parse("focus_color = 36");
-        assert_eq!(cfg.palette().accent, CColor::Idx(36));
-        let cfg = parse("focus_color = \"#ff0000\"");
-        assert_eq!(cfg.palette().accent, CColor::Rgb(0xff, 0, 0));
-        let cfg = parse("focus_color = \"default\"");
-        assert_eq!(cfg.palette().accent, CColor::Default);
-    }
-
-    #[test]
-    fn skeleton_color_parses() {
-        // `skeleton` is no longer a key: the frames are the only look. A
-        // stale `skeleton = ...` in an old config is ignored, not an error.
-        let _ = parse("skeleton = false");
-        let cfg = parse("skeleton_color = \"#333333\"");
-        assert_eq!(cfg.palette().overlay, CColor::Rgb(0x33, 0x33, 0x33));
-    }
-
-    #[test]
-    fn background_index_parses() {
-        let cfg = parse("background = 235");
-        assert_eq!(cfg.palette().base, CColor::Idx(235));
-    }
-
-    #[test]
-    fn background_hex_parses() {
-        let cfg = parse("background = \"#1e1e2e\"");
-        assert_eq!(cfg.palette().base, CColor::Rgb(0x1e, 0x1e, 0x2e));
-        // Leading '#' is optional.
-        let cfg = parse("background = '1e1e2e'");
-        assert_eq!(cfg.palette().base, CColor::Rgb(0x1e, 0x1e, 0x2e));
-    }
-
-    #[test]
-    fn background_default_literal() {
-        let cfg = parse("background = \"default\"");
-        assert_eq!(cfg.palette().base, CColor::Default);
+    fn retired_legacy_color_keys_no_longer_override_the_theme() {
+        // Pre-theme configs used top-level color keys; the `[theme]` table
+        // owns this now. Stale keys are ignored, not fatal, and the preset
+        // wins outright.
+        let cfg = parse("background = 235\nfocus_color = 36\nskeleton_color = \"#333333\"\n");
+        assert_eq!(cfg.palette(), Palette::CATPPUCCIN_MOCHA);
     }
 
     #[test]
@@ -740,14 +593,12 @@ mod tests {
     }
 
     #[test]
-    fn legacy_flat_keys_beat_the_theme() {
-        // A pre-theme config that also names a preset: the explicit legacy
-        // keys must still win, so upgrading gwae never changes an
-        // existing user's colors.
+    fn retired_flat_color_keys_are_ignored_in_favor_of_the_theme() {
+        // Pre-theme configs named colors at the top level; the `[theme]`
+        // table owns this now. Stale keys parse (old files keep loading)
+        // but no longer override the preset.
         let cfg = parse("theme = \"nord\"\nbackground = \"#010203\"\n");
-        let p = cfg.palette();
-        assert_eq!(p.base, CColor::Rgb(1, 2, 3), "legacy background wins");
-        assert_eq!(p.accent, Palette::NORD.accent, "rest comes from the preset");
+        assert_eq!(cfg.palette(), Palette::NORD);
     }
 
     #[test]
@@ -766,13 +617,6 @@ mod tests {
     fn startup_panes_parses() {
         let cfg = parse("startup_panes = 2");
         assert_eq!(cfg.startup_panes, 2);
-    }
-
-    #[test]
-    fn sample_user_config() {
-        let cfg = parse("startup_panes = 2\nbackground = 235");
-        assert_eq!(cfg.startup_panes, 2);
-        assert_eq!(cfg.palette().base, CColor::Idx(235));
     }
 
     #[test]

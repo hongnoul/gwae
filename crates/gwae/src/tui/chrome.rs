@@ -65,10 +65,10 @@ pub(crate) fn draw_big_label(out: &mut [Cell], cols: u16, rect: Rect, label: &st
 }
 
 /// Fill the interior of an empty placeholder box: the big block-font cell
-/// identifier, and (room permitting) a cowsay hint under it.
+/// identifier, and (room permitting) one key hint under it.
 ///
 /// The identifier is the box's *addressing* affordance and always wins: the
-/// cow is only drawn when it fits underneath without crowding the label, so
+/// hint is only drawn when it fits underneath without crowding the label, so
 /// narrow or short boxes silently degrade to the label alone rather than to a
 /// clipped mess. Vertically the pair is centered as a unit, so the box doesn't
 /// look top-heavy.
@@ -79,57 +79,70 @@ pub(crate) fn draw_placeholder_contents(
     rect: Rect,
     label: &str,
     color: CColor,
-    cow: &crate::config::Cowsay,
-    // Position among the strip's empty boxes; `0` is pinned to the hint.
-    cow_ordinal: usize,
-    cell_labels: bool,
+    hint: Option<&str>,
 ) {
-    let art = if cow.enabled {
-        crate::cowsay::message_for(&cow.messages, cow_ordinal, cow_ordinal == 0)
-            .map(|m| crate::cowsay::cow_frame(m, rect.w.min(40)))
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    // 5 rows of block font, then a blank spacer row, then the art.
-    const LABEL_H_FULL: u16 = 5;
-    let label_h: u16 = if cell_labels { LABEL_H_FULL } else { 0 };
-    let art_h = art.len() as u16;
-    let fits = !art.is_empty() && rect.h >= label_h + 1 + art_h;
+    let hint_lines: Vec<String> = hint
+        .map(|m| wrap_hint(m, rect.w))
+        .unwrap_or_default();
+    // 5 rows of block font, then a blank spacer row, then the hint.
+    const LABEL_H: u16 = 5;
+    let hint_h = hint_lines.len() as u16;
+    let fits = !hint_lines.is_empty() && rect.h >= LABEL_H + 1 + hint_h;
     if !fits {
-        if cell_labels {
-            draw_big_label(out, cols, rect, label, color);
-        }
+        draw_big_label(out, cols, rect, label, color);
         return;
     }
-    let total = label_h + 1 + art_h;
+    let total = LABEL_H + 1 + hint_h;
     let top = rect.y + (rect.h - total) / 2;
-    if cell_labels {
-        draw_big_label(
-            out,
-            cols,
-            Rect {
-                x: rect.x,
-                y: top,
-                w: rect.w,
-                h: label_h,
-            },
-            label,
-            color,
-        );
-    }
+    draw_big_label(
+        out,
+        cols,
+        Rect {
+            x: rect.x,
+            y: top,
+            w: rect.w,
+            h: LABEL_H,
+        },
+        label,
+        color,
+    );
     draw_art(
         out,
         cols,
         Rect {
             x: rect.x,
-            y: top + label_h + 1,
+            y: top + LABEL_H + 1,
             w: rect.w,
-            h: art_h,
+            h: hint_h,
         },
-        &art,
+        &hint_lines,
         color,
     );
+}
+
+/// Word-wrap one hint line to the box width, centered by the caller.
+fn wrap_hint(text: &str, max_w: u16) -> Vec<String> {
+    if max_w < 8 {
+        return Vec::new();
+    }
+    let max = max_w as usize;
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        if cur.is_empty() {
+            cur.push_str(word);
+        } else if cur.chars().count() + 1 + word.chars().count() <= max {
+            cur.push(' ');
+            cur.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut cur));
+            cur.push_str(word);
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
 }
 
 /// Paint a block of pre-wrapped ASCII art centered in `rect`.
@@ -1304,7 +1317,7 @@ mod tests {
     use super::*;
     use super::super::input::smart_jump_target;
     use super::super::pty::PtyPane;
-    use super::super::render::tests::{no_cow, no_map, pal_accent, pal_of};
+    use super::super::render::tests::{no_hints, no_map, pal_accent, pal_of};
     use super::super::render::render_frame;
     use crate::theme::Palette;
     use gwae_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport};
@@ -2172,8 +2185,7 @@ mod tests {
                     0,
                     &pal_of(CColor::Default, red, white),
                     &no_map(),
-                    &no_cow(),
-                    true,
+                    no_hints(),
                     None,
                 );
                 let b = frame_boundaries(&out, cols, rows);

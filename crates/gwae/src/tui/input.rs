@@ -1262,12 +1262,12 @@ mod tests {
 
     #[test]
     fn only_native_paste_is_advertised_in_hud_and_cow() {
-        let hints = crate::binds::cowsay_hints();
+        let hints = crate::binds::key_hints();
         assert!(
             hints
                 .iter()
                 .any(|h| h.starts_with(crate::keys::paste_key())),
-            "cow hints must name native paste: {hints:?}"
+            "key hints must name native paste: {hints:?}"
         );
         let rows: Vec<_> = crate::binds::group(crate::binds::Group::Panes)
             .filter(|b| b.desc == "paste")

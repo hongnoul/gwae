@@ -605,7 +605,7 @@ mod tests {
     mod graphics_feed_tests {
         use super::*;
         use super::super::super::input::focused_pane;
-        use super::super::super::render::tests::{no_cow, no_map};
+        use super::super::super::render::tests::{no_hints, no_map};
         use super::super::super::render::{render_frame, render_frame_with_images};
         use crate::geometry::CellPixels;
         use crate::theme::Palette;
@@ -684,8 +684,7 @@ mod tests {
                 0,
                 &Palette::default(),
                 &no_map(),
-                &no_cow(),
-                false,
+                no_hints(),
                 None,
                 Some(&mut host),
             );
@@ -708,8 +707,7 @@ mod tests {
                 0,
                 &Palette::default(),
                 &no_map(),
-                &no_cow(),
-                false,
+                no_hints(),
                 None,
             );
             assert!(out

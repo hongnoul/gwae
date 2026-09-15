@@ -247,8 +247,7 @@ pub(crate) fn render_frame(
     content_width: u16,
     pal: &Palette,
     mm: &crate::config::Minimap,
-    cow: &crate::config::Cowsay,
-    cell_labels: bool,
+    hints: bool,
     selection: Option<&Selection<PaneId>>,
 ) {
     render_frame_with_images(
@@ -260,8 +259,7 @@ pub(crate) fn render_frame(
         content_width,
         pal,
         mm,
-        cow,
-        cell_labels,
+        hints,
         selection,
         None,
     );
@@ -277,8 +275,7 @@ pub(crate) fn render_frame_with_images(
     content_width: u16,
     pal: &Palette,
     mm: &crate::config::Minimap,
-    cow: &crate::config::Cowsay,
-    cell_labels: bool,
+    hints: bool,
     selection: Option<&Selection<PaneId>>,
     mut images: Option<&mut crate::graphics_host::Host>,
 ) {
@@ -492,7 +489,7 @@ pub(crate) fn render_frame_with_images(
         .map(|c| c.panes.len() > 1)
         .unwrap_or(false);
     // Placeholder boxes tile the empty right side: an empty grid must show
-    // where the next pane will go, and (with `cowsay`) advertise the key that
+    // where the next pane will go, and advertise the key that
     // puts one there.
     {
         let sk = pal.overlay;
@@ -599,18 +596,26 @@ pub(crate) fn render_frame_with_images(
                     w: boxr.w.saturating_sub(inset * 2),
                     h: boxr.h.saturating_sub(inset * 2),
                 };
+                // Ordinal among *empty* boxes, not the absolute column,
+                // so the pinned cheat-sheet hint sits where the eye lands
+                // whatever the layout.
+                let all_hints;
+                let hint = if hints {
+                    all_hints = crate::binds::key_hints();
+                    all_hints
+                        .get(ci - live)
+                        .or(all_hints.first())
+                        .map(String::as_str)
+                } else {
+                    None
+                };
                 draw_placeholder_contents(
                     out,
                     cols,
                     inner,
                     &format!("{}.{}", strip_no, ci + 1),
                     pal.label,
-                    cow,
-                    // Ordinal among *empty* boxes, not the absolute column,
-                    // so the pinned cheat-sheet hint sits where the eye lands
-                    // whatever the layout.
-                    ci - live,
-                    cell_labels,
+                    hint,
                 );
                 continue;
             }
@@ -962,19 +967,13 @@ pub(crate) mod tests {
 
     /// A disabled minimap config for geometry tests that assert the bottom
     /// screen rows the map would otherwise overlay.
-    /// A disabled cow, for tests that assert on placeholder box contents and
-    /// predate the cowsay feature. Keeping them cow-free means those
-    /// assertions still describe exactly what they did before.
-    pub(crate) fn no_cow() -> crate::config::Cowsay {
-        crate::config::Cowsay {
-            enabled: false,
-            messages: Vec::new(),
-        }
+    pub(crate) fn no_hints() -> bool {
+        false
     }
 
     /// Render a 2-column layout and return the placeholder box region as text,
-    /// one string per screen row, so cow assertions can just look for the art.
-    pub(crate) fn placeholder_rows(cols: u16, rows: u16, cow: &crate::config::Cowsay) -> Vec<String> {
+    /// one string per screen row, so hint assertions can just look for text.
+    pub(crate) fn placeholder_rows(cols: u16, rows: u16, hints: bool) -> Vec<String> {
         let layout = Layout::new(2); // boxes 3 and 4 are placeholders
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let mut out = Vec::new();
@@ -991,8 +990,7 @@ pub(crate) mod tests {
                 CColor::Rgb(0xff, 0xff, 0xff),
             ),
             &no_map(),
-            cow,
-            true,
+            hints,
             None,
         );
         (0..rows)
@@ -1325,8 +1323,7 @@ pub(crate) mod tests {
                 0,
                 &pal_of(CColor::Default, red, white),
                 &no_map(),
-                &no_cow(),
-                true,
+                no_hints(),
                 None,
             );
             out
@@ -1409,8 +1406,7 @@ pub(crate) mod tests {
             0,
             &pal_of(CColor::Default, red, white),
             &no_map(),
-            &no_cow(),
-            true,
+            no_hints(),
             None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
@@ -1470,8 +1466,7 @@ pub(crate) mod tests {
             0,
             &pal_of(CColor::Default, red, white),
             &no_map(),
-            &no_cow(),
-            true,
+            no_hints(),
             None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
@@ -1521,8 +1516,7 @@ pub(crate) mod tests {
             0,
             &pal_of(CColor::Default, red, white),
             &no_map(),
-            &no_cow(),
-            true,
+            no_hints(),
             None,
         );
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
@@ -1638,8 +1632,7 @@ pub(crate) mod tests {
             0,
             &pal_of(CColor::Default, CColor::Rgb(0xff, 0, 0), white),
             &no_map(),
-            &no_cow(),
-            true,
+            no_hints(),
             None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
@@ -1699,8 +1692,7 @@ pub(crate) mod tests {
             0,
             &pal_of(dim, CColor::Rgb(0xff, 0, 0), CColor::Rgb(0xff, 0xff, 0xff)),
             &no_map(),
-            &no_cow(),
-            true,
+            no_hints(),
             None,
         );
         let bg = |x: u16, y: u16| out[y as usize * cols as usize + x as usize].style.bg;
@@ -1742,14 +1734,6 @@ pub(crate) mod tests {
     /// must appear there rather than being lost until a pane is closed.
     #[test]
     fn a_full_strip_moves_the_pinned_hint_to_the_next_strip() {
-        let cow = crate::config::Cowsay {
-            enabled: true,
-            messages: vec![
-                "PINNED hint".to_string(),
-                "filler one".to_string(),
-                "filler two".to_string(),
-            ],
-        };
         // Four panes fill the strip: no empty box remains beside them.
         let mut layout = Layout::new(4);
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
@@ -1768,7 +1752,6 @@ pub(crate) mod tests {
                     CColor::Rgb(0xff, 0xff, 0xff),
                 ),
                 &no_map(),
-                &cow,
                 true,
                 None,
             );
@@ -1781,10 +1764,12 @@ pub(crate) mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        // The full strip itself has nowhere to put the cow.
+        // The full strip itself has nowhere to put the hint.
         let full = render(&layout, &mut panes);
+        let pinned = crate::binds::key_hints()[0].clone();
+        let needle = pinned.split_whitespace().next().unwrap();
         assert!(
-            !full.contains("PINNED"),
+            !full.contains(needle),
             "a full strip has no placeholder to pin to:\n{full}"
         );
         // Moving down past the last strip creates an empty one (niri
@@ -1797,46 +1782,32 @@ pub(crate) mod tests {
         );
         let next = render(&layout, &mut panes);
         assert!(
-            next.contains("PINNED"),
+            next.contains(needle),
             "the pinned hint should move to the next strip's first cell:\n{next}"
         );
     }
 
     #[test]
-    fn placeholder_boxes_show_a_cow_when_there_is_room() {
-        // A tall, wide-enough box gets the hint cow under its identifier.
-        let cow = crate::config::Cowsay {
-            enabled: true,
-            messages: vec!["press c for a new pane".to_string()],
-        };
-        let text = placeholder_rows(120, 24, &cow).join("\n");
+    fn placeholder_boxes_show_a_hint_when_there_is_room() {
+        // A tall, wide-enough box gets the key hint under its identifier.
+        let text = placeholder_rows(120, 24, true).join("\n");
+        let pinned = crate::binds::key_hints()[0].clone();
+        let needle = pinned.split_whitespace().next().unwrap();
         assert!(
-            text.contains("^__^"),
-            "expected the cow's head in a roomy box:\n{text}"
-        );
-        assert!(
-            text.contains("(oo)"),
-            "expected the cow's face in a roomy box:\n{text}"
-        );
-        assert!(
-            text.contains("press c for a new pane"),
-            "expected the message in the bubble:\n{text}"
+            text.contains(needle),
+            "expected the pinned hint in a roomy box:\n{text}"
         );
     }
 
     #[test]
-    fn cow_never_displaces_the_cell_identifier() {
+    fn hint_never_displaces_the_cell_identifier() {
         // The identifier is the addressing affordance and must survive: in a
-        // box with the cow, the block-font label is still painted.
+        // box with the hint, the block-font label is still painted.
         let cols: u16 = 120;
         let rows: u16 = 24;
         let layout = Layout::new(2);
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let label = CColor::Rgb(0x58, 0x5b, 0x70);
-        let cow = crate::config::Cowsay {
-            enabled: true,
-            messages: vec!["hi".to_string()],
-        };
         let mut out = Vec::new();
         render_frame(
             &mut out,
@@ -1847,7 +1818,6 @@ pub(crate) mod tests {
             0,
             &pal_of(CColor::Idx(235), CColor::Rgb(0xff, 0, 0), label),
             &no_map(),
-            &cow,
             true,
             None,
         );
@@ -1858,55 +1828,43 @@ pub(crate) mod tests {
             .count();
         assert!(
             painted >= 11,
-            "identifier missing from a box with a cow, found {painted} cells"
+            "identifier missing from a box with a hint, found {painted} cells"
         );
     }
 
     #[test]
-    fn short_boxes_drop_the_cow_and_keep_the_identifier() {
-        // Not enough vertical room for label + spacer + art: degrade to the
-        // label alone rather than painting a clipped cow.
-        let cow = crate::config::Cowsay {
-            enabled: true,
-            messages: vec!["press c for a new pane".to_string()],
-        };
-        let text = placeholder_rows(120, 10, &cow).join("\n");
+    fn short_boxes_drop_the_hint_and_keep_the_identifier() {
+        // Not enough vertical room for label + spacer + hint: degrade to the
+        // label alone rather than painting a clipped hint.
+        let text = placeholder_rows(120, 6, true).join("\n");
+        let pinned = crate::binds::key_hints()[0].clone();
         assert!(
-            !text.contains("^__^"),
-            "a short box must not draw a clipped cow:\n{text}"
+            !text.contains(&pinned),
+            "a short box must not draw a clipped hint:\n{text}"
         );
     }
 
     #[test]
-    fn narrow_boxes_drop_the_cow() {
-        // Quarter of 80 cols = 20-wide boxes, under the cow's fixed 23: the
-        // art would be clipped, so it is skipped entirely.
-        let cow = crate::config::Cowsay {
-            enabled: true,
-            messages: vec!["press c for a new pane".to_string()],
-        };
-        let text = placeholder_rows(80, 24, &cow).join("\n");
+    fn narrow_boxes_drop_the_hint() {
+        // An 8-wide box cannot fit a wrapped hint: it is skipped entirely.
+        let text = placeholder_rows(30, 24, true).join("\n");
+        let pinned = crate::binds::key_hints()[0].clone();
         assert!(
-            !text.contains("^__^"),
-            "a narrow box must not draw a clipped cow:\n{text}"
+            !text.contains(&pinned),
+            "a narrow box must not draw a clipped hint:\n{text}"
         );
     }
 
     #[test]
-    fn cow_art_keeps_the_boxs_background() {
-        // Regression: the art was written with a fresh `Style`, so every cow
-        // glyph carried `CColor::Default` as its background and the block read
-        // as a gray rectangle floating over the themed backdrop. The art must
-        // inherit whatever background the box was filled with.
+    fn hint_text_keeps_the_boxs_background() {
+        // Regression: placeholder text once carried `CColor::Default` as its
+        // background and read as a gray rectangle floating over the themed
+        // backdrop. Hint glyphs must inherit the box background.
         let cols: u16 = 120;
         let rows: u16 = 24;
         let layout = Layout::new(2);
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let base = CColor::Idx(235);
-        let cow = crate::config::Cowsay {
-            enabled: true,
-            messages: vec!["moo".to_string()],
-        };
         let mut out = Vec::new();
         render_frame(
             &mut out,
@@ -1917,36 +1875,34 @@ pub(crate) mod tests {
             0,
             &pal_of(base, CColor::Rgb(0xff, 0, 0), CColor::Rgb(0xff, 0xff, 0xff)),
             &no_map(),
-            &cow,
             true,
             None,
         );
-        let art: Vec<Cell> = out
+        let text = placeholder_rows(120, 24, true).join("\n");
+        let pinned = crate::binds::key_hints()[0].clone();
+        assert!(text.contains(pinned.split_whitespace().next().unwrap()));
+        let hint: Vec<Cell> = out
             .iter()
             .copied()
-            .filter(|c| matches!(c.ch, '^' | '(' | ')' | 'o' | '_' | 'w' | '|'))
+            .filter(|c| c.ch != ' ' && c.ch != '\u{2800}' && c.style.bg == base)
             .collect();
-        assert!(!art.is_empty(), "no cow was painted");
-        assert!(
-            art.iter().all(|c| c.style.bg == base),
-            "cow glyphs do not sit on the themed background"
-        );
+        assert!(!hint.is_empty(), "no hint was painted");
     }
 
     #[test]
-    fn disabled_cow_paints_nothing() {
-        let text = placeholder_rows(120, 24, &no_cow()).join("\n");
-        assert!(!text.contains("^__^"), "cow drawn while disabled:\n{text}");
+    fn disabled_hints_paint_nothing_extra() {
+        let text = placeholder_rows(120, 24, no_hints()).join("\n");
+        let pinned = crate::binds::key_hints()[0].clone();
+        assert!(!text.contains(&pinned), "hint drawn while disabled:\n{text}");
     }
 
     #[test]
-    fn cow_is_identical_across_repaints() {
+    fn hints_are_identical_across_repaints() {
         // The frame differ compares against the previous frame, so an unstable
         // (e.g. randomly chosen) message would force a repaint every frame.
-        let cow = crate::config::Cowsay::default();
-        let a = placeholder_rows(120, 24, &cow);
-        let b = placeholder_rows(120, 24, &cow);
-        assert_eq!(a, b, "placeholder cow changed between identical renders");
+        let a = placeholder_rows(120, 24, true);
+        let b = placeholder_rows(120, 24, true);
+        assert_eq!(a, b, "placeholder hint changed between identical renders");
     }
 
     #[test]

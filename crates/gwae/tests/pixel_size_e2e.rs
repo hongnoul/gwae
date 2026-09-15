@@ -288,8 +288,8 @@ impl Session {
             dir.join("gwae/gwae.toml"),
             format!(
                 "default_column_width = \"quarter\"\nstartup_panes = {panes}\ncontent_width = 0\n\
-                 center_focus = false\nkeep_awake = false\ncell_labels = false\n\
-                 [minimap]\nshow = false\n[cowsay]\nenabled = false\n\
+                 keep_awake = false\n\
+                 [minimap]\nshow = false\n\
                  [update]\ncheck = false\n"
             ),
         )

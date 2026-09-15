@@ -8,7 +8,6 @@ mod agent;
 mod binds;
 mod cli;
 mod config;
-mod cowsay;
 mod geometry;
 mod graphics;
 mod graphics_diacritics;

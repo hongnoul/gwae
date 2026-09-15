@@ -1517,7 +1517,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // the same plan, so a click can never land on a tile the paint put
         // somewhere else.
         hud_plan = (show_center_minimap && !show_hud)
-            .then(|| plan_center_minimap(cols, rows, &layout, &cfg.minimap, cfg.cowsay.enabled))
+            .then(|| plan_center_minimap(cols, rows, &layout, &cfg.minimap, true))
             .flatten();
         if host_kitty_graphics && host_images.refresh_due() {
             dirty = true;
@@ -1537,8 +1537,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 cfg.content_width,
                 &pal,
                 &cfg.minimap,
-                &cfg.cowsay,
-                cfg.cell_labels,
+                true,
                 selection.as_ref(),
                 host_kitty_graphics.then_some(&mut host_images),
             );
@@ -1659,11 +1658,7 @@ fn content_scroll_reveals_overflow_e2e() {
         240,
         &Palette::default(),
         &crate::config::Minimap::default(),
-        &crate::config::Cowsay {
-            enabled: false,
-            messages: Vec::new(),
-        },
-        true,
+        false,
         None,
     );
     // Content is inset 1 cell inside the column frame: grid (x,0) is at
@@ -1684,11 +1679,7 @@ fn content_scroll_reveals_overflow_e2e() {
         240,
         &Palette::default(),
         &crate::config::Minimap::default(),
-        &crate::config::Cowsay {
-            enabled: false,
-            messages: Vec::new(),
-        },
-        true,
+        false,
         None,
     );
     assert_eq!(at(&out, 0), '1'); // content col 60
@@ -1706,11 +1697,7 @@ fn content_scroll_reveals_overflow_e2e() {
         240,
         &Palette::default(),
         &crate::config::Minimap::default(),
-        &crate::config::Cowsay {
-            enabled: false,
-            messages: Vec::new(),
-        },
-        true,
+        false,
         None,
     );
     assert_eq!(at(&out, 0), '1'); // content col 200
@@ -1794,11 +1781,7 @@ fn four_quarter_panes_render_to_screen_edge_e2e() {
         0,
         &Palette::default(),
         &crate::config::Minimap::default(),
-        &crate::config::Cowsay {
-            enabled: false,
-            messages: Vec::new(),
-        },
-        true,
+        false,
         None,
     );
     // The first content row shows each pane's letter across its column's
@@ -1975,11 +1958,7 @@ fn identical_grids_paint_identically_across_scroll_states_e2e() {
             0,
             &Palette::default(),
             &crate::config::Minimap::default(),
-            &crate::config::Cowsay {
-                enabled: false,
-                messages: Vec::new(),
-            },
-            true,
+            false,
             None,
         );
         let y = 2usize;

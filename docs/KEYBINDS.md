@@ -15,7 +15,7 @@ Three places know about keys, and one of them is the boss:
 
 `binds.rs` is not a registry the dispatcher obeys; it is a claim the dispatcher
 is tested against (`tui.rs::advertised_bindings_match_the_dispatcher`). The
-cheat-sheet HUD, the cowsay hints in empty boxes, and (by another test) the
+cheat-sheet HUD, the key hints in empty boxes, and (by another test) the
 README table all render from `BINDS`, so documentation cannot drift from code.
 That property is the most valuable thing in this area and **any keybinding
 config that breaks it is a regression**, however configurable it is.
@@ -143,8 +143,8 @@ configurable, "kills the focused pane" is a fact about `KillPane`, not about
 struct CommandInfo { cmd: Command, group: Group, desc: &'static str, hint: &'static str }
 ```
 
-The cow hint becomes `format!("{} {}", chord, info.hint)` over the *resolved*
-keymap. `cowsay_hints()` keeps its signature but takes a `&Keymap`. The
+The key hint becomes `format!("{} {}", chord, info.hint)` over the *resolved*
+keymap. `key_hints()` keeps its signature but takes a `&Keymap`. The
 bijectivity test moves from "one hint per binding" to "one hint per command",
 which is stronger: a new verb cannot ship without a description, and a rebound
 verb explains itself with the user's own key.

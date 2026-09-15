@@ -95,8 +95,8 @@ impl Session {
         std::fs::write(
             dir.join("gwae/gwae.toml"),
             "startup_panes = 1\ndefault_agent = \"jcode\"\ndefault_column_width = \"quarter\"\ncontent_width = 0\n\
-             center_focus = false\nkeep_awake = false\ncell_labels = false\n\
-             [minimap]\nshow = false\n[cowsay]\nenabled = false\n\
+             keep_awake = false\n\
+             [minimap]\nshow = false\n\
              [update]\ncheck = false\n",
         )
         .expect("write config");

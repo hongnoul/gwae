@@ -119,7 +119,7 @@ fn widen(s: &mut Session, n: usize) {
 fn two_digits_address_a_column_past_nine() {
     // 12 columns total, i.e. one that no single-digit chord could ever reach.
     // The focused tile is identified by its exact accent background.
-    let mut s = Session::start("[cowsay]\nenabled = false\n");
+    let mut s = Session::start("");
     let _ = s.drain();
     widen(&mut s, 11);
 
@@ -150,7 +150,7 @@ fn two_digits_address_a_column_past_nine() {
 fn digits_typed_slowly_do_not_run_together() {
     // The idle timeout is what makes a lone `⌥+2` still work, so two digits
     // separated by a long pause must be two separate jumps, not column 12.
-    let mut s = Session::start("[cowsay]\nenabled = false\n");
+    let mut s = Session::start("");
     let _ = s.drain();
     widen(&mut s, 11);
 
@@ -169,7 +169,7 @@ fn digits_typed_slowly_do_not_run_together() {
 fn a_single_digit_still_jumps_on_its_own() {
     // The common case must not regress into "type a number and wait": one
     // digit followed by a pause commits exactly like it always did.
-    let mut s = Session::start("[cowsay]\nenabled = false\n");
+    let mut s = Session::start("");
     let _ = s.drain();
     widen(&mut s, 3);
 
