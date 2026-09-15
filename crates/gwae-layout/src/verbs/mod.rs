@@ -40,12 +40,10 @@ pub enum Action {
     /// Spawn an agent on a brand-new strip below the focused one.
     SpawnAgentRow,
     ScrollViewport(i32),
-    JumpToColumn(usize),
     /// Jump focus directly to a pane anywhere in the grid (smart-jump: the
     /// caller picks the pane, e.g. the next one whose status needs attention).
     FocusPane(PaneId),
 }
-
 
 impl Layout {
     /// Apply a verb, keeping the layout consistent, and return the new
@@ -75,7 +73,6 @@ impl Layout {
             Action::SpawnAgent => Ok(self.apply_new_column(viewport, follow)),
             Action::SpawnAgentRow => Ok(self.apply_new_row(viewport, follow)),
             Action::ScrollViewport(d) => Ok(self.apply_scroll(d, viewport)),
-            Action::JumpToColumn(n) => self.apply_jump(n, viewport, follow),
             Action::FocusPane(pid) => self.apply_focus_pane(pid, viewport, follow),
         }
     }

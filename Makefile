@@ -7,19 +7,11 @@ CARGO  ?= cargo
 CONFIG_DIR  := $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/gwae,$(HOME)/.config/gwae)
 CONFIG_FILE := $(CONFIG_DIR)/gwae.toml
 
-.PHONY: build install install-keep reset-config check test clean dev
+.PHONY: build install install-keep reset-config
 
 ## Build the optimised release binary.
 build:
 	$(CARGO) build --release
-
-## npm run dev equivalent: one command, async hot reload.
-## Builds debug (fast), starts watcher in background, and runs gwae
-## with GWAE_DEV_RELOAD=1 so saving a file swaps the binary in place
-## without losing any pane (same pid, same PTYs, jcode keeps running).
-##   make dev  # debug, ~5s rebuild
-dev:
-	@GWAE_PROFILE=debug ./scripts/hot.sh --run
 
 ## Install the release binary into the first writable `bin` dir on PATH
 ## (falling back to ~/.local/bin), so `gwae` is runnable immediately even
@@ -74,14 +66,3 @@ reset-config:
 	else \
 		echo "no preferences at $(CONFIG_FILE); already a first run"; \
 	fi
-
-## Lint the whole workspace.
-check:
-	$(CARGO) clippy --workspace --all-targets -- -D warnings
-
-## Run all workspace tests.
-test:
-	$(CARGO) test --workspace
-
-clean:
-	$(CARGO) clean

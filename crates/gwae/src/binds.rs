@@ -203,23 +203,13 @@ pub const BINDS: &[Bind] = &[
     },
     Bind {
         trigger: Trigger::Chord(']'),
-        hint: "scrolls the strip right",
         glyph: None,
         group: Group::Navigate,
         desc: "view right",
         effect: Effect::Scroll(200),
     },
     Bind {
-        trigger: Trigger::ModProse("1-9"),
-        hint: "jumps straight to a column",
-        glyph: None,
-        group: Group::Navigate,
-        desc: "jump column",
-        effect: Effect::Unverifiable,
-    },
-    Bind {
         trigger: Trigger::ModProse("↑/↓"),
-        hint: "reads back through this pane's history line by line",
         glyph: None,
         group: Group::Navigate,
         desc: "scrollback",

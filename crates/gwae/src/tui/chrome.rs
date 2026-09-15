@@ -203,9 +203,8 @@ pub(crate) fn status_glyph_for(s: PaneStatus) -> char {
 }
 
 /// Everything the ⌥-hold overlay knows that the layout alone cannot tell it:
-/// what each pane *is* (its OSC 0/2 title), how long it has been silent, where
-/// `⌥+g` would take you, and which column an in-flight `⌥+<number>` is
-/// addressing.
+/// what each pane *is* (its OSC 0/2 title), how long it has been silent, and
+/// where `⌥+g` would take you.
 ///
 /// It is a plain data bag built at the call site from the live PTY panes so
 /// the drawing code stays a pure function of the frame's facts, and so every
@@ -221,15 +220,13 @@ pub(crate) struct HudFacts {
     pub(crate) quiet: HashMap<PaneId, Duration>,
     /// The pane `⌥+g` would jump to right now, if any.
     pub(crate) jump_target: Option<PaneId>,
-    /// The 1-based column an un-committed `⌥+<number>` is pointing at.
-    pub(crate) pending_jump: Option<usize>,
-    /// Whether the `caffeinate` assertion is held: stamps the coffee badge
-    /// onto the HUD frame so the state reads without leaving the overlay.
+    /// Whether the `caffeinate` assertion is held: stamps the keep-awake
+    /// badge onto the HUD frame so the state reads without leaving the overlay.
     pub(crate) keep_awake: bool,
 }
 
-/// Stamp [`crate::keepawake::COFFEE_BADGE`] onto the top frame row of `rect`,
-/// right-aligned inside the frame. No-op when the panel is too narrow to
+/// Stamp [`crate::keepawake::KEEP_AWAKE_BADGE`] onto the top frame row of `rect`,
+/// centered inside the frame. No-op when the panel is too narrow to
 /// hold the badge, so small viewports degrade to the plain frame rather than
 /// a clipped fragment.
 pub(crate) fn stamp_keep_awake_badge(
@@ -651,9 +648,8 @@ pub(crate) fn hud_pane_at(plan: &HudPlan, x: u16, y: u16) -> Option<PaneId> {
 ///
 /// One row per strip, one tile per pane, tile width proportional to the
 /// column's real width share. Spatial-only: each tile shows only the column
-/// address `⌥+<n>` and its status color/glyph, with the pane `⌥+g` would
-/// take you to marked `▸` and the in-flight number highlighted as you type.
-/// Titles and ages are omitted — the map shows *where* panes are, not *what*
+/// address and its status color/glyph, with the pane `⌥+g` would
+/// take you to marked `▸`. Titles and ages are omitted — the map shows *where* panes are, not *what*
 /// they are (which lives in the pane chrome itself). The strip's visible
 /// column span is still underscored.
 ///
@@ -771,33 +767,16 @@ pub(crate) fn paint_center_minimap(
         if tile.y as usize >= plan.row_y.len() {
             continue;
         }
-        // While a `⌥+<number>` is being typed, the tiles it does not address
-        // step back so the target reads instantly.
-        let addressed = facts
-            .pending_jump
-            .map(|n| n == tile.column + 1)
-            .unwrap_or(true);
         let bgc = if tile.focus_col {
             focus_color
-        } else if !addressed {
-            pal.overlay
         } else {
             status_bg(tile.status)
-        };
-        let bgc = if facts.pending_jump.is_some() && addressed && !tile.focus_col {
-            // The pending target is lit at full status intensity: the point
-            // of the preview is that it stands out from the dimmed rest.
-            status_fg(tile.status)
-        } else {
-            bgc
         };
         let neutral = !matches!(bgc, CColor::Rgb(..));
         let (fg, bgc) = tile_colors(bgc, pal);
         let gy = plan.row_y[tile.y as usize] as usize;
         let glyph = status_glyph(tile.status);
         let target = facts.jump_target == Some(tile.pane);
-        // Columns past 9 are addressable with `⌥+1 0`, so print both digits
-        // when the tile can hold them rather than falling back to `+`.
         let addr = if tile.pane_idx == 0 {
             format!("{}", tile.column + 1)
         } else {
@@ -807,8 +786,7 @@ pub(crate) fn paint_center_minimap(
         for (dx, ch) in text.chars().enumerate() {
             let x = map_ox + tile.x as usize + dx;
             // Bold the leading `glyph + address` signature: it is what the
-            // eye lands on when scanning a row of abutting tiles, and it is
-            // what the `⌥+<n>` keys act on.
+            // eye lands on when scanning a row of abutting tiles.
             let sig = dx <= addr.chars().count();
             let ink = if neutral && ch == glyph {
                 status_fg(tile.status)
@@ -818,8 +796,7 @@ pub(crate) fn paint_center_minimap(
             put(out, x as u16, gy as u16, ch, ink, bgc, sig);
             if neutral {
                 if let Some(cell) = out.get_mut(gy * cols as usize + x) {
-                    cell.style.underline =
-                        tile.focus_col || (facts.pending_jump.is_some() && addressed);
+                    cell.style.underline = tile.focus_col;
                 }
             }
         }
@@ -1280,9 +1257,8 @@ pub(crate) fn draw_minimap(
         let glyph = status_glyph(tile.status);
         for dx in 0..tile.w {
             let x = ox + tile.x + dx;
-            // First cell: the pane's column digit (what ⌥+1..9 jumps to);
-            // stacked sub-panes past the first repeat the status glyph
-            // instead. Last cell of a wide tile: the status glyph.
+            // First cell: the pane's column digit; stacked sub-panes past the
+            // first repeat the status glyph instead. Last cell of a wide tile: the status glyph.
             let ch = if dx == 0 {
                 if tile.pane_idx == 0 {
                     char::from_digit(tile.column as u32 + 1, 10).unwrap_or('+')

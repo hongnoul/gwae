@@ -49,35 +49,42 @@ mod input;
 pub(crate) use config_io::{perform_reload, write_harness_dir, write_keep_awake};
 pub(crate) use input::{
     focused_pane, handle_key, is_alt_modifier, is_harness_scroll_chord, key_bytes,
-    layout_pane_count, picker_paste_query, paste_note,
-    smart_jump_target, Cmd, JumpAccum,
+    layout_pane_count, paste_note, picker_paste_query, smart_jump_target, Cmd,
 };
 
 mod platform;
 mod pty;
 mod term;
 
+pub(crate) use platform::{
+    host_supports_kitty_graphics, is_ghostty, macos_option_held, native_modifier_poll_enabled,
+};
 pub use pty::PtyPane;
-pub(crate) use pty::{adopt_pane, descendants, feed_pane_output, kill_pane_tree, nudge_repaint, spawn_pane, sync_panes, PaneMsg, pane_grid_sizes};
-pub(crate) use platform::{host_supports_kitty_graphics, is_ghostty, macos_option_held, native_modifier_poll_enabled};
-pub(crate) use term::{first_line, input_poll_interval, re_enter_terminal, refresh_size, restore_terminal, BINARY_SETTLE, CONFIG_POLL, NOTE_LINGER, SIZE_POLL};
+pub(crate) use pty::{
+    adopt_pane, descendants, feed_pane_output, kill_pane_tree, nudge_repaint, pane_grid_sizes,
+    spawn_pane, sync_panes, PaneMsg,
+};
+pub(crate) use term::{
+    first_line, input_poll_interval, re_enter_terminal, refresh_size, restore_terminal,
+    BINARY_SETTLE, CONFIG_POLL, NOTE_LINGER, SIZE_POLL,
+};
 
 mod diff;
 mod mouse;
 
 pub(crate) use diff::paint;
 use mouse::{
-    MouseRole, clamped_pane_point, mouse_role, pane_at, sgr_mouse_report,
-    wheel_alt_screen_keys, wheel_scroll_delta, WHEEL_SCROLL_LINES,
+    clamped_pane_point, mouse_role, pane_at, sgr_mouse_report, wheel_alt_screen_keys,
+    wheel_scroll_delta, MouseRole, WHEEL_SCROLL_LINES,
 };
 
 mod osc;
 mod shell;
 mod title;
 
-pub use shell::shell_split;
 use osc::scan_osc133;
 use shell::agent_gateway_cmd;
+pub use shell::shell_split;
 use title::emit_title;
 
 /// Rectangle in cells.

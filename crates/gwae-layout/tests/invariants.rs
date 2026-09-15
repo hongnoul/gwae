@@ -736,18 +736,6 @@ fn column_focus_persists_across_strips() {
 }
 
 #[test]
-fn column_focus_survives_a_jump_and_neighbor_edits() {
-    let mut layout = Layout::default();
-    let _ = layout.apply(Action::SplitBelow, view(), follow());
-    let deep = layout.focused_pane_id().unwrap();
-    let _ = layout.apply(Action::JumpToColumn(2), view(), follow());
-    // Editing another column must not disturb this one's memory.
-    let _ = layout.apply(Action::SplitBelow, view(), follow());
-    let _ = layout.apply(Action::JumpToColumn(0), view(), follow());
-    assert_eq!(layout.focused_pane_id(), Some(deep));
-}
-
-#[test]
 fn column_focus_tracks_panes_removed_above_it() {
     // Closing a pane above the remembered one shifts every later index down;
     // memory must follow the same pane rather than drift up a slot.

@@ -92,14 +92,6 @@ pub(crate) enum Cmd {
     /// Resolved in the main loop (which owns the guard and the config), not
     /// here.
     ToggleKeepAwake,
-    /// One digit of a column jump (`⌥+1`, or `⌥+1 2` while Option stays down).
-    ///
-    /// Deliberately *not* resolved to a column here: a single keypress is
-    /// ambiguous, because `⌥+1` may be the whole address or the first half of
-    /// `⌥+12`. Only the main loop knows when the chord ends (Option released,
-    /// or the idle timeout), so it owns the accumulator; this just reports
-    /// "digit N was typed as part of a jump".
-    JumpDigit(u32),
     Quit,
     None,
 }
@@ -107,91 +99,16 @@ pub(crate) enum Cmd {
 impl Cmd {
     /// Whether this command may fire on key auto-repeat.
     ///
-    /// Destructive verbs (kill, quit) and jump digits never repeat: holding
-    /// ⌥+q must not kill panes faster than the HUD can repaint them, a held
-    /// quit chord must not confirm its own disclaimer, and repeated digits
-    /// would corrupt a multi-digit column address. Everything else (focus
-    /// moves, scrolls, plain input) repeats as before.
+    /// Destructive verbs (kill, quit) never repeat: holding
+    /// ⌥+q must not kill panes faster than the HUD can repaint them, and
+    /// a held quit chord must not confirm its own disclaimer.
+    /// Everything else (focus moves, scrolls, plain input) repeats as before.
     pub(crate) fn is_repeatable(&self) -> bool {
         match self {
             Cmd::Act(Action::KillPane) | Cmd::Act(Action::ClosePane(_)) => false,
-            Cmd::Quit | Cmd::JumpDigit(_) | Cmd::ToggleHud => false,
+            Cmd::Quit | Cmd::ToggleHud => false,
             _ => true,
         }
-    }
-}
-
-/// Accumulates the digits of a column jump typed while the modifier is held.
-///
-/// `⌥+1..9` used to jump on the keystroke itself, which made columns 10 and
-/// up unreachable by address: there is no `⌥+10` key. Holding Option is
-/// already a mode (it reveals the HUD/minimap), so the natural fix is to let
-/// that mode collect a *number* rather than a single digit and commit it when
-/// the mode ends.
-///
-/// Commit happens on whichever comes first:
-/// * Option released (the precise signal, available under the Kitty keyboard
-///   protocol, which gwae requests at startup);
-/// * [`Self::TIMEOUT`] of no further digits (the fallback for terminals that
-///   never report a bare release, where the accumulator would otherwise hang
-///   forever and swallow the jump);
-/// * any other chord, which ends the number the same way a non-digit ends a
-///   count in vi.
-///
-/// Kept free of terminal types so the whole state machine is unit testable.
-#[derive(Debug, Default)]
-pub(crate) struct JumpAccum {
-    /// The 1-based column number typed so far, if any.
-    value: Option<usize>,
-    /// When an un-committed number goes stale. Refreshed by every digit.
-    deadline: Option<Instant>,
-}
-
-impl JumpAccum {
-    /// How long a pending number survives without a release event. Long
-    /// enough to type a second digit deliberately, short enough that a
-    /// terminal without release reporting still feels immediate.
-    const TIMEOUT: Duration = Duration::from_millis(500);
-
-    /// Absurd addresses are refused rather than accumulated forever: a jump is
-    /// clamped to the columns that exist anyway, and this keeps `value` from
-    /// overflowing when a key repeat spams digits.
-    const MAX: usize = 999;
-
-    /// Record one digit. `0` extends an existing number (`⌥+1 0` -> 10) but
-    /// starts nothing on its own, since there is no column 0.
-    pub(crate) fn push(&mut self, d: u32, now: Instant) {
-        let d = d as usize;
-        let next = match self.value {
-            Some(v) => v * 10 + d,
-            None if d == 0 => return,
-            None => d,
-        };
-        if next > Self::MAX {
-            return;
-        }
-        self.value = Some(next);
-        self.deadline = Some(now + Self::TIMEOUT);
-    }
-
-    /// Take the accumulated number as a 0-based column index, clearing state.
-    pub(crate) fn take(&mut self) -> Option<usize> {
-        self.deadline = None;
-        self.value.take().map(|v| v.saturating_sub(1))
-    }
-
-    /// Commit if the idle timeout has passed. Returns the column index to
-    /// focus, if any.
-    pub(crate) fn take_if_expired(&mut self, now: Instant) -> Option<usize> {
-        match self.deadline {
-            Some(t) if now >= t => self.take(),
-            _ => None,
-        }
-    }
-
-    /// Whether a number is being typed right now (drives the HUD hint).
-    pub(crate) fn pending(&self) -> Option<usize> {
-        self.value
     }
 }
 
@@ -451,9 +368,6 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             'd' => return Some(Cmd::DirPick),
             'w' => return Some(Cmd::ToggleKeepAwake),
             '/' | '?' => return Some(Cmd::ToggleHud),
-            _ if c.is_ascii_digit() => {
-                return Some(Cmd::JumpDigit(c.to_digit(10).unwrap_or(1)));
-            }
             _ => None,
         };
         if let Some(a) = act {
@@ -507,7 +421,6 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     // Alt+digit/punct not listed above: check the original code directly
     // since those don't need case folding.
     match ev.code {
-        Char(c) if c.is_ascii_digit() => return Some(Cmd::JumpDigit(c.to_digit(10).unwrap_or(1))),
         Char('[') => return Some(Cmd::Scroll(-200)),
         Char(']') => return Some(Cmd::Scroll(200)),
         _ => {}
@@ -898,7 +811,6 @@ mod tests {
             Cmd::Act(Action::KillPane),
             Cmd::Act(Action::ClosePane(1)),
             Cmd::Quit,
-            Cmd::JumpDigit(1),
             Cmd::ToggleHud,
         ] {
             assert!(!cmd.is_repeatable(), "{cmd:?} must not repeat");
@@ -1334,84 +1246,18 @@ mod tests {
     }
 
     #[test]
-    fn alt_digit_is_a_jump_digit_not_an_immediate_jump() {
-        // The regression this whole feature exists for: a digit alone can't
-        // decide the column, because it may be the first of two.
-        let ev = KeyEvent::new(KeyCode::Char('4'), KeyModifiers::ALT);
-        assert_eq!(handle_key(&ev), Some(Cmd::JumpDigit(4)));
-        // Every digit decodes, including the ones that used to be unreachable
-        // as a *second* digit.
+    fn alt_digits_are_forwarded_to_the_pane() {
+        // Column jump is gone: Option+digits belong to the child (readline
+        // word ops, vim counts) and must arrive as Meta ESC+digit.
         for d in 0..=9u32 {
             let c = char::from_digit(d, 10).unwrap();
             let ev = KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT);
-            assert_eq!(handle_key(&ev), Some(Cmd::JumpDigit(d)), "digit {d}");
+            assert_eq!(
+                handle_key(&ev),
+                Some(Cmd::Input(key_bytes(&ev))),
+                "digit {d} should be forwarded, not claimed"
+            );
         }
-    }
-
-    #[test]
-    fn jump_accum_builds_multi_digit_columns() {
-        let t = Instant::now();
-        let mut j = JumpAccum::default();
-        j.push(1, t);
-        j.push(2, t);
-        // 1-based typing, 0-based layout index: column 12 is index 11.
-        assert_eq!(j.take(), Some(11));
-        // Taking clears, so a second commit can't re-jump.
-        assert_eq!(j.take(), None);
-    }
-
-    #[test]
-    fn jump_accum_ignores_a_leading_zero() {
-        // There is no column 0, so a bare `0` must not start a number (and
-        // must not commit a jump to index -1 on release).
-        let t = Instant::now();
-        let mut j = JumpAccum::default();
-        j.push(0, t);
-        assert_eq!(j.pending(), None);
-        // But zero still extends a real number: 1 then 0 is column 10.
-        j.push(1, t);
-        j.push(0, t);
-        assert_eq!(j.take(), Some(9));
-    }
-
-    #[test]
-    fn jump_accum_refuses_absurd_numbers() {
-        // Key repeat must not overflow the accumulator into a nonsense index.
-        let t = Instant::now();
-        let mut j = JumpAccum::default();
-        for _ in 0..12 {
-            j.push(9, t);
-        }
-        assert_eq!(j.pending(), Some(999), "clamped at MAX, not overflowed");
-    }
-
-    #[test]
-    fn jump_accum_expires_without_a_release_event() {
-        // Terminals without the Kitty protocol never report Option release,
-        // so the idle timeout is the only thing that commits the jump.
-        let t = Instant::now();
-        let mut j = JumpAccum::default();
-        j.push(3, t);
-        assert_eq!(j.take_if_expired(t), None, "still being typed");
-        assert_eq!(
-            j.take_if_expired(t + JumpAccum::TIMEOUT),
-            Some(2),
-            "commits once idle"
-        );
-        assert_eq!(j.pending(), None);
-    }
-
-    #[test]
-    fn jump_accum_timeout_is_refreshed_by_each_digit() {
-        // Typing the second digit slowly must not split `12` into `1` then
-        // `2`; every digit restarts the idle window.
-        let t = Instant::now();
-        let mut j = JumpAccum::default();
-        j.push(1, t);
-        let late = t + JumpAccum::TIMEOUT - Duration::from_millis(1);
-        j.push(2, late);
-        assert_eq!(j.take_if_expired(t + JumpAccum::TIMEOUT), None);
-        assert_eq!(j.take_if_expired(late + JumpAccum::TIMEOUT), Some(11));
     }
 
     #[test]

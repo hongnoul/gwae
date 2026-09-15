@@ -92,7 +92,7 @@ pub struct Keymap {
 
 `handle_key` becomes: normalize to a `Chord`, look it up, and on a miss do
 exactly what it does today (arrows/scrollback/pane input). The parameterized
-and stateful commands (`JumpDigit`, `ScrollBack`, `Input`) stay in code; the
+and stateful commands (`ScrollBack`, `Input`) stay in code; the
 keymap covers the named verbs.
 
 Lookup should be written as `lookup(&[Chord]) -> Match::{Exact, Prefix, None}`

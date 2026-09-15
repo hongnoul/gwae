@@ -56,7 +56,6 @@ go to gwae, even with an agent focused.
 | cycle-width | `⌥+r` | cycle focused preset width 1/3 → 1/2 → 1/4 |
 | toggle-full-width | `⌥+f` | toggle focused column between full width and 1/4 |
 | consume / expel | `⌥+,` / `⌥+.` | stack a neighbor / push pane out |
-| jump N | `⌥+1..9` | jump to Nth column |
 | smart-jump | `⌥+g` | jump to next agent that needs you (OSC 133) |
 | find | *(unassigned)* | fuzzy text search over panes. **Not implemented; `⌥+f` is taken by toggle-full-width** (see `binds.rs`, which is verified against the dispatcher). A key must be chosen before this ships |
 | kill-pane | `⌥+x` | close pane; compact columns/rows; an emptied strip is dropped and focus shifts up |

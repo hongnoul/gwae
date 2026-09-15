@@ -274,8 +274,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         native_modifier_poll_enabled(std::env::var("GWAE_NO_NATIVE_MODIFIERS").ok().as_deref());
     let mut bare_alt_held = false;
     let mut chord_alt_until: Option<Instant> = None;
-    // Digits of an in-flight `⌥+<number>` column jump. See `JumpAccum`.
-    let mut jump = JumpAccum::default();
     let mut last_alt_held = false;
     // Startup-only cheat-sheet HUD: shown once at init, dismissed on first key.
     let mut hud_active: bool = true;
@@ -634,13 +632,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             }
                             continue;
                         }
-                        // Like typed input, finish any pending column jump
-                        // before selecting the paste destination.
-                        if let Some(n) = jump.take() {
-                            let v = Viewport::new(cols);
-                            let f = FollowScroll::default();
-                            let _ = layout.apply(Action::JumpToColumn(n), v, f);
-                        }
                         let anchor = focused_pane_views_with_chrome(
                             &layout,
                             cols,
@@ -845,16 +836,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         if is_harness_scroll_chord(&ke)
                             && focused_pane(&layout).is_some_and(|pid| agent_panes.contains(&pid))
                         {
-                            // A non-digit key ends the vi-style count like any
-                            // other command below: `⌥+1 2` then this chord
-                            // lands on column 12 first, instead of leaving a
-                            // stale jump armed behind the forwarded keystroke.
-                            if let Some(n) = jump.take() {
-                                let v = Viewport::new(cols);
-                                let f = FollowScroll::default();
-                                let _ = layout.apply(Action::JumpToColumn(n), v, f);
-                                dirty = true;
-                            }
                             if let Some(pid) = focused_pane(&layout) {
                                 if let Some(p) = panes.get_mut(&pid) {
                                     if p.grid.scroll_to_bottom() {
@@ -867,34 +848,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             continue;
                         }
                         if let Some(cmd) = handle_key(&ke) {
-                            // Destructive and addressing commands never fire on
-                            // auto-repeat: holding ⌥+q must not kill panes
-                            // faster than the HUD can repaint them, and a held
-                            // quit or toggle must not confirm or flicker
-                            // itself. The repeat still refreshes the hold
-                            // window above, so the dashboard stays up while the
-                            // key is down — it just stops acting on it.
+                            // Destructive commands never fire on auto-repeat:
+                            // holding ⌥+q must not kill panes faster than the
+                            // HUD can repaint them, and a held quit or toggle
+                            // must not confirm or flicker itself. The repeat
+                            // still refreshes the hold window above, so the
+                            // dashboard stays up while the key is down — it
+                            // just stops acting on it.
                             if ke.kind == KeyEventKind::Repeat && !cmd.is_repeatable() {
                                 continue;
                             }
-                            // Any command other than another digit ends the number
-                            // being typed, the way a non-count key ends a vi count.
-                            // The pending jump commits first, so `⌥+1 2` then
-                            // `⌥+s` lands the split on column 12, not on wherever
-                            // focus happened to be.
-                            if !matches!(cmd, Cmd::JumpDigit(_)) {
-                                if let Some(n) = jump.take() {
-                                    let v = Viewport::new(cols);
-                                    let f = FollowScroll::default();
-                                    let _ = layout.apply(Action::JumpToColumn(n), v, f);
-                                    dirty = true;
-                                }
-                            }
                             match cmd {
-                                Cmd::JumpDigit(d) => {
-                                    jump.push(d, Instant::now());
-                                    dirty = true;
-                                }
                                 // Arm the disclaimer rather than exiting: the
                                 // second press (handled above) is the one that
                                 // actually kills every pane.
@@ -1066,15 +1030,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     }
                     Ok(Event::Key(ke)) if ke.kind == KeyEventKind::Release => {
                         if is_alt_modifier(&ke) && bare_alt_held {
-                            // Releasing the modifier ends the chord, so a pending
-                            // `⌥+<number>` commits here: this is the whole point
-                            // of accumulating, and it is what makes columns past 9
-                            // addressable at all.
-                            if let Some(n) = jump.take() {
-                                let v = Viewport::new(cols);
-                                let f = FollowScroll::default();
-                                let _ = layout.apply(Action::JumpToColumn(n), v, f);
-                            }
                             bare_alt_held = false;
                             // Bare release means the physical key is up — drop the
                             // fallback window too so a preceding Alt+hjkl chord
@@ -1356,15 +1311,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 chord_alt_until = None;
             }
         }
-        // Fallback commit for terminals that never report a bare Option
-        // release: without this a typed number would sit in the accumulator
-        // forever and the jump would simply never happen.
-        if let Some(n) = jump.take_if_expired(now_for_hud) {
-            let v = Viewport::new(cols);
-            let f = FollowScroll::default();
-            let _ = layout.apply(Action::JumpToColumn(n), v, f);
-            dirty = true;
-        }
         let chord_alt_held = chord_alt_until.is_some();
         // Bare Option polling: on macOS most terminals never emit a bare Alt
         // KeyEvent, so `bare_alt_held` alone cannot reveal the HUD. Poll the
@@ -1383,13 +1329,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         let show_hud = hud_active;
         let show_center_minimap = effective_alt_held && !hud_active && cfg.minimap.show;
         // Everything the overlay knows beyond the layout: what each pane is,
-        // how long it has been silent, and where the two jump keys point.
+        // how long it has been silent, and where smart-jump points.
         // Built only when the panel is actually up, so a normal frame pays
         // nothing for it.
         let hud_facts = if show_center_minimap && !show_hud {
             HudFacts {
                 jump_target: smart_jump_target(&layout),
-                pending_jump: jump.pending(),
                 keep_awake: keep_awake.active(),
                 ..HudFacts::default()
             }
@@ -1430,19 +1375,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
             if let Some(pick) = &dir_pick {
                 draw_dir_picker(&mut frame, cols, rows, pick, &pal);
-            }
-            // Echo the number as it is typed. Without this, a multi-digit
-            // jump is invisible until it commits and `⌥+1 2` is
-            // indistinguishable from a dropped keystroke.
-            if let Some(n) = jump.pending() {
-                draw_toast(
-                    &mut frame,
-                    cols,
-                    rows,
-                    &format!("{} → column {}", crate::keys::mod_key(), n),
-                    &pal,
-                    true,
-                );
             }
             if let Some(note) = &reload_note {
                 let ok = !note.contains("error") && !note.starts_with("paste failed:");
