@@ -283,10 +283,7 @@ mod tests {
         // Toggling off must restore the theme exactly: the red is layered
         // per frame, never written into the palette a reload would keep.
         let g = Guard::acquire(false);
-        for base in [
-            crate::theme::Palette::CATPPUCCIN_MOCHA,
-            crate::theme::Palette::NORD,
-        ] {
+        for base in [crate::theme::Palette::TERMINAL] {
             assert_eq!(effective_palette(&base, &g), base);
             assert_eq!(effective_palette_for_test(&base, false), base);
         }
@@ -294,7 +291,7 @@ mod tests {
 
     #[test]
     fn active_state_swaps_only_the_accent() {
-        let base = crate::theme::Palette::NORD;
+        let base = crate::theme::Palette::TERMINAL;
         let on = effective_palette_for_test(&base, true);
         assert_eq!(on.accent, ACTIVE_ACCENT, "the ring must read as red");
         let mut rest = on;
