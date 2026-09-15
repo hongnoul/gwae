@@ -38,7 +38,7 @@ right way for an agent to check state before suggesting anything:
 | `gwae --version` | Installed version |
 | `gwae agent --print` | Which harness `Alt+;` would spawn, without running it |
 | `gwae init --print` | Every setup question and option, without prompting |
-| `gwae tune` | Input-latency report (add `--apply` to fix gwae's own settings) |
+| `gwae setup --only latency` | Input-latency report (add `--yes` to fix gwae's own settings) |
 
 Never launch `gwae` itself from inside an agent turn: it takes over the
 terminal. Tell the user to run it, or spawn it in its own terminal window.

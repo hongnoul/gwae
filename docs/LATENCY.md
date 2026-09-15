@@ -15,11 +15,11 @@ bothers to look at the other two: tuning only its own knob fixes a third of a
 problem.
 
 ```sh
-gwae tune           # report all three layers
-gwae tune --apply   # also write gwae's own fix
+gwae setup --only latency --print   # report all three layers
+gwae setup --only latency --yes     # also write gwae's own fix
 ```
 
-`gwae tune` prints nothing to fix when there is nothing to fix, and
+`setup --only latency` prints nothing to fix when there is nothing to fix, and
 `gwae doctor` carries a one-line summary.
 
 ## What gets changed, and by whom

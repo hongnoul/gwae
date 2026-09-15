@@ -168,7 +168,7 @@ fn doctor_reports_whether_input_latency_is_tuned() {
     let out = doctor(Some("input_poll_ms = 10\n"));
     assert!(out.contains("latency:"), "got:\n{out}");
     assert!(
-        out.contains("gwae tune"),
+        out.contains("gwae setup"),
         "must point at the fix; got:\n{out}"
     );
 }

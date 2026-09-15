@@ -60,14 +60,6 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
             &cfg_path_for_agent(),
             print,
         ),
-        Command::Tune { apply } => {
-            let code = latency::run_tune(cfg.input_poll_ms, &cfg_path_for_agent(), apply);
-            if code == 0 {
-                Ok(())
-            } else {
-                Err(code)
-            }
-        }
         Command::Init { print, .. } => {
             // `init` is a thin alias for the setup flow: one onboarding
             // system, not two. `--print` shows the planned steps.

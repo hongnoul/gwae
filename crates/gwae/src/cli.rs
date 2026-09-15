@@ -1,9 +1,11 @@
 //! Command-line interface for the `gwae` binary.
 //!
-//! Single binary, subcommands: `run` (default), `agent`, `init`, `tune`,
+//! Single binary, subcommands: `run` (default), `agent`, `init`,
 //! `setup`, `upgrade`, `doctor`.
 //! There is deliberately no `server`/`ctl`/`ls`/`kill-server`: gwae is
 //! daemon-free (ADR-003 reversed, ADR-011).
+//! Latency tuning lives in `setup` (the `latency` stage), not its own
+//! subcommand: one setup flow, not two.
 
 use clap::{Parser, Subcommand};
 
@@ -39,14 +41,6 @@ pub enum Command {
         /// Print what would happen and exit, without prompting or exec'ing.
         #[arg(long)]
         print: bool,
-    },
-    /// Report input-latency settings across macOS, your terminal, and
-    /// gwae, and apply the ones gwae owns.
-    Tune {
-        /// Write gwae's own fix to the config file (never touches macOS
-        /// settings or your terminal's config).
-        #[arg(long)]
-        apply: bool,
     },
     /// Guided first-run setup (alias for `setup`).
     /// Safe to re-run.

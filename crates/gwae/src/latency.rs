@@ -348,79 +348,14 @@ pub fn render_manual_steps(theirs: &[&Setting]) -> Option<String> {
     Some(s)
 }
 
-/// Apply the tuning gwae owns, silently, before onboarding asks anything.
-///
-/// `input_poll_ms` has exactly one right answer, so it was never a real
-/// question: making it one only taught users that setup asks about things they
-/// cannot evaluate. We fix our own config file without asking (one integer, in
-/// our own file, trivially reversible) and *return* the steps only the user can
-/// take, so the caller can show them once on the summary screen rather than
-/// interrupting the flow.
-///
-/// Returns `None` when there is nothing left for the user to do, which is the
-/// common case: silence is the feature.
-pub fn apply_silently(input_poll_ms: u64, cfg_path: &Path) -> Option<String> {
-    let settings = audit(input_poll_ms);
-    let p = pending(&settings);
-    if p.is_empty() {
-        return None;
-    }
-    let (ours, theirs) = ours_and_theirs(&p);
-    if !ours.is_empty() {
-        // A failure here is not worth a screen of its own: the user gets a
-        // working gwae either way, just a couple of milliseconds slower.
-        if let Err(e) = save_input_poll(cfg_path, 1) {
-            tracing::warn!("could not tune {}: {e}", cfg_path.display());
-        }
-    }
-    render_manual_steps(&theirs)
-}
-
 /// One-line summary for `doctor`.
 pub fn summary(settings: &[Setting]) -> String {
     let slow = pending(settings).len();
     if slow == 0 {
         "all layers tuned [ok]".to_string()
     } else {
-        format!("{slow} setting(s) leaving latency on the table; run `gwae tune`")
+        format!("{slow} setting(s) leaving latency on the table; run `gwae setup`")
     }
-}
-
-/// `gwae tune`: report every layer, apply what is ours, print the rest.
-/// Returns the process exit code.
-pub fn run_tune(input_poll_ms: u64, cfg_path: &Path, apply: bool) -> i32 {
-    let settings = audit(input_poll_ms);
-    println!(
-        "{BOLD}Input latency{RESET}{DIM} — a keystroke crosses all three layers, twice{RESET}"
-    );
-    print!("{}", render_report(&settings));
-
-    let p = pending(&settings);
-    if p.is_empty() {
-        println!("\n{GREEN}Everything is already tuned.{RESET}");
-        return 0;
-    }
-    let (ours, theirs) = ours_and_theirs(&p);
-
-    if apply && !ours.is_empty() {
-        match save_input_poll(cfg_path, 1) {
-            Ok(()) => println!(
-                "\n{GREEN}Applied:{RESET} input_poll_ms = 1 {DIM}({}){RESET}",
-                cfg_path.display()
-            ),
-            Err(e) => println!(
-                "\n{YELLOW}Could not write {}: {e}{RESET}",
-                cfg_path.display()
-            ),
-        }
-    } else if !ours.is_empty() {
-        println!("\n{DIM}gwae can fix its own setting: run {RESET}{CYAN}gwae tune --apply{RESET}");
-    }
-    if let Some(steps) = render_manual_steps(&theirs) {
-        print!("{steps}");
-    }
-    println!("\n{DIM}Why these, and why gwae is on the path at all: `docs/LATENCY.md`.{RESET}");
-    0
 }
 
 #[cfg(test)]
