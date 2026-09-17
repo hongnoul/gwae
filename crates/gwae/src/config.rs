@@ -533,4 +533,26 @@ mod tests {
         let cfg = parse("harness_dirs = { jcode = \"~/git/gwae\" }\nagent_dirs = [\"~/notes\"]\nagent_dir_roots = [\"~/work\"]\nagent_dir = \"~/git\"\n");
         assert_eq!(cfg.spawn_dir(), "~/git");
     }
+
+    #[test]
+    fn retired_agents_key_is_ignored_not_fatal() {
+        // The `agents` list is gone (typed picks are remembered in state),
+        // so old configs naming it must still load.
+        let cfg = parse("agents = [\"zz\"]\ndefault_agent = \"claude\"\n");
+        assert_eq!(cfg.default_agent, "claude");
+    }
+
+    #[test]
+    fn live_reload_adopts_the_override_but_keeps_session_state() {
+        // `default_agent` is read on every ⌥+; press, so an edit applies to
+        // the next spawn. `startup_panes` was consumed at launch and
+        // `agent_dir` may hold a live ⌥+d pick: both survive the reload.
+        let mut live = parse("startup_panes = 3\nagent_dir = \"~/live\"\n");
+        live.adopt_appearance(parse(
+            "default_agent = \"claude\"\nstartup_panes = 9\nagent_dir = \"~/file\"\n",
+        ));
+        assert_eq!(live.default_agent, "claude");
+        assert_eq!(live.startup_panes, 3);
+        assert_eq!(live.agent_dir, "~/live");
+    }
 }
