@@ -6,6 +6,9 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Vim-style picker navigation.** The spawn-dir (`⌥+d`) and agent (`⌥+;`) pickers move with `⌃`/`⌥`+`j`/`k` (and `⌃`/`⌥`+`n`/`p`) in addition to arrows. Bare `j`/`k` still filter, since paths contain both.
+
 ## [1.5.0] - 2026-09-17
 
 ### Changed

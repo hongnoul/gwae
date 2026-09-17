@@ -151,7 +151,8 @@ The README test narrows to the default keymap, which is all it ever meant.
 ### 5. Modal keys stay fixed, on purpose
 
 The spawn-dir picker and the quit confirmation
-read keys directly in `run_tui` (arrows, `hjkl`, Enter, Esc). They
+read keys directly in `run_tui` (arrows, `⌃`/`⌥`+`j`/`k`/`n`/`p` in the
+pickers, Enter, Esc). They
 stay hard-coded in v1, because they are transient overlays that print their own
 legend on screen and their keys are not contested with panes. The one
 inconsistency worth fixing is the dir picker's save key (`⌥+s`, tui.rs:3447):
