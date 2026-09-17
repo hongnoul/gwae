@@ -2,7 +2,7 @@
 
 use super::compat;
 use crate::{
-    cell::{CColor, Cell, NO_COMBINING, Style},
+    cell::{CColor, Cell, Style, NO_COMBINING},
     grid::{Damage, Size, TermGrid},
 };
 // --- Reflowing Alacritty-backed grid ---
@@ -425,7 +425,6 @@ mod tests {
         assert_eq!(replies, expected, "one byte per feed");
     }
 
-
     #[test]
     fn geometry_replies_use_current_measurements_and_resize() {
         let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
@@ -451,7 +450,6 @@ mod tests {
         assert_eq!(g.take_pty_replies(), b"\x1b[4;0;0t");
     }
 
-
     #[test]
     fn pixel_callbacks_clamp_before_multiplying_and_reclamp_after_resize() {
         let mut g = TerminalGrid::new(Size { cols: 80, rows: 24 });
@@ -462,7 +460,6 @@ mod tests {
         g.feed(b"\x1b[14t\x1b[18t");
         assert_eq!(g.take_pty_replies(), b"\x1b[4;65535;65534t\x1b[8;1;2t");
     }
-
 
     #[test]
     fn dsr_uses_live_cursor_even_when_scrollback_is_visible() {
@@ -476,7 +473,6 @@ mod tests {
         g.feed(b"\x1b[6n\x1b[2;3H\x1b[6n");
         assert_eq!(g.take_pty_replies(), b"\x1b[4;9R\x1b[2;3R");
     }
-
 
     #[test]
     fn queries_do_not_change_titles_or_title_stack_behavior() {
@@ -493,7 +489,6 @@ mod tests {
         assert_eq!(g.title(), "");
         assert!(g.take_pty_replies().is_empty());
     }
-
 
     #[test]
     fn query_like_payload_in_osc_and_apc_does_not_reply() {
@@ -512,7 +507,6 @@ mod tests {
             assert_eq!(g.take_pty_replies(), b"\x1b[8;5;20t");
         }
     }
-
 
     #[test]
     fn sgr58_underline_color_and_resets_survive_every_split() {
@@ -540,7 +534,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn screen_epoch_counts_alt_pairs_and_ris_at_every_split() {
         for input in [
@@ -562,7 +555,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn graphics_cursor_is_absolute_clamped_and_clears_pending_wrap() {
         let mut g = TerminalGrid::new(Size { cols: 8, rows: 5 });
@@ -580,7 +572,6 @@ mod tests {
         assert_eq!(g.cell(0, 3).ch, 'Y');
         assert_eq!(g.cursor_position(), (3, 1));
     }
-
 
     #[test]
     fn csi_16t_uses_current_measured_cells() {
@@ -604,7 +595,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn tdf_picker_receives_font_size_without_advertising_unsupported_graphics() {
         // Exact query from tdf 0.5.0's pinned ratatui-image 8.0.1 picker.
@@ -622,7 +612,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn csi_16t_rejects_payloads_cancelled_and_nonplain_sequences() {
         let input = b"\x1b]2;[16t\x9b16t\x07\x1b_Gdata;[16t\x9b16t\x1b\\\x1bPdata;[16t\x1b\\\x1b[?16t\x1b[16 t\x1b[16:0t\x1b[16;0t\x1b[16\x18t\x1b[16\x1at";
@@ -636,7 +625,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn synchronized_output_flush_preserves_reply_order() {
         let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
@@ -646,7 +634,6 @@ mod tests {
             b"\x1b[4;0;0t\x1b[6;0;0t\x1b[2;3R\x1b[8;5;20t\x1b[6;0;0t"
         );
     }
-
 
     #[test]
     fn pane_text_reflows_losslessly_across_width_cycles() {
@@ -661,7 +648,6 @@ mod tests {
         g.feed(b"st");
         assert_eq!(g.visible_text(), "abcdefghijklmnopqrst");
     }
-
 
     #[test]
     fn reflow_preserves_hard_breaks_unicode_styles_and_cursor_edits() {
@@ -692,7 +678,6 @@ mod tests {
         g.feed(b"\x1b[3DXYZ");
         assert!(g.session_text().ends_with("secXYZ"));
     }
-
 
     #[test]
     fn deep_history_and_repeated_lines_survive_width_and_height_cycles() {
@@ -730,7 +715,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn alternate_screen_redraw_does_not_replace_primary_history() {
         let mut g = TerminalGrid::new(Size { cols: 20, rows: 8 });
@@ -755,7 +739,6 @@ mod tests {
         assert_eq!(g.session_text(), format!("{primary}!"));
     }
 
-
     #[test]
     fn resize_keeps_partial_escape_sequences_and_truecolor() {
         let mut g = TerminalGrid::new(Size { cols: 20, rows: 8 });
@@ -767,7 +750,6 @@ mod tests {
         assert_eq!(g.cell(10, 0), Cell::default());
         assert_eq!(g.cell(0, 4), Cell::default());
     }
-
 
     #[test]
     fn child_sync_markers_cannot_stall_the_hosted_grid() {
@@ -792,7 +774,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn tiny_dimensions_are_normalized_and_wide_text_survives() {
         let mut g = TerminalGrid::new(Size::default());
@@ -805,7 +786,6 @@ mod tests {
         g.resize(Size { cols: 10, rows: 4 });
         assert_eq!(g.visible_text(), "a你bc");
     }
-
 
     #[test]
     fn scrollback_moves_view_and_returns() {
@@ -827,7 +807,6 @@ mod tests {
         assert!(!g.scroll_by(-1));
     }
 
-
     #[test]
     fn new_output_keeps_a_scrolled_view_pinned_after_resize() {
         let mut g = TerminalGrid::new(Size { cols: 20, rows: 5 });
@@ -845,7 +824,6 @@ mod tests {
         assert!(g.visible_text().contains("new output"));
     }
 
-
     #[test]
     fn deep_scrollback_is_reachable_and_clamped_to_history() {
         let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
@@ -861,7 +839,6 @@ mod tests {
         assert!(g.scroll_by(i32::MIN));
         assert_eq!(g.scrollback_offset(), 0);
     }
-
 
     #[test]
     fn shrinking_the_grid_keeps_deep_scrollback_anchored() {
@@ -880,7 +857,6 @@ mod tests {
         assert_eq!((0..6).map(|x| g.cell(x, 0).ch).collect::<String>(), top);
     }
 
-
     #[test]
     fn scroll_to_bottom_snaps_back_to_live() {
         let mut g = Vt100Grid::new(Size { cols: 10, rows: 3 });
@@ -892,7 +868,6 @@ mod tests {
         assert_eq!(g.scrollback_offset(), 0);
         assert!(!g.scroll_to_bottom());
     }
-
 
     #[test]
     fn alt_screen_and_mouse_modes_are_reported() {
@@ -907,7 +882,6 @@ mod tests {
         assert!(!g.alternate_screen());
         assert!(!g.wants_mouse());
     }
-
 
     #[test]
     fn legacy_modes_keep_child_output_off_the_primary_screen() {
@@ -927,7 +901,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn bracketed_paste_mode_is_reported() {
         // gwae strips the host's paste markers when it decodes an
@@ -941,7 +914,6 @@ mod tests {
         g.feed(b"\x1b[?2004l");
         assert!(!g.wants_bracketed_paste(), "and off again when it stops");
     }
-
 
     #[test]
     fn vt100_feed_writes_cells() {
@@ -962,14 +934,12 @@ mod tests {
         assert_eq!(g.cell(5, 0).ch, ' ');
     }
 
-
     #[test]
     fn vt100_resize_changes_size() {
         let mut g = Vt100Grid::new(Size { cols: 20, rows: 5 });
         g.resize(Size { cols: 30, rows: 8 });
         assert_eq!(g.size(), Size { cols: 30, rows: 8 });
     }
-
 
     #[test]
     fn vt100_style_flags_survive() {
@@ -982,7 +952,6 @@ mod tests {
         assert_eq!(c2.ch, ' ');
         assert!(!c2.style.bold);
     }
-
 
     #[test]
     fn vt100_reports_wide_char_widths() {
@@ -1001,7 +970,6 @@ mod tests {
         assert_eq!(a.width, 1);
     }
 
-
     #[test]
     fn vt100_tracks_osc_title() {
         let mut g = Vt100Grid::new(Size { cols: 20, rows: 5 });
@@ -1016,7 +984,6 @@ mod tests {
         g.feed(b"\x1b]0;\x1b\\");
         assert_eq!(g.title(), "");
     }
-
 
     #[test]
     fn vt100_cell_keeps_combining_marks() {
@@ -1038,5 +1005,4 @@ mod tests {
         assert_eq!(p.combining[0], '\u{0305}');
         assert_eq!(p.combining[1], '\u{030D}');
     }
-
 }

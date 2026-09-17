@@ -75,5 +75,4 @@ mod tests {
         assert_eq!(g.cell(3, 4), Cell::default());
         assert_eq!(g.size(), Size { cols: 10, rows: 10 });
     }
-
 }

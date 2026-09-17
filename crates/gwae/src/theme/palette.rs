@@ -1,7 +1,7 @@
 //! Chrome palette: the enforced retro default plus manual overrides.
 //!
 //! gwae paints its own chrome colors rather than inheriting the terminal
-//! scheme: true-black panels with high-contrast functional colors (cyan
+//! scheme: true-black panels with high-contrast functional colors (white
 //! focus, blue running, amber idle, green done, red failed). Any key can be
 //! overridden under `[theme]` in the config file (see `theme::ThemeConfig`);
 //! there are no presets and no picker.
@@ -59,7 +59,7 @@ impl Palette {
         base: rgb(0x000000),
         surface: rgb(0x000000),
         overlay: rgb(0x808080),
-        accent: rgb(0x00ffff),
+        accent: rgb(0xffffff),
         text: rgb(0xffffff),
         label: rgb(0x808080),
         running: rgb(0x0090ff),
@@ -123,8 +123,8 @@ mod tests {
     #[test]
     fn muted_scales_rgb_and_passes_the_rest_through() {
         assert_eq!(
-            Palette::muted(CColor::Rgb(0x00, 0xff, 0xff)),
-            CColor::Rgb(0x00, 0x99, 0x99)
+            Palette::muted(CColor::Rgb(0xff, 0xff, 0xff)),
+            CColor::Rgb(0x99, 0x99, 0x99)
         );
         assert_eq!(Palette::muted(CColor::Idx(6)), CColor::Idx(6));
         assert_eq!(Palette::muted(CColor::Default), CColor::Default);

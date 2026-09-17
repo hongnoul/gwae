@@ -18,7 +18,11 @@ pub(crate) enum MouseRole {
 }
 
 /// Decide what a mouse event does inside the pane under the cursor.
-pub(crate) fn mouse_role(kind: MouseEventKind, modifiers: KeyModifiers, child_wants_mouse: bool) -> MouseRole {
+pub(crate) fn mouse_role(
+    kind: MouseEventKind,
+    modifiers: KeyModifiers,
+    child_wants_mouse: bool,
+) -> MouseRole {
     let shift = modifiers.contains(KeyModifiers::SHIFT);
     let selecting = matches!(
         kind,
@@ -175,13 +179,12 @@ pub(crate) fn sgr_mouse_report(ev: &MouseEvent, gx: u16, gy: u16) -> Option<Vec<
     )
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::pty::{spawn_pane, PaneMsg, PtyPane};
-    use super::super::render::tests::{no_hints, no_map};
+    use super::super::render::tests::no_map;
     use super::super::render::{focused_pane_views, render_frame};
+    use super::*;
     use crate::geometry::CellPixels;
     use crate::select::{self, Selection};
     use crate::theme::Palette;
@@ -257,8 +260,6 @@ mod tests {
         );
     }
 
-
-
     #[test]
     fn left_drag_selects_but_a_reporting_child_keeps_its_mouse() {
         let plain = KeyModifiers::NONE;
@@ -306,7 +307,6 @@ mod tests {
             MouseRole::Local
         );
     }
-
 
     #[test]
     fn sgr_mouse_report_encodes_wheel_and_buttons() {
@@ -438,7 +438,6 @@ mod tests {
             0,
             &Palette::default(),
             &no_map(),
-            no_hints(),
             Some(&sel),
         );
         // Content is inset 1 cell inside the column frame, so grid (0,0)
@@ -457,5 +456,4 @@ mod tests {
         assert_eq!(at(0, 0).ch, 'h');
         assert_eq!(at(4, 0).ch, 'o');
     }
-
 }

@@ -1,9 +1,8 @@
 //! Structure verbs: split, kill, spawn, widths, scroll, and jumps.
 
 use crate::model::Layout;
-use crate::viewport::{follow_focus_scroll, scroll_stops, snap_scroll, Viewport};
+use crate::viewport::{scroll_stops, snap_scroll, Viewport};
 use crate::width::{Preset, Width};
-use super::Action;
 use crate::{FollowScroll, LayoutError, LayoutResult, PaneId, RowId};
 
 impl Layout {
@@ -111,7 +110,11 @@ impl Layout {
     /// Toggle the focused column between `Full` and `Quarter` width. Any
     /// other width (preset or fixed cells) goes to `Full` first, so the
     /// binding always has an obvious first effect.
-    pub(super) fn apply_toggle_full_width(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
+    pub(super) fn apply_toggle_full_width(
+        &mut self,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> i32 {
         let (row, col) = (self.focus.row, self.focus.column);
         if let Some(r) = self.row_mut(row) {
             if let Some(c) = r.columns.get_mut(col) {
@@ -143,7 +146,11 @@ impl Layout {
     }
 }
 impl Layout {
-    pub(super) fn apply_kill_pane(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
+    pub(super) fn apply_kill_pane(
+        &mut self,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> LayoutResult<i32> {
         let row = self.focus.row;
         let col = self.focus.column;
         let pane_idx = self.focus.pane;
@@ -369,22 +376,6 @@ impl Layout {
                 row.scroll_x = snapped;
             }
         }
-    }
-
-    pub(super) fn apply_jump(
-        &mut self,
-        n: usize,
-        _viewport: Viewport,
-        _follow: FollowScroll,
-    ) -> LayoutResult<i32> {
-        let count = self.focused_col_count();
-        if n >= count {
-            return Ok(self.focused_scroll());
-        }
-        self.focus.column = n;
-        self.restore_column_focus();
-        self.remember_focus();
-        Ok(self.focused_scroll())
     }
 
     /// Smart-jump: focus a pane anywhere in the grid by id, crossing strips

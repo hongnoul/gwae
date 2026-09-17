@@ -257,7 +257,10 @@ mod tests {
             Plan::Configured("sh".into())
         );
         // Whitespace is not a configuration.
-        assert!(matches!(plan("   ", &s, vec![]), Plan::NoneInstalled { .. }));
+        assert!(matches!(
+            plan("   ", &s, vec![]),
+            Plan::NoneInstalled { .. }
+        ));
     }
 
     #[test]

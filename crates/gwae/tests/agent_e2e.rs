@@ -759,7 +759,7 @@ fn a_harness_gwae_has_never_heard_of_is_still_discovered() {
     let sb = Sandbox::new(&[]);
     stub(&sb.bin, "hermes-agent");
     stub(&sb.bin, "frobnicator"); // not agent-shaped: must NOT be offered
-    // A lone install launches itself: no picker, no keypress needed.
+                                  // A lone install launches itself: no picker, no keypress needed.
     let p = sb.spawn(&[]);
     let seen = p.wait_for("AGENT-RAN:hermes-agent");
     assert!(

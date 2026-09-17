@@ -361,8 +361,7 @@ impl Host {
         // Phase 1: drop cached tile lists whose texture ids no longer exist
         // (evicted by hide/budget). Without this a still pane would keep
         // returning tiles that point at deleted host textures.
-        let live: std::collections::HashSet<u32> =
-            self.textures.values().map(|t| t.id).collect();
+        let live: std::collections::HashSet<u32> = self.textures.values().map(|t| t.id).collect();
         self.prepare_cache
             .retain(|_, tiles| tiles.iter().all(|t| live.contains(&t.id)));
     }
@@ -505,7 +504,9 @@ mod tests {
         let mut host = Host::default();
         // No image traffic: no source walk, no tiles.
         host.begin();
-        assert!(host.prepare_cached(7, None, &g, (0, 0, 1, 1), (1, 1)).is_empty());
+        assert!(host
+            .prepare_cached(7, None, &g, (0, 0, 1, 1), (1, 1))
+            .is_empty());
         host.finish();
         // First prepare uploads once and populates the cache.
         host.begin();

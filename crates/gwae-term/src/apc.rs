@@ -173,7 +173,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn apc_extractor_swallows_non_graphics_and_queries() {
         let mut e = KittyApcExtractor::new();
@@ -187,7 +186,6 @@ mod tests {
         let seq = b"\x1b_Gi=7,a=T;AAAA\x1b\\";
         assert_eq!(e.extract(seq), seq.to_vec());
     }
-
 
     #[test]
     fn apc_extractor_bounds_runaway_sequences() {

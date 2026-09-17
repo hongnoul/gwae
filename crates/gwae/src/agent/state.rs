@@ -149,8 +149,8 @@ pub fn save(path: &Path, state: &HarnessState) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::detect::Found;
+    use super::*;
 
     fn tmp() -> PathBuf {
         let p = std::env::temp_dir().join(format!(

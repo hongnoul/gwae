@@ -6,7 +6,6 @@
 //! must preserve the invariants (no implicit resize, no gaps, no row reorder).
 //! Any I/O (PTY spawn/kill) is the caller's job; here we only change structure.
 
-
 mod focus;
 mod move_pane;
 mod structure;

@@ -495,7 +495,7 @@ fn dashboard_footer_is_tally_not_key_hints() {
 #[test]
 fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     use gwae_term::{CColor, Size, TermGrid, Vt100Grid};
-    // Chrome is retro unconditionally: a bare config paints cyan focus on
+    // Chrome is retro unconditionally: a bare config paints white focus on
     // true black, whatever the host terminal is themed as. No OSC color-query
     // response is provided by this PTY.
     let mut s = Session::start("");
@@ -567,7 +567,7 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
                 && matches!(grid.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
             {
                 addresses += 1;
-                // Retro chrome: tiles carry explicit RGB fills (cyan focus,
+                // Retro chrome: tiles carry explicit RGB fills (white focus,
                 // full-intensity status tints) with black/white contrast ink,
                 // never the terminal default pair.
                 assert!(

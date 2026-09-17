@@ -66,7 +66,7 @@ spawn dir, latency) and writes only gwae's own config file.
 ## Colors
 
 gwae paints its own retro chrome: true-black panels with high-contrast
-functional colors (cyan focus, blue running, amber idle, green done, red
+functional colors (white focus, blue running, amber idle, green done, red
 failed, white text). The chrome reads the same whatever the host terminal
 is themed as.
 
@@ -244,7 +244,7 @@ schema changes.
 
 HUD panels are true black with white text. Minimap tiles carry muted status
 tints with black/white contrast ink, and the focused tile keeps an
-underline on top of the cyan fill, so focus never depends on color alone.
+underline on top of the white fill, so focus never depends on color alone.
 Status glyphs (`» ! ✓ ✗`) distinguish state by shape as well as hue. This
 only covers gwae chrome, not programs inside panes. While
 the keep-awake assertion is held a small `keep-awake` badge

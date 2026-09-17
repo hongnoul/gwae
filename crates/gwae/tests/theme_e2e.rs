@@ -154,14 +154,14 @@ fn fgs_in(painted: &str) -> Vec<String> {
 }
 
 /// The enforced retro default: true-black panels with high-contrast
-/// functional colors (cyan focus, blue running, amber idle, green done,
+/// functional colors (white focus, blue running, amber idle, green done,
 /// red failed, white text). A default run must paint these RGB values, not
 /// the host terminal's palette indices.
 fn assert_retro_chrome(painted: &str, ctx: &str) {
-    // Cyan focus accent and true-black panel background must reach the wire.
+    // White focus accent and true-black panel background must reach the wire.
     assert!(
-        painted.contains(&fg_seq(0x00, 0xff, 0xff)),
-        "{ctx} must paint the retro cyan focus accent; saw {fgs:?}",
+        painted.contains(&fg_seq(0xff, 0xff, 0xff)),
+        "{ctx} must paint the retro white focus accent; saw {fgs:?}",
         fgs = fgs_in(painted),
     );
     assert!(
@@ -185,16 +185,18 @@ fn default_config_paints_retro_chrome() {
 #[test]
 fn theme_overrides_repaint_only_the_named_keys() {
     // An accent override swaps the focus ring to magenta while the black
-    // panels stay.
-    let painted = paint_with_config("[theme]\naccent = \"#ff00ff\"\n");
+    // panels stay. Text is overridden too: white is both the retro focus
+    // accent and the retro text color, so leaving text alone would keep
+    // white on the wire and prove nothing about the accent swap.
+    let painted = paint_with_config("[theme]\naccent = \"#ff00ff\"\ntext = \"#00ff00\"\n");
     assert!(
         painted.contains(&fg_seq(0xff, 0x00, 0xff)),
         "the accent override must reach the wire; saw {fgs:?}",
         fgs = fgs_in(&painted),
     );
     assert!(
-        !painted.contains(&fg_seq(0x00, 0xff, 0xff)),
-        "retro cyan must be gone once overridden; saw {fgs:?}",
+        !painted.contains(&fg_seq(0xff, 0xff, 0xff)),
+        "retro white must be gone once overridden; saw {fgs:?}",
         fgs = fgs_in(&painted),
     );
     assert!(

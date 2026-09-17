@@ -239,7 +239,10 @@ mod tests {
     #[test]
     fn a_lone_install_with_no_memory_launches_itself() {
         let s = HarnessState::default();
-        assert_eq!(plan("", &s, vec![mk("claude")]), Plan::Auto("claude".into()));
+        assert_eq!(
+            plan("", &s, vec![mk("claude")]),
+            Plan::Auto("claude".into())
+        );
         // ...but memory of an uninstalled pick does not invent a harness.
         let s = HarnessState {
             last: "gone-xyz".into(),

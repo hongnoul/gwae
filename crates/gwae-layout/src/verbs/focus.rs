@@ -1,10 +1,8 @@
 //! Focus navigation verbs: arrows across columns, strips, and rows.
 
-use super::Action;
 use crate::model::Layout;
-use crate::viewport::{follow_focus_scroll, scroll_stops, snap_scroll, Viewport};
-use crate::width::{Preset, Width};
-use crate::{FollowScroll, LayoutError, LayoutResult, PaneId, RowId};
+use crate::viewport::{follow_focus_scroll, Viewport};
+use crate::{FollowScroll, LayoutError, LayoutResult, RowId};
 
 impl Layout {
     /// Number of columns in the focused row.
@@ -57,7 +55,11 @@ impl Layout {
         self.clamp_focus_pane();
     }
 
-    pub(super) fn focus_left(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
+    pub(super) fn focus_left(
+        &mut self,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> LayoutResult<i32> {
         if self.focus.column == 0 {
             return Ok(self.focused_scroll());
         }
@@ -68,7 +70,11 @@ impl Layout {
         Ok(self.focused_scroll())
     }
 
-    pub(super) fn focus_right(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
+    pub(super) fn focus_right(
+        &mut self,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> LayoutResult<i32> {
         let count = self.focused_col_count();
         if self.focus.column + 1 >= count {
             return Ok(self.focused_scroll());
@@ -80,7 +86,11 @@ impl Layout {
         Ok(self.focused_scroll())
     }
 
-    pub(super) fn focus_up(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
+    pub(super) fn focus_up(
+        &mut self,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> LayoutResult<i32> {
         if self.focus.pane > 0 {
             self.focus.pane -= 1;
             self.remember_focus();
@@ -89,7 +99,11 @@ impl Layout {
         self.cross_row(-1, viewport, follow)
     }
 
-    pub(super) fn focus_down(&mut self, viewport: Viewport, follow: FollowScroll) -> LayoutResult<i32> {
+    pub(super) fn focus_down(
+        &mut self,
+        viewport: Viewport,
+        follow: FollowScroll,
+    ) -> LayoutResult<i32> {
         let max = self
             .focused_row()
             .and_then(|r| r.columns.get(self.focus.column))

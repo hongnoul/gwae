@@ -1,10 +1,8 @@
 //! Move verbs: drag panes across columns and strips.
 
-use super::Action;
 use crate::model::Layout;
-use crate::viewport::{follow_focus_scroll, scroll_stops, snap_scroll, Viewport};
-use crate::width::{Preset, Width};
-use crate::{FollowScroll, LayoutError, LayoutResult, PaneId, RowId};
+use crate::viewport::Viewport;
+use crate::{FollowScroll, LayoutResult};
 
 impl Layout {
     pub(super) fn move_pane(
@@ -69,5 +67,4 @@ impl Layout {
         self.remember_focus();
         Ok(self.focused_scroll())
     }
-
 }

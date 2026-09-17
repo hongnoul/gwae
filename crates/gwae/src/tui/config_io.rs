@@ -39,7 +39,11 @@ pub(crate) fn write_keep_awake(path: &std::path::Path, on: bool) -> Result<(), S
 ///
 /// The `harness` argument is accepted and ignored: per-harness spawn dirs
 /// were removed, so every pick lands in the one `agent_dir` key.
-pub(crate) fn write_harness_dir(path: &std::path::Path, _harness: &str, dir: &str) -> Result<(), String> {
+pub(crate) fn write_harness_dir(
+    path: &std::path::Path,
+    _harness: &str,
+    dir: &str,
+) -> Result<(), String> {
     write_agent_dir(path, dir)
 }
 
@@ -81,4 +85,3 @@ pub(crate) fn perform_reload(
     };
     crate::reload::exec_into(&exe, &handover)
 }
-

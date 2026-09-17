@@ -120,7 +120,6 @@ fn host_width_agrees(cell: Cell) -> bool {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,5 +293,4 @@ mod tests {
             "underline leaks into the plain run: {s:?}"
         );
     }
-
 }

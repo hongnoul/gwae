@@ -151,7 +151,9 @@ impl Config {
     /// every frame - minimap, scroll behavior - is adopted.
     pub fn adopt_appearance(&mut self, new: Config) {
         let Config {
-            startup_panes, agent_dir, ..
+            startup_panes,
+            agent_dir,
+            ..
         } = self.clone();
         *self = Config {
             startup_panes,

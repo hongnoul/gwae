@@ -40,12 +40,7 @@ fn exec(cmd: &str) -> ! {
 
 // ANSI used by the picker. The gateway paints plain text into its own pane, so
 // it only needs colors and a couple of attributes, not a renderer.
-pub fn run(
-    default_agent: &str,
-    state: &HarnessState,
-    state_path: &Path,
-    print_only: bool,
-) -> ! {
+pub fn run(default_agent: &str, state: &HarnessState, state_path: &Path, print_only: bool) -> ! {
     let found = state.order(detect());
     let p = plan(default_agent, state, found);
 

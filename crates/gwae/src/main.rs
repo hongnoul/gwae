@@ -55,8 +55,7 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
         Command::Agent { print } => {
             let state_path = crate::agent::harness_state_path()
                 .unwrap_or_else(|| Config::default_path().with_extension("harness.json"));
-            let state =
-                crate::agent::load_seeded_harness_state(&state_path, &cfg.default_agent);
+            let state = crate::agent::load_seeded_harness_state(&state_path, &cfg.default_agent);
             agent::run(&cfg.default_agent, &state, &state_path, print)
         }
         Command::Init { print, .. } => {

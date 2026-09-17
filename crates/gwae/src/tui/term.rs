@@ -4,7 +4,10 @@ use std::io::Write;
 use std::time::Duration;
 
 use crossterm::cursor;
-use crossterm::event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, PopKeyboardEnhancementFlags};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    PopKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size as term_size, EnterAlternateScreen,
@@ -192,5 +195,4 @@ mod tests {
             Duration::from_millis(50)
         );
     }
-
 }
