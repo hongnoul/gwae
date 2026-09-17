@@ -625,12 +625,12 @@ pub(crate) fn render_frame_with_images(
             if right <= left {
                 continue;
             }
-            let (color, prio) = if ci == layout.focus.column && (!focused_col_split || placeholder)
-            {
-                (focus_color, P_FOCUS_COL)
-            } else {
-                (sk, P_CHROME)
-            };
+            let (color, prio, bold) =
+                if ci == layout.focus.column && (!focused_col_split || placeholder) {
+                    (focus_color, P_FOCUS_COL, true)
+                } else {
+                    (sk, P_CHROME, false)
+                };
             let boxr = Rect {
                 x: left,
                 y: 0,
@@ -650,17 +650,24 @@ pub(crate) fn render_frame_with_images(
                         }
                     }
                 }
-                canvas.rect(boxr, color, prio);
+                canvas.rect(boxr, color, prio, bold);
                 continue;
             }
-            canvas.rect(boxr, color, prio);
+            canvas.rect(boxr, color, prio, bold);
             // Stacked panes: the 1-cell gap between two panes of a column is
             // a shared horizontal rule that tees into the column's verticals,
             // so a stack reads as one subdivided container.
             if let Some(col) = layout.focused_row().and_then(|r| r.columns.get(ci)) {
                 if col.panes.len() > 1 {
                     for v in pane_views.iter().filter(|v| v.col == ci).skip(1) {
-                        canvas.hline(left as i32, right as i32, v.rect.y as i32 - 1, color, prio);
+                        canvas.hline(
+                            left as i32,
+                            right as i32,
+                            v.rect.y as i32 - 1,
+                            color,
+                            prio,
+                            bold,
+                        );
                     }
                 }
             }
@@ -680,7 +687,7 @@ pub(crate) fn render_frame_with_images(
                 let y = rect.y.saturating_sub(1);
                 let w = (rect.w + 2).min(cols.saturating_sub(x));
                 let h = (rect.h + 2).min(rows.saturating_sub(y));
-                canvas.rect(Rect { x, y, w, h }, focus_color, P_FOCUS_PANE);
+                canvas.rect(Rect { x, y, w, h }, focus_color, P_FOCUS_PANE, true);
             }
         }
         _ => {}
@@ -725,7 +732,7 @@ pub(crate) fn render_frame_with_images(
 /// Overwriting half of a wide (2-col) character would orphan its other half,
 /// so the partner cell is blanked: a wide head loses its continuation, a
 /// continuation loses its head.
-fn put_frame_cell(out: &mut [Cell], idx: usize, ch: char, color: CColor) {
+fn put_frame_cell(out: &mut [Cell], idx: usize, ch: char, color: CColor, bold: bool) {
     let Some(c) = out.get(idx).copied() else {
         return;
     };
@@ -753,7 +760,7 @@ fn put_frame_cell(out: &mut [Cell], idx: usize, ch: char, color: CColor) {
     cell.width = 1;
     cell.style.fg = color;
     cell.style.bg = CColor::Default;
-    cell.style.bold = false;
+    cell.style.bold = bold;
     cell.style.underline = false;
     cell.style.inverse = false;
 }
@@ -781,6 +788,7 @@ struct FrameCanvas {
     rows: u16,
     edges: Vec<FrameEdge>,
     colors: Vec<CColor>,
+    bolds: Vec<bool>,
 }
 
 const EDGE_N: u8 = 1;
@@ -795,6 +803,7 @@ impl FrameCanvas {
             rows,
             edges: vec![FrameEdge { mask: 0, prio: 0 }; cols as usize * rows as usize],
             colors: vec![CColor::Default; cols as usize * rows as usize],
+            bolds: vec![false; cols as usize * rows as usize],
         }
     }
 
@@ -802,23 +811,26 @@ impl FrameCanvas {
         self.edges.iter().all(|e| e.mask == 0)
     }
 
-    fn add(&mut self, x: i32, y: i32, mask: u8, color: CColor, prio: u8) {
+    fn add(&mut self, x: i32, y: i32, mask: u8, color: CColor, prio: u8, bold: bool) {
         if x < 0 || y < 0 || x >= self.cols as i32 || y >= self.rows as i32 {
             return;
         }
         let idx = y as usize * self.cols as usize + x as usize;
         let e = &mut self.edges[idx];
         e.mask |= mask;
-        // Highest priority wins the color; ties keep the first writer so a
-        // repaint of the same box is idempotent.
+        // Highest priority wins the color and the weight; ties keep the
+        // first writer so a repaint of the same box is idempotent. The
+        // focus ring is bold white while plain chrome stays regular, so
+        // focus reads even where color alone would not carry it.
         if prio > e.prio {
             e.prio = prio;
             self.colors[idx] = color;
+            self.bolds[idx] = bold;
         }
     }
 
     /// A vertical rule from `y0` to `y1` (inclusive) at column `x`.
-    fn vline(&mut self, x: i32, y0: i32, y1: i32, color: CColor, prio: u8) {
+    fn vline(&mut self, x: i32, y0: i32, y1: i32, color: CColor, prio: u8, bold: bool) {
         for y in y0..=y1 {
             let mut m = EDGE_N | EDGE_S;
             if y == y0 {
@@ -831,12 +843,12 @@ impl FrameCanvas {
             if m == 0 {
                 m = EDGE_N | EDGE_S;
             }
-            self.add(x, y, m, color, prio);
+            self.add(x, y, m, color, prio, bold);
         }
     }
 
     /// A horizontal rule from `x0` to `x1` (inclusive) at row `y`.
-    fn hline(&mut self, x0: i32, x1: i32, y: i32, color: CColor, prio: u8) {
+    fn hline(&mut self, x0: i32, x1: i32, y: i32, color: CColor, prio: u8, bold: bool) {
         for x in x0..=x1 {
             let mut m = EDGE_E | EDGE_W;
             if x == x0 {
@@ -848,12 +860,12 @@ impl FrameCanvas {
             if m == 0 {
                 m = EDGE_E | EDGE_W;
             }
-            self.add(x, y, m, color, prio);
+            self.add(x, y, m, color, prio, bold);
         }
     }
 
     /// The ring of `rect`, as four rules that join at the corners.
-    fn rect(&mut self, rect: Rect, color: CColor, prio: u8) {
+    fn rect(&mut self, rect: Rect, color: CColor, prio: u8, bold: bool) {
         if rect.w == 0 || rect.h == 0 {
             return;
         }
@@ -862,19 +874,19 @@ impl FrameCanvas {
         let x1 = x0 + rect.w as i32 - 1;
         let y1 = y0 + rect.h as i32 - 1;
         if y1 > y0 {
-            self.vline(x0, y0, y1, color, prio);
+            self.vline(x0, y0, y1, color, prio, bold);
             if x1 > x0 {
-                self.vline(x1, y0, y1, color, prio);
+                self.vline(x1, y0, y1, color, prio, bold);
             }
         }
         if x1 > x0 {
-            self.hline(x0, x1, y0, color, prio);
+            self.hline(x0, x1, y0, color, prio, bold);
             if y1 > y0 {
-                self.hline(x0, x1, y1, color, prio);
+                self.hline(x0, x1, y1, color, prio, bold);
             }
         }
         if x1 == x0 && y1 == y0 {
-            self.add(x0, y0, EDGE_E | EDGE_W, color, prio);
+            self.add(x0, y0, EDGE_E | EDGE_W, color, prio, bold);
         }
     }
 
@@ -907,7 +919,7 @@ impl FrameCanvas {
                 let Some(ch) = Self::glyph(self.edges[idx].mask) else {
                     continue;
                 };
-                put_frame_cell(out, idx, ch, self.colors[idx]);
+                put_frame_cell(out, idx, ch, self.colors[idx], self.bolds[idx]);
             }
         }
     }
@@ -916,11 +928,12 @@ impl FrameCanvas {
 /// Overlay a thin frame on the edge ring of `rect`: box-drawing glyphs
 /// (`╭─╮│╰╯`) with `color` as the foreground, on a default background. The
 /// previous implementation preserved the underlying `background` fill (e.g.
-/// `Idx(235)`), which left a dim gray slab behind the thin red focus glyph.
+/// `Idx(235)`), which left a dim gray slab behind the thin focus glyph.
 /// Resetting the ring cells to `Default` makes the hairline float on the same
-/// background as pane interiors and placeholder boxes, so only the red glyph
-/// remains.
-pub(crate) fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor) {
+/// background as pane interiors and placeholder boxes, so only the glyph
+/// remains. Focus rings pass `bold` so the ring reads even where color
+/// alone would not carry it; plain chrome passes `false`.
+pub(crate) fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: CColor, bold: bool) {
     let stride = cols as usize;
     let w = rect.w as usize;
     let h = rect.h as usize;
@@ -931,7 +944,9 @@ pub(crate) fn draw_focus_frame(out: &mut [Cell], cols: u16, rect: Rect, color: C
     // Replace a cell with a frame glyph. Overwriting half of a wide (2-col)
     // character would orphan its other half, so the partner cell is blanked:
     // a wide head loses its continuation, a continuation loses its head.
-    let put = put_frame_cell;
+    let put = |out: &mut [Cell], idx: usize, ch: char, color: CColor| {
+        put_frame_cell(out, idx, ch, color, bold)
+    };
     if h == 1 {
         for x in x0..=x1 {
             put(out, y0 * stride + x, '─', color);
@@ -1400,6 +1415,7 @@ pub(crate) mod tests {
                 h: 3,
             },
             accent,
+            true,
         );
         let cell = |x: usize, y: usize| out[y * 5 + x];
         // Ring edge carries thin accent-colored glyphs; bg is untouched.
@@ -1413,6 +1429,7 @@ pub(crate) mod tests {
         assert_eq!(cell(3, 2).ch, '│', "right edge");
         for (x, y) in [(1, 1), (2, 1), (1, 2), (3, 2), (2, 3), (3, 3)] {
             assert_eq!(cell(x, y).style.fg, accent, "fg accent at ({x},{y})");
+            assert!(cell(x, y).style.bold, "focus ring is bold at ({x},{y})");
             assert_eq!(
                 cell(x, y).style.bg,
                 CColor::Default,
@@ -1440,6 +1457,7 @@ pub(crate) mod tests {
                 h: 1,
             },
             CColor::Idx(1),
+            true,
         );
         // A degenerate 1x1 rect degrades to a horizontal rule glyph.
         assert_eq!(out[0].ch, '─');
@@ -1707,9 +1725,15 @@ pub(crate) mod tests {
         for y in [0, rows / 2, rows - 1] {
             assert_eq!(at(fs, y).style.fg, red, "focused left edge at y={y}");
             assert_eq!(at(fe, y).style.fg, red, "focused shared right edge y={y}");
+            assert!(at(fs, y).style.bold, "focused ring is bold at y={y}");
+            assert!(at(fe, y).style.bold, "focused ring is bold at y={y}");
         }
         // Unshared edges of unfocused boxes stay the skeleton color.
         assert_eq!(at(ranges[2].0 as u16, rows / 2).style.fg, white);
+        assert!(
+            !at(ranges[2].0 as u16, rows / 2).style.bold,
+            "unfocused chrome stays regular weight"
+        );
         // No double borders: the cell next to a shared boundary is interior.
         assert_eq!(at(fe + 1, rows / 2).ch, ' ', "no second rule beside {fe}");
         // Box interiors are not touched by the skeleton.

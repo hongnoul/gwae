@@ -53,12 +53,14 @@ impl Default for Palette {
 
 impl Palette {
     /// The enforced default: true-black panels with high-contrast functional
-    /// colors. Every entry is an explicit RGB value, so the chrome reads the
-    /// same whatever the host terminal is themed as.
+    /// colors (bold white focus ring, dim gray unfocused chrome, blue running,
+    /// amber idle, green done, red failed). Every entry is an explicit RGB
+    /// value, so the chrome reads the same whatever the host terminal is
+    /// themed as.
     pub const RETRO: Palette = Palette {
         base: rgb(0x000000),
         surface: rgb(0x000000),
-        overlay: rgb(0x808080),
+        overlay: rgb(0x5a5a5a),
         accent: rgb(0xffffff),
         text: rgb(0xffffff),
         label: rgb(0x808080),

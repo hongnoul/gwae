@@ -555,7 +555,7 @@ pub(crate) fn paint_center_minimap(
             }
         }
     }
-    draw_focus_frame(out, cols, plan.rect, focus_color);
+    draw_focus_frame(out, cols, plan.rect, focus_color, true);
     let inner_ox = plan.inner_ox;
     let put = |out: &mut [Cell], x: u16, y: u16, ch: char, fg: CColor, bg: CColor, bold: bool| {
         if x >= cols || y >= rows {
@@ -874,7 +874,7 @@ pub(crate) fn draw_center_hud(
         w: bw as u16,
         h: bh as u16,
     };
-    draw_focus_frame(out, cols, rect, focus_color);
+    draw_focus_frame(out, cols, rect, focus_color, true);
     if keep_awake {
         stamp_keep_awake_badge(out, cols, rect, pal);
     }
