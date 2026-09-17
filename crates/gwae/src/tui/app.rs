@@ -1332,13 +1332,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         }
         let show_hud = hud_active;
         let show_center_minimap = effective_alt_held && !hud_active && cfg.minimap.show;
-        // Everything the overlay knows beyond the layout: what each pane is,
-        // how long it has been silent, and where smart-jump points.
+        // Everything the overlay knows beyond the layout: what each pane is
+        // and how long it has been silent.
         // Built only when the panel is actually up, so a normal frame pays
         // nothing for it.
         let hud_facts = if show_center_minimap && !show_hud {
             HudFacts {
-                jump_target: smart_jump_target(&layout),
                 keep_awake: keep_awake.active(),
                 ..HudFacts::default()
             }

@@ -66,8 +66,7 @@ pub(crate) fn status_glyph_for(s: PaneStatus) -> char {
 }
 
 /// Everything the ⌥-hold overlay knows that the layout alone cannot tell it:
-/// what each pane *is* (its OSC 0/2 title), how long it has been silent, and
-/// where `⌥+g` would take you.
+/// what each pane *is* (its OSC 0/2 title) and how long it has been silent.
 ///
 /// It is a plain data bag built at the call site from the live PTY panes so
 /// the drawing code stays a pure function of the frame's facts, and so every
@@ -81,8 +80,6 @@ pub(crate) struct HudFacts {
     /// How long each pane has been silent (used to age attention tiles).
     #[allow(dead_code)]
     pub(crate) quiet: HashMap<PaneId, Duration>,
-    /// The pane `⌥+g` would jump to right now, if any.
-    pub(crate) jump_target: Option<PaneId>,
     /// Whether the `caffeinate` assertion is held: stamps the keep-awake
     /// badge onto the HUD frame so the state reads without leaving the overlay.
     pub(crate) keep_awake: bool,
@@ -199,7 +196,7 @@ pub(crate) fn tile_colors(bg: CColor, pal: &Palette) -> (CColor, CColor) {
 /// map and duplicated what the pane's own chrome already shows. The result is
 /// always exactly `w` characters, padded with blanks, so the caller can paint
 /// cell-for-cell.
-pub(crate) fn tile_text(w: u16, addr: &str, target: bool, glyph: char) -> String {
+pub(crate) fn tile_text(w: u16, addr: &str, glyph: char) -> String {
     let w = w as usize;
     if w == 0 {
         return String::new();
@@ -221,9 +218,9 @@ pub(crate) fn tile_text(w: u16, addr: &str, target: bool, glyph: char) -> String
     if w <= alen + 1 {
         return format!("{glyph}{addr}");
     }
-    // One cell after the address doubles as the smart-jump marker when this
-    // is the pane `⌥+g` would take you to.
-    let sep = if target { '\u{25b8}' } else { ' ' }; // ▸
+    // One cell after the address is a plain gap: status color already
+    // carries health, so no jump marker is painted.
+    let sep = ' ';
     let mut s = String::new();
     s.push(glyph);
     s.push_str(&addr);
@@ -462,7 +459,7 @@ pub(crate) fn has_attention(layout: &Layout) -> bool {
 }
 
 /// Cells the centered dashboard would like per column — spatial-only tiles
-/// need only glyph+address+marker, so 5 (e.g. `»12▸`) is enough. A target,
+/// need only glyph+address, so 5 (e.g. `»12 `) is enough. A target,
 /// not a guarantee: narrow terminals get less and [`tile_text`] degrades
 /// accordingly.
 pub(crate) const WIDTH_PER_TILE: u16 = 5;
@@ -495,10 +492,9 @@ pub(crate) fn hud_pane_at(plan: &HudPlan, x: u16, y: u16) -> Option<PaneId> {
 ///
 /// One row per strip, one tile per pane, tile width proportional to the
 /// column's real width share. Spatial-only: each tile shows only the column
-/// address and its status color/glyph, with the pane `⌥+g` would
-/// take you to marked `▸`. Titles and ages are omitted — the map shows *where* panes are, not *what*
-/// they are (which lives in the pane chrome itself). The strip's visible
-/// column span is still underscored.
+/// address and its status color/glyph. Titles and ages are omitted — the map
+/// shows *where* panes are, not *what* they are (which lives in the pane
+/// chrome itself). The strip's visible column span is still underscored.
 ///
 /// A gutter names each strip, the footer counts panes by status and spells
 /// the keys that act on what you are looking at.
@@ -622,13 +618,12 @@ pub(crate) fn paint_center_minimap(
         let (fg, bgc) = tile_colors(bgc, pal);
         let gy = plan.row_y[tile.y as usize] as usize;
         let glyph = status_glyph(tile.status);
-        let target = facts.jump_target == Some(tile.pane);
         let addr = if tile.pane_idx == 0 {
             format!("{}", tile.column + 1)
         } else {
             "·".to_string()
         };
-        let text = tile_text(tile.w, &addr, target, glyph);
+        let text = tile_text(tile.w, &addr, glyph);
         for (dx, ch) in text.chars().enumerate() {
             let x = map_ox + tile.x as usize + dx;
             // Bold the leading `glyph + address` signature: it is what the
@@ -1143,7 +1138,6 @@ pub(crate) fn draw_minimap(
 
 #[cfg(test)]
 mod tests {
-    use super::super::input::smart_jump_target;
     use super::super::pty::PtyPane;
     use super::super::render::render_frame;
     use super::super::render::tests::{no_map, pal_accent, pal_of};
@@ -1152,6 +1146,25 @@ mod tests {
     use gwae_layout::{Action, FollowScroll, Layout, PaneId, PaneStatus, Viewport};
     use gwae_term::{CColor, Cell};
     use std::collections::HashMap;
+
+    /// The host terminal's own colors for tests that pin terminal-native
+    /// behavior: default fg/bg plus ANSI indices. (The prod `TERMINAL` const
+    /// was retired with the theme refactor; tests that need a native palette
+    /// build it here.)
+    fn pal_terminal() -> Palette {
+        Palette {
+            base: CColor::Default,
+            surface: CColor::Default,
+            overlay: CColor::Idx(8),
+            accent: CColor::Idx(6),
+            text: CColor::Default,
+            label: CColor::Idx(8),
+            running: CColor::Idx(12),
+            idle: CColor::Idx(11),
+            done: CColor::Idx(10),
+            failed: CColor::Idx(9),
+        }
+    }
 
     #[test]
     fn toast_anchors_to_pane_bottom_left() {
@@ -1360,7 +1373,7 @@ mod tests {
         let r2 = layout.new_row();
         let p = layout.alloc_pane();
         layout.add_column(r2, gwae_layout::Width::Cells(20), vec![p]);
-        let term = Palette::TERMINAL;
+        let term = pal_terminal();
         let (cols, rows) = (80u16, 24u16);
 
         for (what, draw) in [("hud", 0), ("center minimap", 1)] {
@@ -1412,7 +1425,7 @@ mod tests {
         layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Failed;
         layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Idle;
 
-        let term = Palette::TERMINAL;
+        let term = pal_terminal();
         let cols = 40usize;
         let mut out = vec![Cell::default(); cols * 8];
         draw_minimap(
@@ -1547,23 +1560,23 @@ mod tests {
 
     #[test]
     fn tile_text_degrades_in_a_fixed_order_as_the_tile_narrows() {
-        // Spatial-only: glyph, address, jump marker, then padding.
-        let wide = tile_text(16, "2", true, '!');
+        // Spatial-only: glyph, address, gap, then padding.
+        let wide = tile_text(16, "2", '!');
         assert_eq!(wide.chars().count(), 16, "always exactly the tile width");
-        assert!(wide.starts_with("!2\u{25b8}"), "got {wide:?}");
+        assert!(wide.starts_with("!2 "), "got {wide:?}");
         assert!(
             wide.trim().ends_with('2') || wide.contains("!2"),
             "glyph and address kept, got {wide:?}"
         );
-        // No jump marker when this is not the smart-jump target.
-        let plain = tile_text(16, "2", false, '!');
+        // The gap cell is always blank: no jump marker is painted.
+        let plain = tile_text(16, "2", '!');
         assert_eq!(plain, format!("!2 {}", " ".repeat(13)), "got {plain:?}");
         // Narrower still padded blanks, glyph/address/sep always readable.
-        let mid = tile_text(6, "2", false, '!');
+        let mid = tile_text(6, "2", '!');
         assert_eq!(mid.chars().count(), 6);
         assert_eq!(mid, "!2    ", "glyph, address, gap, padding");
         // Tight: still glyph + address when 3 cells.
-        let tight = tile_text(4, "2", false, '!');
+        let tight = tile_text(4, "2", '!');
         assert_eq!(tight.chars().count(), 4);
         assert!(
             tight.starts_with("!2"),
@@ -1571,25 +1584,24 @@ mod tests {
         );
         // Two cells: glyph + address. One cell: the status alone, since a
         // waiting pane matters more than which key jumps to it.
-        assert_eq!(tile_text(2, "2", true, '!'), "!2");
-        assert_eq!(tile_text(1, "2", true, '!'), "!");
+        assert_eq!(tile_text(2, "2", '!'), "!2");
+        assert_eq!(tile_text(1, "2", '!'), "!");
         // Two-digit columns fit when there is room and degrade to `+` when
         // there is not: a `1 0` chord addresses column 10, so the map must
         // not silently claim it is column 1.
-        assert!(tile_text(4, "10", false, '\u{bb}').starts_with("\u{bb}10"));
-        assert_eq!(tile_text(2, "10", false, '\u{bb}'), "\u{bb}+");
-        assert_eq!(tile_text(3, "10", false, '\u{bb}'), "\u{bb}10");
+        assert!(tile_text(4, "10", '\u{bb}').starts_with("\u{bb}10"));
+        assert_eq!(tile_text(2, "10", '\u{bb}'), "\u{bb}+");
+        assert_eq!(tile_text(3, "10", '\u{bb}'), "\u{bb}10");
         // Whatever the width, the tile is exactly that many cells.
         for w in 1..=24u16 {
             assert_eq!(
-                tile_text(w, "12", true, '\u{bb}').chars().count(),
+                tile_text(w, "12", '\u{bb}').chars().count(),
                 w as usize,
                 "width {w}"
             );
         }
-        // Target marker occupies the sep cell.
-        assert_eq!(tile_text(3, "1", true, '»'), "»1\u{25b8}");
-        assert_eq!(tile_text(3, "1", false, '»'), "»1 ");
+        // The sep cell is always a blank gap.
+        assert_eq!(tile_text(3, "1", '»'), "»1 ");
     }
 
     #[test]
@@ -1622,7 +1634,7 @@ mod tests {
 
     #[test]
     fn contrast_fg_defers_to_terminal_defaults_for_unknown_colors() {
-        let term = Palette::TERMINAL;
+        let term = pal_terminal();
         // Unknown colors defer to terminal defaults rather than guessing white ink.
         assert_eq!(contrast_fg(CColor::Idx(4), &term), CColor::Default);
         assert_eq!(contrast_fg(CColor::Default, &term), CColor::Default);
@@ -1652,7 +1664,7 @@ mod tests {
     fn unknown_tile_colors_never_guess_white_on_yellow() {
         for idx in 0..=255 {
             assert_eq!(
-                tile_colors(CColor::Idx(idx), &Palette::TERMINAL),
+                tile_colors(CColor::Idx(idx), &pal_terminal()),
                 (CColor::Default, CColor::Default)
             );
         }
@@ -1678,7 +1690,7 @@ mod tests {
             24,
             &layout,
             &plan,
-            &Palette::TERMINAL,
+            &pal_terminal(),
             &HudFacts::default(),
         );
         for tile in &plan.map.cells {
@@ -1697,7 +1709,7 @@ mod tests {
             24,
             &layout,
             &crate::config::Minimap::default(),
-            &Palette::TERMINAL,
+            &pal_terminal(),
         );
         let digits: Vec<_> = out[23 * 100..]
             .iter()
@@ -1711,24 +1723,20 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_names_panes_and_marks_the_attention_target() {
+    fn dashboard_tiles_carry_no_jump_marker() {
         let (mut layout, ids) = dashboard_layout(4);
         layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Idle;
-        let facts = HudFacts {
-            jump_target: smart_jump_target(&layout),
-            ..HudFacts::default()
-        };
-        assert_eq!(facts.jump_target, Some(ids[2]), "the idle pane wants you");
+        let facts = HudFacts::default();
         let out = paint_dashboard(&layout, &facts, 100, 24);
         let text = screen_rows(&out, 100).join("\n");
-        // Spatial-only: titles and ages are not rendered; only glyph+addr+target.
+        // Spatial-only: titles and ages are not rendered; only glyph+addr.
         assert!(
             !text.contains("jcode") && !text.contains("cargo"),
             "spatial tiles carry no title text, got:\n{text}"
         );
         assert!(
-            text.contains('\u{25b8}'),
-            "the smart-jump target is marked, got:\n{text}"
+            !text.contains('\u{25b8}'),
+            "no smart-jump marker is painted, got:\n{text}"
         );
         assert!(
             !text.contains("4m"),
@@ -2156,7 +2164,7 @@ mod tests {
         let (cols, rows) = (80u16, 24u16);
         for keep_awake in [false, true] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
-            draw_center_hud(&mut out, cols, rows, &Palette::TERMINAL, keep_awake);
+            draw_center_hud(&mut out, cols, rows, &pal_terminal(), keep_awake);
             let text: String = out.iter().map(|c| c.ch).collect();
             assert_eq!(
                 text.contains("keep-awake"),
@@ -2172,7 +2180,7 @@ mod tests {
         // not tucked into a corner.
         let (cols, rows) = (80u16, 24u16);
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(&mut out, cols, rows, &Palette::TERMINAL, true);
+        draw_center_hud(&mut out, cols, rows, &pal_terminal(), true);
         let lines = screen_rows(&out, cols);
         let badge = crate::keepawake::KEEP_AWAKE_BADGE;
         let badge_w = badge.chars().count();

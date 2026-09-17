@@ -224,8 +224,9 @@ questions you actually hold the modifier to ask, and carries more per tile:
 * **Which one is it.** Each tile shows the pane's own window title (OSC 0/2),
   shortened - a shell's `user@host: ~/git/gwae` becomes `gwae`, and an agent
   harness's title is already short. Tiles read `»2 claude`, not `2`.
-* **Where should I look.** The pane `⌥+g` would jump to is marked `▸`, and a
-  pane that wants attention carries how long it has been silent (`3m`, `50m`).
+* **Where should I look.** Panes that want attention carry their status
+  color and glyph (`!` idle, `✗` failed); `⌥+g` jumps to the most urgent
+  one (failed, then idle, then done).
 * **What is on screen.** A rule under a strip marks the columns currently in
   the viewport - the one thing an infinite strip cannot show by itself.
 * Strips share one scale, so a 2-column strip reads shorter than a 6-column
