@@ -18,17 +18,24 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// A multi-page PDF whose pages differ, so page turns are genuine new content
 /// rather than a cached texture.
 fn write_pdf(path: &PathBuf) {
-    const PAGES: usize = 6;
+    write_pdf_pages(path, 6);
+}
+
+/// Same as [`write_pdf`] with an explicit page count, for tests that turn
+/// more pages than the default document holds.
+fn write_pdf_pages(path: &PathBuf, pages: usize) {
+    const DEFAULT_PAGES: usize = 6;
+    let pages = if pages == 0 { DEFAULT_PAGES } else { pages };
     let mut objects: Vec<String> = Vec::new();
     // 1: catalog, 2: pages, then per page a page object and its content.
-    let kids: Vec<String> = (0..PAGES).map(|n| format!("{} 0 R", 3 + n * 2)).collect();
+    let kids: Vec<String> = (0..pages).map(|n| format!("{} 0 R", 3 + n * 2)).collect();
     objects.push("<< /Type /Catalog /Pages 2 0 R >>".into());
     objects.push(format!(
-        "<< /Type /Pages /Kids [{}] /Count {PAGES} >>",
+        "<< /Type /Pages /Kids [{}] /Count {pages} >>",
         kids.join(" ")
     ));
-    let font_obj = 3 + PAGES * 2;
-    for n in 0..PAGES {
+    let font_obj = 3 + pages * 2;
+    for n in 0..pages {
         let mut text = String::new();
         for line in 0..40 {
             text.push_str(&format!(
@@ -80,13 +87,19 @@ impl Session {
     /// gwae runs tdf in one pane, on a PTY that reports pixel dimensions so
     /// the image path (not the text-cell fallback) is the one exercised.
     fn start() -> Self {
+        Self::start_with_pages(6)
+    }
+
+    /// Same as [`start`](Self::start) with an explicit PDF page count, for
+    /// tests that turn more pages than the default document holds.
+    fn start_with_pages(pages: usize) -> Self {
         let dir = std::env::var_os("JCODE_SCRATCH_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir)
             .join(format!("gwae-pdf-e2e-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("gwae")).unwrap();
         let pdf = dir.join("page.pdf");
-        write_pdf(&pdf);
+        write_pdf_pages(&pdf, pages);
         std::fs::write(
             dir.join("gwae/gwae.toml"),
             "default_column_width = 'full'\nstartup_panes = 1\n\
@@ -328,7 +341,10 @@ fn still_page_emits_no_image_bytes_on_idle_frames() {
     let _ = s.drain_until_quiet(Duration::from_millis(500));
     let idle = s.drain_until_quiet(Duration::from_millis(2000));
     let idle_packets = idle.windows(6).filter(|w| **w == b"\x1b_Ga=T"[..]).count();
-    eprintln!("idle 2s window: {} bytes, {idle_packets} image transfers", idle.len());
+    eprintln!(
+        "idle 2s window: {} bytes, {idle_packets} image transfers",
+        idle.len()
+    );
     assert_eq!(
         idle_packets, 0,
         "a still page re-uploaded {idle_packets} image transfers on idle frames"
@@ -339,10 +355,50 @@ fn still_page_emits_no_image_bytes_on_idle_frames() {
     s.writer.flush().unwrap();
     let turn = s.drain_until_quiet(Duration::from_millis(700));
     let turn_packets = turn.windows(6).filter(|w| **w == b"\x1b_Ga=T"[..]).count();
-    eprintln!("page turn: {} bytes, {turn_packets} image transfers", turn.len());
+    eprintln!(
+        "page turn: {} bytes, {turn_packets} image transfers",
+        turn.len()
+    );
     assert!(
         turn_packets > 0,
         "page turn produced no image traffic; the viewer did not navigate"
+    );
+}
+
+/// Deep navigation past the old 64-image quota wedge. tdf allocates a fresh
+/// image id per page and clears placements each turn with lowercase `d=a`,
+/// which keeps image data for re-display; gwae used to accumulate one stored
+/// source per page until the quota rejected every later transmit with ENOSPC,
+/// leaving no placements, no host tiles, and a pitch-black viewer. Turning
+/// 70 pages must keep producing exactly one page worth of host image traffic
+/// per turn: the cache isolates idle frames, and quota-pressure eviction of
+/// unplaced images keeps the viewer alive.
+#[test]
+#[ignore]
+fn deep_page_navigation_keeps_rendering_past_sixty_turns() {
+    let mut s = Session::start_with_pages(80);
+    let startup = s.drain_until_quiet(Duration::from_millis(1500));
+    assert!(
+        startup.windows(6).any(|w| w == b"\x1b_Ga=T"),
+        "no host image transfer was emitted, so this ran the text fallback \
+         and measures nothing: {} bytes of startup output",
+        startup.len()
+    );
+    let _ = s.drain_until_quiet(Duration::from_millis(500));
+    let mut dark_turns = Vec::new();
+    for n in 1..=70 {
+        s.writer.write_all(b"l").unwrap();
+        s.writer.flush().unwrap();
+        let frame = s.drain_until_quiet(Duration::from_millis(700));
+        let uploads = frame.windows(6).filter(|w| **w == b"\x1b_Ga=T"[..]).count();
+        if uploads == 0 {
+            dark_turns.push(n);
+        }
+    }
+    assert!(
+        dark_turns.is_empty(),
+        "pages went black (no host image upload) on turns {dark_turns:?}; \
+         the child image quota wedged again"
     );
 }
 
