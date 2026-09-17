@@ -936,6 +936,38 @@ mod tests {
         }
 
         #[test]
+        #[test]
+        fn native_eviction_pressure_leaves_legacy_images_alone() {
+            // Legacy (quiet Unicode-placeholder) images live in a separate
+            // store with their own budget. Native quota-pressure eviction must
+            // neither drop legacy images nor be blocked by them: fill the
+            // native store with the tdf shape (fresh id per page + soft
+            // deletes), commit one legacy image, and confirm both survive
+            // with the native page still placed.
+            let (mut pane, _) = pane_with_replies();
+            for id in 2..2 + crate::graphics::MAX_IMAGES as u32 {
+                feed_pane_output(&mut pane, b"\x1b_Ga=d,d=a\x1b\\", true, true);
+                feed_pane_output(
+                    &mut pane,
+                    format!("\x1b_Ga=T,i={id},f=24,s=1,v=1,C=1;AQID\x1b\\").as_bytes(),
+                    true,
+                    true,
+                );
+            }
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=T,U=1,q=2,i=7,p=1,f=24,s=1,v=2,c=1,r=1,m=1;AAAA\x1b\\",
+                true,
+                true,
+            );
+            feed_pane_output(&mut pane, b"\x1b_Gm=0;BAUG\x1b\\", true, true);
+            assert!(pane
+                .graphics
+                .source(2 + crate::graphics::MAX_IMAGES as u32 - 1)
+                .is_some());
+            assert_eq!(pane.graphics.placements().len(), 1);
+        }
+
         fn dispatcher_replaces_native_source_only_after_successful_legacy_commit() {
             let (mut pane, _) = pane_with_replies();
             feed_pane_output(

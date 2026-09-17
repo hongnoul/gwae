@@ -10,7 +10,7 @@ use std::sync::Arc;
 const MAX_CHUNK: usize = 4096;
 const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 128 * 1024 * 1024;
-const MAX_IMAGES: usize = 64;
+pub(crate) const MAX_IMAGES: usize = 64;
 const MAX_PLACEMENTS: usize = 256;
 const MAX_DIMENSION: u32 = 16384;
 
@@ -1126,6 +1126,56 @@ mod tests {
         assert!(g.source(2).is_some());
         assert!(g.source(3).is_some());
         assert!(g.source(4).is_none());
+    }
+
+    #[test]
+    fn eviction_in_one_pane_never_disturbs_another_pane() {
+        use crate::graphics_host::Host;
+        // One Graphics store per pane: pressure in the busy pane (fresh id
+        // per page + soft deletes, the tdf shape) must not disturb the still
+        // pane's sources, placements, or prepared host tiles. Host textures
+        // are keyed per pane and epochs refreshed every frame, so finish()
+        // never collects the still pane's live texture.
+        let mut busy = Graphics::default();
+        let mut still = Graphics::default();
+        ok(
+            still.command(
+                b"\x1b_Ga=T,i=9,f=24,s=1,v=1,C=1;AQID\x1b\\",
+                (0, 0),
+                (10, 20),
+            ),
+            9,
+        );
+        let mut host = Host::default();
+        host.begin();
+        let calm = host.prepare_cached(2, Some(1), &still, (0, 0, 140, 50), (10, 20));
+        host.finish();
+        assert_eq!(calm.len(), 1);
+        let calm_id = calm[0].id;
+        for id in 10..10 + MAX_IMAGES as u32 + 5 {
+            command(&mut busy, "a=d,d=a", "");
+            ok(
+                command(&mut busy, &format!("a=T,i={id},f=24,s=1,v=1,C=1"), "AQID"),
+                id,
+            );
+            host.begin();
+            let tiles = host.prepare_cached(1, Some(id as u64), &busy, (0, 0, 140, 50), (10, 20));
+            assert_eq!(tiles.len(), 1);
+            // The still pane re-prepares from cache with the same token: its
+            // tile still points at the same live host texture.
+            let again = host.prepare_cached(2, Some(1), &still, (0, 0, 140, 50), (10, 20));
+            assert_eq!(again, calm);
+            host.finish();
+        }
+        assert!(still.source(9).is_some());
+        assert_eq!(still.placements().len(), 1);
+        assert_eq!(calm[0].id, calm_id);
+        assert!(!host.pending.is_empty());
+        let drops = String::from_utf8_lossy(&host.pending);
+        assert!(
+            !drops.contains(&format!("i={calm_id},")),
+            "still pane texture must never be deleted: {drops:?}"
+        );
     }
 
     #[test]
