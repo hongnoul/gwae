@@ -164,6 +164,17 @@ fn assert_retro_chrome(painted: &str, ctx: &str) {
         "{ctx} must paint the retro white focus accent; saw {fgs:?}",
         fgs = fgs_in(painted),
     );
+    // The focus ring is bold white on the wire, so focus reads by weight as
+    // well as color; unfocused chrome is a dimmer gray for the delta.
+    assert!(
+        painted.contains("\x1b[1m"),
+        "{ctx} must paint the focus ring bold; capture has no SGR bold",
+    );
+    assert!(
+        painted.contains(&fg_seq(0x5a, 0x5a, 0x5a)),
+        "{ctx} must paint dim gray unfocused chrome; saw {fgs:?}",
+        fgs = fgs_in(painted),
+    );
     assert!(
         painted.contains(&bg_seq(0x00, 0x00, 0x00)),
         "{ctx} must paint true-black panel backgrounds",
