@@ -48,7 +48,8 @@ pub struct Config {
     /// Explicit harness override for `⌥+;` (spawn-agent). Empty (the default)
     /// means "remember the pick": the first press offers what is installed and
     /// remembers the choice in the state file, so later presses go straight
-    /// there. Set this only to pin a harness in dotfiles or scripts; a value
+    /// there. `⌥+⇧+;` always opens the picker instead and ignores this.
+    /// Set this only to pin a harness in dotfiles or scripts; a value
     /// that is not installed falls back to the picker rather than a dead pane.
     pub default_agent: String,
     /// The directory new panes (agent and shell) start in. Empty (the

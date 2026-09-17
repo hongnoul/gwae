@@ -17,10 +17,11 @@ const QUIET_AFTER: Duration = Duration::from_secs(4);
 /// picker instead of taking the fast path.
 ///
 /// Mirrors the [`crate::agent::plan`] arms so the overlay says the same thing
-/// the `⌥+;` overlay would: a missing override is named, a stale memory is
-/// named, and a live override is called out (it still wins for `⌥+;`, so a
-/// pick here applies to the new strip only). `None` when there is nothing to
-/// explain, which is the common bypass case of a healthy remembered pick.
+/// the `⌥+;` overlay would: a missing override is named, a resolvable
+/// override is called out (it still wins for `⌥+;`, so a pick here applies
+/// to the new strip only), and otherwise a stale memory is named. `None`
+/// when there is nothing to explain, which is the common bypass case of a
+/// healthy remembered pick.
 fn row_picker_notice(want: &str, last: &str, ordered: &[crate::agent::Found]) -> Option<String> {
     let want = want.trim();
     let last = last.trim();
@@ -30,11 +31,13 @@ fn row_picker_notice(want: &str, last: &str, ordered: &[crate::agent::Found]) ->
     if !want.is_empty() && !crate::agent::command_available(want) {
         return Some(format!("`{want}` is not installed"));
     }
+    // A live override outranks memory in `plan`, so it is named first: with
+    // both set, `⌥+;` spawns the override, not the stale pick.
+    if !want.is_empty() && crate::agent::command_available(want) {
+        return Some(format!("default_agent `{want}` still wins for ⌥+;"));
+    }
     if !last.is_empty() && !ordered.iter().any(|f| f.cmd == last) {
         return Some(format!("remembered `{last}` is gone; pick another"));
-    }
-    if !want.is_empty() {
-        return Some(format!("default_agent `{want}` still wins for ⌥+;"));
     }
     None
 }
@@ -468,11 +471,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // the highlighted row. Built when the picker opens rather than at startup
     // so a repo cloned mid-session shows up without a restart.
     let mut dir_pick: Option<DirPicker> = None;
-    // Harness picker (`⌥+;` with more than one answer): the state-ordered
-    // candidates, the typed filter, and the highlighted row. Built when the
-    // chord fires rather than at startup so a harness installed mid-session
-    // shows up without a restart. Fast paths (an override, a remembered
-    // pick, a lone install) never open it.
+    // Harness picker (`⌥+;` with more than one answer, `⌥+⇧+;` always): the
+    // state-ordered candidates, the typed filter, and the highlighted row.
+    // Built when the chord fires rather than at startup so a harness
+    // installed mid-session shows up without a restart. The `⌥+;` fast paths
+    // (an override, a remembered pick, a lone install) never open it; the
+    // row chord always does.
     let mut harness_pick: Option<HarnessPicker> = None;
     // Force-quit confirmation (⌥+Shift+q): true while the centered disclaimer
     // is up. Quitting kills every pane's process, so the chord arms this
@@ -2197,9 +2201,14 @@ mod tests {
             Some("remembered `gone-xyz` is gone; pick another".to_string())
         );
         // A live override is called out: it still wins for ⌥+;, so the pick
-        // here only steers the new strip.
+        // here only steers the new strip. It outranks memory, so with a stale
+        // pick alongside, the override is what the notice names.
         assert_eq!(
             row_picker_notice("sh", "claude", &ordered),
+            Some("default_agent `sh` still wins for ⌥+;".to_string())
+        );
+        assert_eq!(
+            row_picker_notice("sh", "gone-xyz", &ordered),
             Some("default_agent `sh` still wins for ⌥+;".to_string())
         );
         // Nothing installed at all: same line as the NoneInstalled overlay.
