@@ -604,11 +604,10 @@ pub(crate) fn paint_center_minimap(
         if tile.y as usize >= plan.row_y.len() {
             continue;
         }
-        let bgc = if tile.focus_col {
-            focus_color
-        } else {
-            status_bg(tile.status)
-        };
+        // Every tile keeps its status tint, focused or not: the old accent
+        // fill hid whether the focused pane was working, idle, done or
+        // failed. Focus reads via the underline ring painted below.
+        let bgc = status_bg(tile.status);
         let neutral = !matches!(bgc, CColor::Rgb(..));
         let (fg, bgc) = tile_colors(bgc, pal);
         let gy = plan.row_y[tile.y as usize] as usize;
@@ -624,7 +623,7 @@ pub(crate) fn paint_center_minimap(
             // Bold the leading `glyph + address` signature: it is what the
             // eye lands on when scanning a row of abutting tiles. The whole
             // focused tile is bold so focus survives palette-neutral fills
-            // with no underline.
+            // alongside the ring.
             let sig = dx <= addr.chars().count() || tile.focus_col;
             let ink = if neutral && ch == glyph {
                 status_fg(tile.status)
@@ -632,6 +631,25 @@ pub(crate) fn paint_center_minimap(
                 fg
             };
             put(out, x as u16, gy as u16, ch, ink, bgc, sig);
+        }
+    }
+    // Focus ring: an accent underline across the focused tile, on top of its
+    // status tint, instead of swapping the background to the accent fill.
+    // SGR 58 carries the accent even on palette-neutral fills, and the bold
+    // kept above means focus never depends on color alone.
+    if let Some(focused) = plan.map.cells.iter().find(|c| c.focus_col) {
+        if (focused.y as usize) < plan.row_y.len() {
+            let gy = plan.row_y[focused.y as usize] as usize;
+            for dx in 0..focused.w as usize {
+                let x = map_ox + focused.x as usize + dx;
+                if x >= cols as usize || gy >= rows as usize {
+                    continue;
+                }
+                if let Some(cell) = out.get_mut(gy * cols as usize + x) {
+                    cell.style.underline = true;
+                    cell.style.underline_color = focus_color;
+                }
+            }
         }
     }
     // Viewport ruler: which columns of each strip are actually on screen.
@@ -989,10 +1007,12 @@ pub(crate) fn draw_edge_ticks(
 /// Overlay the minimap in the bottom-right corner: an agent dashboard, not
 /// just a position indicator. Rows of the map are strips, each tile is a pane
 /// (columns subdivided by their stacks) with width proportional to the
-/// column's real width share. Every tile is painted in its *status* color
+/// column's real width share. Every tile keeps its *status* color
 /// (working / wants-attention / done / failed), carries the pane's column
 /// digit and, when wide enough, a status
-/// glyph. The focused pane's tile is painted in the focus accent and the
+/// glyph. The focused pane's tile keeps its status tint and gains an accent
+/// underline ring instead of swapping to the focus fill, so focus never
+/// hides what the pane is doing. The
 /// focused strip gets a `❯` chevron in the gutter. An optional one-line
 /// summary above the map counts panes by status: `4 »2 !1 ✓1`.
 pub(crate) fn draw_minimap(
@@ -1044,11 +1064,10 @@ pub(crate) fn draw_minimap(
         if tile.y >= height {
             continue;
         }
-        let bg = if tile.focus_col {
-            focus_color
-        } else {
-            status_bg(tile.status)
-        };
+        // Every tile keeps its status tint, focused or not: the old accent
+        // fill hid whether the focused pane was working, idle, done or
+        // failed. Focus reads via the underline ring stamped below.
+        let bg = status_bg(tile.status);
         let neutral = !matches!(bg, CColor::Rgb(..));
         let (fg, bg) = tile_colors(bg, pal);
         let y = oy + tile.y;
@@ -1082,6 +1101,23 @@ pub(crate) fn draw_minimap(
                 bg,
                 tile.focus_col || (dx == 0 && tile.pane_idx == 0),
             );
+        }
+        // Focus ring: underline the focused tile in the accent, on top of
+        // its status tint, instead of swapping its background to the accent
+        // fill. SGR 58 carries the accent even on palette-neutral fills,
+        // and the bold kept above means focus never depends on color alone.
+        if tile.focus_col {
+            for dx in 0..tile.w {
+                let x = ox + tile.x + dx;
+                if x >= cols || y >= rows {
+                    continue;
+                }
+                let idx = y as usize * cols as usize + x as usize;
+                if let Some(cell) = out.get_mut(idx) {
+                    cell.style.underline = true;
+                    cell.style.underline_color = focus_color;
+                }
+            }
         }
         // Focused strip: a chevron in the gutter just left of the map row.
         if tile.focus_row && tile.x == 0 && ox > 0 {
@@ -1210,15 +1246,20 @@ mod tests {
         // Two strips -> map height 2, width 32 (default max). Bottom-right:
         // ox = 40-32 = 8, oy = 8-2 = 6.
         let cell = |x: usize, y: usize| out[y * 40 + x];
-        // An unknown indexed accent uses neutral fill; focus reads via bold.
+        // The focused tile keeps its status tint and gains an accent
+        // underline ring, so focus never hides what the pane is doing.
         let focus = cell(8, 6);
         assert_eq!(
             focus.style.bg,
-            CColor::Default,
-            "unknown accent uses neutral fill"
+            CColor::Rgb(0x89, 0xb4, 0xfa),
+            "focused tile keeps its running tint"
         );
-        assert!(!focus.style.underline, "no focus underline");
-        assert!(focus.style.bold, "focus reads via bold without a fill");
+        assert!(focus.style.underline, "focus reads via an accent ring");
+        assert_eq!(
+            focus.style.underline_color, accent,
+            "ring carries the accent"
+        );
+        assert!(focus.style.bold, "focus still reads via bold without a fill");
         // The tile carries its column digit (column 0 -> '1').
         assert_eq!(focus.ch, '1', "tile shows the ⌥+digit column address");
         // The non-focused strip's tile is a status tint, not the accent.
@@ -1292,8 +1333,8 @@ mod tests {
         let r2 = layout.new_row();
         let p = layout.alloc_pane();
         layout.add_column(r2, Width::Cells(20), vec![p]);
-        // Statuses: pane1 focused (accent), pane2 done, pane3 failed,
-        // pane4 idle; the strip-2 pane keeps Running.
+        // Statuses: pane1 focused (still Running, with the ring), pane2
+        // done, pane3 failed, pane4 idle; the strip-2 pane keeps Running.
         let ids: Vec<PaneId> = {
             let row = layout.rows[0].clone();
             row.columns.iter().flat_map(|c| c.panes.clone()).collect()
@@ -1315,9 +1356,25 @@ mod tests {
         let cell = |x: usize, y: usize| out[y * cols + x];
         // Map: ox=8, oy=6. Strip 1 has 4 tiles of 8 cells each.
         let (ox, y) = (8usize, 6usize);
-        assert_eq!(cell(ox, y).style.bg, CColor::Default, "tile 1 neutral");
+        assert_eq!(
+            cell(ox, y).style.bg,
+            CColor::Rgb(0x89, 0xb4, 0xfa),
+            "tile 1 focused keeps its running tint"
+        );
         assert!(cell(ox, y).style.bold, "tile 1 focused reads via bold");
-        assert!(!cell(ox, y).style.underline, "no focus underline");
+        assert!(
+            cell(ox, y).style.underline,
+            "tile 1 focused carries the accent ring"
+        );
+        assert_eq!(
+            cell(ox, y).style.underline_color, accent,
+            "ring carries the accent"
+        );
+        // Only the focused tile wears the ring (tiles 2-4 start at ox+8).
+        assert!(
+            !(ox + 8..ox + 32).any(|x| out[y * cols + x].style.underline),
+            "unfocused tiles carry no ring"
+        );
         assert_eq!(
             cell(ox + 8, y).style.bg,
             CColor::Rgb(0xa6, 0xe3, 0xa1),
@@ -1344,6 +1401,73 @@ mod tests {
         assert!(
             bar.trim_start().ends_with("5 »2 !1 ✓1 ✗1"),
             "summary tallies by status, got {bar:?}"
+        );
+    }
+
+    #[test]
+    fn focused_tile_keeps_its_status_tint_under_the_ring() {
+        // The regression this ring replaces: the accent fill hid whether
+        // the focused pane was working, idle, done or failed. A failed
+        // focused pane must show its red tint with the accent ring on top,
+        // never a cyan fill.
+        use gwae_layout::Width;
+        let mut layout = Layout::default(); // 4 quarter panes on strip 1
+        let r2 = layout.new_row();
+        let p = layout.alloc_pane();
+        layout.add_column(r2, Width::Cells(20), vec![p]);
+        let first: PaneId = layout.rows[0].columns[0].panes[0];
+        layout.panes.get_mut(&first).unwrap().status = PaneStatus::Failed;
+        let accent = CColor::Rgb(0x00, 0xff, 0xff);
+        let pal = pal_accent(accent);
+        // Corner overlay.
+        let mut out = vec![Cell::default(); 40 * 8];
+        draw_minimap(
+            &mut out,
+            40,
+            8,
+            &layout,
+            &crate::config::Minimap::default(),
+            &pal,
+        );
+        let cell = |x: usize, y: usize| out[y * 40 + x];
+        let focus = cell(8, 6);
+        assert_eq!(
+            focus.style.bg, pal.failed,
+            "focused failed tile keeps its tint, not the accent fill"
+        );
+        assert_ne!(focus.style.bg, accent, "no accent fill");
+        assert!(focus.style.underline, "ring marks focus");
+        assert_eq!(focus.style.underline_color, accent);
+        // Centered dashboard: same promise.
+        let plan =
+            plan_center_minimap(100, 24, &layout, &crate::config::Minimap::default()).unwrap();
+        let mut dash = vec![Cell::default(); 100 * 24];
+        paint_center_minimap(
+            &mut dash,
+            100,
+            24,
+            &layout,
+            &plan,
+            &pal,
+            &HudFacts::default(),
+        );
+        let focused = plan.map.cells.iter().find(|c| c.focus_col).unwrap();
+        let gy = plan.row_y[focused.y as usize] as usize;
+        let cells = &dash[gy * 100 + (plan.map_ox + focused.x) as usize..]
+            [..focused.w as usize];
+        assert!(
+            cells.iter().all(|c| c.style.bg == pal.failed),
+            "dashboard focused tile keeps its tint"
+        );
+        assert!(
+            cells.iter().all(|c| c.style.underline),
+            "dashboard focused tile wears the ring"
+        );
+        assert!(
+            cells
+                .iter()
+                .all(|c| c.style.underline_color == accent),
+            "ring carries the accent"
         );
     }
 
@@ -1422,14 +1546,24 @@ mod tests {
         );
         let cell = |x: usize, y: usize| out[y * cols + x];
         let (ox, y) = (8usize, 6usize);
-        // Focus stays visible without a fill: bold, not background.
+        // Focus reads via the ring, not a fill: bold plus an accent
+        // underline on top of the terminal background.
         assert_eq!(
             cell(ox, y).style.bg,
             CColor::Default,
             "focused tile keeps the terminal background"
         );
-        assert!(!cell(ox, y).style.underline, "no focus underline");
+        assert!(cell(ox, y).style.underline, "focus reads via the ring");
+        assert_eq!(
+            cell(ox, y).style.underline_color, term.accent,
+            "ring carries the accent"
+        );
         assert!(cell(ox, y).style.bold, "focus reads via bold");
+        // Only the focused tile wears the ring.
+        assert!(
+            !(ox + 8..ox + 32).any(|x| out[y * cols + x].style.underline),
+            "unfocused tiles carry no ring"
+        );
         for (dx, status) in [
             (8, PaneStatus::Done),
             (16, PaneStatus::Failed),
@@ -1682,26 +1816,39 @@ mod tests {
             let y = plan.row_y[tile.y as usize] as usize;
             let cells = &out[y * 100 + (plan.map_ox + tile.x) as usize..][..tile.w as usize];
             assert!(cells.iter().all(|c| c.style.bg == CColor::Default));
-            assert!(
-                cells.iter().all(|c| !c.style.underline),
-                "no focus underline"
-            );
             for c in cells.iter().filter(|c| c.ch.is_ascii_digit()) {
                 assert_eq!(c.style.fg, CColor::Default);
             }
-            // Without a fill or an underline, focus reads via bold: every
-            // cell of the focused tile is bold, while the rest of a tile is
-            // plain (only its address cell is bold).
+            // Without a fill, focus reads via bold plus the accent ring:
+            // every cell of the focused tile is bold and underlined, while
+            // the rest of a tile is plain (only its address cell is bold)
+            // and carries no ring.
             if tile.focus_col {
                 assert!(
                     cells.iter().all(|c| c.style.bold),
                     "focused tile reads via bold"
                 );
-            } else if tile.w >= 2 {
                 assert!(
-                    cells.iter().any(|c| !c.style.bold),
-                    "unfocused tile is not all bold"
+                    cells.iter().all(|c| c.style.underline),
+                    "focused tile reads via the ring"
                 );
+                assert!(
+                    cells
+                        .iter()
+                        .all(|c| c.style.underline_color == pal_terminal().accent),
+                    "ring carries the accent"
+                );
+            } else {
+                assert!(
+                    cells.iter().all(|c| !c.style.underline),
+                    "unfocused tiles carry no ring"
+                );
+                if tile.w >= 2 {
+                    assert!(
+                        cells.iter().any(|c| !c.style.bold),
+                        "unfocused tile is not all bold"
+                    );
+                }
             }
         }
         let mut out = vec![Cell::default(); 100 * 24];
@@ -1721,9 +1868,18 @@ mod tests {
         assert!(digits
             .iter()
             .all(|c| c.style.bg == CColor::Default && c.style.fg == CColor::Default));
+        // Exactly one digit row wears the accent ring: the focused tile's.
+        let ringed: Vec<_> = digits.iter().filter(|c| c.style.underline).collect();
+        assert!(!ringed.is_empty(), "the focused tile wears the ring");
         assert!(
-            digits.iter().all(|c| !c.style.underline),
-            "no focus underline"
+            ringed
+                .iter()
+                .all(|c| c.style.underline_color == pal_terminal().accent),
+            "ring carries the accent"
+        );
+        assert!(
+            digits.iter().any(|c| !c.style.underline),
+            "unfocused tiles carry no ring"
         );
         assert!(
             out.iter().any(|c| c.ch == '❯'),

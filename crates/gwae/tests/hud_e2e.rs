@@ -546,6 +546,7 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     grid.feed(raw.as_bytes());
     let mut addresses = 0;
     let mut bold = 0;
+    let mut ringed = 0;
     // Identify the map by geometry, not the old underline/color behavior.
     let map_y = (0..30)
         .find(|&y| {
@@ -567,9 +568,10 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
                 && matches!(grid.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
             {
                 addresses += 1;
-                // Retro chrome: tiles carry explicit RGB fills (cyan focus,
-                // full-intensity status tints) with black/white contrast ink,
-                // never the terminal default pair.
+                // Retro chrome: every tile keeps an explicit RGB status tint
+                // (the focused one included) with black/white contrast ink,
+                // never the terminal default pair. Focus reads via the accent
+                // ring: bold plus a cyan underline on top of the tint.
                 assert!(
                     matches!(c.style.bg, CColor::Rgb(..)),
                     "address at ({x}, {y}) should sit on a retro tint, got {:?}",
@@ -580,8 +582,17 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
                     "address ink at ({x}, {y}) should be contrast ink, got {:?}",
                     c.style.fg
                 );
-                assert!(!c.style.underline, "no focus underline at ({x}, {y})");
                 bold += usize::from(c.style.bold);
+                if c.style.underline {
+                    ringed += 1;
+                    assert_eq!(
+                        c.style.underline_color,
+                        CColor::Rgb(0x00, 0xff, 0xff),
+                        "ring at ({x}, {y}) should carry the cyan accent, got {:?}",
+                        c.style.underline_color
+                    );
+                    assert!(c.style.bold, "the ringed tile stays bold");
+                }
             }
         }
     }
@@ -590,4 +601,8 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
         "must inspect real minimap addresses, got {addresses}"
     );
     assert!(bold > 0, "the focused tile stays bold");
+    assert_eq!(
+        ringed, 1,
+        "exactly the focused tile wears the accent ring, got {ringed} of {addresses}"
+    );
 }
