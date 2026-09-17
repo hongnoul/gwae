@@ -19,6 +19,16 @@ fn doctor(config_body: Option<&str>) -> String {
 /// developer laptop has `claude` on PATH and a CI runner has nothing, and
 /// `plan` answers differently for each.
 fn doctor_with_agents(config_body: Option<&str>, agents: &[&str]) -> String {
+    doctor_with_agents_and_state(config_body, agents, None)
+}
+
+/// As [`doctor_with_agents`], but with a pre-seeded harness memory file, so
+/// cases can cover the remembered-pick paths deterministically.
+fn doctor_with_agents_and_state(
+    config_body: Option<&str>,
+    agents: &[&str],
+    state_body: Option<&str>,
+) -> String {
     // Unique per case: these tests are threads of one process, so a shared
     // directory would let cases clobber each other's config.
     static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -30,6 +40,10 @@ fn doctor_with_agents(config_body: Option<&str>, agents: &[&str]) -> String {
     std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
     if let Some(body) = config_body {
         std::fs::write(dir.join("gwae/gwae.toml"), body).expect("write config");
+    }
+    if let Some(state) = state_body {
+        std::fs::create_dir_all(dir.join("state/gwae")).expect("temp state dir");
+        std::fs::write(dir.join("state/gwae/harness.json"), state).expect("write state");
     }
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_gwae"));
     cmd.arg("doctor")
@@ -124,6 +138,27 @@ fn doctor_reports_how_the_spawn_agent_key_will_resolve() {
     let out = doctor(Some("startup_panes = 1\n"));
     assert!(out.contains("agent:"), "got:\n{out}");
     assert!(!out.contains("MISSING"), "got:\n{out}");
+}
+
+#[test]
+fn doctor_names_a_dead_override_even_when_memory_covers_it() {
+    // Memory keeps ⌥+; working, so this is not MISSING, but the broken pin
+    // must still be visible rather than sitting silently in the config.
+    let out = doctor_with_agents_and_state(
+        Some("default_agent = \"gwae-no-such-agent-xyz\"\n"),
+        &["codex"],
+        Some("{\"last\":\"codex\",\"mru\":[\"codex\"],\"custom\":[]}".into()),
+    );
+    assert!(
+        out.contains("codex [remembered]") && out.contains("gwae-no-such-agent-xyz"),
+        "got:\n{out}"
+    );
+    assert!(!out.contains("MISSING"), "memory covers it; got:\n{out}");
+
+    // And a live override still reports plain ok, not remembered.
+    let out = doctor_with_agents(Some("default_agent = \"sh\"\n"), &[]);
+    assert!(out.contains("agent: sh [ok]"), "got:\n{out}");
+    assert!(!out.contains("remembered"), "got:\n{out}");
 }
 
 #[test]

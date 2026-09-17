@@ -953,8 +953,15 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     pick.sel = 0;
                                 }
                                 KeyCode::Enter => {
-                                    chosen = pick.current();
-                                    close = true;
+                                    // Never on auto-repeat: the first Enter
+                                    // closes the overlay and remembers the
+                                    // pick, so a repeat would fall through to
+                                    // a fresh ⌥+; and fast-spawn a second
+                                    // pane from the memory just written.
+                                    if ke.kind != KeyEventKind::Repeat {
+                                        chosen = pick.current();
+                                        close = true;
+                                    }
                                 }
                                 KeyCode::Char(c)
                                     if !ke.modifiers.contains(KeyModifiers::ALT)
@@ -1105,15 +1112,27 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     // Rebuilt on every open: repos are cloned and
                                     // deleted while gwae runs, and the scan is a
                                     // handful of readdirs. Harness label sourced
-                                    // from default_agent so ⌥+s knows which table
-                                    // entry to write.
-                                    let harness_label = if cfg.default_agent.trim().is_empty() {
-                                        String::new()
-                                    } else {
-                                        crate::tui::shell_split(&cfg.default_agent)
-                                            .first()
-                                            .cloned()
-                                            .unwrap_or_default()
+                                    // from the live resolution (override, memory,
+                                    // or lone install), so the title names the
+                                    // agent `⌥+;` would actually spawn.
+                                    let harness_label = {
+                                        let ordered = harness_state
+                                            .clone()
+                                            .order(crate::agent::detect());
+                                        match crate::agent::plan(
+                                            &cfg.default_agent,
+                                            &harness_state,
+                                            ordered,
+                                        ) {
+                                            crate::agent::Plan::Configured(cmd)
+                                            | crate::agent::Plan::Auto(cmd) => {
+                                                crate::tui::shell_split(&cmd)
+                                                    .first()
+                                                    .cloned()
+                                                    .unwrap_or_default()
+                                            }
+                                            _ => String::new(),
+                                        }
                                     };
                                     let all = crate::spawndir::candidates(
                                         spawn_dir.as_deref(),

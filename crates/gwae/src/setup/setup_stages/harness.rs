@@ -22,10 +22,23 @@ impl SetupStage for HarnessStage {
             .map(crate::agent::load_harness_state)
             .unwrap_or_default();
         let ordered = state.clone().order(crate::agent::detect());
+        // An override that no longer resolves is worth naming even when
+        // memory covers it: otherwise the dead pin sits in the config
+        // silently while every press takes the remembered path.
+        let broken_override = {
+            let want = ctx.cfg.default_agent.trim();
+            if !want.is_empty() && !crate::agent::command_available(want) {
+                Some(want.to_string())
+            } else {
+                None
+            }
+        };
         match crate::agent::plan(&ctx.cfg.default_agent, &state, ordered) {
             crate::agent::Plan::Configured(cmd) => {
                 if ctx.cfg.default_agent.trim() == cmd.trim() && !cmd.trim().is_empty() {
                     format!("{cmd} [ok]")
+                } else if let Some(want) = broken_override {
+                    format!("{cmd} [remembered] (override `{want}` not installed)")
                 } else {
                     format!("{cmd} [remembered] (⌥+; goes straight there)")
                 }
