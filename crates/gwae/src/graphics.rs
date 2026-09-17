@@ -526,6 +526,38 @@ impl Graphics {
         Err(Error::Quota)
     }
 
+    /// Drop the oldest sources that have no placements, making room for a new
+    /// image of `needed` bytes (beyond what the replaced id already holds).
+    /// Never touches the incoming `id` itself or any source that still has a
+    /// placement. Stops as soon as both the byte and count budgets fit.
+    fn evict_unplaced(&mut self, id: u32, needed: usize) {
+        let mut oldest: Vec<(u64, u32, usize)> = self
+            .sources
+            .iter()
+            .filter(|(&sid, _)| sid != id && !self.placements.iter().any(|p| p.image_id == sid))
+            .map(|(&sid, s)| (s.revision, sid, s.pixels.len()))
+            .collect();
+        oldest.sort();
+        for (_, sid, bytes) in oldest {
+            let fits_bytes = self.total_bytes + needed <= self.total_limit;
+            let fits_count =
+                self.sources.contains_key(&id) || self.sources.len() < self.image_count_limit;
+            if fits_bytes && fits_count {
+                break;
+            }
+            if self.sources.remove(&sid).is_some() {
+                self.total_bytes -= bytes;
+                self.bump();
+            }
+        }
+        // Recompute defensively: removals above are the only mutation path,
+        // so this is a no-op unless a future edit breaks the accounting.
+        debug_assert_eq!(
+            self.total_bytes,
+            self.sources.values().map(|s| s.pixels.len()).sum::<usize>()
+        );
+    }
+
     fn resolve(&self, control: &Control) -> Result<u32> {
         if control.has(b'i') {
             return control.number(b'i', 0);
@@ -569,6 +601,18 @@ impl Graphics {
                 return Ok((id, None));
             }
             let previous_bytes = self.sources.get(&id).map_or(0, |s| s.pixels.len());
+            // The Kitty spec says a terminal running out of quota space must
+            // preferentially delete existing images without placements (soft
+            // deletes such as lowercase `d=a` clear placements but keep data
+            // for re-display, so viewers that allocate a fresh id per page
+            // accumulate exactly such images). Evict the oldest unplaced
+            // sources until the new image fits; only fail when even that is
+            // not enough or every stored image is still placed.
+            if self.total_bytes - previous_bytes + transfer.data.len() > self.total_limit
+                || (!self.sources.contains_key(&id) && self.sources.len() >= self.image_count_limit)
+            {
+                self.evict_unplaced(id, transfer.data.len().saturating_sub(previous_bytes));
+            }
             if self.total_bytes - previous_bytes + transfer.data.len() > self.total_limit
                 || (!self.sources.contains_key(&id) && self.sources.len() >= self.image_count_limit)
             {
@@ -967,36 +1011,91 @@ mod tests {
         transmit(&mut g, 1);
         transmit(&mut g, 2);
         let old = g.source(1).unwrap().pixels.clone();
-        let revision = g.source(1).unwrap().revision;
-        error(command(&mut g, "a=t,i=3,f=24,s=1,v=1", "AAAA"), 3, "ENOSPC");
-        error(
-            command(&mut g, "a=t,i=1,f=24,s=2,v=1", "AAAAAAAA"),
-            1,
-            "ENOSPC",
+        // Both stored images are unplaced (`a=t` stores without displaying),
+        // so per the Kitty spec the oldest is preferentially evicted to admit
+        // the new image instead of failing: this is the tdf page-turn shape
+        // (fresh id per page, placements cleared by lowercase `d=a`).
+        ok(command(&mut g, "a=t,i=3,f=24,s=1,v=1", "AAAA"), 3);
+        assert!(
+            g.source(1).is_none(),
+            "oldest unplaced image must be evicted"
         );
+        assert!(g.source(2).is_some());
+        assert!(g.source(3).is_some());
+        assert_eq!(g.total_bytes, 6);
+        // A larger replacement of a stored image evicts the other unplaced
+        // image to fit, rather than failing: the replaced image commits.
+        let revision3 = g.source(3).unwrap().revision;
+        ok(command(&mut g, "a=t,i=3,f=24,s=2,v=1", "AAAAAAAA"), 3);
+        assert!(g.source(2).is_none(), "unplaced image evicted for growth");
+        assert_ne!(g.source(3).unwrap().revision, revision3);
+        assert_eq!(g.total_bytes, 6);
+        // An oversized single image still fails atomically: the old pixels
+        // and revision survive, and the byte total is unchanged.
+        let revision3 = g.source(3).unwrap().revision;
+        let old3 = g.source(3).unwrap().pixels.clone();
         error(
-            command(&mut g, "a=t,i=1,f=24,s=3,v=1", "AAAAAAAAAAAA"),
-            1,
+            command(&mut g, "a=t,i=3,f=24,s=3,v=1", "AAAAAAAAAAAA"),
+            3,
             "E2BIG",
         );
-        assert_eq!(g.source(1).unwrap().revision, revision);
-        assert!(Arc::ptr_eq(&g.source(1).unwrap().pixels, &old));
+        assert_eq!(g.source(3).unwrap().revision, revision3);
+        assert!(Arc::ptr_eq(&g.source(3).unwrap().pixels, &old3));
         assert_eq!(g.total_bytes, 6);
-        command(&mut g, "a=d,d=I,i=2", "");
-        ok(command(&mut g, "a=t,i=1,f=24,s=2,v=1", "AAAAAAAA"), 1);
-        assert_eq!(g.total_bytes, 6);
-        assert_ne!(g.source(1).unwrap().revision, revision);
+        // An explicit uppercase delete frees its image without eviction help.
+        command(&mut g, "a=d,d=I,i=3", "");
+        assert!(g.source(3).is_none());
+        ok(command(&mut g, "a=t,i=4,f=24,s=1,v=1", "AAAA"), 4);
         assert_eq!(&**old, &[0, 0, 0]);
+        // A hard count limit still bites when every stored image is placed:
+        // nothing is evictable, so the new image is rejected.
         let mut count_limited = Graphics {
             image_count_limit: 1,
             ..Graphics::default()
         };
         transmit(&mut count_limited, 1);
+        ok(command(&mut count_limited, "a=p,i=1,C=1", ""), 1);
         error(
             command(&mut count_limited, "a=t,i=2,f=24,s=1,v=1", "AAAA"),
             2,
             "ENOSPC",
         );
+        // ...but with the stored image unplaced, it is evicted to admit id 2.
+        command(&mut count_limited, "a=d,d=i,i=1", "");
+        ok(
+            command(&mut count_limited, "a=t,i=2,f=24,s=1,v=1", "AAAA"),
+            2,
+        );
+        assert!(count_limited.source(1).is_none());
+    }
+
+    #[test]
+    fn fresh_id_per_page_with_soft_deletes_never_wedges_the_quota() {
+        // tdf 0.5.0's actual page-turn shape, captured live: a fresh image id
+        // per page (`a=T,i=N`) preceded by a lowercase delete-all (`a=d,d=a`)
+        // that clears placements but keeps image data for re-display. Without
+        // quota-pressure eviction of unplaced images, the 64-image limit wedged
+        // every page past ~63 turns: ENOSPC on every transmit, no placements,
+        // and a pitch-black viewer. Every page must commit and the stored
+        // source count must stay bounded instead.
+        let mut g = Graphics::default();
+        let pages = (MAX_IMAGES + 10) as u32;
+        for id in 2..2 + pages {
+            command(&mut g, "a=d,d=a", "");
+            let out = command(&mut g, &format!("a=T,i={id},f=24,s=1,v=1,C=1"), "AQID");
+            ok(out, id);
+            assert_eq!(g.placements().len(), 1);
+            assert_eq!(g.placements()[0].image_id, id);
+            assert!(
+                g.sources.len() <= MAX_IMAGES,
+                "stored sources must stay within quota (got {})",
+                g.sources.len()
+            );
+        }
+        // The oldest unplaced pages were evicted along the way: only a recent
+        // window survives, and the newest page is among them.
+        assert!(g.source(2).is_none(), "oldest pages must have been evicted");
+        assert!(g.source(2 + pages - 1).is_some());
     }
 
     #[test]
