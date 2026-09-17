@@ -180,7 +180,7 @@ impl PtyPane {
     pub(crate) fn scroll_pane(&mut self, d: i32) -> bool {
         if self.grid.alternate_screen() {
             let key: &[u8] = if d > 0 { b"\x1b[C" } else { b"\x1b[D" };
-            for _ in 0..(d.abs() as u32).min(20) {
+            for _ in 0..d.unsigned_abs().min(20) {
                 let _ = self.writer.write_all(key);
             }
             let _ = self.writer.flush();
