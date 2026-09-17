@@ -172,6 +172,24 @@ impl PtyPane {
     pub(crate) fn set_promote_streak(&mut self, streak: u32) {
         self.promote_streak = streak;
     }
+
+    /// Apply a horizontal pan (`⌥+←/→`): plain panes move gwae's own
+    /// `h_scroll` window, but a full-screen child (nvim, less) owns
+    /// horizontal movement itself, so it gets the arrow keys it expects
+    /// instead. Returns true when the frame needs a repaint (plain pan).
+    pub(crate) fn scroll_pane(&mut self, d: i32) -> bool {
+        if self.grid.alternate_screen() {
+            let key: &[u8] = if d > 0 { b"\x1b[C" } else { b"\x1b[D" };
+            for _ in 0..(d.abs() as u32).min(20) {
+                let _ = self.writer.write_all(key);
+            }
+            let _ = self.writer.flush();
+            false
+        } else {
+            self.h_scroll = (self.h_scroll + d).max(0);
+            true
+        }
+    }
 }
 
 /// Native commits with no interleaving text-screen change needed to promote.
@@ -1331,6 +1349,42 @@ mod tests {
             assert_eq!(pane.graphics.placements().len(), 1);
             assert_eq!(pane.grid.visible_text(), "Z");
             assert!(replies.bytes().ends_with(b"\x1b[1;2R"));
+        }
+
+        #[test]
+        fn scroll_pane_forwards_arrows_to_fullscreen_child_instead_of_panning() {
+            // Grey ghost-text in nvim pushes the cursor past the pane edge.
+            // Hitting `⌥+←/→` there must move the child (sidescroll), never
+            // gwae's own h_scroll window, or the pane visibly shoves sideways
+            // underneath the editor.
+            let (mut pane, replies) = pane_with_replies();
+            // Plain shell: pans gwae's window and needs a repaint.
+            assert!(pane.scroll_pane(16));
+            assert_eq!(pane.h_scroll, 16);
+            assert!(replies.bytes().is_empty());
+            assert!(pane.scroll_pane(-16));
+            assert_eq!(pane.h_scroll, 0);
+            // Full-screen nvim: h_scroll stays put, child gets arrows.
+            feed_pane_output(&mut pane, b"\x1b[?1049h", true, true);
+            assert!(pane.grid.alternate_screen());
+            assert!(!pane.scroll_pane(16));
+            assert_eq!(pane.h_scroll, 0, "fullscreen child owns horizontal pan");
+            assert_eq!(replies.bytes(), b"\x1b[C".repeat(16));
+            assert!(!pane.scroll_pane(-1));
+            assert_eq!(
+                replies.bytes(),
+                b"\x1b[C"
+                    .repeat(16)
+                    .iter()
+                    .chain(b"\x1b[D")
+                    .cloned()
+                    .collect::<Vec<u8>>()
+            );
+            // Leaving the alt screen restores the multiplexer pan.
+            feed_pane_output(&mut pane, b"\x1b[?1049l", true, true);
+            assert!(!pane.grid.alternate_screen());
+            assert!(pane.scroll_pane(1));
+            assert_eq!(pane.h_scroll, 1);
         }
     }
 }

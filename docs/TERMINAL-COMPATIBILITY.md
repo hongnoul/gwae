@@ -101,6 +101,27 @@ known-capable host when environment detection is unavailable. In particular,
 WezTerm must have its Kitty graphics support enabled. Disabled mode never
 fabricates a graphics success reply.
 
+## Full-screen apps own horizontal panning
+
+`⌥+←/→` pans gwae's own `h_scroll` window in plain shells, but a full-screen
+child (nvim, less) gets the arrow keys it expects instead (`ESC[D` / `ESC[C`).
+That keeps grey ghost-text / sidescroll in nvim from shoving the pane: the
+editor pans itself, gwae never pans underneath it.
+
+If the ghost text itself still annoys you, turn it off in LazyVim and keep the
+popup menu:
+
+```lua
+-- ~/.config/nvim/lua/plugins/cmp.lua
+return {
+  { "saghen/blink.cmp", opts = { completion = { ghost_text = { enabled = false } } } },
+  { "supermaven-inc/supermaven-nvim", opts = { disable_inline_completion = true } },
+}
+```
+
+Or keep ghost text and set `vim.opt.wrap = true` so it soft-wraps instead of
+sidescrolling.
+
 ## Regression checks
 
 ```sh

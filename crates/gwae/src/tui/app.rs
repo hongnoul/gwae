@@ -1227,8 +1227,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 Cmd::ScrollPane(d) => {
                                     if let Some(pid) = focused_pane(&layout) {
                                         if let Some(p) = panes.get_mut(&pid) {
-                                            p.h_scroll = (p.h_scroll + d).max(0);
-                                            dirty = true;
+                                            if p.scroll_pane(d) {
+                                                dirty = true;
+                                            }
                                         }
                                     }
                                 }
