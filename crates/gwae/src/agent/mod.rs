@@ -20,8 +20,13 @@ mod config;
 mod detect;
 mod picker;
 mod run;
+mod state;
 
 pub use config::Plan;
 pub use config::{plan, set_scalar_text, toml_string_pub};
-pub use detect::{detect_with, which};
+pub use detect::{command_available, detect, which, Found};
 pub use run::run;
+pub use state::{
+    default_path as harness_state_path, load as load_harness_state, save as save_harness_state,
+    HarnessState,
+};

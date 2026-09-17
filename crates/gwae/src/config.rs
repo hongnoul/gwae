@@ -22,6 +22,10 @@ fn default_keep_awake() -> bool {
     true
 }
 
+fn no_agents() -> Vec<String> {
+    Vec::new()
+}
+
 /// Image panes: `auto` promotes a pane to an image viewer once sustained
 /// native image commits prove it is one (e.g. tdf); `off` never promotes,
 /// keeping the classic text-grid path with inline tiles for minimalists.
@@ -41,9 +45,11 @@ pub enum ImagePane {
 pub struct Config {
     /// Default width of a newly created column (default: Half).
     pub default_column_width: Width,
-    /// The agent harness command that `;` (spawn-agent) launches. Empty (the
-    /// default) means "not chosen yet": `;` then runs the agent gateway, which
-    /// offers the harnesses found on PATH and writes the choice back here.
+    /// Explicit harness override for `⌥+;` (spawn-agent). Empty (the default)
+    /// means "remember the pick": the first press offers what is installed and
+    /// remembers the choice in the state file, so later presses go straight
+    /// there. Set this only to pin a harness in dotfiles or scripts; a value
+    /// that is not installed falls back to the picker rather than a dead pane.
     pub default_agent: String,
     /// The directory new panes (agent and shell) start in. Empty (the
     /// default) inherits gwae's own working directory, which is whatever
@@ -51,11 +57,12 @@ pub struct Config {
     /// `agent_dir = "~/git"` works as written. A path that does not exist is
     /// ignored with a warning rather than breaking pane spawn.
     pub agent_dir: String,
-    /// Extra agent commands to offer in the `;` picker, on top of the ones
-    /// gwae knows and the ones it finds by scanning `PATH`. Use this to
-    /// teach it a harness with a name it cannot guess, or a wrapper script.
-    /// Entries that are not installed are simply not shown.
-    pub agents: Vec<String>,
+    /// Retired: extra agent names once came from an `agents` list. They now
+    /// come from the picker itself: any typed command that resolves is
+    /// remembered in the state file. The key still parses so old configs load.
+    #[serde(rename = "agents", default = "no_agents", skip_serializing)]
+    #[allow(dead_code)]
+    pub agents_retired: Vec<String>,
     /// Number of equal-width panes on screen at first launch. Default: 1 (a
     /// single quarter-width pane; the skeleton's placeholder boxes show the
     /// rest of the container).
@@ -100,7 +107,7 @@ impl Default for Config {
             default_column_width: Width::DEFAULT,
             default_agent: String::new(),
             agent_dir: String::new(),
-            agents: Vec::new(),
+            agents_retired: Vec::new(),
             startup_panes: 1,
             theme: ThemeConfig::default(),
             image_pane: ImagePane::default(),
@@ -136,24 +143,21 @@ impl Config {
     ///
     /// Live reload only re-reads the file; it does not re-run startup. So
     /// settings that were *consumed once* at launch are deliberately kept:
-    /// `startup_panes` (the panes already exist). `default_agent` is kept too,
-    /// but only because nothing in the TUI reads it: the agent gateway loads
-    /// the file itself in the new pane, so an edited value applies to the next
-    /// agent pane regardless. Everything that is read afresh
+    /// `startup_panes` (the panes already exist). `default_agent` is adopted,
+    /// not kept: the `⌥+;` overlay and the fast paths read it on every press,
+    /// so an edited override applies to the next agent pane regardless (the
+    /// gateway bootstrap reads the file itself in the new pane, so it follows
+    /// too). Everything that is read afresh
     /// every frame - minimap, scroll behavior - is adopted.
     pub fn adopt_appearance(&mut self, new: Config) {
         let Config {
-            startup_panes,
-            default_agent,
-            agent_dir,
-            ..
+            startup_panes, agent_dir, ..
         } = self.clone();
         *self = Config {
             startup_panes,
-            default_agent,
-            // Kept for the same reason as `default_agent`: the running
-            // session may have overridden it via `--dir` or `⌥+d`, and a
-            // config edit must not yank panes back to the file's value.
+            // Kept: the running session may have overridden it via `--dir`
+            // or `⌥+d`, and a config edit must not yank panes back to the
+            // file's value.
             agent_dir,
             ..new
         };

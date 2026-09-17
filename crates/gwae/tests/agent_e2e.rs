@@ -3,9 +3,9 @@
 //! The spawn-agent key used to run `default_agent` blind, so on a machine
 //! without the harness the pane's child died instantly and left a blank box.
 //! The acceptance behavior is that the pane instead explains itself, offers
-//! whatever *is* installed, saves the pick to the config, and hands the user a
-//! working shell if there is nothing to run. These tests drive the real
-//! `gwae agent` binary under a real PTY, which is exactly what a pane is.
+//! whatever *is* installed, remembers the pick in the state file, and hands
+//! the user a working shell if there is nothing to run. These tests drive the
+//! real `gwae agent` binary under a real PTY, which is exactly what a pane is.
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
@@ -62,12 +62,20 @@ impl Sandbox {
         self.dir.join("gwae/gwae.toml")
     }
 
+    fn state_path(&self) -> std::path::PathBuf {
+        self.dir.join("state/gwae/harness.json")
+    }
+
     fn write_config(&self, body: &str) {
         std::fs::write(self.config_path(), body).expect("write config");
     }
 
     fn read_config(&self) -> String {
         std::fs::read_to_string(self.config_path()).unwrap_or_default()
+    }
+
+    fn read_state(&self) -> String {
+        std::fs::read_to_string(self.state_path()).unwrap_or_default()
     }
 
     /// Run the full TUI with an explicit first-pane command.
@@ -98,6 +106,7 @@ impl Sandbox {
             .expect("openpty");
         let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gwae"));
         cmd.env("XDG_CONFIG_HOME", &self.dir);
+        cmd.env("XDG_STATE_HOME", self.dir.join("state"));
         cmd.env("TERM", "xterm-256color");
         // `sh` must stay reachable: the gateway's last resort is $SHELL.
         cmd.env("PATH", format!("{}:/bin:/usr/bin", self.bin.display()));
@@ -259,7 +268,8 @@ fn with_nothing_installed_the_pane_explains_itself_and_still_gives_a_shell() {
     p.send("echo SHELL-IS-ALIVE\n");
     p.wait_for("SHELL-IS-ALIVE");
 
-    // Nothing was written to the config, since the user chose nothing.
+    // Nothing was remembered, since the user chose nothing.
+    assert!(!sb.read_state().contains("aider"));
     assert!(!sb.read_config().contains("default_agent"));
     p.kill();
 }
@@ -278,11 +288,16 @@ fn an_installed_harness_is_offered_chosen_saved_and_executed() {
     // The stub prints this only if it was actually exec'd.
     p.wait_for("AGENT-RAN:aider");
 
-    // The choice persisted, so the next ⌥+; skips the prompt entirely.
-    let cfg = sb.read_config();
+    // The choice is remembered in the state file (not the config), so the
+    // next ⌥+; skips the prompt entirely.
+    let state = sb.read_state();
     assert!(
-        cfg.contains("default_agent = \"aider\""),
-        "choice must be saved; got:\n{cfg}"
+        state.contains("\"last\":\"aider\""),
+        "choice must be remembered; got:\n{state}"
+    );
+    assert!(
+        !sb.read_config().contains("default_agent"),
+        "the config file must stay untouched"
     );
     p.kill();
 }
@@ -317,13 +332,13 @@ fn a_configured_but_missing_harness_names_it_and_offers_what_exists() {
 
     p.send("1\n");
     p.wait_for("AGENT-RAN:codex");
-    assert!(sb.read_config().contains("default_agent = \"codex\""));
+    assert!(sb.read_state().contains("\"last\":\"codex\""));
     p.kill();
 }
 
 #[test]
 fn choosing_a_shell_leaves_the_config_untouched() {
-    let sb = Sandbox::new(&["claude"]);
+    let sb = Sandbox::new(&["claude", "aider"]);
     // `s` answers the gateway picker, opting out to a shell.
     sb.write_config("startup_panes = 1\n");
     let mut p = sb.spawn(&[]);
@@ -335,35 +350,41 @@ fn choosing_a_shell_leaves_the_config_untouched() {
     let cfg = sb.read_config();
     assert!(
         !cfg.contains("default_agent"),
-        "opting out must not save; got:\n{cfg}"
+        "opting out must not touch the config; got:\n{cfg}"
     );
     assert!(
         cfg.contains("startup_panes = 1"),
         "and must not disturb the file"
     );
+    assert!(
+        !sb.read_state().contains("claude"),
+        "and must not remember anything"
+    );
     p.kill();
 }
 
 #[test]
-fn saving_a_choice_preserves_the_rest_of_the_config_file() {
-    let sb = Sandbox::new(&["claude"]);
-    sb.write_config("# hand written\nstartup_panes = 3\n\n[minimap]\nmax_width = 31\n");
+fn picking_a_harness_never_rewrites_the_config_file() {
+    // The redesign's core promise: the config file is the user's, and a
+    // pick must leave it byte-identical while the memory lands in state.
+    // Two harnesses force the picker (a lone install launches itself).
+    let sb = Sandbox::new(&["claude", "aider"]);
+    let before = "# hand written\nstartup_panes = 3\n\n[minimap]\nmax_width = 31\n";
+    sb.write_config(before);
     let mut p = sb.spawn(&[]);
-    p.wait_for("agent");
+    p.wait_for("Which agent");
     p.send("1\n");
     p.wait_for("AGENT-RAN:claude");
 
-    let cfg = sb.read_config();
-    assert!(
-        cfg.contains("# hand written"),
-        "comments survive; got:\n{cfg}"
+    assert_eq!(
+        sb.read_config(),
+        before,
+        "the config file must be byte-identical after a pick"
     );
-    assert!(cfg.contains("startup_panes = 3"), "got:\n{cfg}");
-    assert!(cfg.contains("max_width = 31"), "got:\n{cfg}");
-    // And it must still be valid TOML with the key at top level.
-    let v: toml::Value = toml::from_str(&cfg).expect("config stays valid TOML");
-    assert_eq!(v["default_agent"].as_str(), Some("claude"));
-    assert_eq!(v["minimap"]["max_width"].as_integer(), Some(31));
+    assert!(
+        sb.read_state().contains("\"last\":\"claude\""),
+        "while the pick is remembered in state"
+    );
     p.kill();
 }
 
@@ -421,9 +442,9 @@ fn screen_text(raw: &str) -> String {
 }
 
 #[test]
-fn pressing_the_spawn_agent_key_opens_the_gateway_in_the_new_pane() {
-    // The binding itself, end to end: this is the path that used to produce a
-    // blank pane, and no unit test of the gateway can prove the TUI reaches it.
+fn pressing_the_spawn_agent_key_with_one_harness_spawns_it_directly() {
+    // The fast path end to end: a single installed harness means `⌥+;` never
+    // opens any picker, in-pane or overlay; the new pane just is the harness.
     let sb = Sandbox::new(&["claude"]);
     let mut p = sb.spawn_tui();
     // Let the first pane settle so the spawn lands in a steady layout.
@@ -431,27 +452,57 @@ fn pressing_the_spawn_agent_key_opens_the_gateway_in_the_new_pane() {
 
     // ⌥+; as a terminal actually sends it: ESC-prefixed (Meta).
     p.send("\x1b;");
-    // The new pane runs the gateway picker (fresh config, nothing saved yet).
-    // The pane is a quarter of the
-    // screen, so assert on fragments that fit in the narrow layout.
     let seen = p.collect_until(Duration::from_secs(10), |raw| {
         let t = screen_text(raw);
-        t.contains("Claude Code")
+        t.contains("AGENT-RAN:claude")
+    });
+    let text = screen_text(&seen);
+    assert!(
+        !text.contains("pick agent") && !text.contains("Which agent"),
+        "a lone harness must spawn with no picker at all; got:\n{text}"
+    );
+    p.kill();
+}
+
+#[test]
+fn pressing_the_spawn_agent_key_with_several_harnesses_opens_the_overlay() {
+    // The overlay end to end: the binding, the native picker, a real
+    // keypress pick, and the remembered state — all without touching the
+    // config file.
+    let sb = Sandbox::new(&["claude", "aider"]);
+    let mut p = sb.spawn_tui();
+    std::thread::sleep(Duration::from_millis(700));
+
+    p.send("\x1b;");
+    // Wait for the whole overlay, not just its title: the title paints in
+    // an earlier write than the rows, so matching on it alone is a race.
+    // (The startup HUD dismisses on the chord itself; its stale bytes in
+    // the accumulation below are harmless.)
+    let seen = p.collect_until(Duration::from_secs(10), |raw| {
+        let t = screen_text(raw);
+        t.contains("pick agent") && t.contains("just a shell")
     });
     let text = screen_text(&seen);
     assert!(text.contains("Claude Code"), "got:\n{text}");
+    assert!(text.contains("just a shell"), "got:\n{text}");
 
-    // Pick it and prove the choice reached the config from real keypresses.
-    // Sleep-driven: the config poll below absorbs all timing slop.
-    p.send("1\n");
+    // ⏎ takes the default (first) entry and spawns it in the new pane.
+    p.send("\r");
+    p.collect_until(Duration::from_secs(10), |raw| {
+        screen_text(raw).contains("AGENT-RAN:claude")
+    });
     let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline && !sb.read_config().contains("default_agent") {
+    while Instant::now() < deadline && !sb.read_state().contains("claude") {
         let _ = p.rx.recv_timeout(Duration::from_millis(200));
     }
     assert!(
-        sb.read_config().contains("default_agent = \"claude\""),
+        sb.read_state().contains("\"last\":\"claude\""),
         "got:\n{}",
-        sb.read_config()
+        sb.read_state()
+    );
+    assert!(
+        !sb.read_config().contains("default_agent"),
+        "the overlay must not touch the config"
     );
     p.kill();
 }
@@ -472,7 +523,7 @@ fn a_bare_enter_takes_the_listed_default() {
     p.send("\n");
     // The gateway execs straight after the pick.
     p.wait_for("AGENT-RAN:claude");
-    assert!(sb.read_config().contains("default_agent = \"claude\""));
+    assert!(sb.read_state().contains("\"last\":\"claude\""));
     p.kill();
 }
 
@@ -481,13 +532,13 @@ fn a_bad_entry_reprompts_instead_of_giving_up() {
     // A typo must not drop the user into a shell silently; the pane keeps
     // asking, since the whole point is to leave them with a working agent.
 
-    let sb = Sandbox::new(&["claude"]);
+    let sb = Sandbox::new(&["claude", "aider"]);
     let mut p = sb.spawn(&[]);
     p.wait_for("Which agent");
     p.send("9\n");
-    p.wait_for("Enter 1-1");
+    p.wait_for("Enter 1-2");
     p.send("banana\n");
-    p.wait_for("Enter 1-1");
+    p.wait_for("Enter 1-2");
     p.send("1\n");
     // The gateway execs straight after a valid pick.
     p.wait_for("AGENT-RAN:claude");
@@ -502,6 +553,7 @@ fn a_non_tty_never_wedges_the_pane_waiting_for_input() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_gwae"))
         .arg("agent")
         .env("XDG_CONFIG_HOME", &sb.dir)
+        .env("XDG_STATE_HOME", sb.dir.join("state"))
         .env("PATH", format!("{}:/bin:/usr/bin", sb.bin.display()))
         .env("SHELL", "/bin/sh")
         .stdin(std::process::Stdio::null())
@@ -511,6 +563,7 @@ fn a_non_tty_never_wedges_the_pane_waiting_for_input() {
         .expect("run agent with no tty");
     // It exec'd a shell, which with no stdin exits immediately and cleanly.
     assert!(out.status.success(), "status: {:?}", out.status);
+    assert!(!sb.read_state().contains("claude"));
     assert!(!sb.read_config().contains("default_agent"));
 }
 
@@ -578,18 +631,19 @@ fn a_harness_gwae_has_never_heard_of_is_still_discovered() {
     let sb = Sandbox::new(&[]);
     stub(&sb.bin, "hermes-agent");
     stub(&sb.bin, "frobnicator"); // not agent-shaped: must NOT be offered
-    let mut p = sb.spawn(&[]);
-    let seen = p.wait_for("hermes-agent");
+    // A lone install launches itself: no picker, no keypress needed.
+    let p = sb.spawn(&[]);
+    let seen = p.wait_for("AGENT-RAN:hermes-agent");
     assert!(
-        !seen.contains("frobnicator"),
-        "an ordinary binary must not be offered; got:\n{seen}"
+        !seen.contains("Which agent"),
+        "a lone harness must never prompt; got:\n{seen}"
     );
-
-    p.send("1\n");
-    p.wait_for("AGENT-RAN:hermes-agent");
-    assert!(sb
-        .read_config()
-        .contains("default_agent = \"hermes-agent\""));
+    // ...and leaves no trace: an auto-launch is not a pick, so a second
+    // harness installed later still gets its picker moment.
+    assert!(
+        !sb.read_state().contains("hermes-agent"),
+        "auto-launch must not write memory"
+    );
     p.kill();
 }
 
@@ -597,31 +651,44 @@ fn a_harness_gwae_has_never_heard_of_is_still_discovered() {
 fn muse_style_one_word_names_are_found_too() {
     let sb = Sandbox::new(&[]);
     stub(&sb.bin, "musecode");
-    let mut p = sb.spawn(&[]);
-    p.wait_for("musecode");
-    p.send("1\n");
+    // Lone install: straight to the harness, no picker.
+    let p = sb.spawn(&[]);
     p.wait_for("AGENT-RAN:musecode");
     p.kill();
 }
 
 #[test]
-fn the_config_can_teach_it_a_name_it_could_never_guess() {
-    // An agent whose command looks like nothing in particular.
-    let sb = Sandbox::new(&[]);
+fn a_typed_pick_is_remembered_and_offered_next_time() {
+    // The replacement for the old `agents` config list: type any resolvable
+    // command once, and it is offered alongside detected harnesses after.
+    // Two harnesses force the picker (a lone install launches itself).
+    let sb = Sandbox::new(&["claude", "aider"]);
     stub(&sb.bin, "zz");
-    sb.write_config("agents = [\"zz\"]\n");
     let mut p = sb.spawn(&[]);
-    let seen = p.wait_for_all(&["agent", "zz"]);
-    assert!(seen.contains("zz"), "got:\n{seen}");
-    p.send("1\n");
+    p.wait_for("Which agent");
+    p.send("zz\n");
     p.wait_for("AGENT-RAN:zz");
+    p.kill();
+
+    let state = sb.read_state();
+    assert!(state.contains("\"last\":\"zz\""), "got:\n{state}");
+    assert!(state.contains("\"custom\""), "got:\n{state}");
+
+    // Second run: the remembered pick execs with no picker at all.
+    let p = sb.spawn(&[]);
+    let seen = p.wait_for("AGENT-RAN:zz");
+    assert!(
+        !seen.contains("Which agent"),
+        "a remembered pick must never prompt; got:\n{seen}"
+    );
     p.kill();
 }
 
 #[test]
 fn typing_an_unlisted_command_works_and_is_saved() {
     // The escape hatch that makes any harness usable immediately.
-    let sb = Sandbox::new(&["claude"]);
+    // Two harnesses force the picker (a lone install launches itself).
+    let sb = Sandbox::new(&["claude", "aider"]);
     stub(&sb.bin, "zz");
     let mut p = sb.spawn(&[]);
     // Both strings, not just the first: the prompt paints across several
@@ -637,13 +704,13 @@ fn typing_an_unlisted_command_works_and_is_saved() {
     p.send("zz\n");
     // The gateway execs straight after the pick.
     p.wait_for("AGENT-RAN:zz");
-    assert!(sb.read_config().contains("default_agent = \"zz\""));
+    assert!(sb.read_state().contains("\"last\":\"zz\""));
     p.kill();
 }
 
 #[test]
 fn a_typed_command_that_does_not_exist_says_so_and_reprompts() {
-    let sb = Sandbox::new(&["claude"]);
+    let sb = Sandbox::new(&["claude", "aider"]);
     let mut p = sb.spawn(&[]);
     p.wait_for("Which agent");
     p.send("hermes\n");
@@ -666,7 +733,7 @@ fn even_with_nothing_found_you_can_type_a_command() {
     p.send("zz\n");
     // The gateway execs straight after the pick.
     p.wait_for("AGENT-RAN:zz");
-    assert!(sb.read_config().contains("default_agent = \"zz\""));
+    assert!(sb.read_state().contains("\"last\":\"zz\""));
     p.kill();
 }
 
@@ -709,16 +776,38 @@ fn startup_pane_one_one_shows_the_selector_when_no_agent_is_configured() {
     assert!(text.contains("Claude Code"), "got:\n{text}");
 
     // And picking there works: answer the gateway picker and the choice
-    // lands in the file. Drive by sleeps past this point, not pokes.
+    // is remembered in state, not the config. Drive by sleeps past this
+    // point, not pokes.
     p.send("1\n");
     let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline && !sb.read_config().contains("default_agent") {
+    while Instant::now() < deadline && !sb.read_state().contains("claude") {
         let _ = p.rx.recv_timeout(Duration::from_millis(200));
     }
     assert!(
-        sb.read_config().contains("default_agent = \"claude\""),
+        sb.read_state().contains("\"last\":\"claude\""),
         "got:\n{}",
-        sb.read_config()
+        sb.read_state()
+    );
+    assert!(
+        !sb.read_config().contains("default_agent"),
+        "the config must stay untouched"
+    );
+    p.kill();
+}
+
+#[test]
+fn startup_with_a_lone_install_launches_it_with_no_picker() {
+    // The zero-config case: one harness, no memory, no override. Pane 1.1
+    // is the harness from the first frame, with no gateway in between.
+    let sb = Sandbox::new(&["claude"]);
+    let mut p = sb.spawn_tui_bare();
+    let seen = p.collect_until_poking(Duration::from_secs(15), "\x1b/", |raw| {
+        screen_text(raw).contains("AGENT-RAN:claude")
+    });
+    let text = screen_text(&seen);
+    assert!(
+        !text.contains("Found on your PATH") && !text.contains("Which agent"),
+        "a lone harness must not show any selector; got:\n{text}"
     );
     p.kill();
 }

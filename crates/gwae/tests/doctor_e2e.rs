@@ -32,7 +32,9 @@ fn doctor_with_agents(config_body: Option<&str>, agents: &[&str]) -> String {
         std::fs::write(dir.join("gwae/gwae.toml"), body).expect("write config");
     }
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_gwae"));
-    cmd.arg("doctor").env("XDG_CONFIG_HOME", &dir);
+    cmd.arg("doctor")
+        .env("XDG_CONFIG_HOME", &dir)
+        .env("XDG_STATE_HOME", dir.join("state"));
     if !agents.is_empty() {
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).expect("bin dir");

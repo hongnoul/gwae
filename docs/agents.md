@@ -46,7 +46,9 @@ terminal. Tell the user to run it, or spawn it in its own terminal window.
 ## Using gwae *around* agents
 
 The intended loop is the inverse: the user runs gwae, then spawns harnesses
-into it. `⌥+;` spawns `default_agent` in a new column; set it once:
+into it. `⌥+;` spawns the remembered harness in a new column (first press
+offers what is installed and remembers the pick; a lone install launches
+itself). Pin one in dotfiles only if you must:
 
 ```toml
 # ~/.config/gwae/gwae.toml

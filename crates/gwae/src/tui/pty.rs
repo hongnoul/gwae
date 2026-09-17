@@ -9,10 +9,10 @@ use gwae_layout::{Layout, PaneId};
 use gwae_term::{Size as GridSize, TermGrid, Vt100Grid};
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 
+use super::render::chrome_rows;
+use super::render::column_grid_sizes;
 use crate::config::Config;
 use crate::geometry::CellPixels;
-use super::render::column_grid_sizes;
-use super::render::chrome_rows;
 
 use super::shell::agent_gateway_cmd;
 use super::shell::shell_split;
@@ -555,20 +555,18 @@ pub(crate) fn nudge_repaint(panes: &mut HashMap<PaneId, PtyPane>) {
 
 /// Use the same drawable geometry before spawn and on every resize. A child
 /// may measure its terminal immediately, before the first compositor frame.
-pub(crate) fn pane_grid_sizes(layout: &Layout, host: GridSize, cfg: &Config) -> Vec<(PaneId, GridSize)> {
+pub(crate) fn pane_grid_sizes(
+    layout: &Layout,
+    host: GridSize,
+    cfg: &Config,
+) -> Vec<(PaneId, GridSize)> {
     layout
         .rows
         .iter()
         .flat_map(|r| &r.columns)
         .flat_map(|col| {
-            let sizes = column_grid_sizes(
-                col.width,
-                col.panes.len(),
-                host,
-                0,
-                true,
-                chrome_rows(cfg),
-            );
+            let sizes =
+                column_grid_sizes(col.width, col.panes.len(), host, 0, true, chrome_rows(cfg));
             col.panes.iter().copied().zip(sizes).map(|(pid, size)| {
                 (
                     pid,
@@ -585,12 +583,14 @@ pub(crate) fn pane_grid_sizes(layout: &Layout, host: GridSize, cfg: &Config) -> 
 }
 
 /// Kill any pane whose id is no longer in the layout, and spawn missing ones.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_panes(
     layout: &mut Layout,
     panes: &mut HashMap<PaneId, PtyPane>,
     tx: &Sender<PaneMsg>,
     geometry: (GridSize, CellPixels),
     agent_panes: &HashSet<PaneId>,
+    agent_cmds: &HashMap<PaneId, String>,
     cwd: Option<&std::path::Path>,
     cfg: &Config,
 ) -> Result<(), String> {
@@ -611,19 +611,19 @@ pub(crate) fn sync_panes(
             false
         }
     });
-    // Spawn missing panes. Agent panes (created via the spawn-agent verb) run
-    // the agent gateway, which becomes the harness; everything else gets the
-    // shell.
+    // Spawn missing panes. A pane with a resolved harness command runs it
+    // directly (the `⌥+;` overlay and the fast paths); an agent pane with
+    // none runs the gateway, which resolves, maybe prompts, and execs the
+    // result, so the pane's process ends up *being* the harness.
+    // Resolving inside the pane (rather than here) is what lets the "not
+    // installed" case be a real interactive screen instead of a toast.
     for (pid, size) in pane_grid_sizes(layout, geometry.0, cfg) {
         if panes.contains_key(&pid) {
             continue;
         }
-        // Agent panes run the gateway, not the harness directly: it resolves
-        // `default_agent`, prompts when there is nothing to resolve, and execs
-        // the result, so the pane's process ends up *being* the harness.
-        // Resolving inside the pane (rather than here) is what lets the "not
-        // installed" case be a real interactive screen instead of a toast.
-        let cmd = if agent_panes.contains(&pid) {
+        let cmd = if let Some(direct) = agent_cmds.get(&pid) {
+            direct.clone()
+        } else if agent_panes.contains(&pid) {
             agent_gateway_cmd()
         } else {
             String::new()
@@ -634,7 +634,6 @@ pub(crate) fn sync_panes(
     }
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -672,10 +671,10 @@ mod tests {
     // to the host terminal. The inert inherited handles are never accessed.
     #[cfg(unix)]
     mod graphics_feed_tests {
-        use super::*;
         use super::super::super::input::focused_pane;
-        use super::super::super::render::tests::{no_hints, no_map};
+        use super::super::super::render::tests::no_map;
         use super::super::super::render::{render_frame, render_frame_with_images};
+        use super::*;
         use crate::geometry::CellPixels;
         use crate::theme::Palette;
         use gwae_term::{Size as GridSize, TermGrid, Vt100Grid};
@@ -757,7 +756,6 @@ mod tests {
                 0,
                 &Palette::default(),
                 &no_map(),
-                no_hints(),
                 None,
                 Some(&mut host),
             );
@@ -780,7 +778,6 @@ mod tests {
                 0,
                 &Palette::default(),
                 &no_map(),
-                no_hints(),
                 None,
             );
             assert!(out
@@ -805,7 +802,12 @@ mod tests {
             );
             assert_eq!(pane.image_activity, Some(1));
             // A no-op query changes no state: token holds.
-            feed_pane_output(&mut pane, b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\", true, true);
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\",
+                true,
+                true,
+            );
             assert_eq!(pane.image_activity, Some(1));
             assert!(pane.graphics.source(7).is_some());
             // A re-display placement advances it again.
@@ -885,7 +887,12 @@ mod tests {
             );
             // Queries and placements change image state but are not commits:
             // the streak holds at 1 and no promotion fires.
-            feed_pane_output(&mut pane, b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\", true, true);
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=q,i=7,f=24,s=1,v=1;AQID\x1b\\",
+                true,
+                true,
+            );
             feed_pane_output(&mut pane, b"\x1b_Ga=p,i=7,C=1\x1b\\", true, true);
             assert_eq!(pane.image_view, None);
             assert_eq!(pane.promote_streak(), 1);
@@ -1158,7 +1165,12 @@ mod tests {
             let second_placement = &panes[&22].graphics.placements()[0];
             assert_eq!((first_placement.row, first_placement.col), (2, 3));
             assert_eq!((second_placement.row, second_placement.col), (4, 6));
-            feed_pane_output(panes.get_mut(&11).unwrap(), b"\x1b_Ga=d,d=A;\x1b\\", true, true);
+            feed_pane_output(
+                panes.get_mut(&11).unwrap(),
+                b"\x1b_Ga=d,d=A;\x1b\\",
+                true,
+                true,
+            );
             assert!(panes[&11].graphics.source(7).is_none());
             assert!(panes[&11].graphics.placements().is_empty());
             assert!(panes[&22].graphics.source(7).is_some());
@@ -1261,7 +1273,12 @@ mod tests {
                 true,
                 true,
             );
-            feed_pane_output(&mut pane, b"\x1b_Ga=t,i=9,f=24,s=1,v=1,m=1;\x1b\\", true, true);
+            feed_pane_output(
+                &mut pane,
+                b"\x1b_Ga=t,i=9,f=24,s=1,v=1,m=1;\x1b\\",
+                true,
+                true,
+            );
             let mut oversized = b"\x1b_Gm=1;".to_vec();
             oversized.extend(std::iter::repeat_n(b'A', 64 * 1024));
             oversized.extend_from_slice(b"\x1b\\");
@@ -1284,5 +1301,4 @@ mod tests {
             assert!(replies.bytes().ends_with(b"\x1b[1;2R"));
         }
     }
-
 }

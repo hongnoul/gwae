@@ -52,13 +52,24 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
     let dir = cli.dir.clone();
     match cli.command.unwrap_or(Command::Run { command: None }) {
         Command::Run { command } => tui::run_tui(command, cfg, dir),
-        Command::Agent { print } => agent::run(
-            &cfg.default_agent,
-            &cfg.agents,
-            cfg.input_poll_ms,
-            &cfg_path_for_agent(),
-            print,
-        ),
+        Command::Agent { print } => {
+            let state_path = crate::agent::harness_state_path()
+                .unwrap_or_else(|| Config::default_path().with_extension("harness.json"));
+            let mut state = crate::agent::load_harness_state(&state_path);
+            // First run after the redesign: seed memory from the explicit
+            // override so an existing `default_agent` keeps working silently.
+            // After that the state file owns the memory, not the config.
+            if state.last.trim().is_empty() && !cfg.default_agent.trim().is_empty() {
+                state.last = cfg.default_agent.trim().to_string();
+            }
+            agent::run(
+                &cfg.default_agent,
+                &state,
+                &state_path,
+                cfg.input_poll_ms,
+                print,
+            )
+        }
         Command::Init { print, .. } => {
             // `init` is a thin alias for the setup flow: one onboarding
             // system, not two. `--print` shows the planned steps.
@@ -73,13 +84,16 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
                 code => Err(code),
             }
         }
-        Command::Upgrade => {
-            match update::run_upgrade(cfg.update.source()) {
-                0 => Ok(()),
-                code => Err(code),
-            }
-        }
-        Command::Setup { check, yes, only, print } => {
+        Command::Upgrade => match update::run_upgrade(cfg.update.source()) {
+            0 => Ok(()),
+            code => Err(code),
+        },
+        Command::Setup {
+            check,
+            yes,
+            only,
+            print,
+        } => {
             let path = Config::default_path();
             let ctx = setup::Ctx {
                 cfg: &cfg,
@@ -114,9 +128,4 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
             Ok(())
         }
     }
-}
-
-/// The config file the agent gateway writes its saved choice to.
-fn cfg_path_for_agent() -> std::path::PathBuf {
-    Config::default_path()
 }

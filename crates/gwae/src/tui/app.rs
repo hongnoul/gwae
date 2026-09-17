@@ -13,6 +13,59 @@ use std::time::Duration;
 /// flicker, short enough that a finished agent surfaces quickly.
 const QUIET_AFTER: Duration = Duration::from_secs(4);
 
+/// Spawn the harness chosen in the `⌥+;` overlay: apply the layout verb, mark
+/// the new pane as an agent pane running this exact command, remember the
+/// pick in the state file, and confirm with a one-line note.
+#[allow(clippy::too_many_arguments)]
+fn spawn_picked_harness(
+    cmd: &str,
+    known: bool,
+    new_row: bool,
+    layout: &mut Layout,
+    panes: &mut HashMap<PaneId, PtyPane>,
+    agent_panes: &mut HashSet<PaneId>,
+    agent_cmds: &mut HashMap<PaneId, String>,
+    tx: &std::sync::mpsc::Sender<PaneMsg>,
+    geometry: (GridSize, CellPixels),
+    cwd: Option<&std::path::Path>,
+    cfg: &Config,
+    state: &mut crate::agent::HarnessState,
+    state_path: Option<&std::path::Path>,
+    note: &mut Option<String>,
+    note_until: &mut Option<Instant>,
+) {
+    let v = Viewport::new(geometry.0.cols);
+    let f = FollowScroll::default();
+    let a = if new_row {
+        Action::SpawnAgentRow
+    } else {
+        Action::SpawnAgent
+    };
+    let _ = layout.apply(a, v, f);
+    if let Some(pid) = focused_pane(layout) {
+        agent_panes.insert(pid);
+        agent_cmds.insert(pid, cmd.to_string());
+    }
+    if let Err(e) = sync_panes(
+        layout,
+        panes,
+        tx,
+        geometry,
+        agent_panes,
+        agent_cmds,
+        cwd,
+        cfg,
+    ) {
+        tracing::error!("sync panes: {e}");
+    }
+    state.record_pick(cmd, known);
+    if let Some(path) = state_path {
+        let _ = crate::agent::save_harness_state(path, state);
+    }
+    *note = Some(format!("agent: {cmd} — ⌥+; goes straight there"));
+    *note_until = Some(Instant::now() + NOTE_LINGER);
+}
+
 /// Run the interactive TUI.
 pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) -> Result<(), i32> {
     use std::io;
@@ -180,6 +233,28 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let update_slot = crate::update::spawn_check(cfg.update.check, cfg.update.source_detected());
     let (tx, rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+    // What `⌥+;` remembers: the last pick spawns with no UI. Loaded once at
+    // startup; the loop owns it from here and saves on every pick. Seeded
+    // from the explicit override on a fresh state file so an existing
+    // `default_agent` keeps working silently.
+    let harness_state_path = crate::agent::harness_state_path();
+    let mut harness_state = harness_state_path
+        .as_deref()
+        .map(crate::agent::load_harness_state)
+        .unwrap_or_default();
+    if harness_state.last.trim().is_empty() && !cfg.default_agent.trim().is_empty() {
+        harness_state.last = cfg.default_agent.trim().to_string();
+    }
+    fn resolve_startup_cmd(
+        default_agent: &str,
+        state: &crate::agent::HarnessState,
+    ) -> Option<String> {
+        let ordered = state.clone().order(crate::agent::detect());
+        match crate::agent::plan(default_agent, state, ordered) {
+            crate::agent::Plan::Configured(cmd) | crate::agent::Plan::Auto(cmd) => Some(cmd),
+            _ => None,
+        }
+    }
     let initial = command.clone().unwrap_or_default();
     let initial_sizes: HashMap<_, _> = pane_grid_sizes(&layout, GridSize { cols, rows }, &cfg)
         .into_iter()
@@ -198,6 +273,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut pane_ids: Vec<PaneId> = layout.panes.keys().copied().collect();
     pane_ids.sort_unstable();
     let mut first_is_agent = false;
+    // A resolved startup harness spawns by name so pane 1.1 *is* the harness
+    // from the first frame. Otherwise pane 1.1 runs the gateway bootstrap,
+    // which prompts in-pane exactly once and remembers the pick.
+    let mut first_agent_cmd: Option<String> = None;
     // Reload path: the panes already exist as live PTYs inherited across the
     // execve, so they are adopted rather than spawned. Their children never
     // learn that gwae's code was replaced underneath them.
@@ -236,7 +315,13 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         let cmd = if i == 0 {
             if initial.trim().is_empty() {
                 first_is_agent = true;
-                agent_gateway_cmd()
+                match resolve_startup_cmd(&cfg.default_agent, &harness_state) {
+                    Some(direct) => {
+                        first_agent_cmd = Some(direct.clone());
+                        direct
+                    }
+                    None => agent_gateway_cmd(),
+                }
             } else {
                 initial.clone()
             }
@@ -287,11 +372,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // the agent gateway instead of a plain shell. A respawn re-resolves, so
     // installing a harness mid-session is picked up without a restart.
     let mut agent_panes: HashSet<PaneId> = HashSet::new();
+    // Panes with a resolved harness command: spawned running the harness
+    // directly, with no gateway in between. Entries are dropped with the pane.
+    let mut agent_cmds: HashMap<PaneId, String> = HashMap::new();
     // Pane 1.1 counts as an agent pane when it opened on the gateway, so a
     // respawn re-resolves rather than dropping the user into a bare shell.
     if first_is_agent {
         if let Some(pid) = pane_ids.first() {
             agent_panes.insert(*pid);
+            if let Some(cmd) = first_agent_cmd {
+                agent_cmds.insert(*pid, cmd);
+            }
         }
     }
     // Panes that were agent panes before a reload stay marked as such.
@@ -354,6 +445,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // the highlighted row. Built when the picker opens rather than at startup
     // so a repo cloned mid-session shows up without a restart.
     let mut dir_pick: Option<DirPicker> = None;
+    // Harness picker (`⌥+;` with more than one answer): the state-ordered
+    // candidates, the typed filter, and the highlighted row. Built when the
+    // chord fires rather than at startup so a harness installed mid-session
+    // shows up without a restart. Fast paths (an override, a remembered
+    // pick, a lone install) never open it.
+    let mut harness_pick: Option<HarnessPicker> = None;
     // Force-quit confirmation (⌥+Shift+q): true while the centered disclaimer
     // is up. Quitting kills every pane's process, so the chord arms this
     // overlay and a second deliberate keystroke commits.
@@ -412,12 +509,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         let f = FollowScroll::default();
                         let _ = layout.apply(Action::ClosePane(pid), v, f);
                         agent_panes.remove(&pid);
+                        agent_cmds.remove(&pid);
                         if let Err(e) = sync_panes(
                             &mut layout,
                             &mut panes,
                             &tx,
                             (GridSize { cols, rows }, cell_pixels),
                             &agent_panes,
+                            &agent_cmds,
                             spawn_dir.as_deref(),
                             &cfg,
                         ) {
@@ -426,6 +525,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     } else {
                         // Already removed from the layout (explicit kill);
                         // just drop the dead PTY handle.
+                        agent_cmds.remove(&pid);
                         panes.remove(&pid);
                     }
                     dirty = true;
@@ -636,6 +736,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             }
                             continue;
                         }
+                        if let Some(pick) = harness_pick.as_mut() {
+                            let query = picker_paste_query(&text);
+                            if !query.is_empty() {
+                                pick.query.push_str(&query);
+                                pick.sel = 0;
+                            }
+                            continue;
+                        }
                         let anchor = focused_pane_views_with_chrome(
                             &layout,
                             cols,
@@ -831,6 +939,106 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             dirty = true;
                             continue;
                         }
+                        // While the harness picker is open it owns the
+                        // keyboard, like the directory picker: printable keys
+                        // filter, arrows move, ⏎ spawns, esc cancels. A pick
+                        // is remembered in the state file, so there is no
+                        // save key; the shell row spawns a plain pane.
+                        if let Some(pick) = harness_pick.as_mut() {
+                            let mut chosen: Option<HarnessChoice> = None;
+                            let mut close = false;
+                            match ke.code {
+                                KeyCode::Up => pick.step(-1),
+                                KeyCode::Down => pick.step(1),
+                                KeyCode::Esc => close = true,
+                                KeyCode::Backspace => {
+                                    pick.query.pop();
+                                    pick.sel = 0;
+                                }
+                                KeyCode::Enter => {
+                                    chosen = pick.current();
+                                    close = true;
+                                }
+                                KeyCode::Char(c)
+                                    if !ke.modifiers.contains(KeyModifiers::ALT)
+                                        && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    pick.query.push(c);
+                                    pick.sel = 0;
+                                }
+                                _ => {}
+                            }
+                            let new_row = pick.new_row;
+                            if close {
+                                harness_pick = None;
+                            }
+                            if let Some(choice) = chosen {
+                                match choice {
+                                    HarnessChoice::Shell => {
+                                        let v = Viewport::new(cols);
+                                        let f = FollowScroll::default();
+                                        let a = if new_row {
+                                            Action::SpawnAgentRow
+                                        } else {
+                                            Action::SpawnAgent
+                                        };
+                                        let _ = layout.apply(a, v, f);
+                                        if let Err(e) = sync_panes(
+                                            &mut layout,
+                                            &mut panes,
+                                            &tx,
+                                            (GridSize { cols, rows }, cell_pixels),
+                                            &agent_panes,
+                                            &agent_cmds,
+                                            spawn_dir.as_deref(),
+                                            &cfg,
+                                        ) {
+                                            tracing::error!("sync panes: {e}");
+                                        }
+                                    }
+                                    HarnessChoice::Listed(f) => {
+                                        spawn_picked_harness(
+                                            &f.cmd,
+                                            true,
+                                            new_row,
+                                            &mut layout,
+                                            &mut panes,
+                                            &mut agent_panes,
+                                            &mut agent_cmds,
+                                            &tx,
+                                            (GridSize { cols, rows }, cell_pixels),
+                                            spawn_dir.as_deref(),
+                                            &cfg,
+                                            &mut harness_state,
+                                            harness_state_path.as_deref(),
+                                            &mut reload_note,
+                                            &mut reload_note_until,
+                                        );
+                                    }
+                                    HarnessChoice::Typed(cmd) => {
+                                        spawn_picked_harness(
+                                            &cmd,
+                                            false,
+                                            new_row,
+                                            &mut layout,
+                                            &mut panes,
+                                            &mut agent_panes,
+                                            &mut agent_cmds,
+                                            &tx,
+                                            (GridSize { cols, rows }, cell_pixels),
+                                            spawn_dir.as_deref(),
+                                            &cfg,
+                                            &mut harness_state,
+                                            harness_state_path.as_deref(),
+                                            &mut reload_note,
+                                            &mut reload_note_until,
+                                        );
+                                    }
+                                }
+                            }
+                            dirty = true;
+                            continue;
+                        }
                         // Harness-first scroll: an agent harness (jcode) owns
                         // Ctrl+Shift+J/K natively, so when it is focused the
                         // chord is forwarded to the child untouched instead of
@@ -970,21 +1178,94 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     if a == Action::KillPane && layout_pane_count(&layout) <= 1 {
                                         break 'main;
                                     }
-                                    let _ = layout.apply(a, v, f);
-                                    // A spawn-agent verb ends focused on the new
-                                    // column just right of the previous focus; mark its pane so sync spawns
-                                    // the agent harness rather than a shell.
+                                    // A spawn-agent verb resolves the harness
+                                    // first: an override, a remembered pick, or
+                                    // a lone install spawns directly with no
+                                    // UI, while anything else opens the
+                                    // overlay and spawns on confirm.
                                     if matches!(a, Action::SpawnAgent | Action::SpawnAgentRow) {
-                                        if let Some(pid) = focused_pane(&layout) {
-                                            agent_panes.insert(pid);
+                                        let new_row = a == Action::SpawnAgentRow;
+                                        let ordered = harness_state
+                                            .clone()
+                                            .order(crate::agent::detect());
+                                        match crate::agent::plan(
+                                            &cfg.default_agent,
+                                            &harness_state,
+                                            ordered,
+                                        ) {
+                                            crate::agent::Plan::Configured(cmd)
+                                            | crate::agent::Plan::Auto(cmd) => {
+                                                let _ = layout.apply(a, v, f);
+                                                if let Some(pid) = focused_pane(&layout) {
+                                                    agent_panes.insert(pid);
+                                                    agent_cmds.insert(pid, cmd);
+                                                }
+                                                if let Err(e) = sync_panes(
+                                                    &mut layout,
+                                                    &mut panes,
+                                                    &tx,
+                                                    (GridSize { cols, rows }, cell_pixels),
+                                                    &agent_panes,
+                                                    &agent_cmds,
+                                                    spawn_dir.as_deref(),
+                                                    &cfg,
+                                                ) {
+                                                    tracing::error!("sync panes: {e}");
+                                                }
+                                            }
+                                            crate::agent::Plan::Missing { want, found } => {
+                                                harness_pick = Some(HarnessPicker {
+                                                    all: found,
+                                                    query: String::new(),
+                                                    sel: 0,
+                                                    new_row,
+                                                    notice: Some(format!(
+                                                        "`{want}` is not installed"
+                                                    )),
+                                                });
+                                            }
+                                            crate::agent::Plan::Choose(found) => {
+                                                let notice =
+                                                    if !harness_state.last.trim().is_empty() {
+                                                        Some(format!(
+                                                            "remembered `{}` is gone; pick another",
+                                                            harness_state.last.trim()
+                                                        ))
+                                                    } else {
+                                                        None
+                                                    };
+                                                harness_pick = Some(HarnessPicker {
+                                                    all: found,
+                                                    query: String::new(),
+                                                    sel: 0,
+                                                    new_row,
+                                                    notice,
+                                                });
+                                            }
+                                            crate::agent::Plan::NoneInstalled { .. } => {
+                                                harness_pick = Some(HarnessPicker {
+                                                    all: Vec::new(),
+                                                    query: String::new(),
+                                                    sel: 0,
+                                                    new_row,
+                                                    notice: Some(
+                                                        "No agent harness found — type a command or take a shell"
+                                                            .to_string(),
+                                                    ),
+                                                });
+                                            }
                                         }
+                                        dirty = true;
+                                        continue;
                                     }
+                                    let _ = layout.apply(a, v, f);
                                     if let Err(e) = sync_panes(
                                         &mut layout,
                                         &mut panes,
                                         &tx,
                                         (GridSize { cols, rows }, cell_pixels),
                                         &agent_panes,
+                                        &agent_cmds,
                                         spawn_dir.as_deref(),
                                         &cfg,
                                     ) {
@@ -1378,6 +1659,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
             if let Some(pick) = &dir_pick {
                 draw_dir_picker(&mut frame, cols, rows, pick, &pal);
+            }
+            if let Some(pick) = &harness_pick {
+                draw_harness_picker(&mut frame, cols, rows, pick, &pal);
             }
             if let Some(note) = &reload_note {
                 let ok = !note.contains("error") && !note.starts_with("paste failed:");

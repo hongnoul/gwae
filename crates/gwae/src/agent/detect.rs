@@ -181,6 +181,12 @@ pub fn command_available(cmd: &str) -> bool {
     }
 }
 
+/// The resolved path of the first word of `cmd`, for state ordering.
+pub fn which_first(cmd: &str) -> Option<PathBuf> {
+    let exe = crate::tui::shell_split(cmd).into_iter().next()?;
+    which(&exe)
+}
+
 /// A harness found on this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
@@ -194,15 +200,15 @@ pub struct Found {
 
 /// Every harness we can find, best-known first.
 ///
-/// Three sources, merged and de-duplicated by command name:
-/// 1. `extra` — names from the user's config, which always win the labeling
-///    and come first, since the user told us about them explicitly.
-/// 2. [`KNOWN_AGENTS`] — the ones we can name nicely.
-/// 3. A scan of every `PATH` directory for anything [`looks_like_agent`].
+/// Two sources, merged and de-duplicated by command name:
+/// 1. [`KNOWN_AGENTS`] — the ones we can name nicely.
+/// 2. A scan of every `PATH` directory for anything [`looks_like_agent`].
 ///
 /// The scan is what makes a brand-new harness (or a personal wrapper script)
 /// show up without a gwae release, which an allowlist alone can never do.
-pub fn detect_with(extra: &[String]) -> Vec<Found> {
+/// Anything else the user types that resolves is remembered in the harness
+/// state file instead of a config list.
+pub fn detect() -> Vec<Found> {
     let mut out: Vec<Found> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -222,23 +228,13 @@ pub fn detect_with(extra: &[String]) -> Vec<Found> {
         }
     }
 
-    // 1. Explicitly configured names, in the user's own order.
-    for cmd in extra {
-        let cmd = cmd.trim();
-        if cmd.is_empty() {
-            continue;
-        }
-        if let Some(path) = which(shell_exe(cmd)) {
-            push(&mut seen, &mut out, cmd, cmd, path);
-        }
-    }
-    // 2. Names we can label.
+    // 1. Names we can label.
     for (cmd, label) in KNOWN_AGENTS {
         if let Some(path) = which(cmd) {
             push(&mut seen, &mut out, cmd, label, path);
         }
     }
-    // 3. Anything else on PATH that looks the part.
+    // 2. Anything else on PATH that looks the part.
     let mut discovered: Vec<Found> = Vec::new();
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
@@ -276,17 +272,6 @@ pub fn detect_with(extra: &[String]) -> Vec<Found> {
         );
     }
     out
-}
-
-/// The executable word of a command line (`"jcode --resume"` -> `"jcode"`).
-pub(super) fn shell_exe(cmd: &str) -> &str {
-    cmd.split_whitespace().next().unwrap_or("")
-}
-
-/// [`detect_with`] with no configured extras.
-#[cfg(test)]
-pub fn detect() -> Vec<Found> {
-    detect_with(&[])
 }
 
 #[cfg(test)]
@@ -344,17 +329,16 @@ mod tests {
     }
 
     #[test]
-    fn configured_extras_are_offered_first_and_are_never_duplicated() {
-        // `sh` stands in for a harness gwae has never heard of.
-        let got = detect_with(&["sh".to_string()]);
-        assert_eq!(got[0].cmd, "sh", "configured names come first: {got:?}");
-        assert_eq!(got.iter().filter(|f| f.cmd == "sh").count(), 1);
-        // Ones that are not installed are simply not shown, not errors.
-        let got = detect_with(&["gwae-not-real-xyz".to_string()]);
-        assert!(!got.iter().any(|f| f.cmd == "gwae-not-real-xyz"));
-        // Blank entries in the config are ignored rather than listed.
-        let got = detect_with(&["".to_string(), "   ".to_string()]);
+    fn detection_output_is_sane_without_any_config() {
+        // There is no config list anymore: what you see is what is installed,
+        // with no blanks and no duplicates.
+        let got = detect();
         assert!(got.iter().all(|f| !f.cmd.trim().is_empty()));
+        let mut names: Vec<&str> = got.iter().map(|f| f.cmd.as_str()).collect();
+        let n = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), n, "duplicate entries in {got:?}");
     }
 
     #[test]

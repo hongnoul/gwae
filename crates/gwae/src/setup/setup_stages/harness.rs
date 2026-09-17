@@ -16,11 +16,21 @@ impl SetupStage for HarnessStage {
         StageKind::Config
     }
     fn doctor_line(&self, ctx: &Ctx) -> String {
-        match crate::agent::plan(
-            &ctx.cfg.default_agent,
-            crate::agent::detect_with(&ctx.cfg.agents),
-        ) {
-            crate::agent::Plan::Configured(cmd) => format!("{cmd} [ok]"),
+        let state_path = crate::agent::harness_state_path();
+        let state = state_path
+            .as_deref()
+            .map(crate::agent::load_harness_state)
+            .unwrap_or_default();
+        let ordered = state.clone().order(crate::agent::detect());
+        match crate::agent::plan(&ctx.cfg.default_agent, &state, ordered) {
+            crate::agent::Plan::Configured(cmd) => {
+                if ctx.cfg.default_agent.trim() == cmd.trim() && !cmd.trim().is_empty() {
+                    format!("{cmd} [ok]")
+                } else {
+                    format!("{cmd} [remembered] (⌥+; goes straight there)")
+                }
+            }
+            crate::agent::Plan::Auto(cmd) => format!("{cmd} [ok] (only one installed)"),
             crate::agent::Plan::Choose(found) => format!(
                 "unset; ⌥+; will offer {} [ok]",
                 found
@@ -43,11 +53,14 @@ impl SetupStage for HarnessStage {
         }
     }
     fn check(&self, ctx: &Ctx) -> bool {
+        let state_path = crate::agent::harness_state_path();
+        let state = state_path
+            .as_deref()
+            .map(crate::agent::load_harness_state)
+            .unwrap_or_default();
+        let ordered = state.clone().order(crate::agent::detect());
         !matches!(
-            crate::agent::plan(
-                &ctx.cfg.default_agent,
-                crate::agent::detect_with(&ctx.cfg.agents)
-            ),
+            crate::agent::plan(&ctx.cfg.default_agent, &state, ordered),
             crate::agent::Plan::Missing { .. }
         )
     }

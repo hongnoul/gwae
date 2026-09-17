@@ -12,12 +12,8 @@ Example:
 
 ```toml
 default_column_width = "half"     # or "quarter", "two-thirds", "full", or 80 (cells)
-default_agent = "claude"           # first pane + ; launch this
-agents = ["my-agent-wrapper"]     # extra names for the selector
+default_agent = ""                # normally empty: ⌥+; remembers your pick itself
 agent_dir = "~/git/gwae"          # directory new panes start in ("" = gwae's cwd)
-harness_dirs = { jcode = "~/git/gwae" } # per-harness override; key = default_agent, any harness works
-agent_dirs = ["~/notes"]          # always offered in the ⌥+d picker
-agent_dir_roots = ["~/work"]      # where ⌥+d searches projects/directories (default: home)
 input_poll_ms = 1            # event-loop poll; 30ms backoff once the screen is quiet
 keep_awake = true            # macOS only: hold idle/display sleep via caffeinate (false lets it sleep)
 
@@ -131,10 +127,11 @@ few times a second, and a one-line toast confirms the reload along the bottom
 of the screen.
 
 `startup_panes` is consumed once at launch (the panes already exist), so
-changing it still needs a restart. `default_agent` is read fresh by the agent
-gateway each time `;` opens a pane, so editing it (or letting the gateway save
-your pick) applies to the *next* agent pane without a restart; panes already
-running a harness keep running it. Everything read every frame - `[minimap]`,
+changing it still needs a restart. `default_agent` is an explicit override
+read fresh each time `⌥+;` fires, so editing it applies to the *next* agent
+pane without a restart; panes already running a harness keep running it. The
+remembered pick lives in the state file, not the config, so picking a
+harness never rewrites your config. Everything read every frame - `[minimap]`,
 `[theme]`, scroll behavior - takes effect immediately. `keep_awake` also applies live:
 flipping it starts or drops the `caffeinate` assertion at once, with the
 change named in the toast.
@@ -205,8 +202,7 @@ A config file that is not being applied at all points at the syntax error:
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `default_column_width` | width | `"quarter"` | Width of newly created columns. A preset name (`"quarter"`, `"third"`, `"half"`, `"two-thirds"`, `"three-quarters"`, `"full"`; separators and case are ignored, and `"1/2"` style also works), a bare integer for fixed cells (`80`), or the table forms `{ preset = "half" }` / `{ cells = 80 }`. |
-| `default_agent` | string | `""` (unset) | The agent harness `;` launches, and what the **first pane** opens on at startup. When unset, or not on `PATH`, you get the **agent selector** instead: it lists harnesses it knows, anything agent-shaped found on your `PATH`, and anything in `agents`; pick one (or type any command) and it is saved here, so every later launch goes straight to it. With nothing found it opens a plain `$SHELL`. `gwae run <cmd>` overrides the first pane. See `gwae agent --print`. |
-| `agents` | array of strings | `[]` | Extra agent commands to offer in the selector, for a harness whose name gwae cannot guess (or a wrapper script of your own). Entries that are not installed are simply not listed. |
+| `default_agent` | string | `""` (unset) | Explicit harness override for `⌥+;` and the **first pane** at startup. Normally left empty: the first press offers what is installed (a lone install launches itself with no UI) and remembers your pick in the state file, so every later press goes straight there. Set it only to pin a harness in dotfiles or scripts; a value that is not on `PATH` falls back to the picker rather than a dead pane. `gwae run <cmd>` overrides the first pane. See `gwae agent --print`. |
 | `startup_panes` | integer | `1` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (shown as skeleton placeholder boxes). The default `1` opens a single terminal in the leftmost quarter. |
 | `input_poll_ms` | integer | `1` | Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. gwae sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. The loop backs off to 30ms once the screen has been quiet for 750ms, so an idle session stays cheap. Run `gwae setup --only latency` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
 | `keep_awake` | bool | `true` | macOS-only: hold a `caffeinate` assertion (idle/display sleep) while gwae runs, so agents keep working with the display asleep. On unless you write `keep_awake = false` or toggle it off with `⌥+w`; never asked by setup. Does **not** defeat lid-close sleep outside clamshell mode (power + external display + input) or `sudo pmset disablesleep 1`. Applies live on save. `GWAE_NO_KEEP_AWAKE=1` forces it off. |

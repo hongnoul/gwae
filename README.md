@@ -59,7 +59,7 @@ gwae run "codex"      # or Codex CLI
 gwae doctor           # check config and setup
 ```
 
-New columns appear to the right of focus. `⌥+;` spawns your configured agent, or offers a picker of installed agents when none is configured.
+New columns appear to the right of focus. `⌥+;` spawns your agent — first press remembers your pick (a lone install launches itself), later presses go straight there.
 
 ## Why not tmux?
 

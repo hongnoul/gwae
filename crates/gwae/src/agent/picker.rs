@@ -1,7 +1,7 @@
 //! Picker rendering and choice parsing for the agent gateway.
 
 use super::config::Plan;
-use super::detect::{command_available, shell_exe, Found, KNOWN_AGENTS};
+use super::detect::{command_available, Found, KNOWN_AGENTS};
 use std::io::{IsTerminal, Write};
 
 pub(super) const DIM: &str = "\x1b[2m";
@@ -28,7 +28,7 @@ fn term_cols() -> usize {
 /// width is testable.
 pub fn render_at(plan: &Plan, cols: usize) -> (String, Vec<Found>) {
     let mut header = String::new();
-    if !matches!(plan, Plan::Configured(_)) && cols >= 17 {
+    if !matches!(plan, Plan::Configured(_) | Plan::Auto(_)) && cols >= 17 {
         header.push_str("gwae\n");
     }
     // Under ~50 columns (a quarter-width pane on a typical screen) the paths
@@ -38,7 +38,7 @@ pub fn render_at(plan: &Plan, cols: usize) -> (String, Vec<Found>) {
     let narrow = cols < 50;
     let mut s = String::new();
     let choices = match plan {
-        Plan::Configured(_) => Vec::new(),
+        Plan::Configured(_) | Plan::Auto(_) => Vec::new(),
         Plan::Missing { want, found } => {
             if narrow {
                 s.push_str(&format!(
@@ -120,8 +120,7 @@ pub fn render_at(plan: &Plan, cols: usize) -> (String, Vec<Found>) {
             ));
         } else {
             s.push_str(&format!(
-                "  {CYAN}s{RESET}  {BOLD}just a shell{RESET}  {DIM}skip, don't save{RESET}\n\n{DIM}Not listed? Type the command itself (e.g. {RESET}{CYAN}hermes --resume{RESET}{DIM}).\nYour choice is saved to {} as `default_agent`, so ⌥+; goes straight there next time.{RESET}\n",
-                crate::config::Config::default_path().display()
+                "  {CYAN}s{RESET}  {BOLD}just a shell{RESET}  {DIM}skip, don't save{RESET}\n\n{DIM}Not listed? Type the command itself (e.g. {RESET}{CYAN}hermes --resume{RESET}{DIM}).\nYour choice is remembered, so ⌥+; goes straight there next time.{RESET}\n",
             ));
         }
     }
@@ -147,6 +146,12 @@ pub enum Choice {
     Typed(String),
     /// Just a shell; save nothing.
     Shell,
+}
+
+/// The executable word of a command line (`"jcode --resume"` -> `"jcode"`),
+/// for naming the missing piece in an error.
+fn shell_exe(cmd: &str) -> &str {
+    cmd.split_whitespace().next().unwrap_or("")
 }
 
 /// Interpret one line of picker input. Pure, so every branch (including the
@@ -212,6 +217,7 @@ pub(super) fn prompt(n: usize) -> Choice {
 mod tests {
     use super::super::config::{fallback_shell, plan, Plan};
     use super::super::detect::Found;
+    use super::super::state::HarnessState;
     use super::Choice;
     use super::*;
     use std::path::PathBuf;
@@ -244,35 +250,38 @@ mod tests {
 
     #[test]
     fn a_resolvable_configured_agent_short_circuits_every_prompt() {
+        let s = HarnessState::default();
         // The common case must never paint: config wins, no detection UI.
         assert_eq!(
-            plan("sh", vec![found("jcode")]),
+            plan("sh", &s, vec![found("jcode")]),
             Plan::Configured("sh".into())
         );
         // Whitespace is not a configuration.
-        assert!(matches!(plan("   ", vec![]), Plan::NoneInstalled { .. }));
+        assert!(matches!(plan("   ", &s, vec![]), Plan::NoneInstalled { .. }));
     }
 
     #[test]
     fn unset_agent_with_installs_offers_a_choice_and_without_them_falls_back() {
+        let s = HarnessState::default();
         assert_eq!(
-            plan("", vec![found("jcode"), found("claude")]),
+            plan("", &s, vec![found("jcode"), found("claude")]),
             Plan::Choose(vec![found("jcode"), found("claude")])
         );
-        assert_eq!(plan("", vec![]), Plan::NoneInstalled { want: None });
+        assert_eq!(plan("", &s, vec![]), Plan::NoneInstalled { want: None });
     }
 
     #[test]
     fn a_configured_but_missing_agent_reports_what_was_wanted() {
+        let s = HarnessState::default();
         assert_eq!(
-            plan("jcode-not-real", vec![found("claude")]),
+            plan("jcode-not-real", &s, vec![found("claude")]),
             Plan::Missing {
                 want: "jcode-not-real".into(),
                 found: vec![found("claude")],
             }
         );
         assert_eq!(
-            plan("jcode-not-real", vec![]),
+            plan("jcode-not-real", &s, vec![]),
             Plan::NoneInstalled {
                 want: Some("jcode-not-real".into())
             }

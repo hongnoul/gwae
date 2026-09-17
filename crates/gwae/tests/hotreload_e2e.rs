@@ -592,9 +592,12 @@ fn an_agent_pane_survives_a_reload_as_the_same_process() {
         "default_agent = \"/bin/cat\"\n",
     )
     .expect("config with an identifiable agent");
+    // The TUI picks config edits up on a poll, so give the reload a moment
+    // to land before the spawn key: otherwise the press resolves against
+    // the pre-edit config.
+    std::thread::sleep(Duration::from_secs(2));
 
-    // ⌥+; opens a column running the agent gateway, which execs the
-    // configured harness.
+    // ⌥+; opens a column running the configured harness directly.
     s.writer.write_all(b"\x1b;").expect("spawn agent");
     s.writer.flush().expect("flush");
     std::thread::sleep(Duration::from_secs(4));
