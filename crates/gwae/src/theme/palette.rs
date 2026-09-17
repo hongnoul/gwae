@@ -64,7 +64,7 @@ impl Palette {
     pub const RETRO: Palette = Palette {
         base: rgb(0x000000),
         surface: rgb(0x000000),
-        overlay: rgb(0x5a5a5a),
+        overlay: rgb(0x3f3f3f),
         accent: rgb(0xffffff),
         text: rgb(0xffffff),
         label: rgb(0x808080),

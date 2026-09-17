@@ -171,7 +171,7 @@ fn assert_retro_chrome(painted: &str, ctx: &str) {
         "{ctx} must paint the focus ring bold; capture has no SGR bold",
     );
     assert!(
-        painted.contains(&fg_seq(0x5a, 0x5a, 0x5a)),
+        painted.contains(&fg_seq(0x3f, 0x3f, 0x3f)),
         "{ctx} must paint dim gray unfocused chrome; saw {fgs:?}",
         fgs = fgs_in(painted),
     );
