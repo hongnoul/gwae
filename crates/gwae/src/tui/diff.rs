@@ -86,6 +86,9 @@ pub(crate) fn paint(buf: &mut Vec<u8>, out: &[Cell], last: &[Cell], cols: u16, r
             if style.underline {
                 let _ = queue!(buf, SetAttribute(Attribute::Underlined));
             }
+            if style.overline {
+                let _ = queue!(buf, SetAttribute(Attribute::OverLined));
+            }
             if style.underline_color != CColor::Default {
                 let _ = queue!(
                     buf,
@@ -119,7 +122,6 @@ fn host_width_agrees(cell: Cell) -> bool {
         None => false,
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -295,4 +297,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn paint_emits_overline_for_ring_cells() {
+        // The HUD focus ring is overline + underline: both must reach the
+        // wire (SGR 53 and SGR 4), each run reset before the next so the
+        // ring never bleeds onto neighboring tiles.
+        let mut row = vec![Cell::default(); 3];
+        row[0].ch = 'r';
+        row[0].style.underline = true;
+        row[0].style.overline = true;
+        row[0].style.underline_color = CColor::Rgb(0, 255, 255);
+        row[1].ch = 'p';
+        let last = vec![
+            Cell {
+                ch: 'x',
+                ..Cell::default()
+            };
+            3
+        ];
+        let mut buf = Vec::new();
+        assert!(paint(&mut buf, &row, &last, 3, 1));
+        let s = String::from_utf8(buf).unwrap();
+        let over = s.find("\u{1b}[53m").expect("overline never set");
+        let under = s.find("\u{1b}[4m").expect("underline never set");
+        assert!(
+            s.contains("\u{1b}[58;2;0;255;255m"),
+            "ring color never set: {s:?}"
+        );
+        let plain = s.find('p').expect("plain run missing");
+        assert!(
+            over < plain && under < plain,
+            "ring leaks into the plain run: {s:?}"
+        );
+        let reset_after = s[over.max(under)..]
+            .find("\u{1b}[0m")
+            .expect("no attribute reset after ringed run");
+        assert!(
+            over.max(under) + reset_after < plain,
+            "ring leaks into the plain run: {s:?}"
+        );
+    }
 }
