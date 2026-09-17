@@ -18,10 +18,6 @@ pub struct Style {
     pub underline_color: CColor,
     pub bold: bool,
     pub underline: bool,
-    /// SGR 53: a line across the top of the cell. Paired with the underline
-    /// it draws a top-and-bottom ring around single-row HUD tiles, which a
-    /// lone underline is too faint to carry on its own.
-    pub overline: bool,
     pub inverse: bool,
 }
 

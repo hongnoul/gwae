@@ -506,7 +506,6 @@ pub(crate) fn render_frame_with_images(
                     cell.style.bg = background;
                     cell.style.bold = false;
                     cell.style.underline = false;
-                    cell.style.overline = false;
                 }
                 // Mark the cut edge so a 3-cell hint never reads as real text.
                 let is_edge = v.peek && gx + 1 == v.rect.w;
@@ -756,7 +755,6 @@ fn put_frame_cell(out: &mut [Cell], idx: usize, ch: char, color: CColor) {
     cell.style.bg = CColor::Default;
     cell.style.bold = false;
     cell.style.underline = false;
-    cell.style.overline = false;
     cell.style.inverse = false;
 }
 
