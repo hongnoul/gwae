@@ -352,19 +352,14 @@ pub(crate) fn plan_center_minimap(
     };
     // Frame + gutter + separating space, before the map gets its budget.
     let chrome_w = 2 + gutter_w + u16::from(gutter_w > 0);
-    // `minimap.max_width` caps the *corner overlay*, where 32 cells is a
-    // deliberately small footprint over live panes. The centered panel is a
-    // different thing at a different moment: it owns the screen for as long
-    // as ⌥ is held and spends its cells on pane names, so it asks for enough
-    // to seat one per tile and treats the configured number as a floor it may
-    // exceed. Raising `max_width` still widens it; lowering it will not
-    // squeeze names out of a panel that has room for them. Never more than
-    // two-thirds of the screen, so the session stays visible around it.
-    let want = (WIDTH_PER_TILE * layout_widest_strip(layout) as u16).max(mm.max_width);
+    // Tight, not padded: each tile is exactly its content (glyph + address,
+    // e.g. `»12`), so the map is only as wide as the widest strip needs.
+    // `minimap.max_width` still caps the *corner overlay*; the centered panel
+    // treats it as a ceiling, never a floor. Never more than two-thirds of
+    // the screen, so the session stays visible around it.
+    let want = (WIDTH_PER_TILE * layout_widest_strip(layout) as u16).min(mm.max_width);
     let room = cols.saturating_sub(chrome_w + 4).max(1);
-    let width = want
-        .min(room)
-        .min((cols * 2 / 3).max(mm.max_width.min(room)));
+    let width = want.min(room).min(cols * 2 / 3).max(1);
     // Proportional, not stretched: on the centered panel the strips are read
     // against each other, and stretching a two-column strip to the width of a
     // six-column one makes the short strip look long.
@@ -529,7 +524,7 @@ pub(crate) fn paint_center_minimap(
     facts: &HudFacts,
 ) {
     let focus_color = pal.accent;
-    let status_bg = |s: PaneStatus| pal.status_muted(s);
+    let status_bg = |s: PaneStatus| pal.status(s);
     let status_fg = |s: PaneStatus| pal.status(s);
     let status_glyph = status_glyph_for;
     let tally: Vec<(String, CColor)> = status_tally(layout)
@@ -627,21 +622,16 @@ pub(crate) fn paint_center_minimap(
         for (dx, ch) in text.chars().enumerate() {
             let x = map_ox + tile.x as usize + dx;
             // Bold the leading `glyph + address` signature: it is what the
-            // eye lands on when scanning a row of abutting tiles.
-            let sig = dx <= addr.chars().count();
+            // eye lands on when scanning a row of abutting tiles. The whole
+            // focused tile is bold so focus survives palette-neutral fills
+            // with no underline.
+            let sig = dx <= addr.chars().count() || tile.focus_col;
             let ink = if neutral && ch == glyph {
                 status_fg(tile.status)
             } else {
                 fg
             };
             put(out, x as u16, gy as u16, ch, ink, bgc, sig);
-            // The focused tile keeps its underline on top of the fill, so
-            // focus never depends on color alone (retro RGB fills included).
-            if tile.focus_col {
-                if let Some(cell) = out.get_mut(gy * cols as usize + x) {
-                    cell.style.underline = true;
-                }
-            }
         }
     }
     // Viewport ruler: which columns of each strip are actually on screen.
@@ -925,7 +915,7 @@ pub(crate) fn draw_edge_ticks(
     if cols == 0 || rows == 0 {
         return;
     }
-    let tick_bg = |s: PaneStatus| pal.status_muted(s);
+    let tick_bg = |s: PaneStatus| pal.status(s);
     let y = rows.saturating_sub(1) as usize;
     let ranges = layout
         .column_x_ranges(layout.focus.row, cols)
@@ -983,7 +973,7 @@ pub(crate) fn draw_edge_ticks(
         let bg = if is_focus {
             pal.accent
         } else if needs {
-            pal.status_muted(PaneStatus::Idle)
+            pal.status(PaneStatus::Idle)
         } else {
             pal.overlay
         };
@@ -1019,8 +1009,8 @@ pub(crate) fn draw_minimap(
     if !mm.show || (layout.panes.len() <= 1 && layout.rows.len() <= 1) {
         return;
     }
-    // Muted tile backgrounds and bright foregrounds, both from the palette.
-    let status_bg = |s: PaneStatus| pal.status_muted(s);
+    // Full-intensity tile backgrounds and bright foregrounds, both from the palette.
+    let status_bg = |s: PaneStatus| pal.status(s);
     let status_fg = |s: PaneStatus| pal.status(s);
     /// Single-width status glyph (every one is width 1 per unicode-width, so
     /// the painter never has to cut a run around it).
@@ -1092,11 +1082,6 @@ pub(crate) fn draw_minimap(
                 bg,
                 tile.focus_col || (dx == 0 && tile.pane_idx == 0),
             );
-            if tile.focus_col {
-                if let Some(cell) = out.get_mut(y as usize * cols as usize + x as usize) {
-                    cell.style.underline = true;
-                }
-            }
         }
         // Focused strip: a chevron in the gutter just left of the map row.
         if tile.focus_row && tile.x == 0 && ox > 0 {
@@ -1225,17 +1210,15 @@ mod tests {
         // Two strips -> map height 2, width 32 (default max). Bottom-right:
         // ox = 40-32 = 8, oy = 8-2 = 6.
         let cell = |x: usize, y: usize| out[y * 40 + x];
-        // An unknown indexed accent uses neutral fill and an underline.
+        // An unknown indexed accent uses neutral fill; focus reads via bold.
         let focus = cell(8, 6);
         assert_eq!(
             focus.style.bg,
             CColor::Default,
             "unknown accent uses neutral fill"
         );
-        assert!(
-            focus.style.underline,
-            "focus remains visible without a fill"
-        );
+        assert!(!focus.style.underline, "no focus underline");
+        assert!(focus.style.bold, "focus reads via bold without a fill");
         // The tile carries its column digit (column 0 -> '1').
         assert_eq!(focus.ch, '1', "tile shows the ⌥+digit column address");
         // The non-focused strip's tile is a status tint, not the accent.
@@ -1246,11 +1229,11 @@ mod tests {
             CColor::Default,
             "other strip is painted chrome"
         );
-        // Fresh panes are Running: a muted Mocha blue tint carrying a `»` glyph at
-        // the tile's right edge.
+        // Fresh panes are Running: a full-intensity Mocha blue tint carrying
+        // a `»` glyph at the tile's right edge.
         assert_eq!(
             other.style.bg,
-            CColor::Rgb(0x52, 0x6c, 0x96),
+            CColor::Rgb(0x89, 0xb4, 0xfa),
             "running tint"
         );
         let other_end = cell(8 + 31, 7);
@@ -1333,20 +1316,21 @@ mod tests {
         // Map: ox=8, oy=6. Strip 1 has 4 tiles of 8 cells each.
         let (ox, y) = (8usize, 6usize);
         assert_eq!(cell(ox, y).style.bg, CColor::Default, "tile 1 neutral");
-        assert!(cell(ox, y).style.underline, "tile 1 focused");
+        assert!(cell(ox, y).style.bold, "tile 1 focused reads via bold");
+        assert!(!cell(ox, y).style.underline, "no focus underline");
         assert_eq!(
             cell(ox + 8, y).style.bg,
-            CColor::Rgb(0x63, 0x88, 0x60),
+            CColor::Rgb(0xa6, 0xe3, 0xa1),
             "tile 2 done"
         );
         assert_eq!(
             cell(ox + 16, y).style.bg,
-            CColor::Rgb(0x91, 0x53, 0x64),
+            CColor::Rgb(0xf3, 0x8b, 0xa8),
             "tile 3 failed"
         );
         assert_eq!(
             cell(ox + 24, y).style.bg,
-            CColor::Rgb(0x96, 0x6b, 0x51),
+            CColor::Rgb(0xfa, 0xb3, 0x87),
             "tile 4 idle"
         );
         // Tiles carry their ⌥+digit address and end-of-tile status glyph.
@@ -1410,8 +1394,8 @@ mod tests {
     fn minimap_status_tints_use_the_palette() {
         // Indexed status colors normalize through `tile_colors`: tile
         // backgrounds stay the terminal default while the status glyphs
-        // carry the color. (RGB statuses paint muted tint tiles; covered
-        // by `draw_minimap_status_colors_and_failed_glyph`.)
+        // carry the color. (RGB statuses paint full-intensity tint tiles;
+        // covered by `draw_minimap_status_colors_and_failed_glyph`.)
         use gwae_layout::Width;
         let mut layout = Layout::default(); // 4 quarter panes on strip 1
         let r2 = layout.new_row();
@@ -1438,13 +1422,14 @@ mod tests {
         );
         let cell = |x: usize, y: usize| out[y * cols + x];
         let (ox, y) = (8usize, 6usize);
-        // Focus stays visible without a fill: underline, not background.
+        // Focus stays visible without a fill: bold, not background.
         assert_eq!(
             cell(ox, y).style.bg,
             CColor::Default,
             "focused tile keeps the terminal background"
         );
-        assert!(cell(ox, y).style.underline, "focus is underlined");
+        assert!(!cell(ox, y).style.underline, "no focus underline");
+        assert!(cell(ox, y).style.bold, "focus reads via bold");
         for (dx, status) in [
             (8, PaneStatus::Done),
             (16, PaneStatus::Failed),
@@ -1697,9 +1682,26 @@ mod tests {
             let y = plan.row_y[tile.y as usize] as usize;
             let cells = &out[y * 100 + (plan.map_ox + tile.x) as usize..][..tile.w as usize];
             assert!(cells.iter().all(|c| c.style.bg == CColor::Default));
+            assert!(
+                cells.iter().all(|c| !c.style.underline),
+                "no focus underline"
+            );
             for c in cells.iter().filter(|c| c.ch.is_ascii_digit()) {
                 assert_eq!(c.style.fg, CColor::Default);
-                assert_eq!(c.style.underline, tile.focus_col);
+            }
+            // Without a fill or an underline, focus reads via bold: every
+            // cell of the focused tile is bold, while the rest of a tile is
+            // plain (only its address cell is bold).
+            if tile.focus_col {
+                assert!(
+                    cells.iter().all(|c| c.style.bold),
+                    "focused tile reads via bold"
+                );
+            } else if tile.w >= 2 {
+                assert!(
+                    cells.iter().any(|c| !c.style.bold),
+                    "unfocused tile is not all bold"
+                );
             }
         }
         let mut out = vec![Cell::default(); 100 * 24];
@@ -1719,7 +1721,14 @@ mod tests {
         assert!(digits
             .iter()
             .all(|c| c.style.bg == CColor::Default && c.style.fg == CColor::Default));
-        assert!(digits.iter().any(|c| c.style.underline));
+        assert!(
+            digits.iter().all(|c| !c.style.underline),
+            "no focus underline"
+        );
+        assert!(
+            out.iter().any(|c| c.ch == '❯'),
+            "the focused strip keeps its chevron"
+        );
     }
 
     #[test]

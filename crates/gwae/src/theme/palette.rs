@@ -11,8 +11,8 @@ use gwae_term::CColor;
 
 /// Every color gwae paints as chrome.
 ///
-/// Status tints are stored at full intensity; the muted variants used for
-/// minimap tiles are derived with [`Palette::muted`] rather than stored.
+/// Status tints are stored at full intensity and painted as-is on minimap
+/// tiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
     /// The empty (uncovered) background behind the panes.
@@ -94,11 +94,6 @@ impl Palette {
             S::Done => self.done,
             S::Failed => self.failed,
         }
-    }
-
-    /// Muted (60%) tint for a pane status, used for minimap tiles.
-    pub fn status_muted(&self, s: PaneStatus) -> CColor {
-        Palette::muted(self.status(s))
     }
 }
 

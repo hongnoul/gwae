@@ -971,7 +971,7 @@ pub(crate) mod tests {
 
     /// A palette with a distinctive accent and RGB status tints. Render
     /// tests assert on the accent to prove focus chrome is drawn and on
-    /// muted status tints for minimap tiles; indexed colors normalize to
+    /// full-intensity status tints for minimap tiles; indexed colors normalize to
     /// the terminal default through `tile_colors`, so the statuses stay
     /// RGB here to keep exercising the tint path.
     pub(crate) fn pal_accent(accent: CColor) -> Palette {

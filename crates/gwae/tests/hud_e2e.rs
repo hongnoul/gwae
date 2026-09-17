@@ -545,8 +545,8 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
     });
     grid.feed(raw.as_bytes());
     let mut addresses = 0;
-    let mut focused = 0;
-    // Identify the map by geometry, not the new underline/color behavior.
+    let mut bold = 0;
+    // Identify the map by geometry, not the old underline/color behavior.
     let map_y = (0..30)
         .find(|&y| {
             (1..140)
@@ -568,8 +568,8 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
             {
                 addresses += 1;
                 // Retro chrome: tiles carry explicit RGB fills (cyan focus,
-                // muted status tints) with black/white contrast ink, never
-                // the terminal default pair.
+                // full-intensity status tints) with black/white contrast ink,
+                // never the terminal default pair.
                 assert!(
                     matches!(c.style.bg, CColor::Rgb(..)),
                     "address at ({x}, {y}) should sit on a retro tint, got {:?}",
@@ -580,7 +580,8 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
                     "address ink at ({x}, {y}) should be contrast ink, got {:?}",
                     c.style.fg
                 );
-                focused += usize::from(c.style.underline);
+                assert!(!c.style.underline, "no focus underline at ({x}, {y})");
+                bold += usize::from(c.style.bold);
             }
         }
     }
@@ -588,5 +589,5 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
         addresses >= 2,
         "must inspect real minimap addresses, got {addresses}"
     );
-    assert!(focused > 0, "the focused tile keeps its underline");
+    assert!(bold > 0, "the focused tile stays bold");
 }
