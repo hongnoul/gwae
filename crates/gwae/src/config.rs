@@ -516,6 +516,18 @@ mod tests {
     }
 
     #[test]
+    fn keep_awake_defaults_to_off_but_parses_true() {
+        // Fresh runs let the Mac sleep as normal; opting in is explicit
+        // (`keep_awake = true` or `⌥+w`). Both the omitted and the absent
+        // paths must agree, or init silently re-enables the assertion.
+        assert!(!parse("").keep_awake);
+        assert!(!Config::default().keep_awake);
+        assert!(!default_keep_awake());
+        assert!(parse("keep_awake = true").keep_awake);
+        assert!(!parse("keep_awake = false").keep_awake);
+    }
+
+    #[test]
     fn startup_panes_parses() {
         let cfg = parse("startup_panes = 2");
         assert_eq!(cfg.startup_panes, 2);
