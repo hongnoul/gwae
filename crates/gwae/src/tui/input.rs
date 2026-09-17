@@ -584,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn handle_key_option_shift_semicolon_spawns_an_agent_row() {
+    fn handle_key_option_shift_semicolon_opens_the_row_picker() {
         // macOS glyph fallback: Option+Shift+; is Ú.
         let ev = KeyEvent::new(KeyCode::Char('\u{da}'), KeyModifiers::NONE);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgentRow)));
