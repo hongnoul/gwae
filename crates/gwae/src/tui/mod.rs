@@ -26,6 +26,7 @@ mod app;
 pub use app::run_tui;
 
 mod chrome;
+mod empty_art;
 mod pickers;
 mod render;
 
