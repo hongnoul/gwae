@@ -147,7 +147,7 @@ fn doctor_names_a_dead_override_even_when_memory_covers_it() {
     let out = doctor_with_agents_and_state(
         Some("default_agent = \"gwae-no-such-agent-xyz\"\n"),
         &["codex"],
-        Some("{\"last\":\"codex\",\"mru\":[\"codex\"],\"custom\":[]}".into()),
+        Some("{\"last\":\"codex\",\"mru\":[\"codex\"],\"custom\":[]}"),
     );
     assert!(
         out.contains("codex [remembered]") && out.contains("gwae-no-such-agent-xyz"),

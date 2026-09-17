@@ -598,6 +598,44 @@ fn a_remembered_but_uninstalled_pick_opens_the_overlay_with_a_notice() {
 }
 
 #[test]
+fn the_row_chord_opens_the_overlay_and_spawns_on_a_new_strip() {
+    // ⌥+Shift+; carries the row intent through the overlay: the pick lands
+    // on a new strip, not a new column, and the choice is remembered.
+    let sb = Sandbox::new(&["claude", "aider"]);
+    let mut p = sb.spawn_tui();
+    std::thread::sleep(Duration::from_millis(700));
+
+    // ⌥+Shift+; as a terminal sends it: ESC-prefixed colon (Meta).
+    p.send("\x1b:");
+    let seen = p.collect_until(Duration::from_secs(10), |raw| {
+        let t = screen_text(raw);
+        t.contains("pick agent") && t.contains("just a shell")
+    });
+    assert!(
+        screen_text(&seen).contains("Claude Code"),
+        "got:\n{}",
+        screen_text(&seen)
+    );
+
+    // Pick the second entry to prove overlay numbering still maps.
+    p.send("\x1b[B");
+    p.send("\r");
+    p.collect_until(Duration::from_secs(10), |raw| {
+        screen_text(raw).contains("AGENT-RAN:aider")
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !sb.read_state().contains("aider") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    assert!(
+        sb.read_state().contains("\"last\":\"aider\""),
+        "got:\n{}",
+        sb.read_state()
+    );
+    p.kill();
+}
+
+#[test]
 fn a_bare_enter_takes_the_listed_default() {
     // The prompt offers Enter as a shortcut, so it must land on entry #1 and
     // save it exactly as an explicit "1" would.

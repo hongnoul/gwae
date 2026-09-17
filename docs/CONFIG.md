@@ -131,7 +131,11 @@ changing it still needs a restart. `default_agent` is an explicit override
 read fresh each time `⌥+;` fires, so editing it applies to the *next* agent
 pane without a restart; panes already running a harness keep running it. The
 remembered pick lives in the state file, not the config, so picking a
-harness never rewrites your config. Everything read every frame - `[minimap]`,
+harness never rewrites your config. That file is
+`$XDG_STATE_HOME/gwae/harness.json` (`~/.local/state/gwae/harness.json` by
+default): `last` is the pick `⌥+;` spawns with no UI, `mru` ranks the picker,
+and `custom` remembers typed commands detection could never guess. Deleting
+it costs one extra pick; nothing in it is hand-edited. Everything read every frame - `[minimap]`,
 `[theme]`, scroll behavior - takes effect immediately. `keep_awake` also applies live:
 flipping it starts or drops the `caffeinate` assertion at once, with the
 change named in the toast.
