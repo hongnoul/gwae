@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "gwae"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "clap",
  "crossterm",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "gwae-layout"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "proptest",
  "serde",
@@ -357,14 +357,14 @@ dependencies = [
 
 [[package]]
 name = "gwae-term"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "alacritty_terminal",
 ]
 
 [[package]]
 name = "gwae-testkit"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "gwae-term",
 ]

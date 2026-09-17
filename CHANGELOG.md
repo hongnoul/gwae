@@ -6,6 +6,11 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-17
+
+### Changed
+- **White focus ring is the retro default.** The cyan accent is retired: fresh runs paint a white focus ring on true black. Cyan is still available as a `[theme] accent` override.
+
 ### Fixed
 - **PDF pages stay rendered past ~63 page turns.** tdf allocates a fresh image id per page and clears placements each turn with lowercase `d=a`, which keeps image data for re-display, so gwae accumulated one stored source per page until the 64-image quota rejected every later transmit with `ENOSPC`: no placements, no host tiles, pitch black. Under quota pressure gwae now evicts the oldest sources without placements first, per the Kitty spec, and only fails when every stored image is still placed. Caught by a live-trace reproduction and a 70-turn acceptance test.
 
