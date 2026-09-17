@@ -24,31 +24,15 @@ Three layers, cheapest first, each one able to stand alone:
 The picker discovers suggestions and searches directory names as you type.
 An existing literal path can also be typed or pasted and takes the top spot.
 
-## Per-harness default
+## Per-harness default (retired)
 
-`⌥+;` does not always mean the same harness: `default_agent` is the user's
-preferred one (`jcode`, `claude`, `codex`, …). A single global `agent_dir`
-makes `⌥+;` open the wrong repo when the preferred harness lives elsewhere.
+`harness_dirs` once held a per-harness fallback table. It is retired: every
+pick now lands in the one `agent_dir` key, and old configs naming
+`harness_dirs` (or `agent_dirs` / `agent_dir_roots`) still parse because the
+keys are ignored, not fatal.
 
-`harness_dirs` is a per-harness fallback table that is not tied to any
-particular harness name:
-
-```toml
-# generic fallback (old key, still works)
-agent_dir = "~/git/gwae"
-
-# per-harness: key = harness command as in default_agent
-harness_dirs = { jcode = "~/git/gwae", Muse = "~/src/foo" }
-# or dotted / table forms:
-# harness_dirs.jcode = "~/git/gwae"
-# [harness_dirs]
-# jcode = "~/git/gwae"
-```
-
-In the `⌥+d` picker the title shows the harness (`spawn dir [jcode]:`),
-and `⌥+s` writes to `harness_dirs.<harness>` when a harness is set
-(otherwise it writes `agent_dir` as before). Any harness is a valid key, so
-the UI is general to whichever harness the user configured as preferred.
+In the `⌥+d` picker the title still shows the harness (`spawn dir [jcode]:`)
+so the user knows which agent the picked directory applies to.
 
 ## Discovery must not guess at names
 
@@ -80,8 +64,7 @@ So discovery keys off things that mean the same thing on every machine:
   suggestions remain useful.
 
 These sources make no assumptions about layout, so `⌥+d` is useful on a machine
-gwae has never seen, with no configuration. `agent_dir_roots` remains for
-people who want to narrow or widen the search (`["~/work", "/srv"]`).
+gwae has never seen, with no configuration.
 
 Discovery is rebuilt every time `⌥+d` opens. A folder scaffolded by an agent
 in the running session is searchable on the next open, without restarting
@@ -93,7 +76,7 @@ selecting one still uses the full directory path.
 
 ## Precedence
 
-`⌥+d` session pick > `--dir` > `harness_dirs[preferred_harness]` > `agent_dir` > gwae's own cwd.
+`⌥+d` session pick > `--dir` > `agent_dir` > gwae's own cwd.
 
 One resolved value lives in the TUI loop (`spawn_dir`), and both spawn paths
 (startup pane 1.1 and `sync_panes` for `⌥+;` / `⌥+:`) read it. Plain shell

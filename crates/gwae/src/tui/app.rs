@@ -259,12 +259,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // pane runs the command* random (ids are allocated in column order, so id
     // order is column order).
     //
-    // Pane 1.1 is the agent gateway unless `run <cmd>` named something else.
+    // Pane 1.1 is the agent pane unless `run <cmd>` named something else.
     // gwae exists to drive agents, so opening on a bare shell asked every
-    // user to type the harness name themselves on every launch; the gateway
-    // either goes straight to the configured agent (indistinguishable from
-    // launching it directly) or shows the selector. An explicit `run` command
-    // still wins, since that is the user being specific.
+    // user to type the harness name themselves on every launch. A resolved
+    // harness (an override, a remembered pick, a lone install) spawns by
+    // name, indistinguishable from launching it directly; otherwise pane 1.1
+    // runs the gateway bootstrap, which prompts in-pane exactly once and
+    // remembers the pick. An explicit `run` command still wins, since that
+    // is the user being specific.
     let mut pane_ids: Vec<PaneId> = layout.panes.keys().copied().collect();
     pane_ids.sort_unstable();
     let mut first_is_agent = false;

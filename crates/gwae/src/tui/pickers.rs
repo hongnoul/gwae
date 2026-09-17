@@ -81,8 +81,8 @@ pub(crate) fn draw_dir_picker(
 ) {
     let shown = pick.shown();
     let rows_shown = shown.len().clamp(1, 10);
-    // Title names the harness so a user with harness_dirs wonders less which
-    // entry ⌥+s will write. Plain "spawn dir:" when no harness is configured.
+    // Title names the harness so the user knows which agent the picked
+    // directory will apply to. Plain "spawn dir:" when no harness is set.
     let title = if pick.harness_label.is_empty() {
         format!(" spawn dir: {}_ ", pick.query)
     } else {

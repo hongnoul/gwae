@@ -515,6 +515,89 @@ fn pressing_the_spawn_agent_key_with_several_harnesses_opens_the_overlay() {
 }
 
 #[test]
+fn a_missing_override_opens_the_overlay_with_a_notice() {
+    // The override names something uninstalled: live ⌥+; must say so in the
+    // overlay, offer what exists, spawn the pick directly, and leave the
+    // override itself alone (it is the user's explicit pin).
+    let sb = Sandbox::new(&["claude", "aider"]);
+    sb.write_config("default_agent = \"jcode\"\n");
+    let mut p = sb.spawn_tui();
+    std::thread::sleep(Duration::from_millis(700));
+
+    p.send("\x1b;");
+    let seen = p.collect_until(Duration::from_secs(10), |raw| {
+        let t = screen_text(raw);
+        t.contains("pick agent") && t.contains("just a shell")
+    });
+    let text = screen_text(&seen);
+    assert!(
+        text.contains("`jcode` is not installed"),
+        "the notice must name the missing override; got:\n{text}"
+    );
+    assert!(text.contains("Claude Code"), "got:\n{text}");
+
+    p.send("\r");
+    p.collect_until(Duration::from_secs(10), |raw| {
+        screen_text(raw).contains("AGENT-RAN:claude")
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !sb.read_state().contains("claude") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    assert!(
+        sb.read_state().contains("\"last\":\"claude\""),
+        "got:\n{}",
+        sb.read_state()
+    );
+    assert!(
+        sb.read_config().contains("default_agent = \"jcode\""),
+        "the override must survive the pick"
+    );
+    p.kill();
+}
+
+#[test]
+fn a_remembered_but_uninstalled_pick_opens_the_overlay_with_a_notice() {
+    // Memory names something since uninstalled: live ⌥+; must say the
+    // remembered pick is gone, offer what exists, and reheal on the pick.
+    let sb = Sandbox::new(&["claude", "aider"]);
+    std::fs::create_dir_all(sb.dir.join("state/gwae")).expect("state dir");
+    std::fs::write(
+        sb.state_path(),
+        "{\"last\":\"gone-xyz\",\"mru\":[\"gone-xyz\"],\"custom\":[]}",
+    )
+    .expect("stale memory");
+    let mut p = sb.spawn_tui();
+    std::thread::sleep(Duration::from_millis(700));
+
+    p.send("\x1b;");
+    let seen = p.collect_until(Duration::from_secs(10), |raw| {
+        let t = screen_text(raw);
+        t.contains("pick agent") && t.contains("just a shell")
+    });
+    let text = screen_text(&seen);
+    assert!(
+        text.contains("remembered `gone-xyz` is gone"),
+        "the notice must name the stale pick; got:\n{text}"
+    );
+
+    p.send("\r");
+    p.collect_until(Duration::from_secs(10), |raw| {
+        screen_text(raw).contains("AGENT-RAN:claude")
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !sb.read_state().contains("\"last\":\"claude\"") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    assert!(
+        sb.read_state().contains("\"last\":\"claude\""),
+        "the pick must reheal memory; got:\n{}",
+        sb.read_state()
+    );
+    p.kill();
+}
+
+#[test]
 fn a_bare_enter_takes_the_listed_default() {
     // The prompt offers Enter as a shortcut, so it must land on entry #1 and
     // save it exactly as an explicit "1" would.
