@@ -432,6 +432,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // in place, keeping every pane. See `crate::reload`.
     #[cfg(unix)]
     let hot_reload = crate::reload::enabled();
+    // Dev session marker, read once: the Option HUD stamps DEV on its bottom
+    // frame row iff this is on, so the dev tab is visually distinct from the
+    // stable tab in the next terminal over.
+    let dev_mode = crate::reload::enabled();
     #[cfg(unix)]
     let exe_path = crate::reload::own_path().ok();
     #[cfg(unix)]
@@ -1674,6 +1678,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         let hud_facts = if show_center_minimap && !show_hud {
             HudFacts {
                 keep_awake: keep_awake.active(),
+                dev: dev_mode,
                 ..HudFacts::default()
             }
         } else {
@@ -1704,7 +1709,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             );
             host_images.finish();
             if show_hud {
-                draw_center_hud(&mut frame, cols, rows, &pal, keep_awake.active());
+                draw_center_hud(&mut frame, cols, rows, &pal, keep_awake.active(), dev_mode);
             }
             if show_center_minimap && !show_hud {
                 if let Some(plan) = &hud_plan {

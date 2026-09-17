@@ -83,6 +83,9 @@ pub(crate) struct HudFacts {
     /// Whether the `caffeinate` assertion is held: stamps the keep-awake
     /// badge onto the HUD frame so the state reads without leaving the overlay.
     pub(crate) keep_awake: bool,
+    /// Whether this is a dev session (`GWAE_DEV_RELOAD=1`): stamps DEV onto
+    /// the bottom HUD frame row. Stable sessions render a plain frame.
+    pub(crate) dev: bool,
 }
 
 /// Stamp [`crate::keepawake::KEEP_AWAKE_BADGE`] onto the top frame row of `rect`,
@@ -101,6 +104,27 @@ pub(crate) fn stamp_keep_awake_badge(
         return;
     }
     let y = rect.y as usize;
+    let start = rect.x as usize + (rect.w as usize - n) / 2;
+    for (i, ch) in badge.chars().enumerate() {
+        let idx = y * cols as usize + start + i;
+        let Some(c) = out.get_mut(idx) else { continue };
+        c.ch = ch;
+        c.style.fg = pal.accent;
+        c.style.bold = true;
+    }
+}
+
+/// Stamp [`crate::reload::DEV_BADGE`] onto the bottom frame row of `rect`,
+/// centered inside the frame. Dev-only: stable sessions never call this, so
+/// their frame stays plain box-drawing. No-op when the panel is too narrow
+/// to hold the badge.
+pub(crate) fn stamp_dev_badge(out: &mut [Cell], cols: u16, rect: super::Rect, pal: &Palette) {
+    let badge = crate::reload::DEV_BADGE;
+    let n = badge.chars().count();
+    if n == 0 || rect.w as usize <= n + 2 || rect.h == 0 {
+        return;
+    }
+    let y = rect.y as usize + rect.h as usize - 1;
     let start = rect.x as usize + (rect.w as usize - n) / 2;
     for (i, ch) in badge.chars().enumerate() {
         let idx = y * cols as usize + start + i;
@@ -692,6 +716,9 @@ pub(crate) fn paint_center_minimap(
     if facts.keep_awake {
         stamp_keep_awake_badge(out, cols, plan.rect, pal);
     }
+    if facts.dev {
+        stamp_dev_badge(out, cols, plan.rect, pal);
+    }
 }
 
 /// Draw a one-line toast, optionally anchored to the bottom-left of a rect
@@ -756,6 +783,7 @@ pub(crate) fn draw_center_hud(
     rows: u16,
     pal: &Palette,
     keep_awake: bool,
+    dev: bool,
 ) {
     let focus_color = pal.accent;
     if cols < 30 || rows < 9 {
@@ -877,6 +905,9 @@ pub(crate) fn draw_center_hud(
     draw_focus_frame(out, cols, rect, focus_color, true);
     if keep_awake {
         stamp_keep_awake_badge(out, cols, rect, pal);
+    }
+    if dev {
+        stamp_dev_badge(out, cols, rect, pal);
     }
     for (idx, line) in lines.iter().enumerate() {
         let ty = oy + 1 + idx;
@@ -1363,7 +1394,7 @@ mod tests {
         for (what, draw) in [("hud", 0), ("center minimap", 1)] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
             if draw == 0 {
-                draw_center_hud(&mut out, cols, rows, &term, false);
+                draw_center_hud(&mut out, cols, rows, &term, false, false);
             } else {
                 let mm = crate::config::Minimap {
                     mode: crate::config::MinimapMode::Off,
@@ -2021,7 +2052,7 @@ mod tests {
         let rows: u16 = 24;
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
         let frame_color = CColor::Rgb(0x74, 0xc7, 0xec);
-        draw_center_hud(&mut out, cols, rows, &pal_accent(frame_color), false);
+        draw_center_hud(&mut out, cols, rows, &pal_accent(frame_color), false, false);
         let has_frame = out
             .iter()
             .any(|c| c.ch == '╭' || c.ch == '╮' || c.ch == '╰' || c.ch == '╯');
@@ -2055,7 +2086,14 @@ mod tests {
             layout.panes.get_mut(pid).unwrap().status = PaneStatus::Running;
         }
         let mut out2 = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(&mut out2, cols, rows, &pal_accent(frame_color), false);
+        draw_center_hud(
+            &mut out2,
+            cols,
+            rows,
+            &pal_accent(frame_color),
+            false,
+            false,
+        );
         let all2: Vec<String> = (0..rows)
             .map(|y| {
                 (0..cols)
@@ -2098,7 +2136,7 @@ mod tests {
         );
         // Tiny viewport: nothing painted.
         let mut tiny = vec![Cell::default(); 10 * 4];
-        draw_center_hud(&mut tiny, 10, 4, &pal_accent(frame_color), false);
+        draw_center_hud(&mut tiny, 10, 4, &pal_accent(frame_color), false, false);
         assert!(
             tiny.iter().all(|c| c.ch == ' '),
             "tiny viewport draws no HUD"
@@ -2173,7 +2211,7 @@ mod tests {
         let (cols, rows) = (80u16, 24u16);
         for keep_awake in [false, true] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
-            draw_center_hud(&mut out, cols, rows, &pal_terminal(), keep_awake);
+            draw_center_hud(&mut out, cols, rows, &pal_terminal(), keep_awake, false);
             let text: String = out.iter().map(|c| c.ch).collect();
             assert_eq!(
                 text.contains("keep-awake"),
@@ -2189,7 +2227,7 @@ mod tests {
         // not tucked into a corner.
         let (cols, rows) = (80u16, 24u16);
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(&mut out, cols, rows, &pal_terminal(), true);
+        draw_center_hud(&mut out, cols, rows, &pal_terminal(), true, false);
         let lines = screen_rows(&out, cols);
         let badge = crate::keepawake::KEEP_AWAKE_BADGE;
         let badge_w = badge.chars().count();
@@ -2212,6 +2250,74 @@ mod tests {
         assert_eq!(
             start_char, expected,
             "badge must be centered on the top frame row:\n{row}"
+        );
+    }
+
+    #[test]
+    fn dev_badge_stamps_the_dashboard_frame_only_in_dev() {
+        // The dev tab reads DEV on the Option HUD chrome; the stable tab next
+        // to it renders a plain frame. Same stamp contract as keep-awake,
+        // gated on the dev session flag instead of the guard.
+        let (layout, _) = dashboard_layout(4);
+        for dev in [false, true] {
+            let facts = HudFacts {
+                dev,
+                ..HudFacts::default()
+            };
+            let out = paint_dashboard(&layout, &facts, 100, 24);
+            let text = screen_rows(&out, 100).join("\n");
+            assert_eq!(
+                text.contains("DEV"),
+                dev,
+                "DEV reads on the HUD frame iff dev:\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn dev_badge_stamps_the_center_help_frame_only_in_dev() {
+        // Same promise for the startup / `⌥+/` help panel.
+        let (cols, rows) = (80u16, 24u16);
+        for dev in [false, true] {
+            let mut out = vec![Cell::default(); cols as usize * rows as usize];
+            draw_center_hud(&mut out, cols, rows, &pal_terminal(), false, dev);
+            let text: String = out.iter().map(|c| c.ch).collect();
+            assert_eq!(
+                text.contains("DEV"),
+                dev,
+                "DEV reads on the help frame iff dev: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dev_badge_sits_bottom_center_of_the_help_frame() {
+        // DEV interrupts the bottom frame row at its horizontal center,
+        // mirroring keep-awake on the top row.
+        let (cols, rows) = (80u16, 24u16);
+        let mut out = vec![Cell::default(); cols as usize * rows as usize];
+        draw_center_hud(&mut out, cols, rows, &pal_terminal(), false, true);
+        let lines = screen_rows(&out, cols);
+        let badge = crate::reload::DEV_BADGE;
+        let badge_w = badge.chars().count();
+        let row = lines
+            .iter()
+            .rev()
+            .find(|l| l.contains("DEV"))
+            .expect("badge must stamp one row");
+        let chars: Vec<char> = row.chars().collect();
+        let frame_start = chars.iter().position(|&c| c == '╰').unwrap();
+        let frame_end = chars.iter().rposition(|&c| c == '╯').unwrap();
+        let frame_w = frame_end - frame_start + 1;
+        let needle: Vec<char> = "DEV".chars().collect();
+        let start_char = chars
+            .windows(needle.len())
+            .position(|w| w == needle.as_slice())
+            .expect("badge text must read in row chars");
+        let expected = frame_start + (frame_w - badge_w) / 2 + 1;
+        assert_eq!(
+            start_char, expected,
+            "badge must be centered on the bottom frame row:\n{row}"
         );
     }
 

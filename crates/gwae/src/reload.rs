@@ -68,6 +68,12 @@ pub const HANDOVER_VAR: &str = "GWAE_RELOAD_HANDOVER";
 #[allow(dead_code)]
 pub const ENABLE_VAR: &str = "GWAE_DEV_RELOAD";
 
+/// Small text badge stamped onto the bottom frame row of the Option HUD
+/// while dev mode is on (`GWAE_DEV_RELOAD=1`), mirroring the keep-awake
+/// badge on the top frame row. Plain text, not a palette change, so stable
+/// sessions (no env) render a plain frame.
+pub const DEV_BADGE: &str = " DEV ";
+
 /// One pane, as it must be described to the next image of gwae.
 ///
 /// Deliberately tiny: a raw fd, the pid it belongs to, and the size it was
