@@ -89,12 +89,18 @@ pub(crate) fn wheel_scroll_delta(kind: MouseEventKind) -> i32 {
 
 /// The arrow keys a full-screen child (vim, less) expects for one wheel
 /// notch: it owns its own scrolling and keeps no scrollback of ours, so the
-/// wheel becomes the keys it would get natively. Mirrors the `ScrollBack`
-/// arm, which does the same translation for the keyboard route.
+/// wheel becomes the keys it would get natively. Vertical notches map to
+/// Up/Down, horizontal flicks to Left/Right. Mirrors the `ScrollBack` /
+/// `ScrollPane` arms, which do the same translation for the keyboard route.
 pub(crate) fn wheel_alt_screen_keys(kind: MouseEventKind) -> &'static [u8] {
     match kind {
         MouseEventKind::ScrollUp => b"\x1b[A",
-        _ => b"\x1b[B]",
+        MouseEventKind::ScrollDown => b"\x1b[B",
+        MouseEventKind::ScrollLeft => b"\x1b[D",
+        MouseEventKind::ScrollRight => b"\x1b[C",
+        // Buttons and moves never reach here (see `mouse_role`), but stay
+        // total so a new caller cannot send garbage to the child.
+        _ => b"\x1b[B",
     }
 }
 
@@ -252,11 +258,13 @@ mod tests {
             -WHEEL_SCROLL_LINES
         );
         // A full-screen child gets the arrows it expects, matching the
-        // `ScrollBack` arm's translation for the keyboard route.
+        // `ScrollBack` / `ScrollPane` arms' translation for the keyboard route.
         assert_eq!(wheel_alt_screen_keys(MouseEventKind::ScrollUp), b"\x1b[A");
+        assert_eq!(wheel_alt_screen_keys(MouseEventKind::ScrollDown), b"\x1b[B");
+        assert_eq!(wheel_alt_screen_keys(MouseEventKind::ScrollLeft), b"\x1b[D");
         assert_eq!(
-            wheel_alt_screen_keys(MouseEventKind::ScrollDown),
-            b"\x1b[B]"
+            wheel_alt_screen_keys(MouseEventKind::ScrollRight),
+            b"\x1b[C"
         );
     }
 
