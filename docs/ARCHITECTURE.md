@@ -86,6 +86,9 @@ execve(own path) ───────────────┴──> adopt f
 
 The pid does not change, the children are never signalled, and the shell in
 each pane does not learn anything happened. See `crates/gwae/src/reload.rs`.
+While `GWAE_DEV_RELOAD=1` is set, the Option HUD stamps `DEV` on its bottom
+frame row so the dev tab is visually distinct from a stable tab next to it;
+stable sessions render a plain frame.
 
 Three facts this rests on were measured, not assumed:
 
