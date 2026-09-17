@@ -258,11 +258,12 @@ pub(crate) fn draw_dir_picker(
     );
 }
 
-/// Live state of the `⌥+;` harness picker overlay.
+/// Live state of the `⌥+;` / `⌥+⇧+;` harness picker overlay.
 ///
 /// Unlike the `⌥+d` directory picker there is no save key: a pick is
 /// remembered in the state file automatically, and a shell is just another
-/// row. `new_row` remembers whether the chord was `⌥+;` or `⌥+Shift+;`, and
+/// row. `new_row` remembers whether the chord was `⌥+;` or `⌥+Shift+;` (`⌥+⇧+;`
+/// always opens the picker, ignoring the fast paths `⌥+;` takes), and
 /// `notice` carries a one-line explanation when the overlay opened for a
 /// reason (an override that is not installed, a remembered pick that is
 /// gone, nothing installed at all).

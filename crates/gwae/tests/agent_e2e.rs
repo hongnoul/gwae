@@ -465,7 +465,7 @@ fn pressing_the_spawn_agent_key_with_one_harness_spawns_it_directly() {
     });
     let text = screen_text(&seen);
     assert!(
-        !text.contains("pick agent") && !text.contains("Which agent"),
+        !text.contains("just a shell") && !text.contains("pick agent:"),
         "a lone harness must spawn with no picker at all; got:\n{text}"
     );
     p.kill();
@@ -631,6 +631,91 @@ fn the_row_chord_opens_the_overlay_and_spawns_on_a_new_strip() {
         sb.read_state().contains("\"last\":\"aider\""),
         "got:\n{}",
         sb.read_state()
+    );
+    p.kill();
+}
+
+#[test]
+fn the_row_chord_always_asks_even_with_a_remembered_pick() {
+    // The force-pick promise: a healthy remembered pick makes ⌥+; spawn with
+    // no UI, but ⌥+Shift+; must still open the overlay instead of repeating
+    // the last harness. This is the exact stuck case the chord exists for.
+    let sb = Sandbox::new(&["claude", "aider"]);
+    std::fs::create_dir_all(sb.dir.join("state/gwae")).expect("state dir");
+    std::fs::write(
+        sb.state_path(),
+        "{\"last\":\"claude\",\"mru\":[\"claude\"],\"custom\":[]}",
+    )
+    .expect("remembered pick");
+    let mut p = sb.spawn_tui();
+    std::thread::sleep(Duration::from_millis(700));
+
+    // ⌥+Shift+; as a terminal sends it: ESC-prefixed colon (Meta).
+    p.send("\x1b:");
+    let seen = p.collect_until(Duration::from_secs(10), |raw| {
+        let t = screen_text(raw);
+        t.contains("pick agent") && t.contains("just a shell")
+    });
+    let text = screen_text(&seen);
+    assert!(text.contains("Claude Code"), "got:\n{text}");
+    assert!(text.contains("aider"), "got:\n{text}");
+
+    // Pick the second entry to prove a different harness is reachable.
+    p.send("\x1b[B");
+    p.send("\r");
+    p.collect_until(Duration::from_secs(10), |raw| {
+        screen_text(raw).contains("AGENT-RAN:aider")
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !sb.read_state().contains("\"last\":\"aider\"") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    assert!(
+        sb.read_state().contains("\"last\":\"aider\""),
+        "got:\n{}",
+        sb.read_state()
+    );
+    p.kill();
+}
+
+#[test]
+fn the_row_chord_ignores_a_live_override_but_leaves_it_pinned() {
+    // A resolved override makes ⌥+; spawn with no UI; ⌥+Shift+; must still
+    // open the overlay (naming the override, since it keeps winning for ⌥+;)
+    // and must not rewrite the config when the pick lands elsewhere.
+    let sb = Sandbox::new(&["claude", "aider"]);
+    sb.write_config("default_agent = \"claude\"\n");
+    let mut p = sb.spawn_tui();
+    std::thread::sleep(Duration::from_millis(700));
+
+    p.send("\x1b:");
+    let seen = p.collect_until(Duration::from_secs(10), |raw| {
+        let t = screen_text(raw);
+        t.contains("pick agent") && t.contains("just a shell")
+    });
+    let text = screen_text(&seen);
+    assert!(
+        text.contains("default_agent") && text.contains("claude"),
+        "the notice must name the live override; got:\n{text}"
+    );
+
+    p.send("\x1b[B");
+    p.send("\r");
+    p.collect_until(Duration::from_secs(10), |raw| {
+        screen_text(raw).contains("AGENT-RAN:aider")
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !sb.read_state().contains("\"last\":\"aider\"") {
+        let _ = p.rx.recv_timeout(Duration::from_millis(200));
+    }
+    assert!(
+        sb.read_state().contains("\"last\":\"aider\""),
+        "got:\n{}",
+        sb.read_state()
+    );
+    assert!(
+        sb.read_config().contains("default_agent = \"claude\""),
+        "the override must survive the pick"
     );
     p.kill();
 }

@@ -237,7 +237,7 @@ pub const BINDS: &[Bind] = &[
         trigger: Trigger::ShiftChord(';'),
         glyph: Some('\u{da}'),
         group: Group::Panes,
-        desc: "new agent row",
+        desc: "pick agent row",
         effect: Effect::Act(Action::SpawnAgentRow),
     },
     Bind {

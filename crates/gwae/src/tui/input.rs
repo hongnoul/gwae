@@ -253,7 +253,7 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{d2}') => return Some(Cmd::Act(Action::MovePaneRight)), // Ò (Option+Shift+l)
             // ¿ (Option+Shift+/), i.e. Option+? — same toggle as Option+/.
             Char('\u{bf}') => return Some(Cmd::ToggleHud),
-            // Ú (Option+Shift+;) spawns an agent on a new strip.
+            // Ú (Option+Shift+;) always opens the harness picker on a new strip.
             Char('\u{da}') => return Some(Cmd::Act(Action::SpawnAgentRow)),
             _ => {}
         }

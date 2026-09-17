@@ -129,7 +129,10 @@ of the screen.
 `startup_panes` is consumed once at launch (the panes already exist), so
 changing it still needs a restart. `default_agent` is an explicit override
 read fresh each time `⌥+;` fires, so editing it applies to the *next* agent
-pane without a restart; panes already running a harness keep running it. The
+pane without a restart; panes already running a harness keep running it.
+`⌥+Shift+;` always opens the picker on a new strip instead, ignoring the
+override and any remembered pick, and names the live override in its notice
+line (the override still wins for the next `⌥+;`). The
 remembered pick lives in the state file, not the config, so picking a
 harness never rewrites your config. That file is
 `$XDG_STATE_HOME/gwae/harness.json` (`~/.local/state/gwae/harness.json` by

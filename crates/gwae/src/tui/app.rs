@@ -13,6 +13,32 @@ use std::time::Duration;
 /// flicker, short enough that a finished agent surfaces quickly.
 const QUIET_AFTER: Duration = Duration::from_secs(4);
 
+/// Notice line for the `⌥+⇧+;` force-pick overlay, which always opens the
+/// picker instead of taking the fast path.
+///
+/// Mirrors the [`crate::agent::plan`] arms so the overlay says the same thing
+/// the `⌥+;` overlay would: a missing override is named, a stale memory is
+/// named, and a live override is called out (it still wins for `⌥+;`, so a
+/// pick here applies to the new strip only). `None` when there is nothing to
+/// explain, which is the common bypass case of a healthy remembered pick.
+fn row_picker_notice(want: &str, last: &str, ordered: &[crate::agent::Found]) -> Option<String> {
+    let want = want.trim();
+    let last = last.trim();
+    if ordered.is_empty() {
+        return Some("No agent harness found — type a command or take a shell".to_string());
+    }
+    if !want.is_empty() && !crate::agent::command_available(want) {
+        return Some(format!("`{want}` is not installed"));
+    }
+    if !last.is_empty() && !ordered.iter().any(|f| f.cmd == last) {
+        return Some(format!("remembered `{last}` is gone; pick another"));
+    }
+    if !want.is_empty() {
+        return Some(format!("default_agent `{want}` still wins for ⌥+;"));
+    }
+    None
+}
+
 /// Spawn the harness chosen in the `⌥+;` overlay: apply the layout verb, mark
 /// the new pane as an agent pane running this exact command, remember the
 /// pick in the state file, and confirm with a one-line note.
@@ -1200,13 +1226,35 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     if a == Action::KillPane && layout_pane_count(&layout) <= 1 {
                                         break 'main;
                                     }
+                                    // `⌥+⇧+;` is the force-pick chord: it always
+                                    // opens the overlay on a new strip, ignoring
+                                    // the fast paths (`default_agent`, a
+                                    // remembered pick, a lone install) that
+                                    // `⌥+;` takes. The pick still lands in the
+                                    // state file, so the next `⌥+;` follows it.
+                                    if a == Action::SpawnAgentRow {
+                                        let ordered =
+                                            harness_state.clone().order(crate::agent::detect());
+                                        harness_pick = Some(HarnessPicker {
+                                            notice: row_picker_notice(
+                                                &cfg.default_agent,
+                                                &harness_state.last,
+                                                &ordered,
+                                            ),
+                                            all: ordered,
+                                            query: String::new(),
+                                            sel: 0,
+                                            new_row: true,
+                                        });
+                                        dirty = true;
+                                        continue;
+                                    }
                                     // A spawn-agent verb resolves the harness
                                     // first: an override, a remembered pick, or
                                     // a lone install spawns directly with no
                                     // UI, while anything else opens the
                                     // overlay and spawns on confirm.
-                                    if matches!(a, Action::SpawnAgent | Action::SpawnAgentRow) {
-                                        let new_row = a == Action::SpawnAgentRow;
+                                    if a == Action::SpawnAgent {
                                         let ordered =
                                             harness_state.clone().order(crate::agent::detect());
                                         match crate::agent::plan(
@@ -1239,7 +1287,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                     all: found,
                                                     query: String::new(),
                                                     sel: 0,
-                                                    new_row,
+                                                    new_row: false,
                                                     notice: Some(format!(
                                                         "`{want}` is not installed"
                                                     )),
@@ -1259,7 +1307,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                     all: found,
                                                     query: String::new(),
                                                     sel: 0,
-                                                    new_row,
+                                                    new_row: false,
                                                     notice,
                                                 });
                                             }
@@ -1268,7 +1316,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                     all: Vec::new(),
                                                     query: String::new(),
                                                     sel: 0,
-                                                    new_row,
+                                                    new_row: false,
                                                     notice: Some(
                                                         "No agent harness found — type a command or take a shell"
                                                             .to_string(),
@@ -2109,5 +2157,55 @@ mod tests {
         for p in panes.values_mut() {
             kill_pane_tree(&mut p.child);
         }
+    }
+
+    fn notice_found(cmds: &[&str]) -> Vec<crate::agent::Found> {
+        cmds.iter()
+            .map(|c| crate::agent::Found {
+                cmd: c.to_string(),
+                label: c.to_string(),
+                path: std::path::PathBuf::from("/bin").join(c),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_row_picker_bypasses_every_fast_path_silently_when_healthy() {
+        // The force-pick promise: a healthy remembered pick (or a lone
+        // install) still opens the picker rather than spawning. `plan` would
+        // resolve both of these to Configured/Auto, which is exactly what the
+        // row chord must ignore.
+        let ordered = notice_found(&["claude"]);
+        assert_eq!(row_picker_notice("", "claude", &ordered), None);
+        // No memory, no override, several harnesses: the plain choose case
+        // carries no notice either.
+        let ordered = notice_found(&["claude", "aider"]);
+        assert_eq!(row_picker_notice("", "", &ordered), None);
+    }
+
+    #[test]
+    fn the_row_picker_explains_overrides_stale_memory_and_empty_scans() {
+        // A missing override is named, mirroring the Missing plan arm.
+        let ordered = notice_found(&["claude"]);
+        assert_eq!(
+            row_picker_notice("jcode-not-real", "", &ordered),
+            Some("`jcode-not-real` is not installed".to_string())
+        );
+        // A stale remembered pick is named, mirroring the Choose notice.
+        assert_eq!(
+            row_picker_notice("", "gone-xyz", &ordered),
+            Some("remembered `gone-xyz` is gone; pick another".to_string())
+        );
+        // A live override is called out: it still wins for ⌥+;, so the pick
+        // here only steers the new strip.
+        assert_eq!(
+            row_picker_notice("sh", "claude", &ordered),
+            Some("default_agent `sh` still wins for ⌥+;".to_string())
+        );
+        // Nothing installed at all: same line as the NoneInstalled overlay.
+        assert_eq!(
+            row_picker_notice("", "", &[]),
+            Some("No agent harness found — type a command or take a shell".to_string())
+        );
     }
 }
