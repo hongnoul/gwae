@@ -954,7 +954,6 @@ mod tests {
         }
 
         #[test]
-        #[test]
         fn native_eviction_pressure_leaves_legacy_images_alone() {
             // Legacy (quiet Unicode-placeholder) images live in a separate
             // store with their own budget. Native quota-pressure eviction must
@@ -986,6 +985,7 @@ mod tests {
             assert_eq!(pane.graphics.placements().len(), 1);
         }
 
+        #[test]
         fn dispatcher_replaces_native_source_only_after_successful_legacy_commit() {
             let (mut pane, _) = pane_with_replies();
             feed_pane_output(

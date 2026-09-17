@@ -15,14 +15,9 @@ use std::time::{Duration, Instant};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
-/// A multi-page PDF whose pages differ, so page turns are genuine new content
-/// rather than a cached texture.
-fn write_pdf(path: &PathBuf) {
-    write_pdf_pages(path, 6);
-}
-
-/// Same as [`write_pdf`] with an explicit page count, for tests that turn
-/// more pages than the default document holds.
+/// Build a multi-page PDF whose pages differ, so page turns are genuine new
+/// content rather than a cached texture. Tests that turn more pages than the
+/// default document holds pass an explicit count.
 fn write_pdf_pages(path: &PathBuf, pages: usize) {
     const DEFAULT_PAGES: usize = 6;
     let pages = if pages == 0 { DEFAULT_PAGES } else { pages };
