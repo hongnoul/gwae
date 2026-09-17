@@ -15,7 +15,7 @@ default_column_width = "half"     # or "quarter", "two-thirds", "full", or 80 (c
 default_agent = ""                # normally empty: ⌥+; remembers your pick itself
 agent_dir = "~/git/gwae"          # directory new panes start in ("" = gwae's cwd)
 input_poll_ms = 1            # event-loop poll; 30ms backoff once the screen is quiet
-keep_awake = true            # macOS only: hold idle/display sleep via caffeinate (false lets it sleep)
+keep_awake = false           # macOS only: hold idle/display sleep via caffeinate (true keeps it awake)
 
 [minimap]
 show = true
@@ -92,8 +92,8 @@ gwae is a single process with no daemon: when macOS sleeps, every pane (and
 every agent in it) freezes until wake. `keep_awake = true` holds a
 `caffeinate` assertion for gwae's own lifetime, so idle and display sleep
 never pause a session you walked away from. macOS-only; elsewhere the key
-does nothing. Default `true`: agents keep working unless you opt out with
-`keep_awake = false` or `⌥+w`. Set `GWAE_NO_KEEP_AWAKE=1` to force it off
+does nothing. Default `false`: the machine sleeps as normal unless you opt in
+with `keep_awake = true` or `⌥+w`. Set `GWAE_NO_KEEP_AWAKE=1` to force it off
 (scripted setups, tests). Editing the key applies live to the running
 session, with a one-line toast confirming the change.
 
@@ -212,7 +212,7 @@ A config file that is not being applied at all points at the syntax error:
 | `default_agent` | string | `""` (unset) | Explicit harness override for `⌥+;` and the **first pane** at startup. Normally left empty: the first press offers what is installed (a lone install launches itself with no UI) and remembers your pick in the state file, so every later press goes straight there. `⌥+Shift+;` always opens the picker instead and ignores this. Set it only to pin a harness in dotfiles or scripts; a value that is not on `PATH` falls back to the picker rather than a dead pane. `gwae run <cmd>` overrides the first pane. See `gwae agent --print`. |
 | `startup_panes` | integer | `1` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (shown as skeleton placeholder boxes). The default `1` opens a single terminal in the leftmost quarter. |
 | `input_poll_ms` | integer | `1` | Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. gwae sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. The loop backs off to 30ms once the screen has been quiet for 750ms, so an idle session stays cheap. Run `gwae setup --only latency` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
-| `keep_awake` | bool | `true` | macOS-only: hold a `caffeinate` assertion (idle/display sleep) while gwae runs, so agents keep working with the display asleep. On unless you write `keep_awake = false` or toggle it off with `⌥+w`; never asked by setup. Does **not** defeat lid-close sleep outside clamshell mode (power + external display + input) or `sudo pmset disablesleep 1`. Applies live on save. `GWAE_NO_KEEP_AWAKE=1` forces it off. |
+| `keep_awake` | bool | `false` | macOS-only: hold a `caffeinate` assertion (idle/display sleep) while gwae runs, so agents keep working with the display asleep. Off unless you write `keep_awake = true` or toggle it on with `⌥+w`; never asked by setup. Does **not** defeat lid-close sleep outside clamshell mode (power + external display + input) or `sudo pmset disablesleep 1`. Applies live on save. `GWAE_NO_KEEP_AWAKE=1` forces it off. |
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit. Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
 | `minimap.mode` | string | `"off"` | Chrome presentation: `off` (no persistent row; `⌥`/Alt reveals centered HUD + minimap), `overlay` (bottom-right corner), `edge_ticks` (frame ticks). Legacy `reserved` / `reserved_quasimode` parse as `off` (no bottom row). |
 | `minimap.max_width` | integer | `32` | Width of the minimap. A hard *cap* for both the corner `overlay` and the centered panel revealed by `⌥`/Alt: the centered panel sizes each tile to its content (status glyph + column address) and never pads out to this number. Lower it to shrink the panel; it never exceeds ⅔ of the screen. |

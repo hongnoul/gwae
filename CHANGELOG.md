@@ -6,6 +6,9 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **Keep-awake is off by default.** Fresh runs let the Mac sleep as normal. Opt in with `keep_awake = true` or `⌥+w`. `GWAE_NO_KEEP_AWAKE=1` still forces it off.
+
 ### Added
 - **Placeholder pals.** Empty skeleton boxes paint one centered monochrome sprite (ghost, invader, mushroom, cat) in half-block cells instead of staying blank. The art is deterministic per box position, uses only the skeleton palette color, carries no text, and tiny boxes stay blank.
 - **Vim-style picker navigation.** The spawn-dir (`⌥+d`) and agent (`⌥+;`) pickers move with `⌃`/`⌥`+`j`/`k` (and `⌃`/`⌥`+`n`/`p`) in addition to arrows. Bare `j`/`k` still filter, since paths contain both.

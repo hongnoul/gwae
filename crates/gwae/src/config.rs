@@ -19,7 +19,7 @@ fn default_input_poll_ms() -> u64 {
 }
 
 fn default_keep_awake() -> bool {
-    true
+    false
 }
 
 fn no_agents() -> Vec<String> {
@@ -90,8 +90,8 @@ pub struct Config {
     pub input_poll_ms: u64,
     /// Hold a macOS `caffeinate` assertion while gwae runs, so idle and
     /// display sleep never pause the panes. macOS-only by construction.
-    /// Default `true`: agents keep working while you are away;
-    /// set `keep_awake = false` to let the machine sleep as normal.
+    /// Default `false`: the machine sleeps as normal unless you opt in with
+    /// `keep_awake = true` or `⌥+w`.
     /// Note the honest limit: a closed
     /// lid still sleeps outside clamshell mode (power + external
     /// display + external input).
