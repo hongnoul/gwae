@@ -7,6 +7,7 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Added
+- **Placeholder pals.** Empty skeleton boxes paint one centered monochrome sprite (ghost, invader, mushroom, cat) in half-block cells instead of staying blank. The art is deterministic per box position, uses only the skeleton palette color, carries no text, and tiny boxes stay blank.
 - **Vim-style picker navigation.** The spawn-dir (`⌥+d`) and agent (`⌥+;`) pickers move with `⌃`/`⌥`+`j`/`k` (and `⌃`/`⌥`+`n`/`p`) in addition to arrows. Bare `j`/`k` still filter, since paths contain both.
 - **`⌥+Shift+;` always asks.** The row chord now opens the harness picker on a new strip every time, ignoring `default_agent`, the remembered pick, and the lone-install fast path that `⌥+;` takes. The overlay names a live override (it still wins for the next `⌥+;`), and the pick is remembered in the state file like any other.
 
