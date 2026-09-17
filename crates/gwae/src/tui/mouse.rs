@@ -76,13 +76,36 @@ pub(crate) fn is_wheel(kind: MouseEventKind) -> bool {
 /// transcript, not a page jump. Small enough to keep precise positioning.
 pub(crate) const WHEEL_SCROLL_LINES: i32 = 3;
 
-/// The scrollback delta for one wheel notch: up/left goes back into history,
-/// down/right comes forward. Horizontal flicks scroll history too when no
-/// reporting child owns them; a reporting child keeps all of its own wheel
+/// True for horizontal wheel flicks (two-finger sideways swipe).
+pub(crate) fn is_horizontal_wheel(kind: MouseEventKind) -> bool {
+    matches!(
+        kind,
+        MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight
+    )
+}
+
+/// One horizontal flick in content columns: matches the keyboard `⌥+←/→`
+/// single step so trackpad, wheel, and keys agree on the stride.
+pub(crate) const WHEEL_PAN_COLS: i32 = 1;
+
+/// The content-pan delta for one horizontal flick: left pans back toward
+/// column 0, right pans forward. Only runs for plain panes; fullscreen
+/// children get Left/Right arrows via `wheel_alt_screen_keys` instead.
+pub(crate) fn wheel_pan_delta(kind: MouseEventKind) -> i32 {
+    match kind {
+        MouseEventKind::ScrollLeft => -WHEEL_PAN_COLS,
+        MouseEventKind::ScrollRight => WHEEL_PAN_COLS,
+        _ => 0,
+    }
+}
+
+/// The scrollback delta for one vertical wheel notch: up goes back into
+/// history, down comes forward. Horizontal flicks never reach here (see
+/// `wheel_pan_delta`); a reporting child keeps all of its own wheel
 /// (see `mouse_role`), so this mapping only runs for plain panes.
 pub(crate) fn wheel_scroll_delta(kind: MouseEventKind) -> i32 {
     match kind {
-        MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => WHEEL_SCROLL_LINES,
+        MouseEventKind::ScrollUp => WHEEL_SCROLL_LINES,
         _ => -WHEEL_SCROLL_LINES,
     }
 }
@@ -239,24 +262,25 @@ mod tests {
 
     #[test]
     fn wheel_helpers_map_notches_to_deltas_and_arrow_keys() {
-        // Up/left go back into history, down/right come forward, by exactly
-        // one step constant so keyboard, wheel and e2e agree on the stride.
+        // Vertical notches move history by exactly one step constant so
+        // keyboard, wheel and e2e agree on the stride; horizontal flicks pan
+        // content instead (same stride as `⌥+←/→`).
         assert_eq!(
             wheel_scroll_delta(MouseEventKind::ScrollUp),
-            WHEEL_SCROLL_LINES
-        );
-        assert_eq!(
-            wheel_scroll_delta(MouseEventKind::ScrollLeft),
             WHEEL_SCROLL_LINES
         );
         assert_eq!(
             wheel_scroll_delta(MouseEventKind::ScrollDown),
             -WHEEL_SCROLL_LINES
         );
-        assert_eq!(
-            wheel_scroll_delta(MouseEventKind::ScrollRight),
-            -WHEEL_SCROLL_LINES
-        );
+        assert!(is_horizontal_wheel(MouseEventKind::ScrollLeft));
+        assert!(is_horizontal_wheel(MouseEventKind::ScrollRight));
+        assert!(!is_horizontal_wheel(MouseEventKind::ScrollUp));
+        assert!(!is_horizontal_wheel(MouseEventKind::ScrollDown));
+        assert_eq!(wheel_pan_delta(MouseEventKind::ScrollLeft), -WHEEL_PAN_COLS);
+        assert_eq!(wheel_pan_delta(MouseEventKind::ScrollRight), WHEEL_PAN_COLS);
+        assert_eq!(wheel_pan_delta(MouseEventKind::ScrollUp), 0);
+        assert_eq!(wheel_pan_delta(MouseEventKind::ScrollDown), 0);
         // A full-screen child gets the arrows it expects, matching the
         // `ScrollBack` / `ScrollPane` arms' translation for the keyboard route.
         assert_eq!(wheel_alt_screen_keys(MouseEventKind::ScrollUp), b"\x1b[A");

@@ -106,7 +106,10 @@ fabricates a graphics success reply.
 `⌥+←/→` pans gwae's own `h_scroll` window in plain shells, but a full-screen
 child (nvim, less) gets the arrow keys it expects instead (`ESC[D` / `ESC[C`).
 That keeps grey ghost-text / sidescroll in nvim from shoving the pane: the
-editor pans itself, gwae never pans underneath it.
+editor pans itself, gwae never pans underneath it. A horizontal trackpad flick
+follows the same split: sideways on a plain shell pans content one column
+(like `⌥+←/→`), while in a full-screen child it sends Left/Right and vertical
+notches keep scrolling history.
 
 If the ghost text itself still annoys you, turn it off in LazyVim and keep the
 popup menu:

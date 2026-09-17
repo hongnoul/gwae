@@ -1480,6 +1480,18 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                 let _ = p.writer.write_all(key);
                                             }
                                             let _ = p.writer.flush();
+                                        } else if is_horizontal_wheel(me.kind) {
+                                            // Sideways flick pans wide content
+                                            // (same stride as `⌥+←/→`), never
+                                            // vertical history: the child is
+                                            // a plain shell with no sidescroll
+                                            // of its own, so gwae pans for it.
+                                            // `scroll_pane` is a no-op repaint
+                                            // false here only for alt-screen,
+                                            // already handled above.
+                                            if p.scroll_pane(wheel_pan_delta(me.kind)) {
+                                                dirty = true;
+                                            }
                                         } else if p.grid.scroll_by(wheel_scroll_delta(me.kind)) {
                                             dirty = true;
                                         }
