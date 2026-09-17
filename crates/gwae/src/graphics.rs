@@ -1099,6 +1099,36 @@ mod tests {
     }
 
     #[test]
+    fn byte_budget_pressure_evicts_unplaced_images_but_never_placed_ones() {
+        // The same spec rule applied to the byte budget: a new image that
+        // does not fit evicts the oldest unplaced sources first. Placed
+        // images are never touched, so pressure against a fully placed store
+        // still fails instead of tearing down the visible screen.
+        let mut g = Graphics {
+            image_limit: 3,
+            total_limit: 6,
+            ..Graphics::default()
+        };
+        // Two 1x1 RGB images fill the 6-byte budget; neither is displayed.
+        transmit(&mut g, 1);
+        transmit(&mut g, 2);
+        // A third image only fits by evicting the oldest unplaced one.
+        transmit(&mut g, 3);
+        assert!(g.source(1).is_none());
+        assert!(g.source(2).is_some());
+        assert!(g.source(3).is_some());
+        assert_eq!(g.total_bytes, 6);
+        // Now place everything that remains: further pressure must fail,
+        // because eviction must not remove visible images.
+        ok(command(&mut g, "a=p,i=2,C=1", ""), 2);
+        ok(command(&mut g, "a=p,i=3,C=1", ""), 3);
+        error(command(&mut g, "a=t,i=4,f=24,s=1,v=1", "AAAA"), 4, "ENOSPC");
+        assert!(g.source(2).is_some());
+        assert!(g.source(3).is_some());
+        assert!(g.source(4).is_none());
+    }
+
+    #[test]
     fn placement_limits_upserts_and_retransmission_remove_old_placements() {
         let mut g = Graphics {
             placement_limit: 2,
