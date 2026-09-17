@@ -62,6 +62,8 @@ pub enum Effect {
     SmartJump,
     /// Open the spawn-directory picker.
     DirPick,
+    /// Open the harness picker, ignoring the fast paths.
+    ForcePick,
     /// Toggle the cheat-sheet HUD.
     ToggleHud,
     /// Toggle the macOS keep-awake assertion.
@@ -237,8 +239,8 @@ pub const BINDS: &[Bind] = &[
         trigger: Trigger::ShiftChord(';'),
         glyph: Some('\u{da}'),
         group: Group::Panes,
-        desc: "pick agent row",
-        effect: Effect::Act(Action::SpawnAgentRow),
+        desc: "pick agent",
+        effect: Effect::ForcePick,
     },
     Bind {
         trigger: Trigger::Chord('b'),

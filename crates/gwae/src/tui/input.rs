@@ -82,6 +82,11 @@ pub(crate) enum Cmd {
     /// Open the spawn-directory picker (`⌥+d`): choose the directory new
     /// panes start in, for this session or written back to the config.
     DirPick,
+    /// Open the harness picker and ignore the fast paths (`⌥+⇧+;`): an
+    /// override, a remembered pick, or a lone install never spawns directly.
+    /// The pick lands in the state file like any other, so the next `⌥+;`
+    /// follows it. Resolved in the main loop, like `DirPick`.
+    ForcePick,
     /// Toggle the centered cheat-sheet HUD (`⌥+/`), the same overlay shown
     /// once at startup. Any other key still dismisses it.
     ToggleHud,
@@ -253,8 +258,8 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{d2}') => return Some(Cmd::Act(Action::MovePaneRight)), // Ò (Option+Shift+l)
             // ¿ (Option+Shift+/), i.e. Option+? — same toggle as Option+/.
             Char('\u{bf}') => return Some(Cmd::ToggleHud),
-            // Ú (Option+Shift+;) always opens the harness picker on a new strip.
-            Char('\u{da}') => return Some(Cmd::Act(Action::SpawnAgentRow)),
+            // Ú (Option+Shift+;) always opens the harness picker.
+            Char('\u{da}') => return Some(Cmd::ForcePick),
             _ => {}
         }
     }
@@ -325,8 +330,8 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
                 }
             });
         }
-        // ⌥+Shift+q and ⌥+Shift+? are the only shifted chords outside hjkl.
-        // Everything else below is an *unshifted* chord: `logical_char` folds
+        // ⌥+Shift+q and ⌥+Shift+? are the only shifted chords outside hjkl
+        // and `;`. Everything else below is an *unshifted* chord: `logical_char` folds
         // case, so without this guard ⌥+Shift+s would be indistinguishable from
         // ⌥+s and gwae would split the column instead of forwarding the key.
         // That silently ate chords the focused pane owns (jcode binds
@@ -345,12 +350,15 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         }
         let act = match c {
             // Some terminals deliver ⌥+Shift+; as a bare ':' with no shift
-            // bit; the shifted codepoint itself is the signal.
-            ';' | ':' => Some(if shift || matches!(ev.code, Char(':')) {
-                Action::SpawnAgentRow
-            } else {
-                Action::SpawnAgent
-            }),
+            // bit; the shifted codepoint itself is the signal. A forced pick
+            // is a picker command, not a layout verb.
+            ';' | ':' => {
+                return Some(if shift || matches!(ev.code, Char(':')) {
+                    Cmd::ForcePick
+                } else {
+                    Cmd::Act(Action::SpawnAgent)
+                });
+            }
             // ⌥+b splits *below*. It used to be ⌥+s, which collided with
             // jcode's typing-scroll-lock toggle: gwae ate the chord and the
             // agent pane never saw it. `b` is free on both sides.
@@ -584,16 +592,16 @@ mod tests {
     }
 
     #[test]
-    fn handle_key_option_shift_semicolon_opens_the_row_picker() {
+    fn handle_key_option_shift_semicolon_force_picks() {
         // macOS glyph fallback: Option+Shift+; is Ú.
         let ev = KeyEvent::new(KeyCode::Char('\u{da}'), KeyModifiers::NONE);
-        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgentRow)));
+        assert_eq!(handle_key(&ev), Some(Cmd::ForcePick));
         // Option-as-Meta: ESC+':' arrives as Alt+':' (shifted codepoint, and
         // some terminals also set the Shift bit).
         let ev = KeyEvent::new(KeyCode::Char(':'), KeyModifiers::ALT);
-        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgentRow)));
+        assert_eq!(handle_key(&ev), Some(Cmd::ForcePick));
         let ev = KeyEvent::new(KeyCode::Char(';'), KeyModifiers::ALT | KeyModifiers::SHIFT);
-        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgentRow)));
+        assert_eq!(handle_key(&ev), Some(Cmd::ForcePick));
     }
 
     #[test]
@@ -1097,6 +1105,7 @@ mod tests {
                 Effect::Act(a) => Cmd::Act(a),
                 Effect::SmartJump => Cmd::SmartJump,
                 Effect::DirPick => Cmd::DirPick,
+                Effect::ForcePick => Cmd::ForcePick,
                 Effect::ToggleHud => Cmd::ToggleHud,
                 Effect::ToggleKeepAwake => Cmd::ToggleKeepAwake,
                 Effect::Quit => Cmd::Quit,

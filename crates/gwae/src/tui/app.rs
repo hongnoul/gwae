@@ -18,8 +18,8 @@ const QUIET_AFTER: Duration = Duration::from_secs(4);
 ///
 /// Mirrors the [`crate::agent::plan`] arms so the overlay says the same thing
 /// the `⌥+;` overlay would: a missing override is named, a resolvable
-/// override is called out (it still wins for `⌥+;`, so a pick here applies
-/// to the new strip only), and otherwise a stale memory is named. `None`
+/// override is called out (it still wins for `⌥+;`, so a pick here only
+/// steers this pane), and otherwise a stale memory is named. `None`
 /// when there is nothing to explain, which is the common bypass case of a
 /// healthy remembered pick.
 fn row_picker_notice(want: &str, last: &str, ordered: &[crate::agent::Found]) -> Option<String> {
@@ -42,14 +42,13 @@ fn row_picker_notice(want: &str, last: &str, ordered: &[crate::agent::Found]) ->
     None
 }
 
-/// Spawn the harness chosen in the `⌥+;` overlay: apply the layout verb, mark
-/// the new pane as an agent pane running this exact command, remember the
-/// pick in the state file, and confirm with a one-line note.
+/// Spawn the harness chosen in the `⌥+;` overlay: apply the spawn-agent verb,
+/// mark the new pane as an agent pane running this exact command, remember
+/// the pick in the state file, and confirm with a one-line note.
 #[allow(clippy::too_many_arguments)]
 fn spawn_picked_harness(
     cmd: &str,
     known: bool,
-    new_row: bool,
     layout: &mut Layout,
     panes: &mut HashMap<PaneId, PtyPane>,
     agent_panes: &mut HashSet<PaneId>,
@@ -65,12 +64,7 @@ fn spawn_picked_harness(
 ) {
     let v = Viewport::new(geometry.0.cols);
     let f = FollowScroll::default();
-    let a = if new_row {
-        Action::SpawnAgentRow
-    } else {
-        Action::SpawnAgent
-    };
-    let _ = layout.apply(a, v, f);
+    let _ = layout.apply(Action::SpawnAgent, v, f);
     if let Some(pid) = focused_pane(layout) {
         agent_panes.insert(pid);
         agent_cmds.insert(pid, cmd.to_string());
@@ -476,7 +470,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // Built when the chord fires rather than at startup so a harness
     // installed mid-session shows up without a restart. The `⌥+;` fast paths
     // (an override, a remembered pick, a lone install) never open it; the
-    // row chord always does.
+    // `⌥+⇧+;` force-pick always does.
     let mut harness_pick: Option<HarnessPicker> = None;
     // Force-quit confirmation (⌥+Shift+q): true while the centered disclaimer
     // is up. Quitting kills every pane's process, so the chord arms this
@@ -1009,7 +1003,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     _ => {}
                                 }
                             }
-                            let new_row = pick.new_row;
                             if close {
                                 harness_pick = None;
                             }
@@ -1018,12 +1011,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     HarnessChoice::Shell => {
                                         let v = Viewport::new(cols);
                                         let f = FollowScroll::default();
-                                        let a = if new_row {
-                                            Action::SpawnAgentRow
-                                        } else {
-                                            Action::SpawnAgent
-                                        };
-                                        let _ = layout.apply(a, v, f);
+                                        let _ = layout.apply(Action::SpawnAgent, v, f);
                                         if let Err(e) = sync_panes(
                                             &mut layout,
                                             &mut panes,
@@ -1041,7 +1029,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         spawn_picked_harness(
                                             &f.cmd,
                                             true,
-                                            new_row,
                                             &mut layout,
                                             &mut panes,
                                             &mut agent_panes,
@@ -1060,7 +1047,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         spawn_picked_harness(
                                             &cmd,
                                             false,
-                                            new_row,
                                             &mut layout,
                                             &mut panes,
                                             &mut agent_panes,
@@ -1184,6 +1170,27 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     });
                                     dirty = true;
                                 }
+                                Cmd::ForcePick => {
+                                    // `⌥+⇧+;`: the overlay opens unconditionally,
+                                    // ignoring the fast paths `⌥+;` takes. The
+                                    // notice mirrors the `⌥+;` overlay's own
+                                    // wording; the silent case is a healthy
+                                    // bypass of a remembered pick or lone
+                                    // install.
+                                    let ordered =
+                                        harness_state.clone().order(crate::agent::detect());
+                                    harness_pick = Some(HarnessPicker {
+                                        notice: row_picker_notice(
+                                            &cfg.default_agent,
+                                            &harness_state.last,
+                                            &ordered,
+                                        ),
+                                        all: ordered,
+                                        query: String::new(),
+                                        sel: 0,
+                                    });
+                                    dirty = true;
+                                }
                                 Cmd::Scroll(d) => {
                                     let v = Viewport::new(cols);
                                     let _ = layout.apply(
@@ -1230,30 +1237,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     if a == Action::KillPane && layout_pane_count(&layout) <= 1 {
                                         break 'main;
                                     }
-                                    // `⌥+⇧+;` is the force-pick chord: it always
-                                    // opens the overlay on a new strip, ignoring
-                                    // the fast paths (`default_agent`, a
-                                    // remembered pick, a lone install) that
-                                    // `⌥+;` takes. The pick still lands in the
-                                    // state file, so the next `⌥+;` follows it.
-                                    if a == Action::SpawnAgentRow {
-                                        let ordered =
-                                            harness_state.clone().order(crate::agent::detect());
-                                        harness_pick = Some(HarnessPicker {
-                                            notice: row_picker_notice(
-                                                &cfg.default_agent,
-                                                &harness_state.last,
-                                                &ordered,
-                                            ),
-                                            all: ordered,
-                                            query: String::new(),
-                                            sel: 0,
-                                            new_row: true,
-                                        });
-                                        dirty = true;
-                                        continue;
-                                    }
-                                    // A spawn-agent verb resolves the harness
+                                    // A spawn-agent press resolves the harness
                                     // first: an override, a remembered pick, or
                                     // a lone install spawns directly with no
                                     // UI, while anything else opens the
@@ -1291,7 +1275,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                     all: found,
                                                     query: String::new(),
                                                     sel: 0,
-                                                    new_row: false,
                                                     notice: Some(format!(
                                                         "`{want}` is not installed"
                                                     )),
@@ -1311,7 +1294,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                     all: found,
                                                     query: String::new(),
                                                     sel: 0,
-                                                    new_row: false,
                                                     notice,
                                                 });
                                             }
@@ -1320,7 +1302,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                     all: Vec::new(),
                                                     query: String::new(),
                                                     sel: 0,
-                                                    new_row: false,
                                                     notice: Some(
                                                         "No agent harness found — type a command or take a shell"
                                                             .to_string(),
@@ -2174,11 +2155,11 @@ mod tests {
     }
 
     #[test]
-    fn the_row_picker_bypasses_every_fast_path_silently_when_healthy() {
+    fn the_force_pick_notice_bypasses_every_fast_path_silently_when_healthy() {
         // The force-pick promise: a healthy remembered pick (or a lone
         // install) still opens the picker rather than spawning. `plan` would
         // resolve both of these to Configured/Auto, which is exactly what the
-        // row chord must ignore.
+        // force-pick chord must ignore.
         let ordered = notice_found(&["claude"]);
         assert_eq!(row_picker_notice("", "claude", &ordered), None);
         // No memory, no override, several harnesses: the plain choose case
@@ -2188,7 +2169,7 @@ mod tests {
     }
 
     #[test]
-    fn the_row_picker_explains_overrides_stale_memory_and_empty_scans() {
+    fn the_force_pick_notice_explains_overrides_stale_memory_and_empty_scans() {
         // A missing override is named, mirroring the Missing plan arm.
         let ordered = notice_found(&["claude"]);
         assert_eq!(
@@ -2201,7 +2182,7 @@ mod tests {
             Some("remembered `gone-xyz` is gone; pick another".to_string())
         );
         // A live override is called out: it still wins for ⌥+;, so the pick
-        // here only steers the new strip. It outranks memory, so with a stale
+        // here only steers this pane. It outranks memory, so with a stale
         // pick alongside, the override is what the notice names.
         assert_eq!(
             row_picker_notice("sh", "claude", &ordered),

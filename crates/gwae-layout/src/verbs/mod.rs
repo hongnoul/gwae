@@ -36,8 +36,6 @@ pub enum Action {
     NewColumn,
     NewRow,
     SpawnAgent,
-    /// Spawn an agent on a brand-new strip below the focused one.
-    SpawnAgentRow,
     ScrollViewport(i32),
     /// Jump focus directly to a pane anywhere in the grid (smart-jump: the
     /// caller picks the pane, e.g. the next one whose status needs attention).
@@ -70,7 +68,6 @@ impl Layout {
             Action::NewColumn => Ok(self.apply_new_column(viewport, follow)),
             Action::NewRow => Ok(self.apply_new_row(viewport, follow)),
             Action::SpawnAgent => Ok(self.apply_new_column(viewport, follow)),
-            Action::SpawnAgentRow => Ok(self.apply_new_row(viewport, follow)),
             Action::ScrollViewport(d) => Ok(self.apply_scroll(d, viewport)),
             Action::FocusPane(pid) => self.apply_focus_pane(pid, viewport, follow),
         }

@@ -598,9 +598,9 @@ fn a_remembered_but_uninstalled_pick_opens_the_overlay_with_a_notice() {
 }
 
 #[test]
-fn the_row_chord_opens_the_overlay_and_spawns_on_a_new_strip() {
-    // ⌥+Shift+; carries the row intent through the overlay: the pick lands
-    // on a new strip, not a new column, and the choice is remembered.
+fn the_force_pick_chord_opens_the_overlay_and_spawns_a_normal_pane() {
+    // ⌥+Shift+; ignores the fast paths and opens the overlay; the pick
+    // lands in a normal pane and the choice is remembered.
     let sb = Sandbox::new(&["claude", "aider"]);
     let mut p = sb.spawn_tui();
     std::thread::sleep(Duration::from_millis(700));
@@ -636,7 +636,7 @@ fn the_row_chord_opens_the_overlay_and_spawns_on_a_new_strip() {
 }
 
 #[test]
-fn the_row_chord_always_asks_even_with_a_remembered_pick() {
+fn the_force_pick_chord_always_asks_even_with_a_remembered_pick() {
     // The force-pick promise: a healthy remembered pick makes ⌥+; spawn with
     // no UI, but ⌥+Shift+; must still open the overlay instead of repeating
     // the last harness. This is the exact stuck case the chord exists for.
@@ -679,7 +679,7 @@ fn the_row_chord_always_asks_even_with_a_remembered_pick() {
 }
 
 #[test]
-fn the_row_chord_ignores_a_live_override_but_leaves_it_pinned() {
+fn the_force_pick_chord_ignores_a_live_override_but_leaves_it_pinned() {
     // A resolved override makes ⌥+; spawn with no UI; ⌥+Shift+; must still
     // open the overlay (naming the override, since it keeps winning for ⌥+;)
     // and must not rewrite the config when the pick lands elsewhere.

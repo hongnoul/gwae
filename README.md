@@ -59,7 +59,7 @@ gwae run "codex"      # or Codex CLI
 gwae doctor           # check config and setup
 ```
 
-New columns appear to the right of focus. `⌥+;` spawns your agent — first press remembers your pick (a lone install launches itself), later presses go straight there. `⌥+Shift+;` always asks, on a new strip.
+New columns appear to the right of focus. `⌥+;` spawns your agent — first press remembers your pick (a lone install launches itself), later presses go straight there. `⌥+Shift+;` always opens the picker instead.
 
 ## Why not tmux?
 
@@ -95,7 +95,7 @@ All chords use `⌥` (Option). Other keys go to the focused pane.
 ⌥+Enter        new column to right of focus
 ⌥+Shift+Enter  new strip below
 ⌥+;            spawn agent
-⌥+Shift+;      pick agent on a new strip (always asks, even with a remembered pick)
+⌥+Shift+;      pick agent (always opens the picker, even with a remembered pick)
 ⌥+h/j/k/l      focus left/down/up/right
 ⌥+Shift+h/j/k/l move pane
 ⌥+g            jump to pane that needs attention

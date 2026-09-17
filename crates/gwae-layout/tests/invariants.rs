@@ -27,7 +27,6 @@ fn random_actions() -> impl Strategy<Value = Vec<Action>> {
         Just(NewColumn),
         Just(NewRow),
         Just(SpawnAgent),
-        Just(SpawnAgentRow),
         Just(MovePaneLeft),
         Just(MovePaneRight),
         prop::collection::vec(0..5, 1).prop_map(|v| ScrollViewport(v[0] - 2)),
