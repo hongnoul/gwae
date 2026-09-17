@@ -1,17 +1,30 @@
 # gwae developer + install targets.
 
 BIN    := target/release/gwae
+DEV_BIN := target/debug/gwae
 CARGO  ?= cargo
 
 # Where the user's config lives (same resolution as Config::default_path()).
 CONFIG_DIR  := $(if $(XDG_CONFIG_HOME),$(XDG_CONFIG_HOME)/gwae,$(HOME)/.config/gwae)
 CONFIG_FILE := $(CONFIG_DIR)/gwae.toml
 
-.PHONY: build install install-keep reset-config
+.PHONY: build install install-keep reset-config dev dev-build
 
 ## Build the optimised release binary.
 build:
 	$(CARGO) build --release
+
+## Fast debug build for `dev` (no config reset, no install).
+dev-build:
+	$(CARGO) build
+	@if command -v codesign >/dev/null 2>&1; then \
+		codesign -f -s - "$(DEV_BIN)" >/dev/null 2>&1 || true; \
+	fi
+
+## Launch the hot-reload dev instance: debug binary + GWAE_DEV_RELOAD=1.
+## Rebuild anytime with `make dev-build`; the running instance execs into it.
+dev: dev-build
+	GWAE_DEV_RELOAD=1 "$(DEV_BIN)" $(ARGS)
 
 ## Install the release binary into the first writable `bin` dir on PATH
 ## (falling back to ~/.local/bin), so `gwae` is runnable immediately even
