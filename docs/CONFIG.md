@@ -219,11 +219,11 @@ A config file that is not being applied at all points at the syntax error:
 ### The centered dashboard (hold `⌥`/Alt)
 
 The corner `overlay` answers "where am I". The centered panel answers the
-questions you actually hold the modifier to ask, and carries more per tile:
+questions you actually hold the modifier to ask:
 
-* **Which one is it.** Each tile shows the pane's own window title (OSC 0/2),
-  shortened - a shell's `user@host: ~/git/gwae` becomes `gwae`, and an agent
-  harness's title is already short. Tiles read `»2 claude`, not `2`.
+* **Which one is it.** Each tile shows the status glyph plus the column
+  address (`»2`, `!3`): position says which column, color and glyph say how
+  it is doing. Tiles are spatial only, no titles, no ages.
 * **Where should I look.** Panes that want attention carry their status
   color and glyph (`!` idle, `✗` failed); `⌥+g` jumps to the most urgent
   one (failed, then idle, then done).
@@ -233,9 +233,8 @@ questions you actually hold the modifier to ask, and carries more per tile:
   one.
 * **Clicking a tile focuses that pane.** The session dims behind the panel.
 
-Tiles degrade gracefully as they narrow: the status glyph and the column digit
-always survive, the title is dropped before the age (a name cut to two letters
-says nothing; how long a pane has waited is the news). With a single pane there
+Tiles degrade gracefully as they narrow: the status glyph always survives,
+then the column digit. With a single pane there
 is nothing to triage, so the hold paints no dashboard; key help lives only in
 the `⌥+/` cheat-sheet.
 
