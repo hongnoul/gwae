@@ -254,7 +254,7 @@ pub fn ours_and_theirs<'a>(pending: &[&'a Setting]) -> (Vec<&'a Setting>, Vec<&'
 }
 
 /// Set `input_poll_ms` in a gwae config's text, preserving everything
-/// else, the same way the agent gateway saves `default_agent`.
+/// else, through the shared comment-preserving scalar rewrite.
 pub fn set_input_poll_text(text: &str, value: u64) -> String {
     crate::agent::set_scalar_text(text, "input_poll_ms", &value.to_string())
 }

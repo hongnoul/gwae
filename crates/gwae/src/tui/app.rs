@@ -234,17 +234,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let (tx, rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     // What `⌥+;` remembers: the last pick spawns with no UI. Loaded once at
-    // startup; the loop owns it from here and saves on every pick. Seeded
-    // from the explicit override on a fresh state file so an existing
-    // `default_agent` keeps working silently.
+    // startup; the loop owns it from here and saves on every pick.
     let harness_state_path = crate::agent::harness_state_path();
-    let mut harness_state = harness_state_path
-        .as_deref()
-        .map(crate::agent::load_harness_state)
-        .unwrap_or_default();
-    if harness_state.last.trim().is_empty() && !cfg.default_agent.trim().is_empty() {
-        harness_state.last = cfg.default_agent.trim().to_string();
-    }
+    let mut harness_state = match &harness_state_path {
+        Some(path) => crate::agent::load_seeded_harness_state(path, &cfg.default_agent),
+        None => crate::agent::HarnessState::default(),
+    };
     fn resolve_startup_cmd(
         default_agent: &str,
         state: &crate::agent::HarnessState,

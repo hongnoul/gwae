@@ -44,17 +44,31 @@ pub fn run(
     default_agent: &str,
     state: &HarnessState,
     state_path: &Path,
-    _input_poll_ms: u64,
     print_only: bool,
 ) -> ! {
-    let ordered = state.clone();
-    let found = ordered.order(detect());
-    let p = plan(default_agent, &ordered, found);
+    let found = state.order(detect());
+    let p = plan(default_agent, state, found);
 
     if print_only {
         match &p {
-            Plan::Configured(cmd) | Plan::Auto(cmd) => println!(
-                "default_agent: {cmd} [ok] -> {}",
+            // Name the actual source: an override, a remembered pick, or a
+            // lone install are three different reasons to go straight there,
+            // and `--print` is how scripts tell them apart.
+            Plan::Configured(cmd) => {
+                let src = if !default_agent.trim().is_empty() {
+                    "default_agent"
+                } else {
+                    "remembered"
+                };
+                println!(
+                    "{src}: {cmd} [ok] -> {}",
+                    which(&crate::tui::shell_split(cmd)[0])
+                        .unwrap_or_default()
+                        .display()
+                )
+            }
+            Plan::Auto(cmd) => println!(
+                "auto: {cmd} [ok] (only one installed) -> {}",
                 which(&crate::tui::shell_split(cmd)[0])
                     .unwrap_or_default()
                     .display()
@@ -80,7 +94,7 @@ pub fn run(
             let _ = std::io::stdout().flush();
             match prompt(0) {
                 Choice::Typed(cmd) => {
-                    let mut s = ordered.clone();
+                    let mut s = state.clone();
                     s.record_pick(&cmd, false);
                     let _ = save(state_path, &s);
                     cmd
@@ -99,7 +113,7 @@ pub fn run(
             };
             match pick {
                 Some((pick, known)) => {
-                    let mut s = ordered.clone();
+                    let mut s = state.clone();
                     s.record_pick(&pick, known);
                     let _ = save(state_path, &s);
                     pick

@@ -125,6 +125,19 @@ pub fn load(path: &Path) -> HarnessState {
     serde_json::from_str(&text).unwrap_or_default()
 }
 
+/// Load the state, seeding `last` from the explicit `default_agent` override
+/// on a fresh state file. Both the `gwae agent` entry and the TUI do this, so
+/// an existing override keeps working silently after the redesign without the
+/// state file ever owning what the config pins. After that the state file
+/// owns the memory, not the config.
+pub fn load_seeded(path: &Path, default_agent: &str) -> HarnessState {
+    let mut state = load(path);
+    if state.last.trim().is_empty() && !default_agent.trim().is_empty() {
+        state.last = default_agent.trim().to_string();
+    }
+    state
+}
+
 /// Persist the state, creating the parent directory when needed.
 pub fn save(path: &Path, state: &HarnessState) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
@@ -191,6 +204,23 @@ mod tests {
         let mut s = HarnessState::default();
         s.record_pick("  ", true);
         assert_eq!(s, HarnessState::default());
+    }
+
+    #[test]
+    fn seeding_adopts_the_override_only_on_a_fresh_state() {
+        let dir = tmp();
+        let path = dir.join("harness.json");
+        // Fresh file: the override becomes memory so existing configs keep
+        // working silently after the redesign.
+        let s = super::load_seeded(&path, "claude");
+        assert_eq!(s.last, "claude");
+        // ...but an existing memory is never clobbered by the config.
+        let mut mine = HarnessState::default();
+        mine.record_pick("aider", true);
+        super::save(&path, &mine).unwrap();
+        let s = super::load_seeded(&path, "claude");
+        assert_eq!(s.last, "aider");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

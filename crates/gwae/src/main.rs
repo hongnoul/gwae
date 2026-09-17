@@ -55,20 +55,9 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
         Command::Agent { print } => {
             let state_path = crate::agent::harness_state_path()
                 .unwrap_or_else(|| Config::default_path().with_extension("harness.json"));
-            let mut state = crate::agent::load_harness_state(&state_path);
-            // First run after the redesign: seed memory from the explicit
-            // override so an existing `default_agent` keeps working silently.
-            // After that the state file owns the memory, not the config.
-            if state.last.trim().is_empty() && !cfg.default_agent.trim().is_empty() {
-                state.last = cfg.default_agent.trim().to_string();
-            }
-            agent::run(
-                &cfg.default_agent,
-                &state,
-                &state_path,
-                cfg.input_poll_ms,
-                print,
-            )
+            let state =
+                crate::agent::load_seeded_harness_state(&state_path, &cfg.default_agent);
+            agent::run(&cfg.default_agent, &state, &state_path, print)
         }
         Command::Init { print, .. } => {
             // `init` is a thin alias for the setup flow: one onboarding

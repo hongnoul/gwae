@@ -402,6 +402,13 @@ fn print_reports_the_resolution_without_prompting_or_running_anything() {
     );
     p.kill();
 
+    // A lone install with no override reports itself as the auto source.
+    let sb = Sandbox::new(&["claude"]);
+    let p = sb.spawn(&["--print"]);
+    let seen = p.wait_for_all(&["auto: claude", "[ok]"]);
+    assert!(seen.contains("[ok]"), "got:\n{seen}");
+    p.kill();
+
     let sb = Sandbox::new(&[]);
     let p = sb.spawn(&["--print"]);
     let seen = p.wait_for("No agent harness found");
