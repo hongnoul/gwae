@@ -85,7 +85,12 @@ glyphs. A binary reload clears image state and requires child retransmission.
 
 Limits include 32 MiB per native source or pending transfer, 128 MiB retained
 native sources per pane, 64 sources and 256 placements per native/legacy store,
-and 16,384-pixel axes. Legacy retained command allocations are capped at 128 MiB
+and 16,384-pixel axes. When a new image would exceed the source-count or byte
+budget, the oldest sources without placements are evicted first (per the Kitty
+spec's preferential deletion of unplaced images), so viewers that allocate a
+fresh id per page, such as tdf, page indefinitely instead of wedging with
+`ENOSPC` once the store fills. Only when every stored image is still placed
+does a new transmit fail. Legacy retained command allocations are capped at 128 MiB
 per pane, with bounded input/PNG validation scratch and 256-cell virtual axes.
 The shared host texture budget is 128 MiB, with 32 MiB per raster tile.
 

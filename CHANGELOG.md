@@ -6,6 +6,9 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- **PDF pages stay rendered past ~63 page turns.** tdf allocates a fresh image id per page and clears placements each turn with lowercase `d=a`, which keeps image data for re-display, so gwae accumulated one stored source per page until the 64-image quota rejected every later transmit with `ENOSPC`: no placements, no host tiles, pitch black. Under quota pressure gwae now evicts the oldest sources without placements first, per the Kitty spec, and only fails when every stored image is still placed. Caught by a live-trace reproduction and a 70-turn acceptance test.
+
 ### Changed
 - **Zero-config harness spawn.** `⌥+;` no longer needs `default_agent` set: a lone installed harness launches itself with no UI, several open a native overlay picker (filter, ⏎ to spawn, `just a shell` row, any typed command that resolves), and the pick is remembered in `$XDG_STATE_HOME/gwae/harness.json` so later presses go straight there. Picking never rewrites `gwae.toml`; `default_agent` stays only as an explicit dotfile/script override, and the `agents` list is retired (old configs still parse; typed commands that resolve are remembered instead).
 - **Homebrew is the absolute source of truth for deployments.** `brew install hongnoul/tap/gwae` is the one supported install and `brew upgrade gwae` the one supported upgrade. Releases build the two macOS bottles only and bump the tap. The repo is macOS-only: every shortcut, clipboard path, and doc assumes Option on a Mac.
