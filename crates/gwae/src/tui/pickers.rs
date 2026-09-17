@@ -196,7 +196,7 @@ pub(crate) fn draw_dir_picker(
             oy + 2,
             ox + 2,
             "no match",
-            pal.overlay,
+            pal.label,
             pal.surface,
             false,
         );
@@ -242,7 +242,7 @@ pub(crate) fn draw_dir_picker(
             c.label.clone()
         };
         text(out, cols, lim, y, ox + 2, &label, fg, bg, selected);
-        let ofg = if selected { fg } else { pal.overlay };
+        let ofg = if selected { fg } else { pal.label };
         text(out, cols, lim, y, at, c.origin, ofg, bg, false);
     }
     text(
@@ -252,7 +252,7 @@ pub(crate) fn draw_dir_picker(
         oy + bh - 2,
         ox + 1,
         help,
-        pal.overlay,
+        pal.label,
         pal.surface,
         false,
     );
@@ -472,7 +472,7 @@ pub(crate) fn draw_harness_picker(
             y,
             ox + 2,
             notice,
-            pal.overlay,
+            pal.label,
             pal.surface,
             false,
         );
@@ -522,7 +522,7 @@ pub(crate) fn draw_harness_picker(
         oy + bh - 2,
         ox + 1,
         help,
-        pal.overlay,
+        pal.label,
         pal.surface,
         false,
     );

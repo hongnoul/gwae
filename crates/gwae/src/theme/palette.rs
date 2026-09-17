@@ -19,13 +19,17 @@ pub struct Palette {
     pub base: CColor,
     /// Background of the HUD and centered minimap panels.
     pub surface: CColor,
-    /// Skeleton frames around unfocused boxes.
+    /// Skeleton frames around unfocused boxes. Dim by design: the
+    /// focused ring is bold white, so unfocused chrome recedes to a
+    /// darker gray and the contrast delta reads at a glance.
     pub overlay: CColor,
     /// The 1-cell accent frame around the focused box, and focus highlights.
     pub accent: CColor,
     /// Text drawn in the HUD and minimap.
     pub text: CColor,
-    /// Text drawn by image-fallback notices.
+    /// Secondary text in pickers (origins, help lines, empty states).
+    /// Brighter than the unfocused frame chrome so it stays readable
+    /// while frames recede.
     pub label: CColor,
     /// Pane status: running (OSC 133 command in flight).
     pub running: CColor,
