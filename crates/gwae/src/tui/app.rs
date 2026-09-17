@@ -854,50 +854,54 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         }
                         // While the directory picker is open it owns the
                         // keyboard: every printable key types into the filter, so
-                        // nothing may reach a pane. Arrows move, ⏎ takes it for
-                        // the session, `⌥+s` writes it to the config file, esc
-                        // cancels. Bare `s` cannot save, because `s` is a filter
-                        // character like any other.
+                        // nothing may reach a pane. Arrows move, ⌃/⌥+j/k moves
+                        // too (bare j/k must keep filtering paths), ⏎ takes it
+                        // for the session, `⌥+s` writes it to the config file,
+                        // esc cancels. Bare `s` cannot save, because `s` is a
+                        // filter character like any other.
                         if let Some(pick) = dir_pick.as_mut() {
                             let alt = ke.modifiers.contains(KeyModifiers::ALT);
                             let mut chosen: Option<(std::path::PathBuf, bool)> = None;
                             let mut close = false;
-                            match ke.code {
-                                KeyCode::Up => pick.step(-1),
-                                KeyCode::Down => pick.step(1),
-                                KeyCode::Esc => close = true,
-                                KeyCode::Backspace => {
-                                    pick.query.pop();
-                                    pick.sel = 0;
-                                }
-                                KeyCode::Enter => {
-                                    if let Some(c) = pick.current() {
-                                        chosen = Some((c.path, false));
+                            if let Some(d) = picker_step(&ke) {
+                                pick.step(d);
+                            } else {
+                                match ke.code {
+                                    KeyCode::Esc => close = true,
+                                    KeyCode::Backspace => {
+                                        pick.query.pop();
+                                        pick.sel = 0;
                                     }
-                                    close = true;
-                                }
-                                KeyCode::Char('s') if alt => {
-                                    if let Some(c) = pick.current() {
-                                        chosen = Some((c.path, true));
+                                    KeyCode::Enter => {
+                                        if let Some(c) = pick.current() {
+                                            chosen = Some((c.path, false));
+                                        }
+                                        close = true;
                                     }
-                                    close = true;
-                                }
-                                // ß is what macOS sends for ⌥+s when Option is not
-                                // mapped to Meta, the same fallback the rest of
-                                // the chords carry.
-                                KeyCode::Char('\u{df}') => {
-                                    if let Some(c) = pick.current() {
-                                        chosen = Some((c.path, true));
+                                    KeyCode::Char('s') if alt => {
+                                        if let Some(c) = pick.current() {
+                                            chosen = Some((c.path, true));
+                                        }
+                                        close = true;
                                     }
-                                    close = true;
+                                    // ß is what macOS sends for ⌥+s when Option is not
+                                    // mapped to Meta, the same fallback the rest of
+                                    // the chords carry.
+                                    KeyCode::Char('\u{df}') => {
+                                        if let Some(c) = pick.current() {
+                                            chosen = Some((c.path, true));
+                                        }
+                                        close = true;
+                                    }
+                                    KeyCode::Char(c)
+                                        if !alt
+                                            && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
+                                    {
+                                        pick.query.push(c);
+                                        pick.sel = 0;
+                                    }
+                                    _ => {}
                                 }
-                                KeyCode::Char(c)
-                                    if !alt && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
-                                    pick.query.push(c);
-                                    pick.sel = 0;
-                                }
-                                _ => {}
                             }
                             // The picker's harness decides which config key `save` writes.
                             // Read it before we clear `dir_pick`.
@@ -938,39 +942,42 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         }
                         // While the harness picker is open it owns the
                         // keyboard, like the directory picker: printable keys
-                        // filter, arrows move, ⏎ spawns, esc cancels. A pick
-                        // is remembered in the state file, so there is no
-                        // save key; the shell row spawns a plain pane.
+                        // filter, arrows and ⌃/⌥+j/k move, ⏎ spawns, esc
+                        // cancels. A pick is remembered in the state file, so
+                        // there is no save key; the shell row spawns a plain
+                        // pane.
                         if let Some(pick) = harness_pick.as_mut() {
                             let mut chosen: Option<HarnessChoice> = None;
                             let mut close = false;
-                            match ke.code {
-                                KeyCode::Up => pick.step(-1),
-                                KeyCode::Down => pick.step(1),
-                                KeyCode::Esc => close = true,
-                                KeyCode::Backspace => {
-                                    pick.query.pop();
-                                    pick.sel = 0;
-                                }
-                                KeyCode::Enter => {
-                                    // Never on auto-repeat: the first Enter
-                                    // closes the overlay and remembers the
-                                    // pick, so a repeat would fall through to
-                                    // a fresh ⌥+; and fast-spawn a second
-                                    // pane from the memory just written.
-                                    if ke.kind != KeyEventKind::Repeat {
-                                        chosen = pick.current();
-                                        close = true;
+                            if let Some(d) = picker_step(&ke) {
+                                pick.step(d);
+                            } else {
+                                match ke.code {
+                                    KeyCode::Esc => close = true,
+                                    KeyCode::Backspace => {
+                                        pick.query.pop();
+                                        pick.sel = 0;
                                     }
+                                    KeyCode::Enter => {
+                                        // Never on auto-repeat: the first Enter
+                                        // closes the overlay and remembers the
+                                        // pick, so a repeat would fall through to
+                                        // a fresh ⌥+; and fast-spawn a second
+                                        // pane from the memory just written.
+                                        if ke.kind != KeyEventKind::Repeat {
+                                            chosen = pick.current();
+                                            close = true;
+                                        }
+                                    }
+                                    KeyCode::Char(c)
+                                        if !ke.modifiers.contains(KeyModifiers::ALT)
+                                            && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
+                                    {
+                                        pick.query.push(c);
+                                        pick.sel = 0;
+                                    }
+                                    _ => {}
                                 }
-                                KeyCode::Char(c)
-                                    if !ke.modifiers.contains(KeyModifiers::ALT)
-                                        && !ke.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
-                                    pick.query.push(c);
-                                    pick.sel = 0;
-                                }
-                                _ => {}
                             }
                             let new_row = pick.new_row;
                             if close {
@@ -1116,9 +1123,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     // or lone install), so the title names the
                                     // agent `⌥+;` would actually spawn.
                                     let harness_label = {
-                                        let ordered = harness_state
-                                            .clone()
-                                            .order(crate::agent::detect());
+                                        let ordered =
+                                            harness_state.clone().order(crate::agent::detect());
                                         match crate::agent::plan(
                                             &cfg.default_agent,
                                             &harness_state,
@@ -1201,9 +1207,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     // overlay and spawns on confirm.
                                     if matches!(a, Action::SpawnAgent | Action::SpawnAgentRow) {
                                         let new_row = a == Action::SpawnAgentRow;
-                                        let ordered = harness_state
-                                            .clone()
-                                            .order(crate::agent::detect());
+                                        let ordered =
+                                            harness_state.clone().order(crate::agent::detect());
                                         match crate::agent::plan(
                                             &cfg.default_agent,
                                             &harness_state,

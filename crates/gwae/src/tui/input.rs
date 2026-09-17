@@ -428,6 +428,40 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
     Some(Cmd::Input(key_bytes(ev)))
 }
 
+/// Step a picker list (`⌥+d` spawn-dir, `⌥+;` harness) with vim keys.
+///
+/// Bare `j`/`k` must keep typing into the filter (paths contain both), so
+/// navigation takes the modified forms: `⌃+j/k`, `⌥+j/k`, `⌃+n/p`, plus the
+/// macOS Option-glyphs (`∆`/`˚`) sent when Option is not Meta. Arrows keep
+/// working. Returns the signed step or `None` when the event is not nav.
+pub(crate) fn picker_step(ev: &KeyEvent) -> Option<i32> {
+    use KeyCode::*;
+    match ev.code {
+        Up => Some(-1),
+        Down => Some(1),
+        // macOS no-Meta path: Option+j/k arrive as ∆/˚ with no modifiers.
+        // They would otherwise be typed into the filter as literal glyphs.
+        Char('\u{2206}') => Some(1), // ∆ (Option+j)
+        Char('\u{2da}') => Some(-1), // ˚ (Option+k)
+        Char(c) => {
+            let lc = c.to_ascii_lowercase();
+            let alt = ev.modifiers.contains(KeyModifiers::ALT);
+            let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
+            if !alt && !ctrl {
+                return None;
+            }
+            match lc {
+                'j' => Some(1),
+                'k' => Some(-1),
+                'n' if ctrl || alt => Some(1),
+                'p' if ctrl || alt => Some(-1),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Trim clipboard text for the spawn-dir filter: directory paths are
 /// single-line, so keep the first line and strip newlines. Empty in, empty
 /// out: the caller decides whether to touch the filter.
@@ -1224,6 +1258,59 @@ mod tests {
         assert!(crate::binds::BINDS
             .iter()
             .all(|b| { b.trigger != crate::binds::Trigger::Chord('v') && b.glyph != Some('√') }));
+    }
+
+    #[test]
+    fn picker_step_takes_modified_jk_and_arrows_but_not_bare_letters() {
+        // Arrows always move; modified j/k/n/p move; bare letters must type
+        // into the filter (paths contain j and k).
+        assert_eq!(
+            picker_step(&KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            Some(-1)
+        );
+        assert_eq!(
+            picker_step(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            Some(1)
+        );
+        for (mods, key, want) in [
+            (KeyModifiers::CONTROL, 'j', 1),
+            (KeyModifiers::CONTROL, 'k', -1),
+            (KeyModifiers::CONTROL, 'n', 1),
+            (KeyModifiers::CONTROL, 'p', -1),
+            (KeyModifiers::ALT, 'j', 1),
+            (KeyModifiers::ALT, 'k', -1),
+        ] {
+            assert_eq!(
+                picker_step(&KeyEvent::new(KeyCode::Char(key), mods)),
+                Some(want),
+                "ctrl/alt {key:?} must step {want}"
+            );
+        }
+        // macOS no-Meta glyphs arrive bare and must not type ∆/˚ into the
+        // filter.
+        assert_eq!(
+            picker_step(&KeyEvent::new(
+                KeyCode::Char('\u{2206}'),
+                KeyModifiers::NONE
+            )),
+            Some(1)
+        );
+        assert_eq!(
+            picker_step(&KeyEvent::new(KeyCode::Char('\u{2da}'), KeyModifiers::NONE)),
+            Some(-1)
+        );
+        for c in ['j', 'k', 'n', 'p', 's', 'x'] {
+            assert_eq!(
+                picker_step(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
+                None,
+                "bare {c} must type, not move"
+            );
+        }
+        assert_eq!(
+            picker_step(&KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT)),
+            None,
+            "the dir-picker save chord is not nav"
+        );
     }
 
     #[test]

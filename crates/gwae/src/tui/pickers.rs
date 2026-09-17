@@ -92,7 +92,7 @@ pub(crate) fn draw_dir_picker(
     // into the filter, so advertising `s` would tell the user to type a
     // letter that filters instead of saving.
     let help = format!(
-        " ↑/↓ pick   ⏎ session   {} save to config   esc cancel ",
+        " ↑/↓·⌃/⌥+j/k pick   ⏎ session   {} save to config   esc cancel ",
         crate::keys::chord("s")
     );
     let help = help.as_str();
@@ -357,7 +357,7 @@ pub(crate) fn draw_harness_picker(
     let notice = pick.notice.as_deref().unwrap_or("");
     let notice_lines = if notice.is_empty() { 0 } else { 1 };
     let title = format!(" pick agent: {}_ ", pick.query);
-    let help = " ↑/↓ pick   ⏎ spawn   esc cancel ";
+    let help = " ↑/↓·⌃/⌥+j/k pick   ⏎ spawn   esc cancel ";
     // Row text: labels only, so the list fits a quarter-width pane. The first
     // row is the Enter default and is labeled as such.
     let row_text: Vec<String> = shown
@@ -382,7 +382,7 @@ pub(crate) fn draw_harness_picker(
         .max(notice.chars().count())
         .max(help.chars().count())
         + 2)
-        .min((cols as usize).saturating_sub(2));
+    .min((cols as usize).saturating_sub(2));
     let bh = rows_shown + notice_lines + 4;
     if bw < 6 || (rows as usize) < bh + 2 {
         return;
@@ -465,7 +465,17 @@ pub(crate) fn draw_harness_picker(
     );
     let mut y = oy + 2;
     if !notice.is_empty() {
-        text(out, cols, lim, y, ox + 2, notice, pal.overlay, pal.surface, false);
+        text(
+            out,
+            cols,
+            lim,
+            y,
+            ox + 2,
+            notice,
+            pal.overlay,
+            pal.surface,
+            false,
+        );
         y += 1;
     }
     let first = pick.sel.saturating_sub(rows_shown.saturating_sub(1));

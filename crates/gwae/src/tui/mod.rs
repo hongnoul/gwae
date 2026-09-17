@@ -47,7 +47,7 @@ mod input;
 pub(crate) use config_io::{perform_reload, write_harness_dir, write_keep_awake};
 pub(crate) use input::{
     focused_pane, handle_key, is_alt_modifier, is_harness_scroll_chord, key_bytes,
-    layout_pane_count, paste_note, picker_paste_query, smart_jump_target, Cmd,
+    layout_pane_count, paste_note, picker_paste_query, picker_step, smart_jump_target, Cmd,
 };
 
 mod platform;
