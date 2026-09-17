@@ -22,7 +22,7 @@ const QUIET_AFTER: Duration = Duration::from_secs(4);
 /// steers this pane), and otherwise a stale memory is named. `None`
 /// when there is nothing to explain, which is the common bypass case of a
 /// healthy remembered pick.
-fn row_picker_notice(want: &str, last: &str, ordered: &[crate::agent::Found]) -> Option<String> {
+fn force_pick_notice(want: &str, last: &str, ordered: &[crate::agent::Found]) -> Option<String> {
     let want = want.trim();
     let last = last.trim();
     if ordered.is_empty() {
@@ -1180,7 +1180,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     let ordered =
                                         harness_state.clone().order(crate::agent::detect());
                                     harness_pick = Some(HarnessPicker {
-                                        notice: row_picker_notice(
+                                        notice: force_pick_notice(
                                             &cfg.default_agent,
                                             &harness_state.last,
                                             &ordered,
@@ -2161,11 +2161,11 @@ mod tests {
         // resolve both of these to Configured/Auto, which is exactly what the
         // force-pick chord must ignore.
         let ordered = notice_found(&["claude"]);
-        assert_eq!(row_picker_notice("", "claude", &ordered), None);
+        assert_eq!(force_pick_notice("", "claude", &ordered), None);
         // No memory, no override, several harnesses: the plain choose case
         // carries no notice either.
         let ordered = notice_found(&["claude", "aider"]);
-        assert_eq!(row_picker_notice("", "", &ordered), None);
+        assert_eq!(force_pick_notice("", "", &ordered), None);
     }
 
     #[test]
@@ -2173,28 +2173,28 @@ mod tests {
         // A missing override is named, mirroring the Missing plan arm.
         let ordered = notice_found(&["claude"]);
         assert_eq!(
-            row_picker_notice("jcode-not-real", "", &ordered),
+            force_pick_notice("jcode-not-real", "", &ordered),
             Some("`jcode-not-real` is not installed".to_string())
         );
         // A stale remembered pick is named, mirroring the Choose notice.
         assert_eq!(
-            row_picker_notice("", "gone-xyz", &ordered),
+            force_pick_notice("", "gone-xyz", &ordered),
             Some("remembered `gone-xyz` is gone; pick another".to_string())
         );
         // A live override is called out: it still wins for ⌥+;, so the pick
         // here only steers this pane. It outranks memory, so with a stale
         // pick alongside, the override is what the notice names.
         assert_eq!(
-            row_picker_notice("sh", "claude", &ordered),
+            force_pick_notice("sh", "claude", &ordered),
             Some("default_agent `sh` still wins for ⌥+;".to_string())
         );
         assert_eq!(
-            row_picker_notice("sh", "gone-xyz", &ordered),
+            force_pick_notice("sh", "gone-xyz", &ordered),
             Some("default_agent `sh` still wins for ⌥+;".to_string())
         );
         // Nothing installed at all: same line as the NoneInstalled overlay.
         assert_eq!(
-            row_picker_notice("", "", &[]),
+            force_pick_notice("", "", &[]),
             Some("No agent harness found — type a command or take a shell".to_string())
         );
     }
