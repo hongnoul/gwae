@@ -8,6 +8,7 @@ changelog, updated per PR). The format is based on
 
 ### Changed
 - **Keep-awake is off by default.** Fresh runs let the Mac sleep as normal. Opt in with `keep_awake = true` or `⌥+w`. `GWAE_NO_KEEP_AWAKE=1` still forces it off.
+- **Plain panes claim no status.** Non-agent PTY panes (shells, TUIs) paint a neutral `·` tile, count in the dashboard total with no tally segment, and never trigger attention or smart-jump. `Running` is now asserted only on evidence: an OSC 133 `C` marker or output from a known agent pane. Shells with real OSC 133 integration still report real status.
 
 ### Added
 - **DEV badge on the Option HUD in dev sessions.** With `GWAE_DEV_RELOAD=1`, the centered HUD and dashboard stamp `DEV` on the bottom frame row (mirroring keep-awake on top), so the dev tab is visually distinct from a stable tab. Stable sessions render a plain frame.
