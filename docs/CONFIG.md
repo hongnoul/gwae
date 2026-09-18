@@ -67,8 +67,9 @@ spawn dir, latency) and writes only gwae's own config file.
 
 gwae paints its own retro chrome: true-black panels with high-contrast
 functional colors (white focus, blue running, amber idle, green done, red
-failed, white text). The chrome reads the same whatever the host terminal
-is themed as.
+failed, white text). Panes without agent status (plain shells, TUIs)
+paint neutral in the skeleton overlay color and carry a `·` tile. The
+chrome reads the same whatever the host terminal is themed as.
 
 Hand-edit escape hatch, no picker: any key can be overridden under
 `[theme]`, and a save repaints the running session.

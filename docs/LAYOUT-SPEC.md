@@ -80,7 +80,8 @@ scroll state: no partial-column slivers, no margin drift.
 ## Minimap
 
 Status bar renders a compact 2D map, one line per nearby row, with the viewport
-bracket, row labels, and per-pane agent-status dots (OSC 133).
+bracket, row labels, and per-pane status tiles (OSC 133 for agent panes;
+plain panes stay neutral with no status claim).
 
 ## Non-goals (v1)
 

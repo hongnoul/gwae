@@ -12,7 +12,7 @@ gwae (one process)
 ├── Composer (coalesce damage -> single 2D cell buffer)
 ├── Render (diff buffer -> batched ANSI -> terminal)
 ├── Input (raw mode: decode keys, forward to focused pane or handle $mod)
-└── OSC 133 trackers (per-pane status: running/idle/done -> minimap + smart-jump)
+└── OSC 133 trackers (per-pane status: plain/running/idle/done/failed -> minimap + smart-jump)
 ```
 
 ## Crate map
