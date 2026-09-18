@@ -68,6 +68,150 @@ pub const HANDOVER_VAR: &str = "GWAE_RELOAD_HANDOVER";
 #[allow(dead_code)]
 pub const ENABLE_VAR: &str = "GWAE_DEV_RELOAD";
 
+/// Environment variable that opts a dev session into *automatic* rebuilds:
+/// the running image watches its own sources and runs the build itself, so
+/// `make dev` needs no manual `make dev-build` step. Implies nothing on its
+/// own: the session still only execs into a binary that builds cleanly and
+/// proves loadable, so a broken tree never disturbs the live panes.
+#[allow(dead_code)]
+pub const WATCH_VAR: &str = "GWAE_DEV_WATCH";
+
+/// Whether this session rebuilds its own binary when sources change.
+///
+/// Off unless explicitly asked for. Gated separately from [`ENABLE_VAR`]
+/// because the exec path is the dangerous part (orphaned processes on a
+/// wrong reload); the watch only *builds*, and a failed build is invisible.
+#[allow(dead_code)]
+pub fn watch_enabled() -> bool {
+    matches!(
+        std::env::var(WATCH_VAR).as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
+}
+
+/// Human phase of an in-flight dev rebuild, for the HUD status pill.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildPhase {
+    Building,
+    Linking,
+    Signing,
+}
+
+/// Outcome of one finished `cargo build` attempt.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum BuildOutcome {
+    /// The binary is newer and `is_loadable` passed: safe to exec.
+    Ready,
+    /// The build failed or the image is unloadable: stay on this image.
+    /// Carries the first error line for the on-demand overlay.
+    Failed(String),
+}
+
+/// The newest mtime under the watched source roots, if any are readable.
+///
+/// Roots are resolved from the current exe (`target/debug/gwae` ->
+/// workspace root): `crates/`, `Cargo.toml`, `Cargo.lock`. No watcher
+/// dependency: one walk per poll at the config-poll rate is negligible
+/// next to the render loop, mirroring the config mtime approach.
+#[allow(dead_code)]
+pub fn source_mtime() -> Option<std::time::SystemTime> {
+    let exe = std::env::current_exe().ok()?;
+    // `.../target/debug/gwae` -> `...` (workspace root).
+    let root = exe
+        .parent()? // debug/
+        .parent()? // target/
+        .parent()?; // workspace root
+    let mut newest: Option<std::time::SystemTime> = None;
+    fn consider(p: &std::path::Path, newest: &mut Option<std::time::SystemTime>) {
+        if let Ok(md) = std::fs::metadata(p) {
+            if let Ok(m) = md.modified() {
+                *newest = Some(newest.map_or(m, |n: std::time::SystemTime| n.max(m)));
+            }
+            if md.is_dir() {
+                if let Ok(rd) = std::fs::read_dir(p) {
+                    for e in rd.flatten() {
+                        let path = e.path();
+                        // Skip build artifacts and VCS state: they churn
+                        // without meaning anything changed.
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            if name == "target" || name == ".git" {
+                                continue;
+                            }
+                        }
+                        consider(&path, newest);
+                    }
+                }
+            }
+        }
+    }
+    for rel in ["crates", "Cargo.toml", "Cargo.lock"] {
+        consider(&root.join(rel), &mut newest);
+    }
+    newest
+}
+
+/// Classify build stderr into a HUD phase: dependency compilation reads as
+/// building, the final link step as linking. Best-effort only.
+#[allow(dead_code)]
+pub fn classify_phase(line: &str) -> BuildPhase {
+    if line.contains("Linking") || line.contains("linking") {
+        BuildPhase::Linking
+    } else {
+        BuildPhase::Building
+    }
+}
+
+/// First meaningful error line from `cargo build` output, for the overlay.
+#[allow(dead_code)]
+pub fn first_error_line(output: &str) -> String {
+    output
+        .lines()
+        .find(|l| l.contains("error"))
+        .map(|l| {
+            let l = l.trim();
+            l.chars().take(120).collect::<String>()
+        })
+        .unwrap_or_else(|| "build failed".to_string())
+}
+
+/// Outcome of one finished dev rebuild: the worst failure mode is exec'ing
+/// a half-written or unloadable binary, so every path that is not "fresh
+/// mtime plus loadable image" reports failure and the caller stays put.
+#[allow(dead_code)]
+pub fn build_outcome(
+    build_ok: bool,
+    stderr_tail: &str,
+    exe: &std::path::Path,
+    before: Option<std::time::SystemTime>,
+) -> BuildOutcome {
+    if !build_ok {
+        return BuildOutcome::Failed(first_error_line(stderr_tail));
+    }
+    let after = binary_mtime(exe);
+    let advanced = match (before, after) {
+        (Some(b), Some(a)) => a > b,
+        (None, Some(_)) => true,
+        _ => false,
+    };
+    if !advanced {
+        // Nothing changed on disk (cached build): not a failure, but
+        // nothing to exec into either. Report it as a quiet non-event.
+        return BuildOutcome::Failed(String::new());
+    }
+    match is_loadable(exe) {
+        Ok(()) => BuildOutcome::Ready,
+        Err(e) => BuildOutcome::Failed(first_line(&e)),
+    }
+}
+
+/// First line of an error, for one-line toasts and overlays.
+#[allow(dead_code)]
+fn first_line(e: &str) -> String {
+    e.lines().next().unwrap_or(e).trim().to_string()
+}
+
 /// Small text badge stamped onto the bottom frame row of the Option HUD
 /// while dev mode is on (`GWAE_DEV_RELOAD=1`), mirroring the keep-awake
 /// badge on the top frame row. Plain text, not a palette change, so stable
@@ -115,6 +259,11 @@ pub struct Handover {
     /// The binary that was running, purely so the new image can log what it
     /// replaced when a reload misbehaves.
     pub from: PathBuf,
+    /// Milliseconds the old image had been up when it exec'd. The new
+    /// image shifts its quiet timers by this gap so panes do not flap
+    /// to attention across a reload. Defaults to 0 for old handovers.
+    #[serde(default)]
+    pub boot_ago_ms: u64,
 }
 
 impl Handover {
@@ -400,7 +549,53 @@ mod tests {
             }],
             spawn_dir: Some(PathBuf::from("/tmp")),
             from: PathBuf::from("/usr/local/bin/gwae"),
+            boot_ago_ms: 0,
         }
+    }
+
+    #[test]
+    fn old_handover_without_clock_field_still_parses() {
+        // `boot_ago_ms` defaults: a handover written by the previous
+        // image loads with zero gap rather than failing.
+        let text = r#"{"layout":{"rows":[],"panes":{},"focus":{"row":0,"column":0,"pane":0},"next_pane":0,"next_row":0},"panes":[],"spawn_dir":null,"from":"/bin/gwae"}"#;
+        let back: Handover = serde_json::from_str(text).expect("old handover parses");
+        assert_eq!(back.boot_ago_ms, 0);
+    }
+
+    #[test]
+    fn build_outcome_demands_fresh_mtime_and_loadable_image() {
+        // A failed build never execs, whatever the mtime says.
+        let exe = std::path::Path::new("/bin/sh");
+        let before = binary_mtime(exe);
+        assert!(matches!(
+            build_outcome(false, "error: boom", exe, before),
+            BuildOutcome::Failed(_)
+        ));
+        // A "successful" build that changed nothing is a quiet non-event
+        // (empty message), not a failure and not a reload.
+        assert!(matches!(
+            build_outcome(true, "", exe, before),
+            BuildOutcome::Failed(m) if m.is_empty()
+        ));
+    }
+
+    #[test]
+    fn first_error_line_extracts_the_signal() {
+        assert_eq!(
+            first_error_line("compiling foo\nerror: expected `;`\nmore"),
+            "error: expected `;`"
+        );
+        assert_eq!(first_error_line("all good"), "build failed");
+    }
+
+    #[test]
+    fn watch_flag_is_opt_in() {
+        let _env = env_guard();
+        std::env::remove_var(WATCH_VAR);
+        assert!(!watch_enabled());
+        std::env::set_var(WATCH_VAR, "1");
+        assert!(watch_enabled());
+        std::env::remove_var(WATCH_VAR);
     }
 
     #[test]

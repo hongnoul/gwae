@@ -32,7 +32,7 @@ mod render;
 
 pub(crate) use chrome::{
     draw_center_hud, draw_toast_at, has_attention, hud_pane_at, paint_center_minimap,
-    plan_center_minimap, HudFacts, HudPlan,
+    plan_center_minimap, BuildPill, HudFacts, HudPlan,
 };
 pub(crate) use pickers::{
     draw_dir_picker, draw_harness_picker, draw_quit_confirm, DirPicker, HarnessChoice,

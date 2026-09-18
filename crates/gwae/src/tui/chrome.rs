@@ -87,6 +87,23 @@ pub(crate) struct HudFacts {
     /// Whether this is a dev session (`GWAE_DEV_RELOAD=1`): stamps DEV onto
     /// the bottom HUD frame row. Stable sessions render a plain frame.
     pub(crate) dev: bool,
+    /// In-flight dev autobuild phase (`GWAE_DEV_WATCH=1`): stamps a dim
+    /// status pill (`building…`, `linking…`, `signing…`) onto the HUD frame
+    /// so the work reads without touching any pane. `None` when idle.
+    pub(crate) build: Option<BuildPill>,
+    /// Held dev watch state: when the crash-loop guard pins the last good
+    /// image, this carries the reason (`reload held…`). `None` normally.
+    pub(crate) held: Option<String>,
+}
+
+/// The dev autobuild pill: what the session is doing while the user keeps
+/// working on the last good image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BuildPill {
+    Building,
+    Linking,
+    Signing,
+    Failed,
 }
 
 /// Stamp [`crate::keepawake::KEEP_AWAKE_BADGE`] onto the top frame row of `rect`,
@@ -133,6 +150,63 @@ pub(crate) fn stamp_dev_badge(out: &mut [Cell], cols: u16, rect: super::Rect, pa
         c.ch = ch;
         c.style.fg = pal.accent;
         c.style.bold = true;
+    }
+}
+
+/// Stamp the dev autobuild pill onto the top frame row of `rect`, right of
+/// center so it never collides with the keep-awake badge. Dim by design:
+/// the build is background work and the panes keep showing the last good
+/// image. No-op when the panel is too narrow.
+pub(crate) fn stamp_build_pill(
+    out: &mut [Cell],
+    cols: u16,
+    rect: super::Rect,
+    pal: &Palette,
+    pill: BuildPill,
+) {
+    let badge: &str = match pill {
+        BuildPill::Building => " building… ",
+        BuildPill::Linking => " linking… ",
+        BuildPill::Signing => " signing… ",
+        BuildPill::Failed => " build failed ",
+    };
+    let n = badge.chars().count();
+    if n == 0 || rect.w as usize <= n + 2 || rect.h == 0 {
+        return;
+    }
+    let y = rect.y as usize;
+    // Right-of-center: keep-awake owns the center.
+    let start = rect.x as usize + (rect.w as usize * 3 / 4).saturating_sub(n / 2);
+    for (i, ch) in badge.chars().enumerate() {
+        let idx = y * cols as usize + start + i;
+        let Some(c) = out.get_mut(idx) else { continue };
+        c.ch = ch;
+        c.style.fg = Palette::muted(pal.text);
+        c.style.bold = false;
+    }
+}
+
+/// Stamp the watch-held reason onto the bottom frame row of `rect`, below
+/// the DEV badge row when both are present. Dim and clipped to the frame.
+pub(crate) fn stamp_held_note(
+    out: &mut [Cell],
+    cols: u16,
+    rect: super::Rect,
+    pal: &Palette,
+    held: &str,
+) {
+    let n = held.chars().count();
+    if n == 0 || rect.w as usize <= n + 2 || rect.h < 2 {
+        return;
+    }
+    let y = rect.y as usize + rect.h as usize - 2;
+    let start = rect.x as usize + (rect.w as usize - n) / 2;
+    for (i, ch) in held.chars().enumerate() {
+        let idx = y * cols as usize + start + i;
+        let Some(c) = out.get_mut(idx) else { continue };
+        c.ch = ch;
+        c.style.fg = Palette::muted(pal.text);
+        c.style.bold = false;
     }
 }
 
@@ -719,6 +793,12 @@ pub(crate) fn paint_center_minimap(
     }
     if facts.dev {
         stamp_dev_badge(out, cols, plan.rect, pal);
+    }
+    if let Some(pill) = facts.build {
+        stamp_build_pill(out, cols, plan.rect, pal, pill);
+    }
+    if let Some(held) = facts.held.as_deref() {
+        stamp_held_note(out, cols, plan.rect, pal, held);
     }
 }
 
@@ -2180,6 +2260,38 @@ mod tests {
         assert!(!has_attention(&Layout::default()));
         mixed.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Idle;
         assert!(has_attention(&mixed), "one idle agent pane wants you");
+    }
+
+    #[test]
+    fn build_pill_and_held_note_stamp_the_frame() {
+        use super::Rect;
+        let pal = pal_accent(CColor::Idx(36));
+        let rect = Rect { x: 0, y: 0, w: 60, h: 8 };
+        for pill in [
+            BuildPill::Building,
+            BuildPill::Linking,
+            BuildPill::Signing,
+            BuildPill::Failed,
+        ] {
+            let mut out = vec![Cell::default(); 60 * 8];
+            stamp_build_pill(&mut out, 60, rect, &pal, pill);
+            let row: String = out[0..60].iter().map(|c| c.ch).collect();
+            let expect = match pill {
+                BuildPill::Building => "building",
+                BuildPill::Linking => "linking",
+                BuildPill::Signing => "signing",
+                BuildPill::Failed => "build failed",
+            };
+            assert!(row.contains(expect), "{pill:?} stamps, got {row:?}");
+        }
+        // Held note reads on its own row and degrades on tiny frames.
+        let mut out = vec![Cell::default(); 60 * 8];
+        stamp_held_note(&mut out, 60, rect, &pal, "reload held");
+        let row: String = out[6 * 60..7 * 60].iter().map(|c| c.ch).collect();
+        assert!(row.contains("reload held"), "held note stamps, got {row:?}");
+        let mut tiny = vec![Cell::default(); 6 * 2];
+        stamp_build_pill(&mut tiny, 6, Rect { x: 0, y: 0, w: 6, h: 2 }, &pal, BuildPill::Building);
+        assert!(tiny.iter().all(|c| c.ch == ' '), "tiny frame stays clean");
     }
 
     /// A wide grid whose columns overflow the viewport, so the dashboard has

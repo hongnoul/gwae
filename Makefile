@@ -23,13 +23,18 @@ dev-build:
 
 ## Launch the hot-reload dev instance: debug binary + GWAE_DEV_RELOAD=1.
 ## Rebuild anytime with `make dev-build`; the running instance execs into it.
+## With WATCH=1 (default) the session rebuilds itself on source change, so
+## no manual step is needed: only a clean, signed, loadable binary triggers
+## the exec, and failures stay invisible on the last good image.
 ## On exit the release binary is installed (config-preserving, like
 ## `install-keep`, never `install`: quitting dev must not wipe onboarding
 ## preferences) so the `gwae` on PATH is always the latest dev build. The
 ## release rebuild is incremental, a no-op when nothing changed. Set
 ## `NO_INSTALL=1` to skip (e.g. quitting a broken intermediate state).
+## Set `WATCH=0` for the old manual behavior.
 dev: dev-build
 	trap 'if [ -z "$${NO_INSTALL:-}" ]; then $(MAKE) install-keep || echo "dev-exit install failed (stable gwae unchanged)"; fi' EXIT; \
+	if [ "$${WATCH:-1}" = "1" ]; then export GWAE_DEV_WATCH=1; fi; \
 	GWAE_DEV_RELOAD=1 "$(DEV_BIN)" $(ARGS)
 
 ## Install the release binary into the first writable `bin` dir on PATH

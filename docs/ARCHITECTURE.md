@@ -70,7 +70,12 @@ and resize signals, and primary output reflow without a child redraw.
 `GWAE_DEV_RELOAD=1` lets a running gwae replace its own binary in place when
 that binary changes on disk, keeping every pane alive. It is how the dev loop
 avoids the thing gwae is worst at: restarting costs you every agent in the
-grid.
+grid. With `GWAE_DEV_WATCH=1` (set by `make dev` unless `WATCH=0`), the
+session also rebuilds itself on source change: a dim `building…` pill reads
+on the HUD frame while the panes keep showing the last good image, and only
+a clean, signed, loadable binary triggers the exec. Failures stay invisible
+with the error held for the `⌥+/` overlay; 3 reloads in 60s pins the last
+good image.
 
 This is deliberately **not** a daemon. A dev-only daemon would mean the dev
 build and the shipped build are different programs, so bugs hide in whichever

@@ -1,6 +1,7 @@
 //! Config file writes + hot-reload exec (verbatim move from `tui/mod.rs`).
 
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use gwae_layout::{Layout, PaneId};
 use gwae_term::TermGrid;
@@ -55,6 +56,7 @@ pub(crate) fn perform_reload(
     panes: &HashMap<PaneId, PtyPane>,
     agent_panes: &HashSet<PaneId>,
     spawn_dir: Option<&std::path::Path>,
+    boot: Instant,
 ) -> Result<std::convert::Infallible, String> {
     let exe = crate::reload::own_path()?;
     let mut handover_panes = Vec::new();
@@ -82,6 +84,7 @@ pub(crate) fn perform_reload(
         panes: handover_panes,
         spawn_dir: spawn_dir.map(|p| p.to_path_buf()),
         from: exe.clone(),
+        boot_ago_ms: boot.elapsed().as_millis().min(u64::MAX as u128) as u64,
     };
     crate::reload::exec_into(&exe, &handover)
 }

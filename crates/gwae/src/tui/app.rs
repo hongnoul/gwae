@@ -105,6 +105,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut cfg = cfg;
     let mut pal = cfg.palette();
     let mut stdout = io::stdout();
+    // Boot instant for the handover clock freeze: the next image shifts
+    // its quiet timers by the gap so panes do not flap on reload.
+    let boot = Instant::now();
     // Arm signal handlers + panic hook before the first pane exists, and hold
     // a drop guard so every early return below still reaps. Quitting gwae is
     // documented as killing everything in the panes; this makes that true for
@@ -254,6 +257,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             spawn_dir = h.spawn_dir.clone();
         }
     }
+    // Clock continuity: adopted panes start their `last_output` at
+    // adoption (see `adopt_pane`), so quiet ages measure from the exec,
+    // not from zero. The sub-second exec gap is negligible next to the
+    // 4s quiet window; no shift needed.
     // Ask (at most once a day, on a background thread) whether a newer gwae
     // exists. Started here so the request overlaps pane spawn instead of
     // adding to startup; the answer lands in a slot the main loop reads, and
@@ -457,6 +464,38 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // exec'ing a half-written binary.
     #[cfg(unix)]
     let mut exe_changed_at: Option<Instant> = None;
+    // Auto-rebuild watch (dev): when `GWAE_DEV_WATCH=1` the session builds
+    // itself on source change, so `make dev` needs no manual step. The
+    // live panes always show the last good image: a build runs off the
+    // event loop with piped output, and only a clean, signed, loadable
+    // binary feeds the exec path above. Failures are invisible except for
+    // the dim HUD pill; detail waits in the `⌥+/` overlay.
+    #[cfg(unix)]
+    let auto_build = crate::reload::watch_enabled() && hot_reload;
+    #[cfg(unix)]
+    let mut src_mtime = auto_build.then(crate::reload::source_mtime).flatten();
+    #[cfg(unix)]
+    let mut src_changed_at: Option<Instant> = None;
+    #[cfg(unix)]
+    let mut build_child: Option<std::process::Child> = None;
+    #[cfg(unix)]
+    let mut build_phase: Option<crate::reload::BuildPhase> = None;
+    #[cfg(unix)]
+    let mut build_before: Option<std::time::SystemTime> = None;
+    #[cfg(unix)]
+    let mut build_cooldown_until: Option<Instant> = None;
+    #[cfg(unix)]
+    let mut build_error: Option<String> = None;
+    // Crash-loop guard: too many execs in a minute pins the last good
+    // image and stops watching until a manual rebuild.
+    #[cfg(unix)]
+    let mut exec_attempts: Vec<Instant> = Vec::new();
+    #[cfg(unix)]
+    let mut watch_held: Option<String> = None;
+    // Quiet-window wait start for the exec gate above: held across ticks
+    // while panes are busy, cleared on fire.
+    #[cfg(unix)]
+    let mut exe_wait_start: Option<Instant> = None;
     let mut size_check = Instant::now();
     // Last time *anything* happened (a keystroke or a byte from any pane).
     // Drives the adaptive input poll below: tight while in use, relaxed once
@@ -656,6 +695,122 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 reload_note_until = Some(Instant::now() + NOTE_LINGER);
             }
         }
+        // Auto-rebuild (dev): sources changed -> build off the event
+        // loop with piped output. Only a clean, loadable binary reaches
+        // the exec path below; failures stay invisible on the last good
+        // image with the error held for the `⌥+/` overlay.
+        #[cfg(unix)]
+        if auto_build && watch_held.is_none() {
+            // Poll an in-flight build without blocking the frame.
+            if let Some(child) = build_child.as_mut() {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        // Reap output for the error overlay. The build ran
+                        // with piped stdio, so this is a bounded read of a
+                        // finished child, never a block on a live one.
+                        let mut stderr_tail = String::new();
+                        if let Some(mut c) = build_child.take() {
+                            use std::io::Read as _;
+                            if let Some(e) = c.stderr.as_mut() {
+                                let mut buf = Vec::new();
+                                let _ = e.read_to_end(&mut buf);
+                                let text = String::from_utf8_lossy(&buf);
+                                let lines: Vec<&str> = text.lines().collect();
+                                let start = lines.len().saturating_sub(40);
+                                stderr_tail = lines[start..].join("\n");
+                            }
+                        }
+                        let outcome = crate::reload::build_outcome(
+                            status.success(),
+                            &stderr_tail,
+                            exe_path.as_deref().unwrap_or(std::path::Path::new("")),
+                            build_before,
+                        );
+                        build_phase = None;
+                        match outcome {
+                            crate::reload::BuildOutcome::Ready => {
+                                build_error = None;
+                                // Codesign the fresh image the way
+                                // `make dev-build` does, best-effort.
+                                if let Some(exe) = exe_path.as_deref() {
+                                    let _ = std::process::Command::new("codesign")
+                                        .args(["-f", "-s", "-"])
+                                        .arg(exe)
+                                        .output();
+                                }
+                                // Fall through to the exec path below:
+                                // the binary mtime moved, so it fires.
+                            }
+                            crate::reload::BuildOutcome::Failed(msg) => {
+                                if msg.is_empty() {
+                                    // Cached no-op build: nothing to do.
+                                } else {
+                                    build_error = Some(msg);
+                                }
+                                // Back off before the next attempt so a
+                                // save storm does not fork builds forever.
+                                build_cooldown_until =
+                                    Some(Instant::now() + std::time::Duration::from_secs(5));
+                            }
+                        }
+                        dirty = true;
+                    }
+                    Ok(None) => {
+                        // Still building: keep the pill up, keep painting.
+                    }
+                    Err(_) => {
+                        build_child = None;
+                        build_phase = None;
+                    }
+                }
+            } else {
+                // No build running: watch sources with a settle window so
+                // a save burst fires one build, not one per keystroke.
+                let now_src = crate::reload::source_mtime();
+                if now_src != src_mtime {
+                    src_mtime = now_src;
+                    src_changed_at = Some(Instant::now());
+                } else if src_changed_at
+                    .map(|t| t.elapsed() >= std::time::Duration::from_millis(500))
+                    .unwrap_or(false)
+                    && !build_cooldown_until.map(|t| Instant::now() < t).unwrap_or(false)
+                {
+                    src_changed_at = None;
+                    // Snapshot the binary mtime so the outcome check can
+                    // tell a real rebuild from a cached no-op.
+                    build_before = exe_path.as_deref().and_then(crate::reload::binary_mtime);
+                    // Spawn detached from the panes: piped output, never
+                    // touching a PTY. The agent session driving the
+                    // feature reads its own log; this session stays
+                    // pristine on the last good image.
+                    let mut cmd = std::process::Command::new("cargo");
+                    cmd.args(["build", "--offline"])
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped());
+                    // Run from the workspace root so relative manifests
+                    // resolve. Best-effort: failure to spawn just
+                    // retries next poll.
+                    if let Some(exe) = exe_path.as_deref() {
+                        if let Some(root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+                            cmd.current_dir(root);
+                        }
+                    }
+                    match cmd.spawn() {
+                        Ok(child) => {
+                            build_child = Some(child);
+                            build_phase = Some(crate::reload::BuildPhase::Building);
+                            build_error = None;
+                            dirty = true;
+                        }
+                        Err(_) => {
+                            build_cooldown_until =
+                                Some(Instant::now() + std::time::Duration::from_secs(5));
+                        }
+                    }
+                }
+            }
+        }
         // Hot reload: the binary on disk changed, so replace this process
         // with the new build and carry every pane across (see
         // `crate::reload`). Dev-gated: the failure mode of a subtly wrong
@@ -673,6 +828,31 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     .unwrap_or(false)
                 {
                     exe_changed_at = None;
+                    // Crash-loop guard: too many execs in a minute pins
+                    // the last good image and holds the watch.
+                    exec_attempts.retain(|t| t.elapsed() < std::time::Duration::from_secs(60));
+                    if exec_attempts.len() >= 3 {
+                        watch_held = Some("reload held: 3 execs in 60s — rebuild manually".to_string());
+                        tracing::error!("hot reload held: crash-loop guard fired");
+                        dirty = true;
+                    } else {
+                        // Prefer a quiet window so output does not tear
+                        // mid-frame: hold the exec until panes go quiet
+                        // (300ms) or 2s pass, whichever comes first.
+                        let quiet = last_activity.elapsed() >= std::time::Duration::from_millis(300);
+                        let waited_long_enough = exe_wait_start
+                            .get_or_insert(Instant::now())
+                            .elapsed()
+                            >= std::time::Duration::from_secs(2);
+                        if !quiet && !waited_long_enough {
+                            // Not quiet yet: re-arm the settle and try
+                            // again next tick. The wait clock keeps
+                            // running so a busy session still reloads
+                            // after 2s.
+                            exe_changed_at = Some(Instant::now());
+                        } else {
+                            exe_wait_start = None;
+                            exec_attempts.push(Instant::now());
                     // Leave the terminal exactly as a normal exit would: the
                     // tty is kernel state and survives the exec, so a new
                     // image would otherwise inherit raw mode and the alt
@@ -684,7 +864,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     // acquires its own guard at startup, and the old
                     // `caffeinate` (bound with `-w` to this pid) exits with us.
                     keep_awake.release();
-                    match perform_reload(&layout, &panes, &agent_panes, spawn_dir.as_deref()) {
+                    match perform_reload(&layout, &panes, &agent_panes, spawn_dir.as_deref(), boot) {
                         // `Ok` is uninhabited: the process is gone.
                         Ok(never) => match never {},
                         Err(e) => {
@@ -707,6 +887,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             reload_note_until = Some(Instant::now() + NOTE_LINGER);
                             dirty = true;
                         }
+                    }
+                        } // end quiet-gate else: exec path above only runs when quiet or timed out
                     }
                 }
             }
@@ -1712,6 +1894,42 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             HudFacts {
                 keep_awake: keep_awake.active(),
                 dev: dev_mode,
+                build: {
+                    #[cfg(unix)]
+                    {
+                        if let Some(p) = build_phase {
+                            Some(match p {
+                                crate::reload::BuildPhase::Building => {
+                                    crate::tui::BuildPill::Building
+                                }
+                                crate::reload::BuildPhase::Linking => {
+                                    crate::tui::BuildPill::Linking
+                                }
+                                crate::reload::BuildPhase::Signing => {
+                                    crate::tui::BuildPill::Signing
+                                }
+                            })
+                        } else if build_error.as_deref().is_some_and(|s| !s.is_empty()) {
+                            Some(crate::tui::BuildPill::Failed)
+                        } else {
+                            None
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        None
+                    }
+                },
+                held: {
+                    #[cfg(unix)]
+                    {
+                        watch_held.clone()
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        None
+                    }
+                },
                 ..HudFacts::default()
             }
         } else {
