@@ -530,7 +530,7 @@ pub(crate) fn smart_jump_target(layout: &Layout) -> Option<PaneId> {
         PaneStatus::Failed => Some(0u8),
         PaneStatus::Idle => Some(1),
         PaneStatus::Done => Some(2),
-        PaneStatus::Running => None,
+        PaneStatus::Running | PaneStatus::Plain => None,
     };
     let mut best: Option<(u8, usize, PaneId)> = None;
     for (i, pid) in order
@@ -1075,7 +1075,7 @@ mod tests {
             .iter()
             .flat_map(|c| c.panes.clone())
             .collect();
-        // All running: nothing needs the user.
+        // All plain: nothing needs the user.
         assert_eq!(smart_jump_target(&layout), None);
         // Pane 3 done, pane 2 idle, pane 1 failed: failed wins outright.
         layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Done;

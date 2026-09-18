@@ -190,7 +190,7 @@ trap 'exit 0' HUP TERM
 redraw
 while :; do
     if read -r key; then
-        printf '\033[2;1HWORK %s' "$GWAE_PANE"
+        printf '\033]133;C\007\033[2;1HWORK %s' "$GWAE_PANE"
     fi
 done
 "#;
@@ -214,12 +214,12 @@ fn focusing_attention_panes_never_turns_redraws_into_work() {
     loop {
         s.peek(50);
         let text = s.screen.visible_text();
-        if (1..=8).all(|n| text.contains(&format!("!{n}"))) {
+        if (1..=8).all(|n| text.contains(&format!("·{n}"))) {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "panes never became idle: {text}"
+            "panes never became plain: {text}"
         );
     }
     let before = std::fs::read_to_string(s.dir.join("winch.log")).unwrap_or_default();
@@ -237,8 +237,8 @@ fn focusing_attention_panes_never_turns_redraws_into_work() {
         );
         assert!(s.screen.visible_text().contains('╭'), "HUD must be visible");
         assert!(
-            s.screen.visible_text().contains("!1"),
-            "idle pane tiles must be visible"
+            s.screen.visible_text().contains("·1"),
+            "plain pane tiles must be visible"
         );
         assert!(
             !visible(&painted).contains('»'),
@@ -251,7 +251,8 @@ fn focusing_attention_panes_never_turns_redraws_into_work() {
         before,
         "navigation must not send SIGWINCH to idle children"
     );
-    // Genuine output still promotes a pane immediately, not after a debounce.
+    // Genuine protocol output still promotes a pane immediately, not after
+    // a debounce: the helper emits OSC 133;C with its WORK redraw.
     s.send(b"work\r");
     s.peek(250);
     assert!(
@@ -330,8 +331,9 @@ fn holding_the_modifier_reveals_a_dashboard_that_names_its_panes() {
         "the hold should reveal the dashboard frame; got:\n{shown:?}"
     );
     // Spatial-only tiles: status glyph + column address, no hint text.
+    // Plain panes (no harness, no protocol) carry the neutral `·`.
     assert!(
-        shown.contains("»") || shown.contains("!"),
+        shown.contains("»") || shown.contains("!") || shown.contains("·"),
         "dashboard should show spatial tiles (glyphs); got:\n{shown:?}"
     );
     for token in ["attention", "1-9", "hjkl"] {
@@ -391,13 +393,13 @@ fn option_digits_reach_the_pane_instead_of_jumping() {
 }
 
 /// Count dashboard tiles by their column addresses: the first pane of each
-/// column prints `glyph + column number` (`»1`, `!2`, ...), so the set of
-/// addresses present is the set of live columns.
+/// column prints `glyph + column number` (`»1`, `·2`, `!3`, ...), so the set
+/// of addresses present is the set of live columns.
 fn tile_addresses(text: &str) -> Vec<usize> {
     (1..=16)
         .filter(|n| {
             let n = n.to_string();
-            ["»", "!", "✓", "✗"]
+            ["»", "·", "!", "✓", "✗"]
                 .iter()
                 .any(|g| text.contains(&format!("{g}{n}")))
         })
@@ -477,7 +479,7 @@ fn dashboard_footer_is_tally_not_key_hints() {
     let shown = visible(&s.peek(150));
     assert!(panel_up(&s), "dashboard still appears: {shown:?}");
     assert!(
-        shown.contains('»') || shown.contains('!'),
+        shown.contains('»') || shown.contains('!') || shown.contains('·'),
         "tiles remain: {shown:?}"
     );
     for token in ["attention", "1-9 col", "hjkl", "keys"] {
@@ -519,7 +521,7 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
                 (1..140)
                     .filter(|&x| {
                         probe.cell(x, y).ch.is_ascii_digit()
-                            && matches!(probe.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
+                            && matches!(probe.cell(x - 1, y).ch, '»' | '·' | '!' | '✓' | '✗')
                     })
                     .count()
                     >= 2
@@ -552,7 +554,7 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
             (1..140)
                 .filter(|&x| {
                     grid.cell(x, y).ch.is_ascii_digit()
-                        && matches!(grid.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
+                        && matches!(grid.cell(x - 1, y).ch, '»' | '·' | '!' | '✓' | '✗')
                 })
                 .count()
                 >= 2
@@ -564,7 +566,7 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
             // The dashboard's address signature is a status glyph + digit.
             if c.ch.is_ascii_digit()
                 && x > 0
-                && matches!(grid.cell(x - 1, y).ch, '»' | '!' | '✓' | '✗')
+                && matches!(grid.cell(x - 1, y).ch, '»' | '·' | '!' | '✓' | '✗')
             {
                 addresses += 1;
                 // Retro chrome: tiles carry explicit RGB fills (white focus,

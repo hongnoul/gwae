@@ -14,18 +14,41 @@ pub type RowId = u64;
 
 /// Agent status from the OSC 133 shell-integration protocol. Purely advisory:
 /// it colors the minimap and powers smart-jump, never the layout itself.
+///
+/// `Running` is asserted only on positive evidence (an OSC 133;C marker or
+/// recent output from a known agent pane). Panes we know nothing about —
+/// plain shells, TUIs, fresh spawns — are `Plain`, never presumed running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PaneStatus {
-    /// A command is executing (OSC 133;C) or the pane is actively emitting
-    /// output (activity heuristic for panes without shell integration).
+    /// A non-agent PTY pane (plain shell, TUI, fresh spawn): no status
+    /// claimed. Painted neutral, excluded from tallies, never attention,
+    /// never a smart-jump target. A real OSC 133 marker still promotes it
+    /// to a real status.
+    Plain,
+    /// A command is executing (OSC 133;C) or a known agent pane is actively
+    /// emitting output (activity heuristic for panes without shell integration).
     Running,
-    /// At the prompt / waiting for input (OSC 133;A) or output has gone
-    /// quiet: the pane wants your attention.
+    /// At the prompt / waiting for input (OSC 133;A) or a known agent pane
+    /// has gone quiet: the pane wants your attention.
     Idle,
     /// The last command finished successfully (OSC 133;D with exit 0).
     Done,
     /// The last command finished with a non-zero exit (OSC 133;D;n, n != 0).
     Failed,
+}
+
+impl PaneStatus {
+    /// Whether this status wants the user: drives `has_attention` and the
+    /// edge-tick `!` marker.
+    pub fn is_attention(self) -> bool {
+        matches!(self, PaneStatus::Idle | PaneStatus::Failed)
+    }
+
+    /// Whether this status is a real claim about the pane (vs the neutral
+    /// `Plain`): drives tally segments and smart-jump candidacy.
+    pub fn is_reportable(self) -> bool {
+        !matches!(self, PaneStatus::Plain)
+    }
 }
 
 /// One PTY-backed pane. The layout only tracks its id and status; the actual
@@ -181,7 +204,7 @@ impl Layout {
             id,
             Pane {
                 id,
-                status: PaneStatus::Running,
+                status: PaneStatus::Plain,
             },
         );
         id

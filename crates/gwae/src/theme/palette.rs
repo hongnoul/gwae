@@ -91,10 +91,12 @@ impl Palette {
         }
     }
 
-    /// Full-intensity tint for a pane status.
+    /// Full-intensity tint for a pane status. `Plain` (no claim) reuses
+    /// the neutral skeleton overlay so it never reads as healthy or sick.
     pub fn status(&self, s: PaneStatus) -> CColor {
         use PaneStatus as S;
         match s {
+            S::Plain => self.overlay,
             S::Running => self.running,
             S::Idle => self.idle,
             S::Done => self.done,

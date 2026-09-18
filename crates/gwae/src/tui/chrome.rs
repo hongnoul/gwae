@@ -58,6 +58,7 @@ pub(crate) fn draw_art(out: &mut [Cell], cols: u16, rect: Rect, lines: &[String]
 
 pub(crate) fn status_glyph_for(s: PaneStatus) -> char {
     match s {
+        PaneStatus::Plain => '\u{00b7}',   // ·
         PaneStatus::Running => '\u{00bb}', // »
         PaneStatus::Idle => '!',
         PaneStatus::Done => '\u{2713}',   // ✓
@@ -314,9 +315,10 @@ pub(crate) struct HudPlan {
 }
 
 /// The status tally shown in the dashboard footer: the pane count, then one
-/// `glyph count` segment per status that has any panes. Returned with the
-/// status rather than a color so the geometry pass can measure it without a
-/// palette.
+/// `glyph count` segment per *reportable* status that has any panes.
+/// `Plain` panes count toward the total but get no segment: they carry no
+/// claim. Returned with the status rather than a color so the geometry pass
+/// can measure it without a palette.
 pub(crate) fn status_tally(layout: &Layout) -> Vec<(String, Option<PaneStatus>)> {
     let statuses = [
         PaneStatus::Running,
@@ -326,7 +328,9 @@ pub(crate) fn status_tally(layout: &Layout) -> Vec<(String, Option<PaneStatus>)>
     ];
     let mut counts = [0usize; 4];
     for p in layout.panes.values() {
-        counts[statuses.iter().position(|s| *s == p.status).unwrap_or(0)] += 1;
+        if let Some(i) = statuses.iter().position(|s| *s == p.status) {
+            counts[i] += 1;
+        }
     }
     let mut out = vec![(format!("{}", layout.panes.len()), None)];
     for (i, s) in statuses.iter().enumerate() {
@@ -471,10 +475,7 @@ pub(crate) fn plan_center_minimap(
 }
 
 pub(crate) fn has_attention(layout: &Layout) -> bool {
-    layout
-        .panes
-        .values()
-        .any(|p| matches!(p.status, PaneStatus::Idle | PaneStatus::Failed))
+    layout.panes.values().any(|p| p.status.is_attention())
 }
 
 /// Cells the centered dashboard would like per column — spatial-only tiles
@@ -961,7 +962,7 @@ pub(crate) fn draw_edge_ticks(
             .first()
             .and_then(|pid| layout.panes.get(pid))
             .map(|pane| pane.status)
-            .unwrap_or(PaneStatus::Running);
+            .unwrap_or(PaneStatus::Plain);
         let bg = if ci == layout.focus.column {
             focus_color
         } else {
@@ -975,7 +976,7 @@ pub(crate) fn draw_edge_ticks(
             c.style.fg = CColor::Idx(231);
         }
         // Mark attention with '!' at tick neighbor if needed
-        if matches!(status, PaneStatus::Idle | PaneStatus::Failed) && x + 1 < cols as usize {
+        if status.is_attention() && x + 1 < cols as usize {
             if let Some(c) = out.get_mut(y * cols as usize + x + 1) {
                 if c.style.bg == CColor::Default || c.style.bg == tick_bg(status) {
                     c.ch = status_glyph_for(status);
@@ -994,7 +995,7 @@ pub(crate) fn draw_edge_ticks(
                 layout
                     .panes
                     .get(pid)
-                    .map(|pane| matches!(pane.status, PaneStatus::Idle | PaneStatus::Failed))
+                    .map(|pane| pane.status.is_attention())
                     .unwrap_or(false)
             })
         });
@@ -1047,6 +1048,7 @@ pub(crate) fn draw_minimap(
     /// the painter never has to cut a run around it).
     fn status_glyph(s: PaneStatus) -> char {
         match s {
+            PaneStatus::Plain => '·',
             PaneStatus::Running => '»',
             PaneStatus::Idle => '!',
             PaneStatus::Done => '✓',
@@ -1130,7 +1132,9 @@ pub(crate) fn draw_minimap(
         ];
         let mut counts = [0usize; 4];
         for p in layout.panes.values() {
-            counts[statuses.iter().position(|s| *s == p.status).unwrap_or(0)] += 1;
+            if let Some(i) = statuses.iter().position(|s| *s == p.status) {
+                counts[i] += 1;
+            }
         }
         // Segments: (text, fg). The total is dim; each tally is colored.
         let mut segs: Vec<(String, CColor)> = vec![(format!("{}", layout.panes.len()), pal.text)];
@@ -1260,24 +1264,29 @@ mod tests {
             CColor::Default,
             "other strip is painted chrome"
         );
-        // Fresh panes are Running: a full-intensity Mocha blue tint carrying
-        // a `»` glyph at the tile's right edge.
+        // Fresh panes are Plain: the neutral skeleton overlay carrying
+        // a `·` glyph at the tile's right edge. No status is claimed.
         assert_eq!(
             other.style.bg,
-            CColor::Rgb(0x89, 0xb4, 0xfa),
-            "running tint"
+            CColor::Rgb(0x3f, 0x3f, 0x3f),
+            "plain tile uses the neutral overlay"
         );
         let other_end = cell(8 + 31, 7);
-        assert_eq!(other_end.ch, '»', "status glyph at the tile end");
+        assert_eq!(other_end.ch, '·', "plain glyph at the tile end");
         // The focused strip carries a chevron in the gutter left of the map.
         assert_eq!(cell(7, 6).ch, '❯', "focused-strip chevron");
         assert_eq!(cell(7, 6).style.fg, accent);
         // The summary bar sits directly above the map: total 5 panes, all
-        // running -> "5 »5" right-aligned at the screen edge.
+        // plain -> just "5" right-aligned at the screen edge. Plain
+        // panes count toward the total but get no segment.
         let bar: String = (0..40).map(|x| cell(x, 5).ch).collect();
         assert!(
-            bar.trim_start().ends_with("5 »5"),
+            bar.trim_start().ends_with('5'),
             "summary bar shows totals, got {bar:?}"
+        );
+        assert!(
+            !bar.contains('»') && !bar.contains('·'),
+            "no tally segments for plain panes, got {bar:?}"
         );
         // Nothing above the summary bar is painted by the minimap.
         let above = cell(8, 4);
@@ -1324,7 +1333,8 @@ mod tests {
         let p = layout.alloc_pane();
         layout.add_column(r2, Width::Cells(20), vec![p]);
         // Statuses: pane1 focused (accent), pane2 done, pane3 failed,
-        // pane4 idle; the strip-2 pane keeps Running.
+        // pane4 idle; the strip-2 pane is set Running explicitly so the
+        // summary exercises a running segment.
         let ids: Vec<PaneId> = {
             let row = layout.rows[0].clone();
             row.columns.iter().flat_map(|c| c.panes.clone()).collect()
@@ -1332,6 +1342,7 @@ mod tests {
         layout.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Done;
         layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Failed;
         layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Idle;
+        layout.panes.get_mut(&p).unwrap().status = PaneStatus::Running;
         let cols = 40usize;
         let mut out = vec![Cell::default(); cols * 8];
         let accent = CColor::Idx(36);
@@ -1369,11 +1380,12 @@ mod tests {
         assert_eq!(cell(ox + 15, y).ch, '✓', "done glyph");
         assert_eq!(cell(ox + 23, y).ch, '✗', "failed glyph");
         assert_eq!(cell(ox + 31, y).ch, '!', "attention glyph");
-        // Summary counts every status: 5 panes, 1 running, 1 attention,
-        // 1 done, 1 failed (focused pane is still Running).
+        // Summary counts every reportable status: 5 panes, 1 running
+        // (the strip-2 pane), 1 attention, 1 done, 1 failed. The focused
+        // pane is Plain, so it contributes to the total but no segment.
         let bar: String = (0..cols).map(|x| cell(x, 5).ch).collect();
         assert!(
-            bar.trim_start().ends_with("5 »2 !1 ✓1 ✗1"),
+            bar.trim_start().ends_with("5 »1 !1 ✓1 ✗1"),
             "summary tallies by status, got {bar:?}"
         );
     }
@@ -2141,6 +2153,33 @@ mod tests {
             tiny.iter().all(|c| c.ch == ' '),
             "tiny viewport draws no HUD"
         );
+    }
+
+    #[test]
+    fn plain_panes_claim_nothing_in_tally_attention_or_glyphs() {
+        // The core `Plain` contract: fresh panes are neutral everywhere.
+        // No tally segment, no attention, `·` glyph, overlay tint.
+        let layout = Layout::default(); // 4 panes, all Plain
+        assert!(!has_attention(&layout), "plain panes want nothing");
+        let tally = status_tally(&layout);
+        assert_eq!(tally.len(), 1, "total only, no segments: {tally:?}");
+        assert_eq!(tally[0].0, "4");
+        assert_eq!(status_glyph_for(PaneStatus::Plain), '·');
+        let pal = pal_accent(CColor::Idx(36));
+        assert_eq!(pal.status(PaneStatus::Plain), pal.overlay);
+        // One agent pane going Running appears; the plains stay silent.
+        let mut mixed = Layout::default();
+        let ids: Vec<PaneId> = mixed.rows[0]
+            .columns
+            .iter()
+            .flat_map(|c| c.panes.clone())
+            .collect();
+        mixed.panes.get_mut(&ids[0]).unwrap().status = PaneStatus::Running;
+        let tally = status_tally(&mixed);
+        assert_eq!(tally.len(), 2, "total + running: {tally:?}");
+        assert!(!has_attention(&Layout::default()));
+        mixed.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Idle;
+        assert!(has_attention(&mixed), "one idle agent pane wants you");
     }
 
     /// A wide grid whose columns overflow the viewport, so the dashboard has

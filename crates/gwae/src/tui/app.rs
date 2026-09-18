@@ -68,6 +68,12 @@ fn spawn_picked_harness(
     if let Some(pid) = focused_pane(layout) {
         agent_panes.insert(pid);
         agent_cmds.insert(pid, cmd.to_string());
+        // Fresh allocs default to `Plain`; an agent spawn is positive
+        // evidence of work, so claim `Running` up front. The OSC protocol
+        // or the quiet heuristic corrects it from here.
+        if let Some(lp) = layout.panes.get_mut(&pid) {
+            lp.status = PaneStatus::Running;
+        }
     }
     if let Err(e) = sync_panes(
         layout,
@@ -403,6 +409,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             if let Some(cmd) = first_agent_cmd {
                 agent_cmds.insert(*pid, cmd);
             }
+            // Fresh allocs are `Plain`; pane 1.1 spawning a harness is
+            // positive evidence of work.
+            if let Some(lp) = layout.panes.get_mut(pid) {
+                lp.status = PaneStatus::Running;
+            }
         }
     }
     // Panes that were agent panes before a reload stay marked as such.
@@ -501,14 +512,18 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         );
                         p.last_output = Instant::now();
                         // Explicit OSC 133 status beats the activity
-                        // heuristic from the first marker onward.
+                        // heuristic from the first marker onward, for any
+                        // pane (a shell-integrated plain shell is
+                        // trustworthy). The heuristic below it is agent-only:
+                        // a plain shell's output claims nothing.
                         if let Some(st) = scan_osc133(&bytes) {
                             p.saw_osc133 = true;
                             if let Some(lp) = layout.panes.get_mut(&pid) {
                                 lp.status = st;
                             }
-                        } else if !p.saw_osc133 {
-                            // Fresh output from a protocol-less pane: working.
+                        } else if !p.saw_osc133 && agent_panes.contains(&pid) {
+                            // Fresh output from a protocol-less *agent* pane:
+                            // working.
                             if let Some(lp) = layout.panes.get_mut(&pid) {
                                 lp.status = PaneStatus::Running;
                             }
@@ -574,14 +589,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
         }
 
-        // Activity heuristic for panes that never speak OSC 133 (plain
-        // shells, most TUIs): output within the window means "working",
-        // silence past it flips to "wants attention" so the minimap and
-        // smart-jump still triage them. Panes with real shell integration
-        // are owned by the explicit protocol above and skipped here.
+        // Activity heuristic for *agent* panes that never speak OSC 133
+        // (agent TUIs without shell integration): output within the window
+        // means "working", silence past it flips to "wants attention" so the
+        // minimap and smart-jump still triage them. Panes with real shell
+        // integration are owned by the explicit protocol above and skipped
+        // here; plain (non-agent) panes are skipped entirely — their output
+        // claims nothing and they stay `Plain`.
         let now = Instant::now();
         for (pid, p) in panes.iter() {
-            if p.saw_osc133 {
+            if p.saw_osc133 || !agent_panes.contains(pid) {
                 continue;
             }
             let quiet = now.duration_since(p.last_output) >= QUIET_AFTER;
@@ -1261,6 +1278,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                 if let Some(pid) = focused_pane(&layout) {
                                                     agent_panes.insert(pid);
                                                     agent_cmds.insert(pid, cmd);
+                                                    if let Some(lp) = layout.panes.get_mut(&pid) {
+                                                        lp.status = PaneStatus::Running;
+                                                    }
                                                 }
                                                 if let Err(e) = sync_panes(
                                                     &mut layout,

@@ -153,7 +153,7 @@ pub fn build_scaled(layout: &Layout, map_w: u16, viewport_cols: u16, scale: Scal
                     .panes
                     .get(pid)
                     .map(|p| p.status)
-                    .unwrap_or(PaneStatus::Running);
+                    .unwrap_or(PaneStatus::Plain);
                 cells.push(MinimapCell {
                     x: px,
                     y,
@@ -202,8 +202,8 @@ mod tests {
         assert!(m.cells[0].focus_row);
         // Later columns share the row's focus but not the column focus.
         assert!(!m.cells[1].focus_col);
-        // All tiles carry a status.
-        assert!(m.cells.iter().all(|c| c.status == PaneStatus::Running));
+        // All tiles carry a status; fresh panes claim nothing.
+        assert!(m.cells.iter().all(|c| c.status == PaneStatus::Plain));
     }
 
     #[test]
@@ -255,6 +255,20 @@ mod tests {
         // Tiles tile contiguously left-to-right with no gaps/overlap.
         assert_eq!(r3_cells[0].x, 0);
         assert_eq!(r3_cells[1].x, 8);
+    }
+
+    #[test]
+    fn status_helpers_separate_attention_from_reporting() {
+        assert!(PaneStatus::Idle.is_attention());
+        assert!(PaneStatus::Failed.is_attention());
+        assert!(!PaneStatus::Plain.is_attention());
+        assert!(!PaneStatus::Running.is_attention());
+        assert!(!PaneStatus::Done.is_attention());
+        assert!(!PaneStatus::Plain.is_reportable());
+        assert!(PaneStatus::Running.is_reportable());
+        assert!(PaneStatus::Idle.is_reportable());
+        assert!(PaneStatus::Done.is_reportable());
+        assert!(PaneStatus::Failed.is_reportable());
     }
 
     #[test]
