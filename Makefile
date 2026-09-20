@@ -65,15 +65,8 @@ install: build $(if $(KEEP_CONFIG),,reset-config)
 	fi; \
 	mv -f "$$tmp" "$$dir/gwae"; \
 	echo "installed gwae -> $$dir/gwae (atomic: cp .new -> codesign -> mv)"; \
-	state_dir="$${XDG_STATE_HOME:-$$HOME/.local/state}/gwae"; \
-	if mkdir -p "$$state_dir" 2>/dev/null; then \
-		version="$$($$dir/gwae --version 2>/dev/null || true)"; \
-		version="$${version##* }"; \
-		{ echo "# Written by gwae's Makefile (make install); read by gwae upgrade. Safe to delete."; \
-		  echo 'source = "source"'; \
-		  echo "dir = \"$$dir\""; \
-		  echo "version = \"$$version\""; \
-		} > "$$state_dir/install.toml"; \
+	if [ -f "$${XDG_STATE_HOME:-$$HOME/.local/state}/gwae/install.toml" ]; then \
+		echo "note: kept existing install receipt (dev install does not claim the upgrade route)"; \
 	fi
 
 ## Install without clearing preferences.

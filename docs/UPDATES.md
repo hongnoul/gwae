@@ -137,8 +137,10 @@ version = "1.0.1"
 ```
 
 Detection honours the receipt while the binary sits in the directory it
-names. `make install` writes the same file with `source = "source"`.
-Homebrew needs no receipt: the Cellar path identifies the install on its own.
+names. `make install` deliberately leaves the receipt alone: a dev install
+must not claim the upgrade route, so detection falls back to the `target/`
+path heuristic (`source`). Homebrew needs no receipt: the Cellar path
+identifies the install on its own.
 
 State, not config: it is machine-written bookkeeping, so it stays out of
 `~/.config/gwae`, which is a directory the user is invited to hand-edit.
