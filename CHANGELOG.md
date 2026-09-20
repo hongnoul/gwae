@@ -6,6 +6,9 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- **The Option-hold dashboard appears with a lone pane.** Holding `⌥` with a single pane used to paint nothing; it now shows a one-tile dashboard with its tally, so the hold always answers where focus is.
+
 ### Changed
 - **Keep-awake is off by default.** Fresh runs let the Mac sleep as normal. Opt in with `keep_awake = true` or `⌥+w`. `GWAE_NO_KEEP_AWAKE=1` still forces it off.
 - **The spatial dashboard follows focus past `max_rows`.** The centered `⌥` panel and the corner `overlay` used to pin the first rows, stranding focus past line 6 with no tile. Both now window around the focused strip (centered in the middle, pinned at the ends), with cut strips counted (`⋯ +N↑`/`↓` on the panel, `+N↑`/`+N↓` in the overlay summary). Click-to-focus and the overlay chevron track the window.

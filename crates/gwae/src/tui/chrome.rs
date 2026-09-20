@@ -1763,6 +1763,14 @@ mod tests {
         assert_eq!(lone.row_y.len(), 1, "one tile row");
         assert_eq!(lone.map.cells.len(), 1, "one tile");
         assert!(lone.tally_y.is_some(), "lone tally stays");
+        // Clicking the lone tile resolves to the only pane, so the plan and
+        // the click path agree even with nowhere else to focus.
+        let pid = single.panes.keys().next().copied().unwrap();
+        assert_eq!(
+            hud_pane_at(&lone, lone.map_ox, lone.row_y[0]),
+            Some(pid),
+            "lone tile click focuses the pane"
+        );
     }
 
     #[test]
