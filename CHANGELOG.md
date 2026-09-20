@@ -7,6 +7,7 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Fixed
+- **`⌥+w` confirms the keep-awake flip.** The toggle used to flip silently with no on-screen feedback, so a press that dismissed the HUD read as broken. It now shows a one-line note (`keep-awake on/off`, saved or session-only) and names the blocker when the assertion cannot be held.
 - **The Option-hold dashboard appears with a lone pane.** Holding `⌥` with a single pane used to paint nothing; it now shows a one-tile dashboard with its tally, so the hold always answers where focus is.
 
 ### Changed
