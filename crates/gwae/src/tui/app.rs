@@ -1326,8 +1326,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     // bottom-left note confirms the flip.
                                     if !cfg!(target_os = "macos") {
                                         reload_note_anchor = None;
-                                        reload_note =
-                                            Some("keep-awake is macOS-only".to_string());
+                                        reload_note = Some("keep-awake is macOS-only".to_string());
                                         reload_note_until = Some(Instant::now() + NOTE_LINGER);
                                     } else {
                                         cfg.keep_awake = !cfg.keep_awake;
