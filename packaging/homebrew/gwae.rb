@@ -21,6 +21,15 @@ class Gwae < Formula
     bin.install "gwae"
   end
 
+  def caveats
+    <<~EOS
+      gwae is on your PATH via Homebrew, so it works in this terminal
+      and every fresh one right after install. No setup needed:
+        gwae        # start (Esc dismisses the help overlay)
+        gwae init   # guided setup, safe to re-run
+    EOS
+  end
+
   test do
     system "#{bin}/gwae", "doctor"
   end

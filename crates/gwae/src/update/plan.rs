@@ -2,7 +2,7 @@
 
 use super::source::Source;
 use super::REPO;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // What upgrading would take
@@ -10,12 +10,17 @@ use std::path::Path;
 
 /// The upgrade route for a given [`Source`].
 ///
-/// Homebrew is the canonical route. Everything else is legacy: detected so
-/// old installs get a truthful answer, but new installs should use
-/// `brew install hongnoul/tap/gwae`.
+/// Homebrew is the primary install; the curl installer (`scripts/install.sh`,
+/// served from the site) is the supported fallback for machines without
+/// Homebrew. Both are first-class: detection tells them apart via the install
+/// receipt, and each upgrades the way it was installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Plan {
-    /// `brew upgrade gwae`.
+    /// Re-run `scripts/install.sh` into the directory this binary lives in.
+    /// The installer owns download, checksum, and atomic install, so
+    /// upgrading is deliberately the same code path as installing.
+    Script { dir: PathBuf },
+    /// `brew upgrade gwae` (primary).
     Brew,
     /// `cargo install gwae --locked --force` (legacy).
     Cargo,
@@ -35,11 +40,24 @@ impl Plan {
     /// "would this run something?" a single `is_empty()` at the call site
     /// rather than a match that has to be kept in sync.
     ///
-    /// Only [`Plan::Brew`] and the legacy cargo routes run anything;
-    /// everything else prints. `gwae upgrade` itself is check-only and never
-    /// executes even these: it prints the command for the user to run.
+    /// Only [`Plan::Script`], [`Plan::Brew`], and the legacy cargo routes run
+    /// anything; everything else prints. `gwae upgrade` itself is check-only
+    /// and never executes even these: it prints the command for the user to run.
     pub fn commands(&self) -> Vec<(String, Vec<String>)> {
         match self {
+            Plan::Script { dir } => {
+                let url =
+                    format!("https://raw.githubusercontent.com/{REPO}/main/scripts/install.sh");
+                // Piping the installer to bash is exactly what the user did
+                // to get here, and it keeps checksum verification in one
+                // place. `GWAE_INSTALL_DIR` pins the destination so an
+                // upgrade cannot silently relocate the binary.
+                let script = format!(
+                    "curl -fsSL {url} | GWAE_INSTALL_DIR={} bash",
+                    shell_quote(&dir.to_string_lossy())
+                );
+                vec![("/bin/bash".into(), vec!["-c".into(), script])]
+            }
             Plan::Brew => vec![("brew".into(), vec!["upgrade".into(), "gwae".into()])],
             Plan::Cargo => vec![(
                 "cargo".into(),
@@ -69,6 +87,9 @@ impl Plan {
     /// the words of the tool that will do it.
     pub fn describe(&self) -> String {
         match self {
+            Plan::Script { dir } => {
+                format!("re-run the installer into {}", dir.display())
+            }
             Plan::Brew => "brew upgrade gwae".to_string(),
             Plan::Cargo => "cargo install gwae --locked --force".to_string(),
             Plan::CargoGit => {
@@ -82,13 +103,17 @@ impl Plan {
 
 /// Decide the upgrade route from the source. Pure.
 ///
-/// Homebrew is the canonical route. The `Managed` arms are the legacy
-/// installs owned by something that would be actively damaged by us writing
-/// over the file, so those turn into instructions rather than actions.
-pub fn plan(source: Source, _exe: &Path) -> Plan {
+/// The `Managed` arms are the installs owned by something that would be
+/// actively damaged by us writing over the file, so those turn into
+/// instructions rather than actions. Brew and the curl installer are both
+/// first-class: we own those files outright.
+pub fn plan(source: Source, exe: &Path) -> Plan {
     match source {
-        Source::Script => Plan::Managed {
-            how: "the install.sh route is retired: reinstall with `brew install hongnoul/tap/gwae`",
+        Source::Script => Plan::Script {
+            dir: exe
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from(".")),
         },
         Source::Homebrew => Plan::Brew,
         Source::Cargo => Plan::Cargo,
@@ -106,6 +131,15 @@ pub fn plan(source: Source, _exe: &Path) -> Plan {
         },
         Source::Unknown => Plan::Ask,
     }
+}
+
+/// Minimal POSIX shell quoting for a path interpolated into `bash -c`.
+///
+/// Only ever applied to a directory *we* resolved from `current_exe`, but a
+/// path with a space in it is ordinary on macOS and would otherwise split the
+/// assignment into a command.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 // ---------------------------------------------------------------------------
@@ -163,15 +197,19 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn the_retired_script_route_points_at_brew_and_runs_nothing() {
+    fn the_script_plan_pins_the_install_dir_and_quotes_it() {
         let p = plan(Source::Script, Path::new("/Users/my name/.local/bin/gwae"));
+        let cmds = p.commands();
+        assert_eq!(cmds.len(), 1, "script route must run: {p:?}");
+        let script = &cmds[0].1[1];
         assert!(
-            p.commands().is_empty(),
-            "retired route must never run: {p:?}"
+            script.contains("GWAE_INSTALL_DIR='/Users/my name/.local/bin'"),
+            "install dir must survive a space: {script}"
         );
+        assert!(script.contains("scripts/install.sh"));
         assert!(
-            p.describe().contains("brew install"),
-            "must point at brew: {}",
+            p.describe().contains("/Users/my name/.local/bin"),
+            "must name the dir: {}",
             p.describe()
         );
     }
@@ -214,13 +252,13 @@ mod tests {
         let n = notice("1.0.1", "1.0.2", &Plan::Brew);
         assert!(n.contains("1.0.2 is out"), "{n}");
         assert!(n.contains("brew upgrade gwae"), "{n}");
-        // Retired routes print their reinstall advice, not a runnable command.
+        // Routes we drive ourselves point at the installer re-run, not a raw binary.
         let n = notice(
             "1.0.1",
             "1.0.2",
             &plan(Source::Script, Path::new("/b/gwae")),
         );
-        assert!(n.contains("brew install"), "{n}");
+        assert!(n.contains("re-run the installer"), "{n}");
     }
 
     #[test]

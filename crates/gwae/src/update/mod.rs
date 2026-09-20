@@ -1,8 +1,10 @@
 //! Staying current: how an *already installed* gwae learns about a new
 //! version, and how it moves to one (ADR-016).
 //!
-//! Homebrew is the absolute source of truth: `brew install hongnoul/tap/gwae`
-//! installs, `brew upgrade gwae` upgrades. Every other source below is legacy
+//! Homebrew is the primary install (`brew install hongnoul/tap/gwae`,
+//! upgraded with `brew upgrade gwae`); the curl installer
+//! (`scripts/install.sh`, served from the site) is the supported fallback
+//! for machines without Homebrew. Every other source below is legacy
 //! detection so old installs get a truthful answer, not a supported route.
 //!
 //! The rule this module exists to enforce is one sentence: **gwae updates
@@ -18,14 +20,13 @@
 //! 1. **Where did this binary come from?** [`Source`], decided by
 //!    [`detect`] from facts ([`Facts`]) rather than probed inline, so every
 //!    branch is testable without owning five differently-installed machines.
-//!    Order of authority: the user's config, then the legacy receipt the
-//!    retired installer left behind, then the path the running binary
-//!    sits at. A guess is always labelled as one ([`Source::Unknown`]).
+//!    Order of authority: the user's config, then the receipt the curl
+//!    installer (or `make install`) left behind, then the path the running
+//!    binary sits at. A guess is always labelled as one ([`Source::Unknown`]).
 //! 2. **What would upgrading take?** [`plan`], pure, yielding either a
 //!    command we are willing to run ([`Plan::commands`]) or an explanation of
 //!    the one command *you* should run when the answer belongs to a package
-//!    manager we must not fight — or to a retired route that now means
-//!    reinstalling with Homebrew.
+//!    manager we must not fight.
 //! 3. **Is there anything to upgrade to?** [`latest_version`] asks GitHub's
 //!    `releases/latest` redirect for a tag. That request is a bare HTTP HEAD:
 //!    it carries no version, no machine id, and nothing about the user, and

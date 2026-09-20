@@ -198,6 +198,9 @@ jobs:
 
           # --- also patch the source-of-truth copy in this repo so next checkout is not stale ---
           # Push directly to main with GITHUB_TOKEN (no PR needed — this is machine bookkeeping).
+          # Mirror scripts/install.sh to docs/install.sh so Pages serves the
+          # curl URL (https://hongnoul.github.io/gwae/install.sh). The docs
+          # copy is generated: edit scripts/install.sh, never docs/install.sh.
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$TMP/gwae"
           cd "$TMP/gwae"
           git fetch origin main --depth=1 || true
@@ -206,11 +209,12 @@ jobs:
           git config user.email "gwae-bot@hongnoul.github.io"
           # Overwrite packaging file with the same generated content
           cp "$TMP/tap/Formula/gwae.rb" packaging/homebrew/gwae.rb
-          git add packaging/homebrew/gwae.rb 2>/dev/null || true
+          if [ -f scripts/install.sh ]; then cp scripts/install.sh docs/install.sh; fi
+          git add packaging/homebrew/gwae.rb docs/install.sh 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "gwae main already up to date"
           else
-            git commit -m "release: sync Homebrew formula to v${VERSION} [skip ci]"
+            git commit -m "release: sync Homebrew formula + Pages installer to v${VERSION} [skip ci]"
             git push origin main
-            echo "synced formula to main@${VERSION}"
+            echo "synced formula + installer to main@${VERSION}"
           fi

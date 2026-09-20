@@ -175,9 +175,11 @@
 
       <section id="install">
         <h2>Install</h2>
-        <p>macOS only. Homebrew is the one supported install.</p>
+        <p>macOS only. Homebrew is the primary install and works in the same terminal right after install.</p>
         <pre><code>brew install hongnoul/tap/gwae</code></pre>
-        <p>Upgrade with <code>brew upgrade gwae</code>. Windows and Linux are sunset: no builds ship.</p>
+        <p>No Homebrew? The curl installer lands in <code>~/.local/bin</code>, adds it to your shell PATH, and prints the one line that activates it in the current terminal:</p>
+        <pre><code>curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash</code></pre>
+        <p>Upgrade the same way you installed: <code>brew upgrade gwae</code>, or re-run the installer. <code>gwae upgrade</code> prints the exact command for your machine. Windows and Linux are sunset: no builds ship.</p>
       </section>
 
       <section id="try">

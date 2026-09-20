@@ -6,11 +6,12 @@ this file is the decision and its reasoning (ADR-016).
 
 ## The rule
 
-**Homebrew is the absolute source of truth for deployments.**
-`brew install hongnoul/tap/gwae` is the one supported install;
-`brew upgrade gwae` is the one supported upgrade. Every other route below is
-legacy: detection still tells the truth about old installs, but new installs
-should use Homebrew.
+**Homebrew is the primary install; the curl installer is the supported fallback.**
+`brew install hongnoul/tap/gwae` is the main route (`brew upgrade gwae` to
+update). Without Homebrew, `curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash`
+installs to `~/.local/bin` with checksum verification, PATH setup, and an
+install receipt, and re-running it is the upgrade. Every other route below is
+legacy: detection still tells the truth about old installs.
 
 **gwae updates itself the way it was installed, or not at all.**
 
@@ -48,7 +49,7 @@ five differently-installed machines.
 Path heuristics, after resolving symlinks (Homebrew links `bin/gwae` into the
 Cellar, and the unresolved path hides the one marker that identifies it):
 
-- `/opt/homebrew/**`, `**/Cellar/**` → `brew` (canonical).
+- `/opt/homebrew/**`, `**/Cellar/**` → `brew` (primary).
 - `**/target/{release,debug}/**` → `source` (someone running their own checkout).
 - `**/linuxbrew/**` → `brew` (legacy Linuxbrew reading).
 - `**/.cargo/bin/**` → `cargo`, refined to `cargo-git` or `source` by the entry in `~/.cargo/.crates.toml` (legacy).
@@ -67,8 +68,8 @@ gwae explains instead of acting.
 
 | Source | Route | gwae runs it? |
 |---|---|---|
-| `brew` | `brew upgrade gwae` | yes (canonical) |
-| `install.sh` | Retired installer (file removed): reinstall with `brew install hongnoul/tap/gwae` | **no**, printed |
+| `brew` | `brew upgrade gwae` | yes (primary) |
+| `install.sh` | Re-run the installer into the current dir (`curl .../install.sh \| GWAE_INSTALL_DIR=<dir> bash`) | yes (supported fallback) |
 | `cargo` | `cargo install gwae --locked --force` | yes (legacy) |
 | `cargo-git` | `cargo install --git .../gwae gwae --locked --force` | yes (legacy) |
 | `source` | `git pull && make install` | **no**, printed |
@@ -81,10 +82,11 @@ returns an empty vector for them, so "will this run something?" is one
 `is_empty()` at the call site rather than a match that has to be kept in sync
 with a growing enum.
 
-The retired `install.sh` route resolves to a reinstall-with-Homebrew
-instruction. The installer file is removed, so there is nothing to re-run;
-surviving receipts still identify the install truthfully instead of falling
-through to `unknown`.
+Re-running `install.sh` *is* the upgrade for the curl route, deliberately:
+download, checksum verification, and atomic install already live there, so a
+second implementation inside the binary would mean two places where checksum
+verification can be forgotten. `GWAE_INSTALL_DIR` pins the destination so an
+upgrade cannot silently relocate the binary.
 
 ### 3. Is there anything to upgrade to?
 
@@ -124,9 +126,9 @@ response is a URL. gwae cannot count its users this way, and that is fine.
   `GWAE_NO_UPDATE_CHECK=1` in the environment. The env var wins, so a CI runner
   or a shared machine can be made quiet without editing a file it may not own.
 
-## The install receipt (legacy)
+## The install receipt
 
-The removed `scripts/install.sh` wrote `$XDG_STATE_HOME/gwae/install.toml`:
+`scripts/install.sh` writes `$XDG_STATE_HOME/gwae/install.toml`:
 
 ```toml
 source = "install.sh"
@@ -134,10 +136,9 @@ dir = "/Users/u/.local/bin"
 version = "1.0.1"
 ```
 
-Detection still honours surviving receipts while the binary sits in the
-directory they name. `make install` writes the same file with
-`source = "source"`. New installs should use Homebrew, which needs no receipt:
-the Cellar path identifies the install on its own.
+Detection honours the receipt while the binary sits in the directory it
+names. `make install` writes the same file with `source = "source"`.
+Homebrew needs no receipt: the Cellar path identifies the install on its own.
 
 State, not config: it is machine-written bookkeeping, so it stays out of
 `~/.config/gwae`, which is a directory the user is invited to hand-edit.
@@ -171,7 +172,7 @@ people will actually see it.
 [update]
 check = true      # daily check + one-line notice; false to go quiet
 source = ""       # "" detects; or pin: brew, install.sh, cargo, cargo-git,
-                  # source, nix, system (brew is canonical)
+                  # source, nix, system (brew primary, install.sh fallback)
 ```
 
 An unrecognized `source` is reported by `gwae doctor` and otherwise ignored, and

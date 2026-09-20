@@ -285,7 +285,8 @@ pub struct Update {
     /// `GWAE_NO_UPDATE_CHECK=1` turns it off without editing this file.
     pub check: bool,
     /// How this gwae was installed, when the automatic detection is wrong or
-    /// cannot tell. `brew` is the canonical route; the rest are legacy
+    /// cannot tell. `brew` is the primary route, `install.sh` the supported
+    /// fallback; the rest are legacy
     /// routes detection still understands. One of `brew`, `install.sh`,
     /// `cargo`, `cargo-git`, `source`, `nix`, `system`. Empty (the default) means
     /// "detect it", which uses the installer's receipt when there is one and

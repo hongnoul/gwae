@@ -22,13 +22,19 @@ Add columns beyond the screen edge, then move between them without shrinking the
 
 ## Install
 
-macOS only. Homebrew is the one supported install and the absolute source of truth for deployments.
+macOS only. Homebrew is the primary install and works in the same terminal right after install.
 
 ```bash
 brew install hongnoul/tap/gwae
 ```
 
-Upgrade the same way:
+No Homebrew? The curl installer lands in `~/.local/bin`, adds it to your shell PATH, and prints the one line that activates it in the current terminal:
+
+```bash
+curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
+```
+
+Upgrade the same way you installed (`brew upgrade gwae`, or re-run the installer):
 
 ```bash
 brew upgrade gwae

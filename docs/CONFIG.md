@@ -27,7 +27,7 @@ show_counts = true
 [update]
 check = true                 # daily "a new gwae is out" notice; false = silent
 source = ""                  # "" detects; or pin: brew, install.sh, cargo,
-                             # cargo-git, source, nix, system (brew is canonical)
+                             # cargo-git, source, nix, system (brew primary, install.sh fallback)
 ```
 
 ## Responsive Yazi panels
@@ -40,8 +40,11 @@ Yazi unchanged. Panes wrap at the visible width, so Yazi sees the pane width.
 
 ## Staying up to date (`[update]`)
 
-Homebrew is the canonical install: `brew install hongnoul/tap/gwae`, upgraded
-with `brew upgrade gwae`. gwae upgrades **the way it was installed, or not at
+Homebrew is the primary install: `brew install hongnoul/tap/gwae`, upgraded
+with `brew upgrade gwae`. Without Homebrew, the curl installer
+(`curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash`) is the
+supported fallback: it verifies the checksum, sets up PATH, and re-running
+it upgrades. gwae upgrades **the way it was installed, or not at
 all**: `gwae upgrade` prints the exact command for this machine and runs it
 for routes it owns, and only *prints* the command for routes another package
 manager owns (a checkout you built yourself, or a legacy Nix / distro install).

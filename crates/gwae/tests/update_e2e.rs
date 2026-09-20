@@ -140,8 +140,8 @@ fn an_install_receipt_decides_the_route_over_the_path() {
         "the receipt must beat the target/ path heuristic: {line}"
     );
     assert!(
-        line.contains("brew install"),
-        "retired script route must point at brew: {line}"
+        line.contains("re-run the installer"),
+        "curl route upgrades by re-running the installer: {line}"
     );
 }
 

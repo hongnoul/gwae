@@ -9,18 +9,17 @@ use std::path::{Path, PathBuf};
 
 /// How gwae got onto this machine, which decides how it may leave.
 ///
-/// gwae is macOS-only and ships via Homebrew (`brew install
-/// hongnoul/tap/gwae`). The other variants exist so a binary installed any
-/// other way is still told the truth about its own route instead of being
-/// guessed at.
+/// gwae is macOS-only. Homebrew (`brew install hongnoul/tap/gwae`) is the
+/// primary install; the curl installer (`scripts/install.sh`, served from the
+/// site) is the supported fallback. The other variants exist so a binary
+/// installed any other way is still told the truth about its own route
+/// instead of being guessed at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// `scripts/install.sh` put a release binary in a plain directory.
-    /// The installer is retired and removed: this source now resolves to a
-    /// reinstall-with-Homebrew instruction. Kept so surviving receipts and
-    /// old configs still get a truthful answer instead of `unknown`.
+    /// `scripts/install.sh` put a release binary in a plain directory. We own
+    /// that file outright, so re-running the installer is the upgrade.
     Script,
-    /// Homebrew (the tap). `brew upgrade gwae`. The canonical route.
+    /// Homebrew (the tap). `brew upgrade gwae`. The primary route.
     Homebrew,
     /// `cargo install gwae` from crates.io. Legacy: new installs should use
     /// Homebrew.
@@ -81,8 +80,8 @@ impl Source {
     }
 
     /// Every name a user may write, for error messages.
-    /// Brew first: the canonical route is listed first and the docs point
-    /// there. The rest are legacy routes detection still understands.
+    /// Brew first, curl second: the two supported routes lead, and the docs
+    /// point there. The rest are legacy routes detection still understands.
     pub const NAMES: &'static [&'static str] = &[
         "brew",
         "install.sh",
@@ -125,7 +124,7 @@ pub enum CargoOrigin {
     Path,
 }
 
-/// The note the retired `scripts/install.sh` left, so the source is *known* rather than
+/// The note `scripts/install.sh` leaves, so the source is *known* rather than
 /// inferred from a path that a user may well have moved the binary to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Receipt {
