@@ -374,13 +374,16 @@ pub(crate) struct HudPlan {
     pub(crate) rulers: Vec<Option<(usize, usize)>>,
     /// Screen x of map cell 0 (past the frame and the strip gutter).
     pub(crate) map_ox: u16,
-    /// Gutter labels, one per strip, and the gutter's width in cells.
+    /// Gutter labels, one per shown strip, and the gutter's width in cells.
     pub(crate) gutter: Vec<String>,
     pub(crate) gutter_w: u16,
-    /// The tiles to paint (already limited to the shown strips).
+    /// The tiles to paint (already limited to the shown strips, with `y`
+    /// rebased to the shown window so `0` is the first visible strip).
     pub(crate) map: gwae_layout::minimap::Minimap,
-    /// Strips cut off the bottom, if any.
+    /// Strips cut off the window, if any (total above + below).
     pub(crate) hidden: usize,
+    /// Strips cut off above the shown window (0 when pinned to the top).
+    pub(crate) hidden_before: usize,
     /// Inner width, and the first inner row/column.
     pub(crate) inner_w: usize,
     pub(crate) inner_ox: usize,
@@ -435,8 +438,8 @@ pub(crate) fn plan_center_minimap(
         return None;
     }
 
-    // Strip gutter: just the strip number.
-    let gutter: Vec<String> = layout
+    // Strip gutter: just the strip number (windowed below with the map).
+    let all_gutter: Vec<String> = layout
         .rows
         .iter()
         .enumerate()
@@ -445,7 +448,7 @@ pub(crate) fn plan_center_minimap(
     let gutter_w = if single {
         0
     } else {
-        gutter
+        all_gutter
             .iter()
             .map(|g| g.chars().count())
             .max()
@@ -466,15 +469,52 @@ pub(crate) fn plan_center_minimap(
     // against each other, and stretching a two-column strip to the width of a
     // six-column one makes the short strip look long.
     let map = minimap::build_scaled(layout, width, cols, minimap::Scale::Proportional);
-    let shown_rows = mm.max_rows.min(map.height).min(rows.saturating_sub(6));
-    if !single && (shown_rows == 0 || map.width == 0) {
+    let capacity = mm.max_rows.min(map.height).min(rows.saturating_sub(6));
+    if !single && (capacity == 0 || map.width == 0) {
         return None;
     }
+    // The window follows focus: strips past `max_rows` stay reachable instead
+    // of being silently cut off the bottom. Pinned to the top while focus is
+    // early, to the bottom while it is late, and centered on focus between.
+    let focus_row = layout
+        .rows
+        .iter()
+        .position(|r| r.id == layout.focus.row)
+        .unwrap_or(0);
+    let shown_rows = capacity.min(map.height);
+    let start: usize = if (map.height as usize) <= shown_rows as usize || single {
+        0
+    } else {
+        let max_start = (map.height as usize).saturating_sub(shown_rows as usize);
+        (focus_row.saturating_sub(shown_rows as usize / 2)).min(max_start)
+    };
+    let end = start.saturating_add(shown_rows as usize);
+    let hidden_before = if single { 0 } else { start };
     let hidden = if single {
         0
     } else {
         (map.height as usize).saturating_sub(shown_rows as usize)
     };
+    let gutter: Vec<String> = if single {
+        all_gutter
+    } else {
+        all_gutter
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i >= start && *i < end)
+            .map(|(_, g)| g.clone())
+            .collect()
+    };
+    // Rebase the shown tiles so `y = 0` is the first visible strip: paint
+    // and click-to-focus both index into the window, not the full layout.
+    let mut map = map;
+    if !single && (start > 0 || (map.height as usize) > shown_rows as usize) {
+        map.cells.retain(|c| (c.y as usize) >= start && (c.y as usize) < end);
+        for c in map.cells.iter_mut() {
+            c.y -= start as u16;
+        }
+        map.height = shown_rows;
+    }
 
     // Each strip that overflows the screen gets a ruler row under its tiles,
     // so the two always read together.
@@ -482,7 +522,7 @@ pub(crate) fn plan_center_minimap(
         Vec::new()
     } else {
         (0..shown_rows as usize)
-            .map(|i| visible_column_range(layout, i, cols))
+            .map(|i| visible_column_range(layout, start + i, cols))
             .collect()
     };
     let ruler_rows = rulers.iter().filter(|r| r.is_some()).count();
@@ -542,6 +582,7 @@ pub(crate) fn plan_center_minimap(
         gutter_w,
         map,
         hidden,
+        hidden_before,
         inner_w,
         inner_ox,
         tally_y,
@@ -675,11 +716,11 @@ pub(crate) fn paint_center_minimap(
         }
     };
     let map_ox = plan.map_ox as usize;
-    // Strip gutter.
+    // Strip gutter (windowed: `gutter[i]` names layout strip `hidden_before + i`).
     for (i, gy) in plan.row_y.iter().enumerate() {
         let focused = layout
             .rows
-            .get(i)
+            .get(plan.hidden_before + i)
             .map(|r| r.id == layout.focus.row)
             .unwrap_or(false);
         let label = plan.gutter.get(i).cloned().unwrap_or_default();
@@ -762,13 +803,22 @@ pub(crate) fn paint_center_minimap(
             );
         }
     }
-    // Truncation is never silent: strips past the cut are counted.
+    // Truncation is never silent: strips cut off above/below are counted.
     if plan.hidden > 0 {
-        let more = format!(
-            "⋯ +{} strip{}",
-            plan.hidden,
-            if plan.hidden == 1 { "" } else { "s" }
-        );
+        let after = plan.hidden.saturating_sub(plan.hidden_before);
+        let more = match (plan.hidden_before, after) {
+            (0, _) => format!(
+                "⋯ +{} strip{} ↓",
+                after,
+                if after == 1 { "" } else { "s" }
+            ),
+            (_, 0) => format!(
+                "⋯ +{} strip{} ↑",
+                plan.hidden_before,
+                if plan.hidden_before == 1 { "" } else { "s" }
+            ),
+            _ => format!("⋯ +{}↑ +{}↓", plan.hidden_before, after),
+        };
         write(
             out,
             inner_ox,
@@ -1959,6 +2009,53 @@ mod tests {
         );
         let text = screen_rows(&out, 100).join("\n");
         assert!(text.contains("+7 strips"), "says how many are cut:\n{text}");
+    }
+
+    #[test]
+    fn dashboard_window_follows_focus_past_max_rows() {
+        // Ten strips with room for three: focus on the last strip must pull
+        // the window down so the focused tile is visible and clickable,
+        // instead of pinning the first three rows forever.
+        let mut layout = Layout::default();
+        for _ in 0..9 {
+            let r = layout.new_row();
+            let p = layout.alloc_pane();
+            layout.add_column(r, gwae_layout::Width::Cells(20), vec![p]);
+        }
+        let mm = crate::config::Minimap {
+            max_rows: 3,
+            ..Default::default()
+        };
+        let last = layout.rows.last().unwrap().id;
+        layout.focus.row = last;
+        let plan = plan_center_minimap(100, 24, &layout, &mm).expect("dashboard fits");
+        assert_eq!(plan.row_y.len(), 3, "capped at max_rows");
+        assert_eq!(plan.hidden_before, 7, "seven strips scrolled off the top");
+        assert_eq!(plan.gutter, vec!["8", "9", "10"], "gutter names the shown strips");
+        assert!(
+            plan.map.cells.iter().any(|c| c.focus_row),
+            "the focused strip must be in the window"
+        );
+        // Clicking the focused row's tile resolves to a pane on that strip.
+        let want: Vec<PaneId> = layout.rows.last().unwrap().columns[0].panes.clone();
+        let y = *plan.row_y.last().unwrap();
+        assert_eq!(
+            hud_pane_at(&plan, plan.map_ox, y),
+            want.first().copied(),
+            "click lands on the focused strip"
+        );
+        let mut out = vec![Cell::default(); 100 * 24];
+        paint_center_minimap(
+            &mut out,
+            100,
+            24,
+            &layout,
+            &plan,
+            &pal_accent(CColor::Idx(36)),
+            &HudFacts::default(),
+        );
+        let text = screen_rows(&out, 100).join("\n");
+        assert!(text.contains("+7 strip"), "says how many are cut above:\n{text}");
     }
 
     #[test]

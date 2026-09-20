@@ -217,7 +217,7 @@ A config file that is not being applied at all points at the syntax error:
 | `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit. Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). |
 | `minimap.mode` | string | `"off"` | Chrome presentation: `off` (no persistent row; `⌥`/Alt reveals centered HUD + minimap), `overlay` (bottom-right corner), `edge_ticks` (frame ticks). Legacy `reserved` / `reserved_quasimode` parse as `off` (no bottom row). |
 | `minimap.max_width` | integer | `32` | Width of the minimap. A hard *cap* for both the corner `overlay` and the centered panel revealed by `⌥`/Alt: the centered panel sizes each tile to its content (status glyph + column address) and never pads out to this number. Lower it to shrink the panel; it never exceeds ⅔ of the screen. |
-| `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown. Used for `overlay` and the centered minimap while holding `⌥`/Alt. Strips past the cut are counted on the panel (`⋯ +3 strips`) rather than silently dropped. |
+| `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown. Used for `overlay` and the centered minimap while holding `⌥`/Alt. The centered panel windows around focus, so strips past line 6 stay reachable. Strips outside the window are counted on the panel (`⋯ +3 strips ↓`, `⋯ +2 strips ↑`) rather than silently dropped. |
 | `minimap.show_counts` | bool | `true` | Summary tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts skipped), above the map. |
 
 ### The centered dashboard (hold `⌥`/Alt)
@@ -235,6 +235,8 @@ questions you actually hold the modifier to ask:
   the viewport - the one thing an infinite strip cannot show by itself.
 * Strips share one scale, so a 2-column strip reads shorter than a 6-column
   one.
+* The window follows focus past `max_rows`: the focused strip is always
+  shown, with cut strips counted above/below, so every strip stays reachable.
 * **Clicking a tile focuses that pane.** The session dims behind the panel.
 
 Tiles degrade gracefully as they narrow: the status glyph always survives,
