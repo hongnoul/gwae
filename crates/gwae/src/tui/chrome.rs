@@ -990,7 +990,7 @@ pub(crate) fn draw_center_hud(
     lines.push(rule('┴'));
     lines.push(format!(
         "{:^width$}",
-        &format!("prefix: {}+key", crate::keys::mod_key()),
+        format!("prefix: {}+key", crate::keys::mod_key()),
         width = table_w
     ));
 
