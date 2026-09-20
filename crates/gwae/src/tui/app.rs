@@ -1048,6 +1048,13 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         | KeyCode::Char('\u{d4}')
                                         | KeyCode::Char('\u{f8ff}')
                                         | KeyCode::Char('\u{d2}')
+                                        | KeyCode::Char('\u{192}')
+                                        | KeyCode::Char('\u{2202}')
+                                        | KeyCode::Char('\u{2211}')
+                                        | KeyCode::Char('\u{222b}')
+                                        | KeyCode::Char('\u{f7}')
+                                        | KeyCode::Char('\u{bf}')
+                                        | KeyCode::Char('\u{da}')
                                 );
                             if alt_chord {
                                 // Short window so tapping Option+h for navigation
@@ -1313,20 +1320,48 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     dirty = true;
                                 }
                                 Cmd::ToggleKeepAwake => {
-                                    // Silent toggle: no bottom-left text. The
-                                    // guard still flips and persists; state
-                                    // reads on the HUD keep-awake badge.
+                                    // Visible toggle: the HUD badge carries the
+                                    // state while an overlay is up, but the
+                                    // toggle itself dismisses the HUD, so a
+                                    // bottom-left note confirms the flip.
                                     if !cfg!(target_os = "macos") {
                                         reload_note_anchor = None;
-                                        reload_note = None;
-                                        reload_note_until = None;
+                                        reload_note =
+                                            Some("keep-awake is macOS-only".to_string());
+                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
                                     } else {
                                         cfg.keep_awake = !cfg.keep_awake;
                                         keep_awake.refresh(cfg.keep_awake);
-                                        let _ = write_keep_awake(&cfg_path, cfg.keep_awake);
+                                        let saved = write_keep_awake(&cfg_path, cfg.keep_awake);
                                         reload_note_anchor = None;
-                                        reload_note = None;
-                                        reload_note_until = None;
+                                        reload_note = Some(match saved {
+                                            Ok(()) => {
+                                                if cfg.keep_awake {
+                                                    if keep_awake.active() {
+                                                        "keep-awake on: Mac stays up while gwae runs (saved)".to_string()
+                                                    } else {
+                                                        format!(
+                                                            "keep-awake on (saved), assertion not held ({})",
+                                                            crate::keepawake::availability_note()
+                                                        )
+                                                    }
+                                                } else {
+                                                    "keep-awake off (saved)".to_string()
+                                                }
+                                            }
+                                            Err(e) => {
+                                                if cfg.keep_awake {
+                                                    format!(
+                                                        "keep-awake on (this session; save error: {e})"
+                                                    )
+                                                } else {
+                                                    format!(
+                                                        "keep-awake off (this session; save error: {e})"
+                                                    )
+                                                }
+                                            }
+                                        });
+                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
                                         // A config write bumps the mtime;
                                         // adopt it now so the reload poll
                                         // does not echo our own toggle back.

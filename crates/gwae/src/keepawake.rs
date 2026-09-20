@@ -109,6 +109,16 @@ pub fn availability() -> Availability {
     }
 }
 
+/// Short human reason the assertion is not held, for toasts.
+pub fn availability_note() -> &'static str {
+    match availability() {
+        Availability::Ready => "caffeinate failed to start",
+        Availability::WrongOs => "macOS only",
+        Availability::OptedOut => "GWAE_NO_KEEP_AWAKE is set",
+        Availability::Missing => "caffeinate not found",
+    }
+}
+
 fn spawn(enabled: bool) -> Option<Child> {
     if !enabled || !matches!(availability(), Availability::Ready) {
         return None;
@@ -243,6 +253,14 @@ mod tests {
     #[test]
     fn probing_the_real_machine_never_panics() {
         let _ = availability();
+        let _ = availability_note();
+    }
+
+    #[test]
+    fn availability_note_names_the_blocker() {
+        // The Opt+W toast stays honest when the guard cannot hold: the
+        // note must name what to unset or install, never read as working.
+        assert!(!availability_note().is_empty());
     }
 
     #[test]
