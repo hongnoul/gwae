@@ -105,6 +105,20 @@ version=$("$INSTALL_DIR/gwae" --version 2>/dev/null) \
   || die "installed binary at ${INSTALL_DIR}/gwae does not run on this machine"
 say "installed ${version} to ${INSTALL_DIR}/gwae"
 
+# A Homebrew gwae elsewhere on PATH would now be shadowed (or shadow this
+# install): say which one wins so `gwae --version` never surprises anyone.
+if command -v brew >/dev/null 2>&1 && brew list gwae >/dev/null 2>&1; then
+  case ":$PATH:" in
+    *":$INSTALL_DIR:"*)
+      first_gwae="$(command -v gwae 2>/dev/null || true)"
+      if [ -n "$first_gwae" ] && [ "$first_gwae" != "$INSTALL_DIR/gwae" ]; then
+        say "note: Homebrew also provides gwae, and ${first_gwae} wins on your current PATH."
+        say "this install (${INSTALL_DIR}/gwae) takes effect in terminals where ${INSTALL_DIR} comes first."
+      fi
+      ;;
+  esac
+fi
+
 # --- receipt ------------------------------------------------------------------
 # Record *how* gwae got here, so `gwae upgrade` knows the route instead of
 # guessing it from the install path. ~/.local/bin is genuinely ambiguous
@@ -214,3 +228,4 @@ add_to_path
 
 say "ready. run 'gwae' to start, or 'gwae init' for the guided setup."
 say "later: 'gwae upgrade' moves you to the next release the same way."
+say "to uninstall: remove ${INSTALL_DIR}/gwae (and the 'added by gwae installer' PATH lines, if any were added above)."
