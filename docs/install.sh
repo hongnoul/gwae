@@ -3,19 +3,47 @@
 #   curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 # Fallback: https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh
 #
-# Installs to ~/.local/bin and makes sure `gwae` works right after install:
-# same terminal (the dir is already on PATH for most devs; otherwise the
-# installer persists a guarded PATH snippet to your shell profile and prints
-# the one-line export that activates it without a restart) and every fresh
-# terminal after that. Override with GWAE_INSTALL_DIR. GWAE_NO_MODIFY_PATH=1
+# Installs into the first writable `*bin` dir already on PATH (preferring
+# `~/.local/bin`), so `gwae` works in this terminal and every fresh one with
+# no profile change and no paste. Only when no PATH dir is writable does it
+# fall back to `~/.local/bin` and persist a guarded PATH snippet to your
+# shell profile, printing the one-line export that activates it here.
+# Override with GWAE_INSTALL_DIR. GWAE_NO_MODIFY_PATH=1
 # opts out of profile writes (CI, scripted setups) and prints instructions.
 set -euo pipefail
 
 REPO="hongnoul/gwae"
-INSTALL_DIR="${GWAE_INSTALL_DIR:-$HOME/.local/bin}"
 
 say() { printf '\033[1;36mgwae:\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mgwae:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Where to put the binary. Explicit `GWAE_INSTALL_DIR` always wins (upgrades
+# pin it so a re-run cannot relocate the binary). Otherwise pick the first
+# writable `*bin` dir already on PATH, so `gwae` works in this terminal and
+# every fresh one with no profile change and no paste. Only when no PATH dir
+# is writable do we fall back to `~/.local/bin` and set up PATH below.
+if [ -n "${GWAE_INSTALL_DIR:-}" ]; then
+  INSTALL_DIR="$GWAE_INSTALL_DIR"
+else
+  INSTALL_DIR=""
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) INSTALL_DIR="$HOME/.local/bin" ;;
+  esac
+  if [ -z "$INSTALL_DIR" ]; then
+    _rest="$PATH"
+    while [ -n "$_rest" ]; do
+      _d="${_rest%%:*}"
+      if [ "$_rest" = "$_d" ]; then _rest=""; else _rest="${_rest#*:}"; fi
+      case "$_d" in *bin) ;; *) continue ;; esac
+      # Never claim system locations even when writable (sudo): they belong
+      # to the OS or a package manager, and overwriting there fights it.
+      case "$_d" in /usr/bin|/bin|/usr/sbin|/sbin|/System/*) continue ;; esac
+      if [ -d "$_d" ] && [ -w "$_d" ]; then INSTALL_DIR="$_d"; break; fi
+    done
+    unset _rest _d
+  fi
+  [ -n "$INSTALL_DIR" ] || INSTALL_DIR="$HOME/.local/bin"
+fi
 
 # --- platform (macOS only) ----------------------------------------------------
 case "$(uname -s)" in

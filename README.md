@@ -40,9 +40,9 @@ Upgrade the same way you installed (`brew upgrade gwae`, or re-run the installer
 brew upgrade gwae
 ```
 
-`gwae doctor` prints the detected install source and the upgrade route. Building from source (`cargo build`, `cargo install --path`) works for development but is not a supported install.
+`gwae doctor` prints the detected install source and the upgrade route. Building from source (`cargo build`, `cargo install --path`) works for development but is not a supported install. If `command -v gwae` points somewhere other than Homebrew after installing, an older copy earlier on PATH is shadowing it: remove it or reorder PATH so `brew install` wins.
 
-> Windows and Linux are sunset. The ConPTY build, scoop bucket, install scripts, AUR, and nix flake are removed. Old binaries keep running but get no updates. Mac-only lets every shortcut, clipboard path, and focus fix assume macOS.
+> Windows and Linux are sunset. Old binaries keep running but get no updates. Mac-only lets every shortcut, clipboard path, and focus fix assume macOS.
 
 ## Try it in 30 seconds
 
