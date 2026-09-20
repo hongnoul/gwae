@@ -358,17 +358,17 @@ fn holding_the_modifier_reveals_a_dashboard_that_names_its_panes() {
 }
 
 #[test]
-fn a_lone_pane_ignores_the_hold() {
-    // One pane has no grid to triage: the hold paints no dashboard. The
-    // only key help is the `⌥+/` cheat-sheet.
+fn a_lone_pane_still_reveals_its_dashboard() {
+    // One pane still gets a one-tile dashboard with its tally, so the hold
+    // always answers where focus is instead of going silent.
     let mut s = Session::start("startup_panes = 1\n");
     let _ = s.drain();
 
     s.send(&alt(b'h'));
     let shown = visible(&s.peek(150));
     assert!(
-        !panel_up(&s),
-        "one pane paints no dashboard; got:\n{shown:?}"
+        panel_up(&s),
+        "one pane still paints a dashboard; got:\n{shown:?}"
     );
     s.kill();
 }

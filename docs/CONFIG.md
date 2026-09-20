@@ -243,8 +243,8 @@ questions you actually hold the modifier to ask:
 * **Clicking a tile focuses that pane.** The session dims behind the panel.
 
 Tiles degrade gracefully as they narrow: the status glyph always survives,
-then the column digit. With a single pane there
-is nothing to triage, so the hold paints no dashboard; key help lives only in
+then the column digit. A lone pane still gets a one-tile dashboard with its
+tally, so the hold always answers where focus is; key help lives only in
 the `⌥+/` cheat-sheet.
 
 Generated from the config structs' doc comments; keep this file in sync when the

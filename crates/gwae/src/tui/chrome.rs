@@ -432,11 +432,6 @@ pub(crate) fn plan_center_minimap(
     if !mm.show || cols < 20 || rows < 8 {
         return None;
     }
-    // A single pane has no grid to triage: nothing to show.
-    let single = layout.panes.len() <= 1 && layout.rows.len() <= 1;
-    if single {
-        return None;
-    }
 
     // Strip gutter: just the strip number (windowed below with the map).
     let all_gutter: Vec<String> = layout
@@ -445,16 +440,12 @@ pub(crate) fn plan_center_minimap(
         .enumerate()
         .map(|(i, _)| format!("{}", i + 1))
         .collect();
-    let gutter_w = if single {
-        0
-    } else {
-        all_gutter
-            .iter()
-            .map(|g| g.chars().count())
-            .max()
-            .unwrap_or(0)
-            .min(10) as u16
-    };
+    let gutter_w = all_gutter
+        .iter()
+        .map(|g| g.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(10) as u16;
     // Frame + gutter + separating space, before the map gets its budget.
     let chrome_w = 2 + gutter_w + u16::from(gutter_w > 0);
     // Tight, not padded: each tile is exactly its content (glyph + address,
@@ -470,7 +461,7 @@ pub(crate) fn plan_center_minimap(
     // six-column one makes the short strip look long.
     let map = minimap::build_scaled(layout, width, cols, minimap::Scale::Proportional);
     let capacity = mm.max_rows.min(map.height).min(rows.saturating_sub(6));
-    if !single && (capacity == 0 || map.width == 0) {
+    if capacity == 0 || map.width == 0 {
         return None;
     }
     // The window follows focus: strips past `max_rows` stay reachable instead
@@ -482,33 +473,25 @@ pub(crate) fn plan_center_minimap(
         .position(|r| r.id == layout.focus.row)
         .unwrap_or(0);
     let shown_rows = capacity.min(map.height);
-    let start: usize = if (map.height as usize) <= shown_rows as usize || single {
+    let start: usize = if (map.height as usize) <= shown_rows as usize {
         0
     } else {
         let max_start = (map.height as usize).saturating_sub(shown_rows as usize);
         (focus_row.saturating_sub(shown_rows as usize / 2)).min(max_start)
     };
     let end = start.saturating_add(shown_rows as usize);
-    let hidden_before = if single { 0 } else { start };
-    let hidden = if single {
-        0
-    } else {
-        (map.height as usize).saturating_sub(shown_rows as usize)
-    };
-    let gutter: Vec<String> = if single {
-        all_gutter
-    } else {
-        all_gutter
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i >= start && *i < end)
-            .map(|(_, g)| g.clone())
-            .collect()
-    };
+    let hidden_before = start;
+    let hidden = (map.height as usize).saturating_sub(shown_rows as usize);
+    let gutter: Vec<String> = all_gutter
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i >= start && *i < end)
+        .map(|(_, g)| g.clone())
+        .collect();
     // Rebase the shown tiles so `y = 0` is the first visible strip: paint
     // and click-to-focus both index into the window, not the full layout.
     let mut map = map;
-    if !single && (start > 0 || (map.height as usize) > shown_rows as usize) {
+    if start > 0 || (map.height as usize) > shown_rows as usize {
         map.cells
             .retain(|c| (c.y as usize) >= start && (c.y as usize) < end);
         for c in map.cells.iter_mut() {
@@ -519,20 +502,12 @@ pub(crate) fn plan_center_minimap(
 
     // Each strip that overflows the screen gets a ruler row under its tiles,
     // so the two always read together.
-    let rulers: Vec<Option<(usize, usize)>> = if single {
-        Vec::new()
-    } else {
-        (0..shown_rows as usize)
-            .map(|i| visible_column_range(layout, start + i, cols))
-            .collect()
-    };
+    let rulers: Vec<Option<(usize, usize)>> = (0..shown_rows as usize)
+        .map(|i| visible_column_range(layout, start + i, cols))
+        .collect();
     let ruler_rows = rulers.iter().filter(|r| r.is_some()).count();
-    let body_rows = if single {
-        0
-    } else {
-        shown_rows as usize + ruler_rows + usize::from(hidden > 0)
-    };
-    let has_summary = mm.show_counts && !single;
+    let body_rows = shown_rows as usize + ruler_rows + usize::from(hidden > 0);
+    let has_summary = mm.show_counts;
     let footer_rows = usize::from(has_summary);
 
     let map_row_w = (gutter_w + u16::from(gutter_w > 0) + map.width) as usize;
@@ -1728,8 +1703,8 @@ mod tests {
             all.contains('✗') || all.contains('»'),
             "status glyph present, got {all:?}"
         );
-        // A single pane has no grid to triage: the panel stays hidden and
-        // the hold is a no-op rather than a wall of hints.
+        // A lone pane still gets a one-tile dashboard with its tally, so
+        // the hold always answers where focus is instead of going silent.
         let single = Layout::new(1);
         let (sc, sr) = (80u16, 24u16);
         let mut out2 = vec![Cell::default(); sc as usize * sr as usize];
@@ -1742,10 +1717,12 @@ mod tests {
             &pal_accent(CColor::Idx(36)),
             &HudFacts::default(),
         );
-        assert!(
-            out2.iter().all(|c| c.ch == ' '),
-            "one pane paints no dashboard"
-        );
+        let frame2 = out2
+            .iter()
+            .any(|c| c.ch == '╭' || c.ch == '╮' || c.ch == '╰' || c.ch == '╯');
+        assert!(frame2, "one pane still paints its dashboard");
+        let all2: String = out2.iter().map(|c| c.ch).collect();
+        assert!(all2.contains('1'), "lone tile carries its address");
     }
 
     #[test]
@@ -1779,10 +1756,13 @@ mod tests {
                 );
             }
         }
-        // A single pane has no grid to triage: no plan at all.
+        // A lone pane still plans a one-tile dashboard with its tally.
         let single = Layout::new(1);
         let mm = crate::config::Minimap::default();
-        assert!(plan_center_minimap(100, 24, &single, &mm).is_none());
+        let lone = plan_center_minimap(100, 24, &single, &mm).expect("lone pane plans");
+        assert_eq!(lone.row_y.len(), 1, "one tile row");
+        assert_eq!(lone.map.cells.len(), 1, "one tile");
+        assert!(lone.tally_y.is_some(), "lone tally stays");
     }
 
     #[test]
