@@ -84,16 +84,20 @@ else
 fi
 
 # --- install (atomic: tmp file -> ad-hoc sign -> rename) -----------------------
+# The staging name is per-process: two concurrent installs (two terminals,
+# an upgrade racing a reinstall) must not share one `gwae.new`.
 tar xzf "$tmp/pkg.tar.gz" -C "$tmp"
 [ -f "$tmp/gwae" ] || die "archive did not contain a gwae binary"
 mkdir -p "$INSTALL_DIR"
-tmp_bin="$INSTALL_DIR/gwae.new"
+tmp_bin="$INSTALL_DIR/gwae.new.$$"
+trap "rm -rf \"\$tmp\" \"$tmp_bin\"" EXIT
 cp "$tmp/gwae" "$tmp_bin"
 chmod 755 "$tmp_bin"
 if command -v codesign >/dev/null 2>&1; then
   codesign -f -s - "$tmp_bin" >/dev/null 2>&1 || true
 fi
 mv -f "$tmp_bin" "$INSTALL_DIR/gwae"
+trap 'rm -rf "$tmp"' EXIT
 
 # Report the version by asking the installed binary, which also proves it
 # executes on this machine before the user ever runs it.
