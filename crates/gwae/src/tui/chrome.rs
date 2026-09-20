@@ -509,7 +509,8 @@ pub(crate) fn plan_center_minimap(
     // and click-to-focus both index into the window, not the full layout.
     let mut map = map;
     if !single && (start > 0 || (map.height as usize) > shown_rows as usize) {
-        map.cells.retain(|c| (c.y as usize) >= start && (c.y as usize) < end);
+        map.cells
+            .retain(|c| (c.y as usize) >= start && (c.y as usize) < end);
         for c in map.cells.iter_mut() {
             c.y -= start as u16;
         }
@@ -807,11 +808,7 @@ pub(crate) fn paint_center_minimap(
     if plan.hidden > 0 {
         let after = plan.hidden.saturating_sub(plan.hidden_before);
         let more = match (plan.hidden_before, after) {
-            (0, _) => format!(
-                "⋯ +{} strip{} ↓",
-                after,
-                if after == 1 { "" } else { "s" }
-            ),
+            (0, _) => format!("⋯ +{} strip{} ↓", after, if after == 1 { "" } else { "s" }),
             (_, 0) => format!(
                 "⋯ +{} strip{} ↑",
                 plan.hidden_before,
@@ -1187,7 +1184,24 @@ pub(crate) fn draw_minimap(
     }
     let width = mm.max_width.min(cols.saturating_sub(2).max(1));
     let map = minimap::build(layout, width, cols);
-    let height = mm.max_rows.min(map.height).min(rows);
+    let capacity = mm.max_rows.min(map.height).min(rows);
+    // The window follows focus, like the centered dashboard: strips past
+    // `max_rows` stay reachable instead of being pinned to the first rows.
+    let focus_row = layout
+        .rows
+        .iter()
+        .position(|r| r.id == layout.focus.row)
+        .unwrap_or(0);
+    let height = capacity.min(map.height);
+    let start: usize = if (map.height as usize) <= height as usize {
+        0
+    } else {
+        let max_start = (map.height as usize).saturating_sub(height as usize);
+        (focus_row.saturating_sub(height as usize / 2)).min(max_start)
+    };
+    let end = start.saturating_add(height as usize);
+    let hidden = (map.height as usize).saturating_sub(height as usize);
+    let hidden_after = hidden.saturating_sub(start);
     let ox = cols - map.width;
     let oy = rows - height;
     let put = |out: &mut [Cell], x: u16, y: u16, ch: char, fg: CColor, bg: CColor, bold: bool| {
@@ -1204,7 +1218,7 @@ pub(crate) fn draw_minimap(
         }
     };
     for tile in &map.cells {
-        if tile.y >= height {
+        if (tile.y as usize) < start || (tile.y as usize) >= end {
             continue;
         }
         let bg = if tile.focus_col {
@@ -1214,7 +1228,7 @@ pub(crate) fn draw_minimap(
         };
         let neutral = !matches!(bg, CColor::Rgb(..));
         let (fg, bg) = tile_colors(bg, pal);
-        let y = oy + tile.y;
+        let y = oy + tile.y - start as u16;
         let glyph = status_glyph(tile.status);
         for dx in 0..tile.w {
             let x = ox + tile.x + dx;
@@ -1267,7 +1281,16 @@ pub(crate) fn draw_minimap(
             }
         }
         // Segments: (text, fg). The total is dim; each tally is colored.
+        // A windowed map counts the cut strips so truncation reads.
         let mut segs: Vec<(String, CColor)> = vec![(format!("{}", layout.panes.len()), pal.text)];
+        if hidden > 0 {
+            let note = match (start, hidden_after) {
+                (0, _) => format!(" +{hidden_after}↓"),
+                (_, 0) => format!(" +{start}↑"),
+                _ => format!(" +{start}↑+{hidden_after}↓"),
+            };
+            segs.push((note, Palette::muted(pal.text)));
+        }
         for (i, s) in statuses.iter().enumerate() {
             if counts[i] > 0 {
                 segs.push((format!(" {}{}", status_glyph(*s), counts[i]), status_fg(*s)));
@@ -1517,6 +1540,39 @@ mod tests {
         assert!(
             bar.trim_start().ends_with("5 »1 !1 ✓1 ✗1"),
             "summary tallies by status, got {bar:?}"
+        );
+    }
+
+    #[test]
+    fn corner_overlay_window_follows_focus_past_max_rows() {
+        use gwae_layout::Width;
+        // Ten strips, room for three: focusing the last strip must keep the
+        // focused tile painted (bottom row of the overlay) instead of leaving
+        // it cut off above the window.
+        let mut layout = Layout::default();
+        for _ in 0..9 {
+            let r = layout.new_row();
+            let p = layout.alloc_pane();
+            layout.add_column(r, Width::Cells(20), vec![p]);
+        }
+        let mm = crate::config::Minimap {
+            max_rows: 3,
+            ..Default::default()
+        };
+        layout.focus.row = layout.rows.last().unwrap().id;
+        let (cols, rows) = (40u16, 8u16);
+        let mut out = vec![Cell::default(); cols as usize * rows as usize];
+        let accent = CColor::Idx(36);
+        draw_minimap(&mut out, cols, rows, &layout, &mm, &pal_accent(accent));
+        let cell = |x: usize, y: usize| out[y * cols as usize + x];
+        // Overlay geometry: width 32, ox = 8, oy = 8 - 3 = 5. The last row
+        // (y = 7) is the focused strip: bold focus tile plus chevron.
+        assert!(cell(8, 7).style.bold, "focused tile reads via bold");
+        assert_eq!(cell(7, 7).ch, '❯', "focused-strip chevron");
+        let bar: String = (0..cols as usize).map(|x| cell(x, 4).ch).collect();
+        assert!(
+            bar.contains('↑'),
+            "summary counts strips cut above, got {bar:?}"
         );
     }
 
@@ -2031,7 +2087,11 @@ mod tests {
         let plan = plan_center_minimap(100, 24, &layout, &mm).expect("dashboard fits");
         assert_eq!(plan.row_y.len(), 3, "capped at max_rows");
         assert_eq!(plan.hidden_before, 7, "seven strips scrolled off the top");
-        assert_eq!(plan.gutter, vec!["8", "9", "10"], "gutter names the shown strips");
+        assert_eq!(
+            plan.gutter,
+            vec!["8", "9", "10"],
+            "gutter names the shown strips"
+        );
         assert!(
             plan.map.cells.iter().any(|c| c.focus_row),
             "the focused strip must be in the window"
@@ -2055,7 +2115,10 @@ mod tests {
             &HudFacts::default(),
         );
         let text = screen_rows(&out, 100).join("\n");
-        assert!(text.contains("+7 strip"), "says how many are cut above:\n{text}");
+        assert!(
+            text.contains("+7 strip"),
+            "says how many are cut above:\n{text}"
+        );
     }
 
     #[test]
@@ -2363,7 +2426,12 @@ mod tests {
     fn build_pill_and_held_note_stamp_the_frame() {
         use super::Rect;
         let pal = pal_accent(CColor::Idx(36));
-        let rect = Rect { x: 0, y: 0, w: 60, h: 8 };
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            w: 60,
+            h: 8,
+        };
         for pill in [
             BuildPill::Building,
             BuildPill::Linking,
@@ -2387,7 +2455,18 @@ mod tests {
         let row: String = out[6 * 60..7 * 60].iter().map(|c| c.ch).collect();
         assert!(row.contains("reload held"), "held note stamps, got {row:?}");
         let mut tiny = vec![Cell::default(); 6 * 2];
-        stamp_build_pill(&mut tiny, 6, Rect { x: 0, y: 0, w: 6, h: 2 }, &pal, BuildPill::Building);
+        stamp_build_pill(
+            &mut tiny,
+            6,
+            Rect {
+                x: 0,
+                y: 0,
+                w: 6,
+                h: 2,
+            },
+            &pal,
+            BuildPill::Building,
+        );
         assert!(tiny.iter().all(|c| c.ch == ' '), "tiny frame stays clean");
     }
 
