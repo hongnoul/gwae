@@ -173,9 +173,12 @@ add_to_path() {
     *zsh*) ensure_block "$HOME/.zshrc" ;;
     *bash*)
       # Bash reads .bash_profile for login shells, .bashrc for interactive
-      # non-login shells. The guard makes writing both safe.
+      # non-login shells; POSIX sh reads .profile, which bash login shells
+      # also fall back to when no bash-specific file exists. The guard makes
+      # writing all three safe.
       ensure_block "$HOME/.bashrc"
       ensure_block "$HOME/.bash_profile"
+      ensure_block "$HOME/.profile"
       ;;
     *) ensure_block "$HOME/.profile" ;;
   esac
