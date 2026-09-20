@@ -1574,6 +1574,19 @@ mod tests {
             bar.contains('↑'),
             "summary counts strips cut above, got {bar:?}"
         );
+        // Middle focus centers the overlay window too: the chevron moves to
+        // the middle row and the summary counts both cut sides.
+        layout.focus.row = layout.rows[5].id;
+        let mut mid = vec![Cell::default(); cols as usize * rows as usize];
+        draw_minimap(&mut mid, cols, rows, &layout, &mm, &pal_accent(accent));
+        let mid_cell = |x: usize, y: usize| mid[y * cols as usize + x];
+        assert_eq!(mid_cell(7, 6).ch, '❯', "chevron follows focus mid-window");
+        assert!(mid_cell(8, 6).style.bold, "focused tile reads via bold");
+        let mid_bar: String = (0..cols as usize).map(|x| mid_cell(x, 4).ch).collect();
+        assert!(
+            mid_bar.contains('↑') && mid_bar.contains('↓'),
+            "both cut sides counted, got {mid_bar:?}"
+        );
     }
 
     #[test]
@@ -2118,6 +2131,34 @@ mod tests {
         assert!(
             text.contains("+7 strip"),
             "says how many are cut above:\n{text}"
+        );
+        // Middle focus centers the window: strips cut on both sides, focus
+        // in the middle row, both arrows in the truncation note.
+        layout.focus.row = layout.rows[5].id;
+        let mid = plan_center_minimap(100, 24, &layout, &mm).expect("dashboard fits");
+        assert_eq!(
+            mid.gutter,
+            vec!["5", "6", "7"],
+            "window centers on the focused strip"
+        );
+        assert_eq!(mid.hidden_before, 4, "four strips cut above");
+        assert_eq!(mid.hidden, 7, "seven cut in total");
+        let focus_pos = mid.map.cells.iter().find(|c| c.focus_row).map(|c| c.y);
+        assert_eq!(focus_pos, Some(1), "focused strip sits mid-window");
+        let mut mid_out = vec![Cell::default(); 100 * 24];
+        paint_center_minimap(
+            &mut mid_out,
+            100,
+            24,
+            &layout,
+            &mid,
+            &pal_accent(CColor::Idx(36)),
+            &HudFacts::default(),
+        );
+        let mid_text = screen_rows(&mid_out, 100).join("\n");
+        assert!(
+            mid_text.contains("+4↑") && mid_text.contains("+3↓"),
+            "both cut sides counted:\n{mid_text}"
         );
     }
 

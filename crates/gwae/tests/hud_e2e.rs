@@ -424,6 +424,69 @@ fn live_columns(s: &mut Session) -> Vec<usize> {
     }
 }
 
+/// Reveal the dashboard until `cond` holds on the emulator screen.
+/// Re-sending the chord is free (each press re-opens the hold), so a loaded
+/// runner that catches a mid-paint frame just retries instead of flaking.
+fn reveal_until(s: &mut Session, cond: impl Fn(&str) -> bool, what: &str) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        s.send(&alt(b'h'));
+        s.peek(150);
+        let text = s.screen.visible_text();
+        if panel_up(s) && cond(&text) {
+            return text;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what}; last got:\n{text:?}"
+        );
+    }
+}
+
+#[test]
+fn dashboard_window_follows_focus_past_max_rows() {
+    // Eight strips with room for six (the default `max_rows`): the window
+    // must follow focus so the focused strip always has a tile, instead of
+    // pinning the first rows and stranding focus past line 6.
+    //
+    // Kitty CSI-u `ESC[13;4u` is the wire form of Alt+Shift+Enter (13 =
+    // Enter, mods 4 = Alt+Shift); `ESC q`-style chords are deliberate
+    // single presses, as in the kill-repeat test above.
+    const NEW_STRIP: &[u8] = b"\x1b[13;4u";
+    let mut s = Session::start("startup_panes = 1\n");
+    let _ = s.drain();
+    for _ in 0..7 {
+        s.send(NEW_STRIP);
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    let _ = s.drain();
+    // Eight strips exist: the dashboard must say exactly two are cut, which
+    // also proves every Alt+Shift+Enter landed (fewer strips → "+1 strip").
+    // New strips take focus, so the window hangs off the bottom: cut above
+    // only, never below.
+    let bottom = reveal_until(
+        &mut s,
+        |t| t.contains("+2 strip"),
+        "eight strips never counted",
+    );
+    assert!(
+        bottom.contains('↑') && !bottom.contains('↓'),
+        "bottom focus cuts above only; got:\n{bottom:?}"
+    );
+    // Walk focus back to the first strip: the window returns to the top.
+    for _ in 0..7 {
+        s.send(&alt(b'k'));
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    let _ = s.drain();
+    let top = reveal_until(&mut s, |t| t.contains("+2 strip"), "strips lost walking up");
+    assert!(
+        top.contains('↓') && !top.contains('↑'),
+        "top focus cuts below only; got:\n{top:?}"
+    );
+    s.kill();
+}
+
 #[test]
 fn held_kill_repeats_cannot_outrun_the_dashboard() {
     // Regression for the stale-HUD kill bug: holding ⌥+q fired key
