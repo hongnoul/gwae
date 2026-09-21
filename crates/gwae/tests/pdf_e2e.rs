@@ -10,6 +10,7 @@
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
@@ -88,10 +89,21 @@ impl Session {
     /// Same as [`start`](Self::start) with an explicit PDF page count, for
     /// tests that turn more pages than the default document holds.
     fn start_with_pages(pages: usize) -> Self {
+        // Unique per session, not just per process: the six tests in this
+        // binary run on parallel threads, and sharing one dir meant sharing
+        // one page.pdf, rewritten with different page counts mid-run. A tdf
+        // past the truncation point then wedged: alive, stable memory, zero
+        // output. (Same NEXT_ID pattern as hud_e2e and agent_e2e.)
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::var_os("JCODE_SCRATCH_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir)
-            .join(format!("gwae-pdf-e2e-{}", std::process::id()));
+            .join(format!(
+                "gwae-pdf-e2e-{}-{}",
+                std::process::id(),
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("gwae")).unwrap();
         let pdf = dir.join("page.pdf");
         write_pdf_pages(&pdf, pages);
