@@ -224,6 +224,28 @@ fn real_tdf_page_redraws_stay_within_a_streamable_frame_budget() {
     }
 }
 
+/// Resident MB of a process, via `ps`.
+fn rss_mb(pid: u32) -> Option<f64> {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    Some(text.trim().parse::<f64>().ok()? / 1024.0)
+}
+
+/// PIDs whose full command line matches `pattern`, via `pgrep -f`.
+fn pids_matching(pattern: &str) -> Vec<u32> {
+    let out = std::process::Command::new("pgrep")
+        .args(["-f", pattern])
+        .output();
+    let Ok(out) = out else { return Vec::new() };
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .filter_map(|p| p.parse().ok())
+        .collect()
+}
+
 /// CPU seconds a process has used so far, via `ps`.
 fn cpu_seconds(pid: u32) -> Option<f64> {
     let out = std::process::Command::new("ps")
@@ -380,6 +402,7 @@ fn deep_page_navigation_keeps_rendering_past_sixty_turns() {
         startup.len()
     );
     let _ = s.drain_until_quiet(Duration::from_millis(500));
+    let gwae_pid = s.child.process_id();
     let mut dark_turns = Vec::new();
     for n in 1..=70 {
         s.writer.write_all(b"l").unwrap();
@@ -402,12 +425,24 @@ fn deep_page_navigation_keeps_rendering_past_sixty_turns() {
         if uploads == 0 {
             dark_turns.push(n);
         }
+        // Every 10 turns, sample the pipeline: tdf RSS growth distinguishes
+        // a viewer-side leak/OOM from a gwae-side upload stall.
+        if n % 10 == 0 {
+            let tdfs = pids_matching("gwae-pdf-e2e");
+            let rss: Vec<String> = tdfs
+                .iter()
+                .map(|p| format!("{p}: {:.0}MB", rss_mb(*p).unwrap_or(-1.0)))
+                .collect();
+            eprintln!("turn {n}: gwae pid {gwae_pid:?}, tdf rss: {rss:?}");
+        }
     }
+    let tdfs = pids_matching("gwae-pdf-e2e");
+    let gwae_cpu = gwae_pid.and_then(cpu_seconds);
     assert!(
         dark_turns.is_empty(),
         "pages went black (no host image upload) on turns {dark_turns:?}; \
-         the child image quota wedged again (gwae pid: {:?})",
-        s.child.process_id()
+         the child image quota wedged again (gwae pid: {gwae_pid:?} cpu: {gwae_cpu:?}s, \
+         tdf pids: {tdfs:?})"
     );
 }
 
