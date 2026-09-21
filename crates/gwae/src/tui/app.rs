@@ -773,7 +773,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 } else if src_changed_at
                     .map(|t| t.elapsed() >= std::time::Duration::from_millis(500))
                     .unwrap_or(false)
-                    && !build_cooldown_until.map(|t| Instant::now() < t).unwrap_or(false)
+                    && !build_cooldown_until
+                        .map(|t| Instant::now() < t)
+                        .unwrap_or(false)
                 {
                     src_changed_at = None;
                     // Snapshot the binary mtime so the outcome check can
@@ -792,7 +794,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     // resolve. Best-effort: failure to spawn just
                     // retries next poll.
                     if let Some(exe) = exe_path.as_deref() {
-                        if let Some(root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+                        if let Some(root) = exe
+                            .parent()
+                            .and_then(|p| p.parent())
+                            .and_then(|p| p.parent())
+                        {
                             cmd.current_dir(root);
                         }
                     }
@@ -832,18 +838,19 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     // the last good image and holds the watch.
                     exec_attempts.retain(|t| t.elapsed() < std::time::Duration::from_secs(60));
                     if exec_attempts.len() >= 3 {
-                        watch_held = Some("reload held: 3 execs in 60s — rebuild manually".to_string());
+                        watch_held =
+                            Some("reload held: 3 execs in 60s — rebuild manually".to_string());
                         tracing::error!("hot reload held: crash-loop guard fired");
                         dirty = true;
                     } else {
                         // Prefer a quiet window so output does not tear
                         // mid-frame: hold the exec until panes go quiet
                         // (300ms) or 2s pass, whichever comes first.
-                        let quiet = last_activity.elapsed() >= std::time::Duration::from_millis(300);
-                        let waited_long_enough = exe_wait_start
-                            .get_or_insert(Instant::now())
-                            .elapsed()
-                            >= std::time::Duration::from_secs(2);
+                        let quiet =
+                            last_activity.elapsed() >= std::time::Duration::from_millis(300);
+                        let waited_long_enough =
+                            exe_wait_start.get_or_insert(Instant::now()).elapsed()
+                                >= std::time::Duration::from_secs(2);
                         if !quiet && !waited_long_enough {
                             // Not quiet yet: re-arm the settle and try
                             // again next tick. The wait clock keeps
@@ -853,41 +860,48 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         } else {
                             exe_wait_start = None;
                             exec_attempts.push(Instant::now());
-                    // Leave the terminal exactly as a normal exit would: the
-                    // tty is kernel state and survives the exec, so a new
-                    // image would otherwise inherit raw mode and the alt
-                    // screen and paint into a screen it never entered.
-                    tracing::info!("hot reload: binary changed, execing new image");
-                    let _ = stdout.write_all(&host_images.clear());
-                    restore_terminal(&mut stdout, kitty_keyboard);
-                    // Drop the sleep assertion before the exec: the new image
-                    // acquires its own guard at startup, and the old
-                    // `caffeinate` (bound with `-w` to this pid) exits with us.
-                    keep_awake.release();
-                    match perform_reload(&layout, &panes, &agent_panes, spawn_dir.as_deref(), boot) {
-                        // `Ok` is uninhabited: the process is gone.
-                        Ok(never) => match never {},
-                        Err(e) => {
-                            // The exec failed, so this image is still running
-                            // and still owns every pane. Put the screen back
-                            // and carry on rather than dying with them.
-                            tracing::error!("hot reload failed: {e}");
-                            // Re-acquire the sleep assertion we released
-                            // before the exec: this image is still the
-                            // session, so it keeps the promise the config
-                            // makes.
-                            keep_awake.refresh(cfg.keep_awake);
-                            if let Err(e) = re_enter_terminal(&mut stdout) {
-                                tracing::error!("restore after failed reload: {e}");
-                                break 'main;
+                            // Leave the terminal exactly as a normal exit would: the
+                            // tty is kernel state and survives the exec, so a new
+                            // image would otherwise inherit raw mode and the alt
+                            // screen and paint into a screen it never entered.
+                            tracing::info!("hot reload: binary changed, execing new image");
+                            let _ = stdout.write_all(&host_images.clear());
+                            restore_terminal(&mut stdout, kitty_keyboard);
+                            // Drop the sleep assertion before the exec: the new image
+                            // acquires its own guard at startup, and the old
+                            // `caffeinate` (bound with `-w` to this pid) exits with us.
+                            keep_awake.release();
+                            match perform_reload(
+                                &layout,
+                                &panes,
+                                &agent_panes,
+                                spawn_dir.as_deref(),
+                                boot,
+                            ) {
+                                // `Ok` is uninhabited: the process is gone.
+                                Ok(never) => match never {},
+                                Err(e) => {
+                                    // The exec failed, so this image is still running
+                                    // and still owns every pane. Put the screen back
+                                    // and carry on rather than dying with them.
+                                    tracing::error!("hot reload failed: {e}");
+                                    // Re-acquire the sleep assertion we released
+                                    // before the exec: this image is still the
+                                    // session, so it keeps the promise the config
+                                    // makes.
+                                    keep_awake.refresh(cfg.keep_awake);
+                                    if let Err(e) = re_enter_terminal(&mut stdout) {
+                                        tracing::error!("restore after failed reload: {e}");
+                                        break 'main;
+                                    }
+                                    last.clear();
+                                    reload_note_anchor = None;
+                                    reload_note =
+                                        Some(format!("hot reload failed: {}", first_line(&e)));
+                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                    dirty = true;
+                                }
                             }
-                            last.clear();
-                            reload_note_anchor = None;
-                            reload_note = Some(format!("hot reload failed: {}", first_line(&e)));
-                            reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                            dirty = true;
-                        }
-                    }
                         } // end quiet-gate else: exec path above only runs when quiet or timed out
                     }
                 }
