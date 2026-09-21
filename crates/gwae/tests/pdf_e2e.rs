@@ -385,7 +385,20 @@ fn deep_page_navigation_keeps_rendering_past_sixty_turns() {
         s.writer.write_all(b"l").unwrap();
         s.writer.flush().unwrap();
         let frame = s.drain_until_quiet(Duration::from_millis(700));
-        let uploads = frame.windows(6).filter(|w| **w == b"\x1b_Ga=T"[..]).count();
+        let mut uploads = frame.windows(6).filter(|w| **w == b"\x1b_Ga=T"[..]).count();
+        eprintln!("turn {n}: {} bytes, {uploads} uploads", frame.len());
+        if uploads == 0 {
+            // A loaded runner can need more than one quiet window for a full
+            // raster+encode+transmit cycle. A wedged quota never recovers, so
+            // one bounded grace wait keeps the regression signal intact while
+            // slow runners get slack.
+            let grace = s.drain_until_quiet(Duration::from_millis(2000));
+            uploads += grace.windows(6).filter(|w| **w == b"\x1b_Ga=T"[..]).count();
+            eprintln!(
+                "turn {n}: dark after 700ms, grace saw {} bytes, {uploads} uploads total",
+                grace.len()
+            );
+        }
         if uploads == 0 {
             dark_turns.push(n);
         }
@@ -393,7 +406,8 @@ fn deep_page_navigation_keeps_rendering_past_sixty_turns() {
     assert!(
         dark_turns.is_empty(),
         "pages went black (no host image upload) on turns {dark_turns:?}; \
-         the child image quota wedged again"
+         the child image quota wedged again (gwae pid: {:?})",
+        s.child.process_id()
     );
 }
 

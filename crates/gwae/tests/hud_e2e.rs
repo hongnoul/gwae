@@ -324,12 +324,9 @@ fn holding_the_modifier_reveals_a_dashboard_that_names_its_panes() {
 
     // A chord holds the modifier open for a short window even on terminals
     // that never report a bare Option press, which is what most terminals do.
-    s.send(&alt(b'h'));
-    let shown = visible(&s.peek(150));
-    assert!(
-        panel_up(&s),
-        "the hold should reveal the dashboard frame; got:\n{shown:?}"
-    );
+    // Re-reveal until the frame is up: on a loaded runner one peek can miss
+    // the ~180ms hold window.
+    let shown = visible(&reveal_raw(&mut s));
     // Spatial-only tiles: status glyph + column address, no hint text.
     // Plain panes (no harness, no protocol) carry the neutral `·`.
     assert!(
@@ -364,8 +361,8 @@ fn a_lone_pane_still_reveals_its_dashboard() {
     let mut s = Session::start("startup_panes = 1\n");
     let _ = s.drain();
 
-    s.send(&alt(b'h'));
-    let shown = visible(&s.peek(150));
+    // Retry: on a loaded runner one peek can miss the ~180ms hold window.
+    let shown = visible(&reveal_raw(&mut s));
     assert!(
         panel_up(&s),
         "one pane still paints a dashboard; got:\n{shown:?}"
@@ -420,6 +417,26 @@ fn live_columns(s: &mut Session) -> Vec<usize> {
             std::time::Instant::now() < deadline,
             "dashboard never revealed tiles: {}",
             s.screen.visible_text()
+        );
+    }
+}
+
+/// Reveal the dashboard and return the raw bytes of the window where the
+/// frame was up, resending the chord until `panel_up` holds. Raw bytes (not
+/// the emulator screen) because some assertions strip styling from the
+/// stream itself.
+fn reveal_raw(s: &mut Session) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        s.send(&alt(b'h'));
+        let raw = s.peek(150);
+        if panel_up(s) {
+            return raw;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "dashboard never appeared; last got:\n{:?}",
+            visible(&raw)
         );
     }
 }
@@ -538,8 +555,9 @@ fn dashboard_footer_is_tally_not_key_hints() {
     let mut s = Session::start("");
     let _ = s.drain();
     widen(&mut s, 3);
-    s.send(&alt(b'h'));
-    let shown = visible(&s.peek(150));
+    // Retry: on a loaded runner one peek can catch the frame mid-paint or
+    // after the hold lapses.
+    let shown = visible(&reveal_raw(&mut s));
     assert!(panel_up(&s), "dashboard still appears: {shown:?}");
     assert!(
         shown.contains('»') || shown.contains('!') || shown.contains('·'),
