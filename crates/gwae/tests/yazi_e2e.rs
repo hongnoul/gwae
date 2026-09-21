@@ -219,6 +219,19 @@ impl Session {
         eprintln!("Rendered evidence: {}", path.display());
     }
 
+    /// Visible text with this session's unique scratch dir replaced, so two
+    /// sessions in different dirs compare byte-for-byte on rendered content.
+    /// Yazi's header shows the CWD middle-truncated with `…`, so only the
+    /// trailing unique component is scrubbed: the head never renders.
+    fn scrubbed_text(&self) -> String {
+        let unique = self
+            .dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.screen.visible_text().replace(&unique, "<dir>")
+    }
+
     fn activate_via_cli(&self) {
         // The documented command from a Yazi subshell, with this isolated
         // test instance's environment rather than the user's live session.
@@ -322,23 +335,23 @@ fn yazi_breakpoints_and_live_activation_are_reversible() {
 fn yazi_outside_gwae_is_unchanged() {
     let mut baseline = Session::start(53, false, false, false);
     baseline.expect(true, true, "standalone unmodified narrow baseline");
-    let narrow = baseline.screen.visible_text();
+    let narrow = baseline.scrubbed_text();
     baseline.resize(107);
     baseline.expect(true, true, "standalone unmodified wide baseline");
-    let wide = baseline.screen.visible_text();
+    let wide = baseline.scrubbed_text();
     drop(baseline);
     let mut s = Session::start(53, false, false, true);
     s.expect(true, true, "standalone narrow terminal");
-    assert_eq!(s.screen.visible_text(), narrow);
+    assert_eq!(s.scrubbed_text(), narrow);
     s.send(b"\x07");
     s.expect(true, true, "standalone plugin activation");
-    assert_eq!(s.screen.visible_text(), narrow);
+    assert_eq!(s.scrubbed_text(), narrow);
     s.resize(107);
     s.expect(true, true, "standalone wide terminal");
-    assert_eq!(s.screen.visible_text(), wide);
+    assert_eq!(s.scrubbed_text(), wide);
     s.resize(53);
     s.expect(true, true, "standalone restored narrow terminal");
-    assert_eq!(s.screen.visible_text(), narrow);
+    assert_eq!(s.scrubbed_text(), narrow);
     eprintln!("PASS standalone: complete rendered text matches unmodified narrow and wide baselines byte-for-byte");
 }
 
