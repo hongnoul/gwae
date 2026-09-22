@@ -69,9 +69,20 @@ pub fn plan_uninstall(source: Source, exe: &PathBuf) -> Uninstall {
         Source::System => Uninstall::Owner {
             cmd: "ask your package manager (e.g. `paru -R gwae-bin`)".to_string(),
         },
-        Source::Unknown => Uninstall::Owner {
-            cmd: "remove the gwae binary on your PATH (`command -v gwae`), plus ~/.config/gwae and ~/.local/state/gwae".to_string(),
-        },
+        Source::Unknown => {
+            // Unknown means "no owner claimed this path" (dev `make install`
+            // into ~/.bun/bin, a hand copy, a stale receipt elsewhere). The
+            // user asked to uninstall this exact binary, so remove it plus
+            // our own dirs rather than punting.
+            let mut paths = vec![exe.clone()];
+            if let Some(dir) = config_dir() {
+                paths.push(dir);
+            }
+            if let Some(dir) = state_dir() {
+                paths.push(dir);
+            }
+            Uninstall::Ours { paths }
+        }
     }
 }
 
@@ -205,6 +216,18 @@ mod tests {
             panic!("system must defer");
         };
         assert!(!cmd.is_empty(), "managed routes must still say what to do");
+    }
+
+    #[test]
+    fn unknown_route_removes_this_binary_not_a_guess() {
+        // `make install` into ~/.bun/bin, a hand copy, a stale receipt
+        // elsewhere: no owner claims it, so the binary the user invoked is
+        // the thing to remove.
+        let exe = PathBuf::from("/Users/x/.bun/bin/gwae");
+        let Uninstall::Ours { paths } = plan_uninstall(Source::Unknown, &exe) else {
+            panic!("unknown must remove itself, not punt");
+        };
+        assert_eq!(paths.first().unwrap(), &exe, "{paths:?}");
     }
 
     #[test]
