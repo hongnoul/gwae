@@ -7,6 +7,7 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Fixed
+- **A done agent no longer paints `Running` forever.** A finished jcode client keeps emitting maintenance output (periodic redraws, ambient notification toasts), which the output-activity heuristic mistook for work. gwae now polls the jcode daemon's `clients:map` on a background thread every 3s and demotes a `Running` tile to `Idle` when the daemon reports that session as settled (`ready`, not generating). Only `Running` tiles are touched, so real `Done`/`Failed`/OSC-`Idle` facts still win; panes the daemon does not know (no title match, no daemon, stale snapshot) keep the heuristic. Set `GWAE_NO_HARNESS_STATUS=1` to disable the poll.
 - **`⌥+w` confirms the keep-awake flip.** The toggle used to flip silently with no on-screen feedback, so a press that dismissed the HUD read as broken. It now shows a one-line note (`keep-awake on/off`, saved or session-only) and names the blocker when the assertion cannot be held.
 - **The Option-hold dashboard appears with a lone pane.** Holding `⌥` with a single pane used to paint nothing; it now shows a one-tile dashboard with its tally, so the hold always answers where focus is.
 

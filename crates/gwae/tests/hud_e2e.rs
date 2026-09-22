@@ -83,6 +83,16 @@ impl Session {
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
         cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_LOG", "off");
+        // A fake `jcode` daemon double (written by the test into
+        // `dir/bin`): answers `debug clients:map` with canned statuses so
+        // the harness-status reconciliation path is exercised without a
+        // live daemon. Empty when the test wrote no double.
+        if dir.join("bin").is_dir() {
+            cmd.env(
+                "PATH",
+                format!("{}:/usr/bin:/bin", dir.join("bin").display()),
+            );
+        }
         // The fixture exercises protocol chords, not the user's live keyboard.
         cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
         cmd.arg("run");
@@ -446,6 +456,127 @@ fn reveal_raw(s: &mut Session) -> String {
             visible(&raw)
         );
     }
+}
+
+/// A fake `jcode` that answers `debug clients:map` with one settled session.
+/// The agent pane below titles itself `jcode pond` (a real OSC 0/2 title, the
+/// same channel a live harness uses), and the double reports `pond` as
+/// `ready`: a done client the heuristic would otherwise hold at `Running`
+/// because the pane keeps emitting output.
+///
+/// The double serves both roles: with `debug clients:map` argv it answers
+/// the poller; otherwise (spawned as the pane's harness) it titles the pane
+/// and ticks forever.
+#[cfg(unix)]
+const DAEMON_DOUBLE: &str = r#"#!/bin/sh
+if [ "$1" = "debug" ] && [ "$2" = "clients:map" ]; then
+    printf '{"count":1,"clients":[{"session_id":"session_pond_1_abc","friendly_name":"pond","status":"ready","working_dir":"/tmp"}]}'
+    exit 0
+fi
+printf '\033]0;jcode pond\007'
+while :; do printf '\033[2;1Htick %s' "$(date +%S)"; sleep 1; done
+"#;
+
+/// A finished agent TUI keeps repainting (spinner frames, ambient toasts),
+/// so the activity heuristic alone holds `Running` forever. The daemon's
+/// `ready` verdict must demote that tile to `!` (idle, wants attention).
+#[cfg(unix)]
+#[test]
+fn a_settled_daemon_session_demotes_a_chatty_running_tile() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::var_os("JCODE_SCRATCH_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let dir = root.join(format!("gwae-hud-daemon-{}-0", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
+    std::fs::create_dir_all(dir.join("bin")).expect("temp bin dir");
+    std::fs::write(dir.join("bin/jcode"), DAEMON_DOUBLE).expect("write double");
+    std::fs::set_permissions(
+        dir.join("bin/jcode"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("chmod double");
+    // No `run` command: pane 1.1 resolves the lone `jcode` on PATH as its
+    // startup harness, so it is a genuine agent pane running the double.
+    // The double titles the pane like a real client (`jcode pond`) and
+    // then ticks forever; the daemon reports `pond` as `ready`.
+    std::fs::write(dir.join("gwae/gwae.toml"), "startup_panes = 1\n").expect("write config");
+
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 30,
+            cols: 140,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .expect("openpty");
+    let executable =
+        std::env::var_os("GWAE_E2E_BIN").unwrap_or_else(|| env!("CARGO_BIN_EXE_gwae").into());
+    let mut cmd = CommandBuilder::new(executable);
+    cmd.env_clear();
+    cmd.cwd(&dir);
+    cmd.env("HOME", &dir);
+    cmd.env("XDG_CONFIG_HOME", &dir);
+    cmd.env("XDG_CACHE_HOME", dir.join("cache"));
+    cmd.env("XDG_DATA_HOME", dir.join("data"));
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("SHELL", "/bin/sh");
+    cmd.env(
+        "PATH",
+        format!("{}:/usr/bin:/bin", dir.join("bin").display()),
+    );
+    cmd.env("ENV", "/dev/null");
+    cmd.env("GWAE_NO_UPDATE_CHECK", "1");
+    cmd.env("GWAE_NO_KEEP_AWAKE", "1");
+    cmd.env("GWAE_LOG", "off");
+    cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
+    // No `run` arg: pane 1.1 boots the startup-harness path.
+    let child = pair.slave.spawn_command(cmd).expect("spawn gwae");
+    drop(pair.slave);
+    let mut reader = pair.master.try_clone_reader().expect("reader");
+    let writer = pair.master.take_writer().expect("writer");
+    let (tx, rx) = channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        while let Ok(n) = reader.read(&mut buf) {
+            if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let mut s = Session {
+        rx,
+        writer,
+        child,
+        _master: pair.master,
+        screen: Vt100Grid::new(Size {
+            rows: 30,
+            cols: 140,
+        }),
+        dir: dir.clone(),
+    };
+    let _ = s.drain();
+    // The pane ticks forever, so the activity heuristic alone would claim
+    // `Running`; the daemon says `ready`, so the tile must settle at `!`
+    // within a few poll intervals and never stick at `»`.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let shown = visible(&reveal_raw(&mut s));
+        assert!(
+            !shown.contains("»1"),
+            "daemon says ready but the tile is stuck running: {shown:?}"
+        );
+        if shown.contains("!1") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "tile never settled to idle: {shown:?}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    s.kill();
 }
 
 /// Reveal the dashboard until `cond` holds on the emulator screen.

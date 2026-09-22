@@ -267,6 +267,15 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // a session that ends first simply never sees it. Nothing is ever
     // installed by this: the notice names the command and stops.
     let update_slot = crate::update::spawn_check(cfg.update.check, cfg.update.source_detected());
+    // Authoritative harness status from the jcode daemon (`clients:map`):
+    // a finished agent TUI keeps emitting maintenance output (spinner
+    // redraws, cross-session notification toasts), so the activity
+    // heuristic alone paints `Running` forever. The daemon knows which
+    // sessions are actually generating; the loop reconciles `Running`
+    // tiles against this snapshot below. Same detached-thread-plus-slot
+    // shape as the update check: the loop only ever locks briefly.
+    let harness_slot = crate::harness_status::spawn_poll();
+    let mut harness_snapshot_at = Instant::now();
     let (tx, rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     // What `⌥+;` remembers: the last pick spawns with no UI. Loaded once at
@@ -654,6 +663,53 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 if lp.status != want {
                     lp.status = want;
                     dirty = true;
+                }
+            }
+        }
+
+        // Authoritative override from the jcode daemon: a finished agent
+        // TUI keeps emitting maintenance output (periodic redraws, ambient
+        // notification toasts), so the heuristic above can hold `Running`
+        // forever on a done client. When the daemon reports the session
+        // behind a `Running` tile as settled, demote it to `Idle` (done,
+        // waiting on the user). Only `Running` tiles are touched: a real
+        // `Done`/`Failed`/OSC-`Idle` is sharper than the daemon's coarse
+        // lifecycle. Unknown panes (no title match, no daemon, stale
+        // snapshot) keep the heuristic's answer.
+        //
+        // The mapping is the pane's terminal title, which embeds the
+        // session short name (`jcode Iwazaru`, `Release planning (fox)`).
+        // Fresh panes with no title yet simply miss and retry next frame.
+        if !crate::harness_status::snapshot_stale(harness_snapshot_at, now) {
+            if let Ok(slot) = harness_slot.lock() {
+                if !slot.is_empty() {
+                    // `slot` is borrowed; collect first so the layout and
+                    // panes borrows below do not fight it.
+                    let running: Vec<(PaneId, String)> = layout
+                        .panes
+                        .iter()
+                        .filter(|(_, lp)| lp.status == PaneStatus::Running)
+                        .filter_map(|(pid, _)| {
+                            panes.get(pid).map(|p| (*pid, p.grid.title().to_string()))
+                        })
+                        .collect();
+                    for (pid, title) in running {
+                        let st = crate::harness_status::status_for_title(&title, &slot);
+                        if let Some(want) =
+                            crate::harness_status::reconcile_running(PaneStatus::Running, st)
+                        {
+                            if let Some(lp) = layout.panes.get_mut(&pid) {
+                                lp.status = want;
+                                dirty = true;
+                            }
+                        }
+                    }
+                } else {
+                    // First poll has not landed yet (or the daemon just
+                    // restarted and the poller is holding the last good
+                    // snapshot by returning empty): age the snapshot clock
+                    // from a successful read instead of boot.
+                    harness_snapshot_at = now;
                 }
             }
         }
