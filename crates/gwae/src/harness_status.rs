@@ -130,8 +130,13 @@ pub fn query_once() -> HashMap<String, ClientStatus> {
 /// [`POLL_INTERVAL`]. Non-blocking by construction: the thread is detached
 /// and the event loop only ever locks the slot briefly to clone it.
 ///
-/// An empty query result keeps the previous snapshot rather than clearing it:
-/// a daemon restart mid-session must not flap every tile to unknown.
+/// An empty query result keeps the previous client map rather than clearing
+/// it (a daemon restart mid-session must not flap every tile to unknown),
+/// but still stamps the clock: consecutive failures age the snapshot out
+/// through [`snapshot_stale`], so a dead daemon degrades to the heuristic
+/// instead of pinning its last verdict forever. The first query runs
+/// immediately so tiles settle within seconds of launch, not after one
+/// idle interval.
 pub fn spawn_poll() -> StatusSlot {
     let slot: StatusSlot = Arc::new(Mutex::new(Snapshot::default()));
     if std::env::var_os(NO_POLL_ENV).is_some() {
@@ -142,17 +147,33 @@ pub fn spawn_poll() -> StatusSlot {
         return slot;
     }
     let out = Arc::clone(&slot);
-    std::thread::spawn(move || loop {
-        let fresh = query_once();
-        if !fresh.is_empty() {
+    std::thread::spawn(move || {
+        // First query runs immediately so tiles settle within seconds of
+        // launch, not after one idle interval.
+        let mut first = true;
+        loop {
+            if !first {
+                std::thread::sleep(POLL_INTERVAL);
+            }
+            first = false;
+            let fresh = query_once();
             if let Ok(mut g) = out.lock() {
-                g.clients = fresh;
-                g.at = Some(Instant::now());
+                apply_poll(&mut g, fresh, Instant::now());
             }
         }
-        std::thread::sleep(POLL_INTERVAL);
     });
     slot
+}
+
+/// Fold one poll answer into the snapshot: a non-empty map replaces the
+/// old one, an empty answer keeps it (a daemon restart gap must not flap
+/// every tile), and the clock always stamps so consecutive failures age
+/// out through [`snapshot_stale`].
+fn apply_poll(snap: &mut Snapshot, fresh: HashMap<String, ClientStatus>, at: Instant) {
+    if !fresh.is_empty() {
+        snap.clients = fresh;
+    }
+    snap.at = Some(at);
 }
 
 /// Find the polled status for the session named in a pane title.
@@ -374,5 +395,29 @@ mod tests {
             clients: HashMap::new(),
         };
         assert!(!snapshot_stale(&snap, later));
+    }
+
+    #[test]
+    fn empty_polls_keep_the_map_but_age_the_clock() {
+        // The poller stamps `at` even when the daemon answers empty (a
+        // restart gap): the old map survives a blip, but consecutive
+        // failures still age out instead of pinning the last verdict.
+        let t0 = Instant::now();
+        let mut snap = Snapshot {
+            at: Some(t0),
+            clients: parse_clients_map(SAMPLE),
+        };
+        // One empty poll: map kept, clock refreshed.
+        apply_poll(&mut snap, HashMap::new(), t0 + POLL_INTERVAL);
+        assert_eq!(snap.clients.len(), 2);
+        assert!(!snapshot_stale(&snap, t0 + POLL_INTERVAL));
+        // The clock stamps every poll, so staleness is measured from the
+        // last answer: failures longer than the window behind the last
+        // stamp age out and the heuristic takes over.
+        let last = t0 + POLL_INTERVAL;
+        assert!(snapshot_stale(
+            &snap,
+            last + POLL_INTERVAL * 2 + Duration::from_secs(3)
+        ));
     }
 }
