@@ -25,7 +25,8 @@ pub(crate) const SPRITE_CELL_H: u16 = (SPRITE_H / 2) as u16;
 /// The pals, in box order. The box's strip-column index picks the sprite, so
 /// a box always shows the same pal whatever the occupancy: filling a neighbour
 /// never changes the art you are already looking at.
-const SPRITES: [&[&str; SPRITE_H]; 4] = [&BOT, &INVADER, &GHOST, &CAT];
+const SPRITES: [&[&str; SPRITE_H]; 8] =
+    [&BOT, &INVADER, &GHOST, &CAT, &FROG, &CRAB, &SLIME, &DINO];
 
 const GHOST: [&str; SPRITE_H] = [
     "....XXXX....",
@@ -84,6 +85,66 @@ const CAT: [&str; SPRITE_H] = [
     ".XXXXXXXXXX.",
     "..XXXXXXXX..",
     "...X.XX.X...",
+    "............",
+];
+
+const FROG: [&str; SPRITE_H] = [
+    "..XX....XX..",
+    ".XXXX..XXXX.",
+    ".X..X..X..X.",
+    "XXXXXXXXXXXX",
+    "XXXXXXXXXXXX",
+    "XX........XX",
+    "XXXXXXXXXXXX",
+    ".XXXXXXXXXX.",
+    ".XXXXXXXXXX.",
+    "..XXXXXXXX..",
+    ".XX..XX..XX.",
+    "............",
+];
+
+const CRAB: [&str; SPRITE_H] = [
+    "X..........X",
+    ".X.XX..XX.X.",
+    "..XXXXXXXX..",
+    ".XXXXXXXXXX.",
+    "XXX..XX..XXX",
+    "XXX..XX..XXX",
+    "XXXXXXXXXXXX",
+    ".XXXXXXXXXX.",
+    "..XXXXXXXX..",
+    ".X.XXXXXX.X.",
+    "X..X.XX.X..X",
+    "............",
+];
+
+const SLIME: [&str; SPRITE_H] = [
+    "............",
+    "............",
+    "....XXXX....",
+    "..XXXXXXXX..",
+    ".XXXXXXXXXX.",
+    ".XX..XX..XX.",
+    "XXX..XX..XXX",
+    "XXXXXXXXXXXX",
+    "XXXX.XX.XXXX",
+    "XXXXXXXXXXXX",
+    ".XXXXXXXXXX.",
+    "............",
+];
+
+const DINO: [&str; SPRITE_H] = [
+    "......XXXXX.",
+    "......XX.XX.",
+    "......XXXXX.",
+    "......XXX...",
+    "X....XXXX...",
+    "XX..XXXXXXX.",
+    ".XXXXXXXX...",
+    ".XXXXXXXX...",
+    "..XXXXXX....",
+    "...XXXXX....",
+    "...XX..XX...",
     "............",
 ];
 
