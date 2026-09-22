@@ -52,7 +52,13 @@ fn main() {
 fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
     let dir = cli.dir.clone();
     match cli.command.unwrap_or(Command::Run { command: None }) {
-        Command::Run { command } => tui::run_tui(command, cfg, dir),
+        Command::Run { command } => {
+            // First run configures in the native terminal, before the TUI
+            // opens: full width for the picker, no cramped pane.
+            let path = Config::default_path();
+            let cfg = setup::first_run::ensure(&path, false);
+            tui::run_tui(command, cfg, dir)
+        }
         Command::Agent { print } => {
             let state_path = crate::agent::harness_state_path()
                 .unwrap_or_else(|| Config::default_path().with_extension("harness.json"));
@@ -60,17 +66,23 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
             agent::run(&cfg.default_agent, &state, &state_path, print)
         }
         Command::Init { print, .. } => {
-            // `init` is a thin alias for the setup flow: one onboarding
-            // system, not two. `--print` shows the planned steps.
-            let path = Config::default_path();
-            let ctx = setup::Ctx {
-                cfg: &cfg,
-                cfg_path: &path,
-                dir: dir.as_deref(),
-            };
-            match setup::run_setup(&ctx, false, false, None, print) {
-                0 => Ok(()),
-                code => Err(code),
+            // Native first-run flow in this terminal (full width), not a
+            // pane inside the TUI. `--print` keeps the old audit output.
+            if print {
+                let path = Config::default_path();
+                let ctx = setup::Ctx {
+                    cfg: &cfg,
+                    cfg_path: &path,
+                    dir: dir.as_deref(),
+                };
+                match setup::run_setup(&ctx, false, false, None, true) {
+                    0 => Ok(()),
+                    code => Err(code),
+                }
+            } else {
+                let path = Config::default_path();
+                setup::first_run::ensure(&path, true);
+                Ok(())
             }
         }
         Command::Upgrade => match update::run_upgrade(cfg.update.source()) {

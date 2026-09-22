@@ -4,11 +4,11 @@ use super::config::Plan;
 use super::detect::{command_available, Found, KNOWN_AGENTS};
 use std::io::{IsTerminal, Write};
 
-pub(super) const DIM: &str = "\x1b[2m";
-pub(super) const BOLD: &str = "\x1b[1m";
-pub(super) const CYAN: &str = "\x1b[36m";
-pub(super) const YELLOW: &str = "\x1b[33m";
-pub(super) const RESET: &str = "\x1b[0m";
+pub(crate) const DIM: &str = "\x1b[2m";
+pub(crate) const BOLD: &str = "\x1b[1m";
+pub(crate) const CYAN: &str = "\x1b[36m";
+pub(crate) const YELLOW: &str = "\x1b[33m";
+pub(crate) const RESET: &str = "\x1b[0m";
 
 /// The pane's width in columns, for laying the picker out. Panes are often a
 /// quarter of the screen, so the full-width form does not fit and its most

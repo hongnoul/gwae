@@ -14,8 +14,12 @@ set -euo pipefail
 
 REPO="hongnoul/gwae"
 
-say() { printf '\033[1;36mgwae:\033[0m %s\n' "$*"; }
-die() { printf '\033[1;31mgwae:\033[0m %s\n' "$*" >&2; exit 1; }
+say() { printf '  > %s\n' "$*"; }
+die() { printf '  > %s\n' "$*" >&2; exit 1; }
+
+banner() {
+  printf '\n   ▄▄▄▄ ▄ ▄\n    ▄ █ █▄█\n    █ █ █ █\n    █ ▀ █ █\n   ▀▀▀▀ ▀ ▀\n\n  gwae installer  ·  github.com/hongnoul/gwae\n\n'
+}
 
 # Where to put the binary. Explicit `GWAE_INSTALL_DIR` always wins (upgrades
 # pin it so a re-run cannot relocate the binary). Otherwise pick the first
@@ -46,9 +50,10 @@ else
 fi
 
 # --- platform (macOS only) ----------------------------------------------------
+banner
 case "$(uname -s)" in
-  Darwin) ;;
-  *) die "gwae is macOS-only. On this machine build from source or use Homebrew on a Mac: brew install hongnoul/tap/gwae" ;;
+  Darwin) os=macos ;;
+  *) die "gwae is macOS-only. On a Mac: brew install hongnoul/tap/gwae" ;;
 esac
 
 case "$(uname -m)" in
@@ -56,6 +61,7 @@ case "$(uname -m)" in
   aarch64 | arm64) arch=aarch64 ;;
   *) die "unsupported architecture $(uname -m)" ;;
 esac
+say "detected ${os}/${arch}"
 target="${arch}-apple-darwin"
 artifact="gwae-${target}"
 
@@ -66,7 +72,9 @@ url="https://github.com/${REPO}/releases/latest/download/${artifact}.tar.gz"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-say "downloading ${artifact} (latest release)..."
+say "fetching latest release manifest..."
+manifest_ver=$(curl -fsSL "https://github.com/${REPO}/releases/latest" -o /dev/null -w '%{url_effective}' 2>/dev/null | grep -o '[^/]*$' || true)
+[ -n "${manifest_ver:-}" ] && say "downloading ${manifest_ver}..."
 curl -fsSL -o "$tmp/pkg.tar.gz" "$url" \
   || die "download failed: $url"
 
@@ -78,7 +86,6 @@ if curl -fsSL "https://github.com/${REPO}/releases/latest/download/${artifact}.t
   expected=$(awk '{print $1}' "$tmp/pkg.sha256")
   actual=$($sha_tool "$tmp/pkg.tar.gz" | awk '{print $1}')
   [ "$expected" = "$actual" ] || die "checksum verification failed"
-  say "checksum verified"
 else
   die "could not fetch ${artifact}.tar.gz.sha256; refusing to install without verification"
 fi
@@ -103,7 +110,7 @@ trap 'rm -rf "$tmp"' EXIT
 # executes on this machine before the user ever runs it.
 version=$("$INSTALL_DIR/gwae" --version 2>/dev/null) \
   || die "installed binary at ${INSTALL_DIR}/gwae does not run on this machine"
-say "installed ${version} to ${INSTALL_DIR}/gwae"
+say "installed ${version##* } to ${INSTALL_DIR}/gwae"
 
 # A Homebrew gwae elsewhere on PATH would now be shadowed (or shadow this
 # install): say which one wins so `gwae --version` never surprises anyone.
@@ -226,6 +233,4 @@ add_to_path() {
 
 add_to_path
 
-say "ready. run 'gwae' to start, or 'gwae init' for the guided setup."
-say "later: 'gwae upgrade' moves you to the next release the same way."
-say "to uninstall: remove ${INSTALL_DIR}/gwae (and the 'added by gwae installer' PATH lines, if any were added above)."
+printf '\n  > ready. run '\''gwae'\'' to get started.\n\n'

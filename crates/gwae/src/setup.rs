@@ -24,6 +24,7 @@
 //! passes unchanged. Interactive rendering (`Screen`), apply, and the
 //! `setup` command loop land in later phases.
 
+pub mod first_run;
 pub mod setup_stages;
 pub mod setup_support;
 
