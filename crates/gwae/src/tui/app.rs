@@ -655,22 +655,20 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // no visible change. The daemon verdict below is the persistent
         // answer for those panes.
         let now = Instant::now();
-        let daemon_covers: std::collections::HashSet<PaneId> =
-            match harness_slot.lock() {
-                Ok(slot)
-                    if !crate::harness_status::snapshot_stale(&slot, now)
-                        && !slot.clients.is_empty() =>
-                {
-                    panes
-                        .iter()
-                        .filter_map(|(pid, p)| {
-                            crate::harness_status::status_for_title(p.grid.title(), &slot)
-                                .map(|_| *pid)
-                        })
-                        .collect()
-                }
-                _ => std::collections::HashSet::new(),
-            };
+        let daemon_covers: std::collections::HashSet<PaneId> = match harness_slot.lock() {
+            Ok(slot)
+                if !crate::harness_status::snapshot_stale(&slot, now)
+                    && !slot.clients.is_empty() =>
+            {
+                panes
+                    .iter()
+                    .filter_map(|(pid, p)| {
+                        crate::harness_status::status_for_title(p.grid.title(), &slot).map(|_| *pid)
+                    })
+                    .collect()
+            }
+            _ => std::collections::HashSet::new(),
+        };
         for (pid, p) in panes.iter() {
             if p.saw_osc133 || !agent_panes.contains(pid) || daemon_covers.contains(pid) {
                 continue;

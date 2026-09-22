@@ -228,14 +228,21 @@ pub fn run_uninstall(_configured: Option<super::source::Source>, yes: bool) -> i
         let fish = home.join(".config/fish/conf.d/gwae.fish");
         if fish.is_file() {
             let empty = std::fs::read_to_string(&fish)
-                .map(|t| t.lines().all(|l| l.trim().is_empty() || l.trim_start().starts_with('#')))
+                .map(|t| {
+                    t.lines()
+                        .all(|l| l.trim().is_empty() || l.trim_start().starts_with('#'))
+                })
                 .unwrap_or(false);
             if empty {
                 let _ = std::fs::remove_file(&fish);
             }
         }
     }
-    if failed { 1 } else { 0 }
+    if failed {
+        1
+    } else {
+        0
+    }
 }
 
 /// Remove our marked lines from a profile file, keeping everything else.
@@ -290,8 +297,14 @@ mod tests {
             PathBuf::from("/Users/x/.local/bin/gwae"),
         ];
         let s = plan_sweep(exe.clone(), bins, Vec::new(), true, true);
-        assert!(s.owner_cmds.iter().any(|c| c.contains("brew uninstall")), "{s:?}");
-        assert!(s.owner_cmds.iter().any(|c| c.contains("cargo uninstall")), "{s:?}");
+        assert!(
+            s.owner_cmds.iter().any(|c| c.contains("brew uninstall")),
+            "{s:?}"
+        );
+        assert!(
+            s.owner_cmds.iter().any(|c| c.contains("cargo uninstall")),
+            "{s:?}"
+        );
         // Every binary plus our two dirs; dirs last.
         assert!(s.paths.contains(&exe), "{s:?}");
         let n = s.paths.len();

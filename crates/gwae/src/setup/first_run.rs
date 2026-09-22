@@ -142,10 +142,7 @@ fn agent_step(cfg_path: &Path, sty: &Style) {
         }
         Plan::Auto(cmd) => {
             remember(&mut state, state_path.as_deref(), &cmd, true);
-            sty.done(&format!(
-                "agent: {cmd} {}",
-                sty.dim("(only one installed)")
-            ));
+            sty.done(&format!("agent: {cmd} {}", sty.dim("(only one installed)")));
         }
         ref chooser @ (Plan::Choose(_) | Plan::Missing { .. }) => {
             let (text, choices) = render(chooser);
@@ -178,10 +175,7 @@ fn agent_step(cfg_path: &Path, sty: &Style) {
                     remember(&mut state, state_path.as_deref(), &cmd, false);
                     sty.done(&format!("agent: {cmd} — ⌥+; goes straight there"));
                 }
-                _ => sty.done(&format!(
-                    "agent: none {}",
-                    sty.dim("— panes open a shell")
-                )),
+                _ => sty.done(&format!("agent: none {}", sty.dim("— panes open a shell"))),
             }
         }
     }

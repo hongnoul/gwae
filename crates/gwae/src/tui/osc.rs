@@ -97,10 +97,7 @@ mod tests {
     #[test]
     fn running_is_an_agent_only_claim() {
         // A harness pane's command-start marker means real agent work.
-        assert_eq!(
-            osc_status(PaneStatus::Running, true),
-            PaneStatus::Running
-        );
+        assert_eq!(osc_status(PaneStatus::Running, true), PaneStatus::Running);
         // A plain pane running lazyvim (its shell emitted 133;C) is not
         // "working" in the HUD sense: the tile stays neutral.
         assert_eq!(osc_status(PaneStatus::Running, false), PaneStatus::Plain);

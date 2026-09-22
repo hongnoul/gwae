@@ -25,8 +25,7 @@ pub(crate) const SPRITE_CELL_H: u16 = (SPRITE_H / 2) as u16;
 /// The pals, in box order. The box's strip-column index picks the sprite, so
 /// a box always shows the same pal whatever the occupancy: filling a neighbour
 /// never changes the art you are already looking at.
-const SPRITES: [&[&str; SPRITE_H]; 8] =
-    [&BOT, &INVADER, &GHOST, &CAT, &FROG, &CRAB, &SLIME, &DINO];
+const SPRITES: [&[&str; SPRITE_H]; 8] = [&BOT, &INVADER, &GHOST, &CAT, &FROG, &CRAB, &SLIME, &DINO];
 
 const GHOST: [&str; SPRITE_H] = [
     "....XXXX....",
