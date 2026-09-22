@@ -83,16 +83,6 @@ impl Session {
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
         cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_LOG", "off");
-        // A fake `jcode` daemon double (written by the test into
-        // `dir/bin`): answers `debug clients:map` with canned statuses so
-        // the harness-status reconciliation path is exercised without a
-        // live daemon. Empty when the test wrote no double.
-        if dir.join("bin").is_dir() {
-            cmd.env(
-                "PATH",
-                format!("{}:/usr/bin:/bin", dir.join("bin").display()),
-            );
-        }
         // The fixture exercises protocol chords, not the user's live keyboard.
         cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
         cmd.arg("run");
