@@ -13,6 +13,54 @@ use std::path::Path;
 use crate::agent::{parse_choice, render, Choice, HarnessState};
 use crate::config::Config;
 
+/// Styling for the first-run lines, gated the way clig.dev prescribes: no
+/// escapes when stdout is not a tty, when `NO_COLOR` is set (any value), or
+/// when `TERM=dumb`. First run only prompts on a tty, but `gwae init` can be
+/// scripted or redirected, and the transcript must stay grep-clean there.
+struct Style {
+    on: bool,
+}
+
+impl Style {
+    fn detect() -> Self {
+        let on = std::io::stdout().is_terminal()
+            && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
+            && std::env::var_os("TERM").is_none_or(|t| t != "dumb");
+        Style { on }
+    }
+    fn paint(&self, code: &str, s: &str) -> String {
+        if self.on {
+            format!("\x1b[{code}m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+    fn bold(&self, s: &str) -> String {
+        self.paint("1", s)
+    }
+    fn dim(&self, s: &str) -> String {
+        self.paint("2", s)
+    }
+    fn green(&self, s: &str) -> String {
+        self.paint("32", s)
+    }
+    fn yellow(&self, s: &str) -> String {
+        self.paint("33", s)
+    }
+    /// A completed step: `✓ agent: jcode — ⌥+; goes straight there`.
+    fn done(&self, s: &str) {
+        println!("{} {s}", self.green("✓"));
+    }
+    /// Something to act on later: `! latency: run `…``.
+    fn note(&self, s: &str) {
+        println!("{} {s}", self.yellow("!"));
+    }
+    /// A step header: `[1/2] agent`.
+    fn step(&self, i: usize, n: usize, name: &str) {
+        println!("{} {}", self.dim(&format!("[{i}/{n}]")), self.bold(name));
+    }
+}
+
 /// True when this looks like a fresh machine: no config file yet.
 pub fn is_first_run(cfg_path: &Path) -> bool {
     std::fs::metadata(cfg_path).is_err()
@@ -32,19 +80,31 @@ pub fn ensure(cfg_path: &Path, force: bool) -> Config {
         return Config::load(cfg_path);
     }
 
-    println!("gwae first run — one-time setup in this terminal.\n");
+    let sty = Style::detect();
+    println!(
+        "{} {}\n",
+        sty.bold("gwae"),
+        sty.dim("· one-time setup in this terminal")
+    );
 
-    agent_step(cfg_path);
-    latency_step(cfg_path);
+    sty.step(1, 2, "agent");
+    agent_step(cfg_path, &sty);
+    println!();
+    sty.step(2, 2, "latency");
+    latency_step(cfg_path, &sty);
 
-    println!("\nready. entering gwae…\n");
+    println!(
+        "\n{} {}\n",
+        sty.green("✓"),
+        sty.bold("ready — entering gwae…")
+    );
     Config::load(cfg_path)
 }
 
 /// Pick the `⌥+;` harness at full terminal width and remember it in the
 /// state file. Fast paths (override, memory, lone install) print one line
 /// and never prompt.
-fn agent_step(cfg_path: &Path) {
+fn agent_step(cfg_path: &Path, sty: &Style) {
     use crate::agent::{detect, load_harness_state, plan, Plan};
     let cfg = Config::load(cfg_path);
     let state_path = crate::agent::harness_state_path();
@@ -55,11 +115,14 @@ fn agent_step(cfg_path: &Path) {
     let ordered = state.clone().order(detect());
     match plan(&cfg.default_agent, &state, ordered) {
         Plan::Configured(cmd) => {
-            println!("agent: {cmd} [ok] — ⌥+; goes straight there");
+            sty.done(&format!("agent: {cmd} — ⌥+; goes straight there"));
         }
         Plan::Auto(cmd) => {
             remember(&mut state, state_path.as_deref(), &cmd, true);
-            println!("agent: {cmd} [ok] (only one installed)");
+            sty.done(&format!(
+                "agent: {cmd} {}",
+                sty.dim("(only one installed)")
+            ));
         }
         ref chooser @ (Plan::Choose(_) | Plan::Missing { .. }) => {
             let (text, choices) = render(chooser);
@@ -70,14 +133,17 @@ fn agent_step(cfg_path: &Path) {
                     let cmd = choices.get(i).map(|f| f.cmd.clone()).unwrap_or_default();
                     if !cmd.is_empty() {
                         remember(&mut state, state_path.as_deref(), &cmd, true);
-                        println!("agent: {cmd} — ⌥+; goes straight there");
+                        sty.done(&format!("agent: {cmd} — ⌥+; goes straight there"));
                     }
                 }
                 Choice::Typed(cmd) => {
                     remember(&mut state, state_path.as_deref(), &cmd, false);
-                    println!("agent: {cmd} — ⌥+; goes straight there");
+                    sty.done(&format!("agent: {cmd} — ⌥+; goes straight there"));
                 }
-                Choice::Shell => println!("agent: skipped — ⌥+; will offer a shell"),
+                Choice::Shell => sty.done(&format!(
+                    "agent: skipped {}",
+                    sty.dim("— ⌥+; will offer a shell")
+                )),
             }
         }
         Plan::NoneInstalled { .. } => {
@@ -87,9 +153,12 @@ fn agent_step(cfg_path: &Path) {
             match prompt_loop(0) {
                 Choice::Typed(cmd) => {
                     remember(&mut state, state_path.as_deref(), &cmd, false);
-                    println!("agent: {cmd} — ⌥+; goes straight there");
+                    sty.done(&format!("agent: {cmd} — ⌥+; goes straight there"));
                 }
-                _ => println!("agent: no harness found — panes open a shell"),
+                _ => sty.done(&format!(
+                    "agent: none {}",
+                    sty.dim("— panes open a shell")
+                )),
             }
         }
     }
@@ -104,22 +173,29 @@ fn remember(state: &mut HarnessState, path: Option<&Path>, cmd: &str, known: boo
 
 /// Our own latency knob is ours to write: set it silently, report the rest
 /// with the exact fix command instead of touching anything.
-fn latency_step(cfg_path: &Path) {
+fn latency_step(cfg_path: &Path, sty: &Style) {
     let cfg = Config::load(cfg_path);
     let audit = crate::latency::audit(cfg.input_poll_ms);
     let pending = crate::latency::pending(&audit);
     let (ours, theirs) = crate::latency::ours_and_theirs(&pending);
     if !ours.is_empty() {
         match crate::latency::save_input_poll(cfg_path, 1) {
-            Ok(()) => println!("latency: input_poll_ms = 1"),
-            Err(e) => println!("latency: could not write {}: {e}", cfg_path.display()),
+            Ok(()) => sty.done("latency: set input_poll_ms = 1"),
+            Err(e) => sty.note(&format!(
+                "latency: could not write {}: {e}",
+                cfg_path.display()
+            )),
         }
     } else {
-        println!("latency: all layers tuned [ok]");
+        sty.done("latency: all layers tuned");
     }
     for s in theirs {
         if let Some(fix) = &s.fix {
-            println!("latency: {}: run `{fix}` ({})", s.key, s.why);
+            sty.note(&format!(
+                "latency: {}: run `{fix}` {}",
+                s.key,
+                sty.dim(&format!("({})", s.why))
+            ));
         }
     }
 }
