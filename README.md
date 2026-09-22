@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/assets/gwae.svg" alt="gwae logo" width="128">
-
 # gwae
 
 [![Latest Release](https://badgen.net/github/release/hongnoul/gwae?icon=github)](https://github.com/hongnoul/gwae/releases)
