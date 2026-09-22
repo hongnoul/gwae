@@ -89,6 +89,10 @@ fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
             0 => Ok(()),
             code => Err(code),
         },
+        Command::Uninstall { yes } => match update::run_uninstall(cfg.update.source(), yes) {
+            0 => Ok(()),
+            code => Err(code),
+        },
         Command::Setup {
             check,
             yes,

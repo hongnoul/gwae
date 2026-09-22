@@ -43,6 +43,7 @@ use std::time::Duration;
 mod check;
 mod plan;
 mod source;
+mod uninstall;
 
 pub const REPO: &str = "hongnoul/gwae";
 
@@ -77,3 +78,4 @@ pub const SOURCE_ENV: &str = "GWAE_UPDATE_SOURCE";
 
 pub use check::{doctor_line, run_upgrade, spawn_check};
 pub use source::{detect, probe, Source};
+pub use uninstall::run_uninstall;

@@ -72,6 +72,16 @@ pub enum Command {
     /// printed command yourself.
     #[command(alias = "update")]
     Upgrade,
+    /// Remove what the installer put down: the binary plus gwae's own
+    /// config and state dirs. Brew/cargo/nix/system installs print the
+    /// owner's command instead of fighting it. PATH lines the installer
+    /// added are listed, never silently removed.
+    Uninstall {
+        /// Remove without prompting (for scripts). Without it, a tty
+        /// confirm is required; piped sessions only print the plan.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Print diagnostics about the current terminal and $mod decoding.
     Doctor,
 }
