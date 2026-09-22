@@ -251,13 +251,20 @@ fn focusing_attention_panes_never_turns_redraws_into_work() {
         before,
         "navigation must not send SIGWINCH to idle children"
     );
-    // Genuine protocol output still promotes a pane immediately, not after
-    // a debounce: the helper emits OSC 133;C with its WORK redraw.
+    // `Running` is an agent claim: these panes are plain shells (spawned via
+    // `run`, not `⌥+;`), so even a genuine OSC 133;C from one of them (an
+    // editor like lazyvim, a pager, any foreground command) must not paint a
+    // working status. The tile stays neutral.
     s.send(b"work\r");
     s.peek(250);
     assert!(
-        s.screen.visible_text().contains("»1"),
-        "real work must still be running: {}",
+        !visible(&s.screen.visible_text()).contains('»'),
+        "a plain pane's 133;C must never claim running: {}",
+        s.screen.visible_text()
+    );
+    assert!(
+        s.screen.visible_text().contains("·1"),
+        "the plain pane's tile must stay neutral: {}",
         s.screen.visible_text()
     );
 }

@@ -81,7 +81,7 @@ mod osc;
 mod shell;
 mod title;
 
-use osc::scan_osc133;
+use osc::{osc_status, scan_osc133};
 use shell::agent_gateway_cmd;
 pub use shell::shell_split;
 use title::emit_title;

@@ -50,6 +50,22 @@ pub(crate) fn scan_osc133(bytes: &[u8]) -> Option<PaneStatus> {
     status
 }
 
+/// What a pane's tile actually claims after an OSC 133 marker.
+///
+/// `Running` is an *agent* claim: the HUD triages harness work, and a plain
+/// pane mid-command (an editor, a pager, a long `git log`) is not work the
+/// user is waiting on. A shell-integrated plain shell still gets its prompt
+/// (`Idle`) and completion (`Done`/`Failed`) statuses, since those are the
+/// user-facing facts the minimap and smart-jump act on; only the in-flight
+/// `133;C` is demoted to neutral for non-agent panes.
+pub(crate) fn osc_status(st: PaneStatus, is_agent: bool) -> PaneStatus {
+    if st == PaneStatus::Running && !is_agent {
+        PaneStatus::Plain
+    } else {
+        st
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +92,22 @@ mod tests {
         assert_eq!(scan_osc133(b"\x1b]2;title\x07"), None);
         // B (input start) is not a status change.
         assert_eq!(scan_osc133(b"\x1b]133;B\x07"), None);
+    }
+
+    #[test]
+    fn running_is_an_agent_only_claim() {
+        // A harness pane's command-start marker means real agent work.
+        assert_eq!(
+            osc_status(PaneStatus::Running, true),
+            PaneStatus::Running
+        );
+        // A plain pane running lazyvim (its shell emitted 133;C) is not
+        // "working" in the HUD sense: the tile stays neutral.
+        assert_eq!(osc_status(PaneStatus::Running, false), PaneStatus::Plain);
+        // Every other marker is trusted from any integrated shell.
+        for st in [PaneStatus::Idle, PaneStatus::Done, PaneStatus::Failed] {
+            assert_eq!(osc_status(st, false), st);
+            assert_eq!(osc_status(st, true), st);
+        }
     }
 }

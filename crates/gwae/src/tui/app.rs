@@ -553,12 +553,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         // Explicit OSC 133 status beats the activity
                         // heuristic from the first marker onward, for any
                         // pane (a shell-integrated plain shell is
-                        // trustworthy). The heuristic below it is agent-only:
-                        // a plain shell's output claims nothing.
+                        // trustworthy). `Running` is the exception: it is an
+                        // agent claim, so a non-agent pane's `133;C` (an
+                        // editor, a pager, any foreground command in a plain
+                        // shell) reads as neutral, not "working". The
+                        // heuristic below it is agent-only too: a plain
+                        // shell's output claims nothing.
                         if let Some(st) = scan_osc133(&bytes) {
                             p.saw_osc133 = true;
                             if let Some(lp) = layout.panes.get_mut(&pid) {
-                                lp.status = st;
+                                lp.status = osc_status(st, agent_panes.contains(&pid));
                             }
                         } else if !p.saw_osc133 && agent_panes.contains(&pid) {
                             // Fresh output from a protocol-less *agent* pane:
