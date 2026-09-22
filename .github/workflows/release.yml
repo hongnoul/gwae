@@ -134,12 +134,12 @@ jobs:
           fetch_sha() {
             local asset="$1"
             local url="https://github.com/${REPO}/releases/download/${TAG}/${asset}.sha256"
-            echo "  fetching $url"
+            echo "  fetching $url" >&2
             # Prefer curl via releases/download (no API rate limit); fall back to gh.
             if curl -fsSL "$url" -o /tmp/_sha 2>/dev/null; then
               awk '{print $1}' /tmp/_sha
             else
-              echo "  curl failed, trying gh release download..."
+              echo "  curl failed, trying gh release download..." >&2
               gh release download "$TAG" -p "${asset}.sha256" -D /tmp 2>/dev/null || true
               awk '{print $1}' /tmp/"${asset}.sha256" 2>/dev/null || {
                 echo "::error::could not fetch SHA for $asset"
@@ -151,6 +151,14 @@ jobs:
           SHA_ARM_MAC=$(fetch_sha "gwae-aarch64-apple-darwin.tar.gz")
           SHA_X64_MAC=$(fetch_sha "gwae-x86_64-apple-darwin.tar.gz")
           echo "SHAs: arm_mac=$SHA_ARM_MAC x64_mac=$SHA_X64_MAC"
+
+          # Guard: a captured log line or partial download must never reach the formula.
+          for sha in "$SHA_ARM_MAC" "$SHA_X64_MAC"; do
+            if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$'; then
+              echo "::error::malformed sha256: '$sha'"
+              exit 1
+            fi
+          done
 
           # --- push to tap repo ---
           TMP=$(mktemp -d)
