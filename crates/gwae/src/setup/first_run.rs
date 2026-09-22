@@ -59,6 +59,29 @@ impl Style {
     fn step(&self, i: usize, n: usize, name: &str) {
         println!("{} {}", self.dim(&format!("[{i}/{n}]")), self.bold(name));
     }
+    /// Pass text through, or strip SGR escapes when styling is off. The
+    /// shared picker renders with colors baked in (it also runs inside TUI
+    /// panes); first run owns the plain-output contract here, so `NO_COLOR`
+    /// and `TERM=dumb` strip that text too instead of leaking escapes.
+    fn filter(&self, s: &str) -> String {
+        if self.on {
+            return s.to_string();
+        }
+        let mut out = String::with_capacity(s.len());
+        let mut rest = s;
+        while let Some(i) = rest.find('\x1b') {
+            out.push_str(&rest[..i]);
+            let tail = &rest[i..];
+            match tail.find('m') {
+                Some(j) => rest = &tail[j + 1..],
+                None => {
+                    rest = "";
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
 }
 
 /// True when this looks like a fresh machine: no config file yet.
@@ -126,9 +149,9 @@ fn agent_step(cfg_path: &Path, sty: &Style) {
         }
         ref chooser @ (Plan::Choose(_) | Plan::Missing { .. }) => {
             let (text, choices) = render(chooser);
-            print!("{text}");
+            print!("{}", sty.filter(&text));
             let _ = std::io::stdout().flush();
-            match prompt_loop(choices.len()) {
+            match prompt_loop(choices.len(), sty) {
                 Choice::Listed(i) => {
                     let cmd = choices.get(i).map(|f| f.cmd.clone()).unwrap_or_default();
                     if !cmd.is_empty() {
@@ -148,9 +171,9 @@ fn agent_step(cfg_path: &Path, sty: &Style) {
         }
         Plan::NoneInstalled { .. } => {
             let (text, _) = render(&Plan::NoneInstalled { want: None });
-            print!("{text}");
+            print!("{}", sty.filter(&text));
             let _ = std::io::stdout().flush();
-            match prompt_loop(0) {
+            match prompt_loop(0, sty) {
                 Choice::Typed(cmd) => {
                     remember(&mut state, state_path.as_deref(), &cmd, false);
                     sty.done(&format!("agent: {cmd} — ⌥+; goes straight there"));
@@ -202,11 +225,10 @@ fn latency_step(cfg_path: &Path, sty: &Style) {
 
 /// Read one picker choice, re-prompting until valid. EOF returns Shell so
 /// a closed stdin can never wedge first run.
-fn prompt_loop(n: usize) -> Choice {
-    use crate::agent::{DIM, RESET};
+fn prompt_loop(n: usize, sty: &Style) -> Choice {
     let stdin = std::io::stdin();
     loop {
-        print!("\n\x1b[36m>\x1b[0m ");
+        print!("\n{} ", sty.paint("36", ">"));
         let _ = std::io::stdout().flush();
         let mut line = String::new();
         match stdin.lock().read_line(&mut line) {
@@ -215,7 +237,7 @@ fn prompt_loop(n: usize) -> Choice {
         }
         match parse_choice(&line, n) {
             Ok(c) => return c,
-            Err(msg) => println!("{DIM}{msg}{RESET}"),
+            Err(msg) => println!("{}", sty.dim(&msg)),
         }
     }
 }

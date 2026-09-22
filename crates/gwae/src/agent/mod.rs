@@ -29,7 +29,7 @@ mod state;
 pub use config::Plan;
 pub use config::{plan, set_scalar_text, toml_string_pub};
 pub use detect::{command_available, detect, which, Found};
-pub(crate) use picker::{parse_choice, render, Choice, DIM, RESET};
+pub(crate) use picker::{parse_choice, render, Choice};
 pub use run::run;
 pub use state::{
     default_path as harness_state_path, load as load_harness_state,
