@@ -477,6 +477,9 @@ fn pressing_the_spawn_agent_key_with_several_harnesses_opens_the_overlay() {
     // keypress pick, and the remembered state — all without touching the
     // config file.
     let sb = Sandbox::new(&["claude", "aider"]);
+    // A config file must exist: a missing one triggers the native first-run
+    // flow before the TUI, which is not what this test drives.
+    sb.write_config("");
     let mut p = sb.spawn_tui();
     std::thread::sleep(Duration::from_millis(700));
 
@@ -561,6 +564,9 @@ fn a_remembered_but_uninstalled_pick_opens_the_overlay_with_a_notice() {
     // Memory names something since uninstalled: live ⌥+; must say the
     // remembered pick is gone, offer what exists, and reheal on the pick.
     let sb = Sandbox::new(&["claude", "aider"]);
+    // A config file must exist so first run is skipped; the stale memory
+    // below is the live-TUI scenario under test.
+    sb.write_config("");
     std::fs::create_dir_all(sb.dir.join("state/gwae")).expect("state dir");
     std::fs::write(
         sb.state_path(),
@@ -602,6 +608,9 @@ fn the_force_pick_chord_opens_the_overlay_and_spawns_a_normal_pane() {
     // ⌥+Shift+; ignores the fast paths and opens the overlay; the pick
     // lands in a normal pane and the choice is remembered.
     let sb = Sandbox::new(&["claude", "aider"]);
+    // A config file must exist so first run is skipped and the chord is
+    // handled by the live TUI.
+    sb.write_config("");
     let mut p = sb.spawn_tui();
     std::thread::sleep(Duration::from_millis(700));
 
@@ -976,6 +985,10 @@ fn startup_pane_one_one_shows_the_selector_when_no_agent_is_configured() {
     // Case 2 of 2: nothing configured, so pane 1.1 is the selector itself.
     // With a fresh config that selector is the gateway's own picker.
     let sb = Sandbox::new(&["claude", "aider"]);
+    // "No agent configured" means an empty config, not a missing file: a
+    // missing file is first run, which now configures natively before the
+    // TUI ever opens. Pane 1.1's selector is the post-first-run behavior.
+    sb.write_config("");
     let mut p = sb.spawn_tui_bare();
     // Wait for the gateway to have painted, then dismiss the startup HUD,
     // which covers the middle of the screen (ESC is swallowed by gwae, so

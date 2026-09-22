@@ -194,6 +194,11 @@ impl Session {
         cmd.env("GWAE_KITTY_KEYBOARD", "0");
         cmd.env("GWAE_KITTY_GRAPHICS", "0");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
+        // The sandbox's fake `jcode` (below) execs `tee received-paste`, so
+        // the harness-status poller running `jcode debug clients:map` would
+        // truncate the very file these tests assert on. No daemon exists
+        // here anyway: opt out.
+        cmd.env("GWAE_NO_HARNESS_STATUS", "1");
         cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
         cmd.env("GWAE_TEST_CLIPBOARD", dir.join("clipboard"));
