@@ -483,10 +483,7 @@ fn spawn_with_double(status: &str, mode: &str, tag: &str) -> Session {
     let root = std::env::var_os("JCODE_SCRATCH_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    let dir = root.join(format!(
-        "gwae-hud-daemon-{}-{tag}",
-        std::process::id()
-    ));
+    let dir = root.join(format!("gwae-hud-daemon-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
     std::fs::create_dir_all(dir.join("bin")).expect("temp bin dir");
