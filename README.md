@@ -81,7 +81,7 @@ Choose gwae when you want readable panes that scroll beyond the screen, rather t
 
 ## Agent status
 
-Reads standard [OSC 133](https://gitlab.freedesktop.org/terminal-wg/specifications/-/blob/master/docs/OSC-133.md) markers when available. Otherwise, output activity and idle time provide a heuristic, not a guarantee that an agent needs input.
+Reads standard [OSC 133](https://gitlab.freedesktop.org/terminal-wg/specifications/-/blob/master/docs/OSC-133.md) markers when available. Otherwise, output activity and idle time provide a heuristic, not a guarantee that an agent needs input. For jcode panes the daemon's verdict wins over the heuristic: gwae polls which sessions are actually generating and corrects heuristic tiles both ways, so a finished client that keeps repainting settles to idle instead of sticking at working, and a generating client in a quiet stretch holds working instead of flapping to attention. Set `GWAE_NO_HARNESS_STATUS=1` to disable the poll.
 
 `»` working · `!` needs input · `✓` done · `✗` failed
 
