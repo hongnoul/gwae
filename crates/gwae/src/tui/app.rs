@@ -275,7 +275,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // tiles against this snapshot below. Same detached-thread-plus-slot
     // shape as the update check: the loop only ever locks briefly.
     let harness_slot = crate::harness_status::spawn_poll();
-    let mut harness_snapshot_at = Instant::now();
     let (tx, rx) = channel::<PaneMsg>();
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     // What `⌥+;` remembers: the last pick spawns with no UI. Loaded once at
@@ -680,36 +679,31 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // The mapping is the pane's terminal title, which embeds the
         // session short name (`jcode Iwazaru`, `Release planning (fox)`).
         // Fresh panes with no title yet simply miss and retry next frame.
-        if !crate::harness_status::snapshot_stale(harness_snapshot_at, now) {
-            if let Ok(slot) = harness_slot.lock() {
-                if !slot.is_empty() {
-                    // `slot` is borrowed; collect first so the layout and
-                    // panes borrows below do not fight it.
-                    let running: Vec<(PaneId, String)> = layout
-                        .panes
-                        .iter()
-                        .filter(|(_, lp)| lp.status == PaneStatus::Running)
-                        .filter_map(|(pid, _)| {
-                            panes.get(pid).map(|p| (*pid, p.grid.title().to_string()))
-                        })
-                        .collect();
-                    for (pid, title) in running {
-                        let st = crate::harness_status::status_for_title(&title, &slot);
-                        if let Some(want) =
-                            crate::harness_status::reconcile_running(PaneStatus::Running, st)
-                        {
-                            if let Some(lp) = layout.panes.get_mut(&pid) {
-                                lp.status = want;
-                                dirty = true;
-                            }
+        // Staleness reads the snapshot's own refresh clock (stamped by the
+        // poller on every success), so a healthy poller never ages out no
+        // matter how long the session has lived.
+        if let Ok(slot) = harness_slot.lock() {
+            if !crate::harness_status::snapshot_stale(&slot, now) && !slot.clients.is_empty() {
+                // `slot` is borrowed; collect first so the layout and
+                // panes borrows below do not fight it.
+                let running: Vec<(PaneId, String)> = layout
+                    .panes
+                    .iter()
+                    .filter(|(_, lp)| lp.status == PaneStatus::Running)
+                    .filter_map(|(pid, _)| {
+                        panes.get(pid).map(|p| (*pid, p.grid.title().to_string()))
+                    })
+                    .collect();
+                for (pid, title) in running {
+                    let st = crate::harness_status::status_for_title(&title, &slot);
+                    if let Some(want) =
+                        crate::harness_status::reconcile_running(PaneStatus::Running, st)
+                    {
+                        if let Some(lp) = layout.panes.get_mut(&pid) {
+                            lp.status = want;
+                            dirty = true;
                         }
                     }
-                } else {
-                    // First poll has not landed yet (or the daemon just
-                    // restarted and the poller is holding the last good
-                    // snapshot by returning empty): age the snapshot clock
-                    // from a successful read instead of boot.
-                    harness_snapshot_at = now;
                 }
             }
         }

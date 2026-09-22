@@ -40,7 +40,22 @@ pub struct ClientStatus {
 }
 
 /// The latest polled snapshot, shared with the event loop.
-pub type StatusSlot = Arc<Mutex<HashMap<String, ClientStatus>>>;
+///
+/// The timestamp is stamped by the poller on every successful refresh, so
+/// staleness measures the last good daemon answer, not process boot. Without
+/// this the loop's own clock would age out a healthy poller minutes after
+/// startup and reconciliation would silently stop.
+#[derive(Debug, Default)]
+pub struct Snapshot {
+    /// When the current `clients` map was last refreshed (`None` = no
+    /// successful poll yet).
+    pub at: Option<Instant>,
+    /// Statuses keyed by lowercased session short name.
+    pub clients: HashMap<String, ClientStatus>,
+}
+
+/// The latest polled snapshot, shared with the event loop.
+pub type StatusSlot = Arc<Mutex<Snapshot>>;
 
 /// Whether a daemon status string means "actively generating".
 ///
@@ -118,7 +133,7 @@ pub fn query_once() -> HashMap<String, ClientStatus> {
 /// An empty query result keeps the previous snapshot rather than clearing it:
 /// a daemon restart mid-session must not flap every tile to unknown.
 pub fn spawn_poll() -> StatusSlot {
-    let slot: StatusSlot = Arc::new(Mutex::new(HashMap::new()));
+    let slot: StatusSlot = Arc::new(Mutex::new(Snapshot::default()));
     if std::env::var_os(NO_POLL_ENV).is_some() {
         return slot;
     }
@@ -131,7 +146,8 @@ pub fn spawn_poll() -> StatusSlot {
         let fresh = query_once();
         if !fresh.is_empty() {
             if let Ok(mut g) = out.lock() {
-                *g = fresh;
+                g.clients = fresh;
+                g.at = Some(Instant::now());
             }
         }
         std::thread::sleep(POLL_INTERVAL);
@@ -146,13 +162,10 @@ pub fn spawn_poll() -> StatusSlot {
 /// search over-asserts on short names (`bo` inside `about`), so require a
 /// word boundary on both sides: ASCII alphanumerics extend a name, anything
 /// else (space, paren, emoji, start/end) terminates it.
-pub fn status_for_title<'a>(
-    title: &str,
-    snapshot: &'a HashMap<String, ClientStatus>,
-) -> Option<&'a ClientStatus> {
+pub fn status_for_title<'a>(title: &str, snapshot: &'a Snapshot) -> Option<&'a ClientStatus> {
     let lower = title.to_lowercase();
     let bytes = lower.as_bytes();
-    snapshot.values().find(|cs| {
+    snapshot.clients.values().find(|cs| {
         let needle = cs.name.to_lowercase();
         let n = needle.as_bytes();
         if n.is_empty() || n.len() > bytes.len() {
@@ -200,9 +213,13 @@ pub fn reconcile_running(
 /// When the snapshot is old enough that it may describe a previous turn,
 /// stop trusting it: fall back to the heuristic rather than pinning a stale
 /// verdict. The poller refreshes every [`POLL_INTERVAL`]; twice that plus
-/// headroom means at least one refresh was missed.
-pub fn snapshot_stale(last_refresh: Instant, now: Instant) -> bool {
-    now.duration_since(last_refresh) >= POLL_INTERVAL * 2 + Duration::from_secs(2)
+/// headroom means at least one refresh was missed. A snapshot with no
+/// successful poll yet (`at` is `None`) is always stale.
+pub fn snapshot_stale(snapshot: &Snapshot, now: Instant) -> bool {
+    let Some(at) = snapshot.at else {
+        return true;
+    };
+    now.duration_since(at) >= POLL_INTERVAL * 2 + Duration::from_secs(2)
 }
 
 #[cfg(test)]
@@ -256,9 +273,16 @@ mod tests {
         assert!(m.is_empty());
     }
 
+    fn snapshot_of(text: &str) -> Snapshot {
+        Snapshot {
+            at: Some(Instant::now()),
+            clients: parse_clients_map(text),
+        }
+    }
+
     #[test]
     fn title_match_needs_word_boundaries() {
-        let m = parse_clients_map(SAMPLE);
+        let m = snapshot_of(SAMPLE);
         // Bare fallback label, capitalized the way jcode capitalizes it.
         assert_eq!(
             status_for_title("🐀 jcode Iwazaru", &m).unwrap().name,
@@ -272,8 +296,8 @@ mod tests {
             "iwazaru"
         );
         // Short names must not match inside other words.
-        let mut bo = HashMap::new();
-        bo.insert(
+        let mut bo_clients = HashMap::new();
+        bo_clients.insert(
             "bo".to_string(),
             ClientStatus {
                 name: "bo".to_string(),
@@ -281,6 +305,10 @@ mod tests {
                 busy: false,
             },
         );
+        let bo = Snapshot {
+            at: Some(Instant::now()),
+            clients: bo_clients,
+        };
         assert!(status_for_title("about to run", &bo).is_none());
         assert!(status_for_title("hi bo!", &bo).is_some());
         // Unknown titles match nothing.
@@ -290,9 +318,9 @@ mod tests {
     #[test]
     fn reconcile_only_demotes_stale_running() {
         use gwae_layout::PaneStatus;
-        let m = parse_clients_map(SAMPLE);
-        let done = &m["iwazaru"];
-        let working = &m["piglet"];
+        let m = snapshot_of(SAMPLE);
+        let done = &m.clients["iwazaru"];
+        let working = &m.clients["piglet"];
         // Settled daemon + Running tile -> Idle (done, wants attention).
         assert_eq!(
             reconcile_running(PaneStatus::Running, Some(done)),
@@ -316,12 +344,33 @@ mod tests {
 
     #[test]
     fn staleness_needs_a_missed_refresh_plus_headroom() {
+        // No successful poll yet: always stale, so the heuristic stands
+        // until the poller lands its first answer.
+        assert!(snapshot_stale(&Snapshot::default(), Instant::now()));
         let t0 = Instant::now();
-        assert!(!snapshot_stale(t0, t0 + POLL_INTERVAL));
-        assert!(!snapshot_stale(t0, t0 + POLL_INTERVAL * 2));
+        let fresh = Snapshot {
+            at: Some(t0),
+            clients: HashMap::new(),
+        };
+        assert!(!snapshot_stale(&fresh, t0 + POLL_INTERVAL));
+        assert!(!snapshot_stale(&fresh, t0 + POLL_INTERVAL * 2));
         assert!(snapshot_stale(
-            t0,
+            &fresh,
             t0 + POLL_INTERVAL * 2 + Duration::from_secs(3)
         ));
+    }
+
+    #[test]
+    fn a_healthy_poller_never_ages_out() {
+        // The regression this struct exists for: staleness must measure the
+        // last successful poll, not process boot. A snapshot refreshed a
+        // second ago is fresh no matter how long the session has lived.
+        let boot = Instant::now();
+        let later = boot + Duration::from_secs(3600);
+        let snap = Snapshot {
+            at: Some(later - Duration::from_secs(1)),
+            clients: HashMap::new(),
+        };
+        assert!(!snapshot_stale(&snap, later));
     }
 }
