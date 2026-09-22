@@ -7,7 +7,7 @@
 //! manager never ends up owning a ghost, then we sweep whatever is left.
 
 use super::source::state_dir;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Shell profiles the curl installer may have touched.
 const PROFILE_FILES: &[&str] = &[
@@ -24,7 +24,7 @@ const OWN_MARK: &str = "added by gwae installer";
 /// Every installed `gwae` binary: each `gwae` on PATH (resolved through
 /// symlinks, so the brew Cellar target is found too) plus the known install
 /// dirs, so a shadowed copy is never left behind.
-fn all_binaries(current_exe: &PathBuf) -> Vec<PathBuf> {
+fn all_binaries(current_exe: &Path) -> Vec<PathBuf> {
     use std::collections::HashSet;
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -33,7 +33,7 @@ fn all_binaries(current_exe: &PathBuf) -> Vec<PathBuf> {
             out.push(p);
         }
     };
-    push(current_exe.clone());
+    push(current_exe.to_path_buf());
     if let Ok(path) = std::env::var("PATH") {
         for dir in path.split(':') {
             if dir.is_empty() {
@@ -248,7 +248,7 @@ pub fn run_uninstall(_configured: Option<super::source::Source>, yes: bool) -> i
 /// Remove our marked lines from a profile file, keeping everything else.
 /// Both the snippet and its `# added by gwae installer` comment contain the
 /// mark, so one filter drops both.
-fn strip_our_lines(path: &PathBuf) -> std::io::Result<()> {
+fn strip_our_lines(path: &Path) -> std::io::Result<()> {
     let text = std::fs::read_to_string(path)?;
     let kept: Vec<&str> = text.lines().filter(|l| !l.contains(OWN_MARK)).collect();
     let mut s = kept.join("\n");
@@ -258,7 +258,7 @@ fn strip_our_lines(path: &PathBuf) -> std::io::Result<()> {
     std::fs::write(path, s)
 }
 
-fn remove_path(p: &PathBuf) -> std::io::Result<()> {
+fn remove_path(p: &Path) -> std::io::Result<()> {
     if !p.exists() && !p.is_symlink() {
         return Ok(());
     }
