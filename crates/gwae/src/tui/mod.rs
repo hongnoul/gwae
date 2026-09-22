@@ -45,7 +45,7 @@ pub(crate) use render::{focused_pane_views_with_chrome, render_frame_with_images
 mod config_io;
 mod input;
 
-pub(crate) use config_io::{perform_reload, write_harness_dir, write_keep_awake};
+pub(crate) use config_io::{perform_reload, write_harness_dir};
 pub(crate) use input::{
     focused_pane, handle_key, is_alt_modifier, is_harness_scroll_chord, key_bytes,
     layout_pane_count, paste_note, picker_paste_query, picker_step, smart_jump_target, Cmd,

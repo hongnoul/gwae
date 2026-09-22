@@ -114,10 +114,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // the abnormal exits too, not just ⌥+Shift+q.
     crate::reap::install();
     let _reap_guard = crate::reap::Guard;
-    // Hold idle/display sleep while the session lives (macOS `caffeinate`,
-    // no-op elsewhere or when disabled). Tied to the process lifetime via the
-    // guard's drop, and reconciled on config reload below.
-    let mut keep_awake = crate::keepawake::Guard::acquire(cfg.keep_awake);
+    // Keep-awake always starts off: the machine sleeps as normal unless the
+    // user presses ⌥+w in this session. The config file's `keep_awake` is
+    // ignored at startup and the toggle is never persisted.
+    cfg.keep_awake = false;
+    let mut keep_awake = crate::keepawake::Guard::acquire(false);
     enable_raw_mode().map_err(|e| {
         eprintln!("raw mode: {e}");
         1
@@ -1423,42 +1424,24 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         reload_note = Some("keep-awake is macOS-only".to_string());
                                         reload_note_until = Some(Instant::now() + NOTE_LINGER);
                                     } else {
+                                        // Session-only: never persisted, and
+                                        // always off again at next launch.
                                         cfg.keep_awake = !cfg.keep_awake;
                                         keep_awake.refresh(cfg.keep_awake);
-                                        let saved = write_keep_awake(&cfg_path, cfg.keep_awake);
                                         reload_note_anchor = None;
-                                        reload_note = Some(match saved {
-                                            Ok(()) => {
-                                                if cfg.keep_awake {
-                                                    if keep_awake.active() {
-                                                        "keep-awake on: Mac stays up while gwae runs (saved)".to_string()
-                                                    } else {
-                                                        format!(
-                                                            "keep-awake on (saved), assertion not held ({})",
-                                                            crate::keepawake::availability_note()
-                                                        )
-                                                    }
-                                                } else {
-                                                    "keep-awake off (saved)".to_string()
-                                                }
+                                        reload_note = Some(if cfg.keep_awake {
+                                            if keep_awake.active() {
+                                                "keep-awake on for this session (off again at next launch)".to_string()
+                                            } else {
+                                                format!(
+                                                    "keep-awake on (this session), assertion not held ({})",
+                                                    crate::keepawake::availability_note()
+                                                )
                                             }
-                                            Err(e) => {
-                                                if cfg.keep_awake {
-                                                    format!(
-                                                        "keep-awake on (this session; save error: {e})"
-                                                    )
-                                                } else {
-                                                    format!(
-                                                        "keep-awake off (this session; save error: {e})"
-                                                    )
-                                                }
-                                            }
+                                        } else {
+                                            "keep-awake off".to_string()
                                         });
                                         reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                        // A config write bumps the mtime;
-                                        // adopt it now so the reload poll
-                                        // does not echo our own toggle back.
-                                        cfg_mtime = Config::mtime(&cfg_path);
                                     }
                                     dirty = true;
                                 }

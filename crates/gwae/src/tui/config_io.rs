@@ -23,19 +23,6 @@ pub(crate) fn write_agent_dir(path: &std::path::Path, dir: &str) -> Result<(), S
     std::fs::write(path, out).map_err(|e| e.to_string())
 }
 
-/// Persist the `⌥+w` toggle as `keep_awake` in the config file, so the
-/// keypress and the file agree and the choice survives a restart.
-///
-/// Same comment-preserving rewrite as the spawn-dir save path.
-pub(crate) fn write_keep_awake(path: &std::path::Path, on: bool) -> Result<(), String> {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    let out = crate::agent::set_scalar_text(&text, "keep_awake", if on { "true" } else { "false" });
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(path, out).map_err(|e| e.to_string())
-}
-
 /// Persist the picked spawn directory as `agent_dir`.
 ///
 /// The `harness` argument is accepted and ignored: per-harness spawn dirs

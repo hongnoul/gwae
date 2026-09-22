@@ -90,8 +90,9 @@ pub struct Config {
     pub input_poll_ms: u64,
     /// Hold a macOS `caffeinate` assertion while gwae runs, so idle and
     /// display sleep never pause the panes. macOS-only by construction.
-    /// Default `false`: the machine sleeps as normal unless you opt in with
-    /// `keep_awake = true` or `⌥+w`.
+    /// Session-only: keep-awake always starts off at launch and only the
+    /// `⌥+w` toggle turns it on; the file value is not read at startup and
+    /// the toggle is not saved back.
     /// Note the honest limit: a closed
     /// lid still sleeps outside clamshell mode (power + external
     /// display + external input).
@@ -154,6 +155,7 @@ impl Config {
         let Config {
             startup_panes,
             agent_dir,
+            keep_awake,
             ..
         } = self.clone();
         *self = Config {
@@ -162,12 +164,12 @@ impl Config {
             // or `⌥+d`, and a config edit must not yank panes back to the
             // file's value.
             agent_dir,
+            // Kept: keep-awake is session-only. It starts off every launch
+            // and only ⌥+w flips it, so a config edit must not turn it on.
+            keep_awake,
             ..new
         };
-        // `keep_awake` rides along with the reload rather than being pinned:
-        // it is a behavior toggle applied live to the running
-        // session (the guard is reconciled in the render loop). `startup_panes`
-        // above stays pinned because it was consumed once at launch.
+        // `startup_panes` stays pinned because it was consumed once at launch.
     }
 
     /// Directory new panes start in: `agent_dir`, or "" when unset.
