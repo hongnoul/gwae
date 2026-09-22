@@ -187,26 +187,25 @@ pub fn status_for_title<'a>(title: &str, snapshot: &'a Snapshot) -> Option<&'a C
 ///
 /// Returns the status the tile should claim, or `None` when the daemon knows
 /// nothing about this pane and the heuristic stands:
-/// - daemon says busy -> `Running` regardless of quiet time (a quiet stretch
-///   mid-generation, e.g. a long tool call with no redraw, is still work).
-/// - daemon says settled -> `Idle` ("wants attention": the agent is done and
-///   waiting on the user), never `Running`.
-/// - only applies to panes currently claiming `Running`: a real `Done`,
-///   `Failed`, or OSC-`Idle` is a sharper fact than the daemon's coarse
-///   lifecycle and must not be clobbered.
-pub fn reconcile_running(
+/// - tile `Running` + daemon settled -> `Idle` ("wants attention": the agent
+///   is done and waiting on the user). This is the reported bug: maintenance
+///   output pins the heuristic at `Running` forever.
+/// - tile `Idle` + daemon busy -> `Running` (a quiet stretch mid-generation,
+///   e.g. a long tool call with no redraw, is still work; the heuristic
+///   would otherwise flap to attention mid-turn).
+/// - only `Running`/`Idle` tiles are touched: a real `Done`, `Failed`, or
+///   OSC 133 verdict is a sharper fact than the daemon's coarse lifecycle
+///   and must not be clobbered.
+pub fn reconcile(
     current: gwae_layout::PaneStatus,
     snapshot: Option<&ClientStatus>,
 ) -> Option<gwae_layout::PaneStatus> {
     use gwae_layout::PaneStatus;
-    if current != PaneStatus::Running {
-        return None;
-    }
     let cs = snapshot?;
-    if cs.busy {
-        None
-    } else {
-        Some(PaneStatus::Idle)
+    match (current, cs.busy) {
+        (PaneStatus::Running, false) => Some(PaneStatus::Idle),
+        (PaneStatus::Idle, true) => Some(PaneStatus::Running),
+        _ => None,
     }
 }
 
@@ -316,30 +315,33 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_only_demotes_stale_running() {
+    fn reconcile_corrects_both_directions() {
         use gwae_layout::PaneStatus;
         let m = snapshot_of(SAMPLE);
         let done = &m.clients["iwazaru"];
         let working = &m.clients["piglet"];
         // Settled daemon + Running tile -> Idle (done, wants attention).
         assert_eq!(
-            reconcile_running(PaneStatus::Running, Some(done)),
+            reconcile(PaneStatus::Running, Some(done)),
             Some(PaneStatus::Idle)
         );
-        // Busy daemon + Running tile -> keep the heuristic's claim.
-        assert_eq!(reconcile_running(PaneStatus::Running, Some(working)), None);
-        // Sharper facts are never clobbered, even when the daemon is settled.
-        for st in [
-            PaneStatus::Done,
-            PaneStatus::Failed,
-            PaneStatus::Idle,
-            PaneStatus::Plain,
-        ] {
-            assert_eq!(reconcile_running(st, Some(done)), None, "{st:?}");
-            assert_eq!(reconcile_running(st, Some(working)), None, "{st:?}");
+        // Busy daemon + quiet (Idle) tile -> Running: a silent stretch
+        // mid-generation is still work, not a cry for attention.
+        assert_eq!(
+            reconcile(PaneStatus::Idle, Some(working)),
+            Some(PaneStatus::Running)
+        );
+        // Agreements hold: no flap when both sides say the same thing.
+        assert_eq!(reconcile(PaneStatus::Running, Some(working)), None);
+        assert_eq!(reconcile(PaneStatus::Idle, Some(done)), None);
+        // Sharper facts are never clobbered, even when the daemon disagrees.
+        for st in [PaneStatus::Done, PaneStatus::Failed, PaneStatus::Plain] {
+            assert_eq!(reconcile(st, Some(done)), None, "{st:?}");
+            assert_eq!(reconcile(st, Some(working)), None, "{st:?}");
         }
         // No daemon knowledge -> heuristic stands.
-        assert_eq!(reconcile_running(PaneStatus::Running, None), None);
+        assert_eq!(reconcile(PaneStatus::Running, None), None);
+        assert_eq!(reconcile(PaneStatus::Idle, None), None);
     }
 
     #[test]

@@ -458,36 +458,45 @@ fn reveal_raw(s: &mut Session) -> String {
     }
 }
 
-/// A fake `jcode` that answers `debug clients:map` with one settled session.
-/// The agent pane below titles itself `jcode pond` (a real OSC 0/2 title, the
-/// same channel a live harness uses), and the double reports `pond` as
-/// `ready`: a done client the heuristic would otherwise hold at `Running`
-/// because the pane keeps emitting output.
+/// A fake `jcode` that answers `debug clients:map` with one session whose
+/// lifecycle status comes from `$GWAE_DOUBLE_STATUS` (`ready` or `running`).
+/// The agent pane titles itself `jcode pond` (a real OSC 0/2 title, the same
+/// channel a live harness uses).
 ///
 /// The double serves both roles: with `debug clients:map` argv it answers
 /// the poller; otherwise (spawned as the pane's harness) it titles the pane
-/// and ticks forever.
+/// and then behaves per `$GWAE_DOUBLE_MODE`: `chatty` ticks forever (a done
+/// client the heuristic would hold at `Running`), `quiet` prints once and
+/// goes silent (a generating client in a quiet stretch the heuristic would
+/// flap to `!`).
 #[cfg(unix)]
 const DAEMON_DOUBLE: &str = r#"#!/bin/sh
 if [ "$1" = "debug" ] && [ "$2" = "clients:map" ]; then
-    printf '{"count":1,"clients":[{"session_id":"session_pond_1_abc","friendly_name":"pond","status":"ready","working_dir":"/tmp"}]}'
+    printf '{"count":1,"clients":[{"session_id":"session_pond_1_abc","friendly_name":"pond","status":"%s","working_dir":"/tmp"}]}' "${GWAE_DOUBLE_STATUS:-ready}"
     exit 0
 fi
 printf '\033]0;jcode pond\007'
+if [ "${GWAE_DOUBLE_MODE:-chatty}" = "quiet" ]; then
+    printf 'working'
+    exec sleep 60
+fi
 while :; do printf '\033[2;1Htick %s' "$(date +%S)"; sleep 1; done
 "#;
 
-/// A finished agent TUI keeps repainting (spinner frames, ambient toasts),
-/// so the activity heuristic alone holds `Running` forever. The daemon's
-/// `ready` verdict must demote that tile to `!` (idle, wants attention).
+/// Spawn gwae with the daemon double on PATH and no `run` arg, so pane 1.1
+/// boots the startup-harness path as a genuine agent pane running the
+/// double. `status` is the daemon verdict (`ready`/`running`), `mode` the
+/// pane behavior (`chatty`/`quiet`). The double inherits both via env.
 #[cfg(unix)]
-#[test]
-fn a_settled_daemon_session_demotes_a_chatty_running_tile() {
+fn spawn_with_double(status: &str, mode: &str, tag: &str) -> Session {
     use std::os::unix::fs::PermissionsExt;
     let root = std::env::var_os("JCODE_SCRATCH_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    let dir = root.join(format!("gwae-hud-daemon-{}-0", std::process::id()));
+    let dir = root.join(format!(
+        "gwae-hud-daemon-{}-{tag}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("gwae")).expect("temp config dir");
     std::fs::create_dir_all(dir.join("bin")).expect("temp bin dir");
@@ -499,8 +508,6 @@ fn a_settled_daemon_session_demotes_a_chatty_running_tile() {
     .expect("chmod double");
     // No `run` command: pane 1.1 resolves the lone `jcode` on PATH as its
     // startup harness, so it is a genuine agent pane running the double.
-    // The double titles the pane like a real client (`jcode pond`) and
-    // then ticks forever; the daemon reports `pond` as `ready`.
     std::fs::write(dir.join("gwae/gwae.toml"), "startup_panes = 1\n").expect("write config");
 
     let pair = native_pty_system()
@@ -526,6 +533,8 @@ fn a_settled_daemon_session_demotes_a_chatty_running_tile() {
         "PATH",
         format!("{}:/usr/bin:/bin", dir.join("bin").display()),
     );
+    cmd.env("GWAE_DOUBLE_STATUS", status);
+    cmd.env("GWAE_DOUBLE_MODE", mode);
     cmd.env("ENV", "/dev/null");
     cmd.env("GWAE_NO_UPDATE_CHECK", "1");
     cmd.env("GWAE_NO_KEEP_AWAKE", "1");
@@ -545,7 +554,7 @@ fn a_settled_daemon_session_demotes_a_chatty_running_tile() {
             }
         }
     });
-    let mut s = Session {
+    Session {
         rx,
         writer,
         child,
@@ -554,8 +563,17 @@ fn a_settled_daemon_session_demotes_a_chatty_running_tile() {
             rows: 30,
             cols: 140,
         }),
-        dir: dir.clone(),
-    };
+        dir,
+    }
+}
+
+/// A finished agent TUI keeps repainting (spinner frames, ambient toasts),
+/// so the activity heuristic alone holds `Running` forever. The daemon's
+/// `ready` verdict must demote that tile to `!` (idle, wants attention).
+#[cfg(unix)]
+#[test]
+fn a_settled_daemon_session_demotes_a_chatty_running_tile() {
+    let mut s = spawn_with_double("ready", "chatty", "settled");
     let _ = s.drain();
     // The pane ticks forever, so the activity heuristic alone would claim
     // `Running`; the daemon says `ready`, so the tile must settle at `!`
@@ -573,6 +591,37 @@ fn a_settled_daemon_session_demotes_a_chatty_running_tile() {
         assert!(
             std::time::Instant::now() < deadline,
             "tile never settled to idle: {shown:?}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    s.kill();
+}
+
+/// A generating agent in a quiet stretch (a long tool call with no redraw)
+/// goes silent past the quiet window. The heuristic alone would flap the
+/// tile to `!` mid-turn; the daemon's `running` verdict must hold it at `»`.
+#[cfg(unix)]
+#[test]
+fn a_busy_daemon_session_holds_a_quiet_tile_running() {
+    let mut s = spawn_with_double("running", "quiet", "busy");
+    let _ = s.drain();
+    // Wait out the quiet window first: the tile may legitimately start at
+    // `»` (fresh output) and only the daemon keeps it there once silence
+    // passes 4s. From then on it must never flap to `!`.
+    std::thread::sleep(Duration::from_secs(6));
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let shown = visible(&reveal_raw(&mut s));
+        assert!(
+            !shown.contains("!1"),
+            "daemon says running but the tile flapped to idle: {shown:?}"
+        );
+        if shown.contains("»1") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "tile never held running: {shown:?}"
         );
         std::thread::sleep(Duration::from_millis(500));
     }

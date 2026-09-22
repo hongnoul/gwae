@@ -647,9 +647,31 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // integration are owned by the explicit protocol above and skipped
         // here; plain (non-agent) panes are skipped entirely — their output
         // claims nothing and they stay `Plain`.
+        //
+        // Panes the daemon already covers skip the heuristic: otherwise a
+        // quiet-but-busy pane would flap every frame (heuristic writes
+        // `Idle`, daemon writes `Running` back), repainting the frame for
+        // no visible change. The daemon verdict below is the persistent
+        // answer for those panes.
         let now = Instant::now();
+        let daemon_covers: std::collections::HashSet<PaneId> =
+            match harness_slot.lock() {
+                Ok(slot)
+                    if !crate::harness_status::snapshot_stale(&slot, now)
+                        && !slot.clients.is_empty() =>
+                {
+                    panes
+                        .iter()
+                        .filter_map(|(pid, p)| {
+                            crate::harness_status::status_for_title(p.grid.title(), &slot)
+                                .map(|_| *pid)
+                        })
+                        .collect()
+                }
+                _ => std::collections::HashSet::new(),
+            };
         for (pid, p) in panes.iter() {
-            if p.saw_osc133 || !agent_panes.contains(pid) {
+            if p.saw_osc133 || !agent_panes.contains(pid) || daemon_covers.contains(pid) {
                 continue;
             }
             let quiet = now.duration_since(p.last_output) >= QUIET_AFTER;
@@ -666,15 +688,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
         }
 
-        // Authoritative override from the jcode daemon: a finished agent
-        // TUI keeps emitting maintenance output (periodic redraws, ambient
-        // notification toasts), so the heuristic above can hold `Running`
-        // forever on a done client. When the daemon reports the session
-        // behind a `Running` tile as settled, demote it to `Idle` (done,
-        // waiting on the user). Only `Running` tiles are touched: a real
-        // `Done`/`Failed`/OSC-`Idle` is sharper than the daemon's coarse
-        // lifecycle. Unknown panes (no title match, no daemon, stale
-        // snapshot) keep the heuristic's answer.
+        // Authoritative override from the jcode daemon, in both directions:
+        // a finished agent TUI keeps emitting maintenance output (periodic
+        // redraws, ambient notification toasts), so the heuristic above can
+        // hold `Running` forever on a done client — demote that tile to
+        // `Idle` (done, waiting on the user). Conversely a generating agent
+        // in a quiet stretch (a long tool call with no redraw) goes silent
+        // past the quiet window — hold that tile at `Running` instead of
+        // flapping to attention mid-turn. Only heuristic tiles (`Running` /
+        // `Idle`) are touched: a real `Done`/`Failed`/OSC 133 verdict is
+        // sharper than the daemon's coarse lifecycle. Unknown panes (no
+        // title match, no daemon, stale snapshot) keep the heuristic.
         //
         // The mapping is the pane's terminal title, which embeds the
         // session short name (`jcode Iwazaru`, `Release planning (fox)`).
@@ -686,19 +710,21 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             if !crate::harness_status::snapshot_stale(&slot, now) && !slot.clients.is_empty() {
                 // `slot` is borrowed; collect first so the layout and
                 // panes borrows below do not fight it.
-                let running: Vec<(PaneId, String)> = layout
+                let candidates: Vec<(PaneId, PaneStatus, String)> = layout
                     .panes
                     .iter()
-                    .filter(|(_, lp)| lp.status == PaneStatus::Running)
-                    .filter_map(|(pid, _)| {
-                        panes.get(pid).map(|p| (*pid, p.grid.title().to_string()))
+                    .filter(|(_, lp)| {
+                        lp.status == PaneStatus::Running || lp.status == PaneStatus::Idle
+                    })
+                    .filter_map(|(pid, lp)| {
+                        panes
+                            .get(pid)
+                            .map(|p| (*pid, lp.status, p.grid.title().to_string()))
                     })
                     .collect();
-                for (pid, title) in running {
+                for (pid, current, title) in candidates {
                     let st = crate::harness_status::status_for_title(&title, &slot);
-                    if let Some(want) =
-                        crate::harness_status::reconcile_running(PaneStatus::Running, st)
-                    {
+                    if let Some(want) = crate::harness_status::reconcile(current, st) {
                         if let Some(lp) = layout.panes.get_mut(&pid) {
                             lp.status = want;
                             dirty = true;
