@@ -622,10 +622,14 @@ pub(crate) fn nudge_repaint(panes: &mut HashMap<PaneId, PtyPane>) -> RepaintRest
 /// How long a repaint nudge leaves the pane one row taller before restoring.
 ///
 /// The child has to be scheduled in between or it never sees two distinct
-/// sizes and never fully repaints (see [`nudge_repaint`] case 3). Measured
-/// sufficient at 50ms against a real ratatui app; doubled for headroom on a
-/// loaded machine, and still far below the ~6s a reload already takes.
-pub(crate) const REPAINT_SETTLE: std::time::Duration = std::time::Duration::from_millis(100);
+/// sizes and never fully repaints (see [`nudge_repaint`] case 3). 50ms was
+/// measured sufficient against a real ratatui app on an idle machine, but a
+/// child that polls its size (rather than handling `SIGWINCH`) can sleep
+/// through a window that short when the machine is loaded, so this is set well
+/// above the measurement. It costs nothing: it is a deadline for one extra
+/// `ioctl`, not a sleep, and the loop keeps painting throughout. Still an
+/// order of magnitude below the several seconds a reload already takes.
+pub(crate) const REPAINT_SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// The second half of a repaint nudge: sizes to put back, and when.
 ///

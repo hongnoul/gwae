@@ -299,6 +299,12 @@ fn a_reload_swaps_the_binary_and_keeps_the_pane_running() {
 /// test honest about *when* the paint happened: gwae legitimately sizes a pane
 /// during startup, so the claim is that a further paint happens after the
 /// reload.
+///
+/// The probe samples quickly and the assertion polls rather than sleeping a
+/// fixed span. Six of these tests reload real binaries in parallel, so a
+/// coarse sampling loop can sit through the whole grown-size window and miss
+/// it, which showed up as a 1-in-3 flake. The sampling interval is well under
+/// `REPAINT_SETTLE` (100ms) so the change cannot fall between two samples.
 #[test]
 fn a_reloaded_pane_actually_repaints_itself() {
     const MARK: &str = "RTPAINT24810";
@@ -307,6 +313,8 @@ fn a_reloaded_pane_actually_repaints_itself() {
     std::fs::write(
         &script,
         // Paint only on an observed size change, like ratatui's diff does.
+        // `sleep 0.02` keeps sampling far below the settle window; `stty`
+        // reads the size from the controlling terminal on every pass.
         format!(
             "#!/bin/sh\n\
              last=''\n\
@@ -316,7 +324,7 @@ fn a_reloaded_pane_actually_repaints_itself() {
              \t\tprintf '{MARK}\\n'\n\
              \t\tlast=$now\n\
              \tfi\n\
-             \tsleep 0.1\n\
+             \tsleep 0.02\n\
              done\n"
         ),
     )
@@ -329,8 +337,17 @@ fn a_reloaded_pane_actually_repaints_itself() {
     }
 
     let s = Session::start(&format!("sh {}", script.display()));
-    std::thread::sleep(Duration::from_secs(3));
-    let before = s.screen().matches(MARK).count();
+    // Wait for the first paint rather than assuming one lands in a fixed
+    // window: under parallel load startup can take noticeably longer.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut before = 0;
+    while Instant::now() < deadline {
+        before = s.screen().matches(MARK).count();
+        if before > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
     assert!(
         before > 0,
         "precondition: the probe must have painted at least once before the \
@@ -339,8 +356,18 @@ fn a_reloaded_pane_actually_repaints_itself() {
     );
 
     s.trigger_reload();
-    std::thread::sleep(Duration::from_secs(8));
-    let after = s.screen().matches(MARK).count();
+    // Poll for the repaint. The budget is generous because the reload itself
+    // (settle window, is_loadable check, exec, adopt) dominates it; the test
+    // returns as soon as the paint lands.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut after = before;
+    while Instant::now() < deadline {
+        after = s.screen().matches(MARK).count();
+        if after > before {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
     let _ = std::fs::remove_file(&script);
 
     assert!(
