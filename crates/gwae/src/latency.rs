@@ -216,20 +216,25 @@ pub fn kitty_settings() -> Vec<Setting> {
     ]
 }
 
-/// Probe gwae's own knob. This is the one we may write.
+/// Probe gwae's own knob.
+///
+/// Retired as a latency setting: since the event-driven loop landed (input
+/// forwarder thread + single blocking channel wait), a keystroke wakes the
+/// loop immediately and `input_poll_ms` only paces periodic housekeeping
+/// (size re-check, note expiry, status flips). Reporting it as "leaving
+/// latency on the table" would tell users to tune a knob that no longer
+/// touches the input path, so the audit always calls it optimal. The key
+/// still parses and is still written by older configs; it just stopped
+/// being a recommendation.
 pub fn gwae_settings(input_poll_ms: u64) -> Vec<Setting> {
     vec![Setting {
         layer: "gwae",
         key: "input_poll_ms",
         current: Some(input_poll_ms.to_string()),
         want: "1",
-        verdict: if input_poll_ms <= 1 {
-            Verdict::Optimal
-        } else {
-            Verdict::Suboptimal
-        },
-        why: "how long the loop waits for a keystroke; gwae is on the round trip twice, so it costs double",
-        fix: Some("input_poll_ms = 1".into()),
+        verdict: Verdict::Optimal,
+        why: "timer tick only; keystrokes wake the loop directly, so this no longer affects input latency",
+        fix: None,
     }]
 }
 
@@ -331,11 +336,15 @@ mod tests {
     }
 
     #[test]
-    fn gwae_own_setting_is_judged_against_one_millisecond() {
-        assert_eq!(gwae_settings(1)[0].verdict, Verdict::Optimal);
-        assert_eq!(gwae_settings(0)[0].verdict, Verdict::Optimal);
-        assert_eq!(gwae_settings(2)[0].verdict, Verdict::Suboptimal);
-        assert_eq!(gwae_settings(10)[0].verdict, Verdict::Suboptimal);
+    fn gwae_own_setting_is_retired_never_a_recommendation() {
+        // Since the event-driven loop, `input_poll_ms` paces timers only:
+        // keystrokes wake the loop directly. Whatever the value says, the
+        // audit must not tell the user to tune it for latency — a nag here
+        // would recommend a knob with no effect on the input path.
+        for v in [0, 1, 2, 10, 50] {
+            assert_eq!(gwae_settings(v)[0].verdict, Verdict::Optimal);
+            assert!(gwae_settings(v)[0].fix.is_none());
+        }
     }
 
     #[test]

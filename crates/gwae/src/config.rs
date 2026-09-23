@@ -95,12 +95,12 @@ pub struct Config {
     /// The minimap: a small bottom-right grid showing each strip (row) and its
     /// panes (columns), with the focused strip and column highlighted.
     pub minimap: Minimap,
-    /// Milliseconds to wait in `event::poll` before checking PTY output and
-    /// repainting. Lower values reduce perceived typing and backspace latency
-    /// at the cost of more frequent wakeups. Default is 1ms for minimum
-    /// input latency (backspace/delete feels instant); the loop backs off to
-    /// 30ms once the screen has been quiet for 750ms, so an idle session stays
-    /// cheap. Valid range 1..50.
+    /// Milliseconds the event loop's timer tick waits between housekeeping
+    /// passes (terminal size re-check, note expiry, status flips) while the
+    /// session is active; the loop backs off to 30ms once the screen has
+    /// been quiet for 750ms, so an idle session stays cheap. Keystrokes and
+    /// pane output wake the loop directly regardless of this value, so it
+    /// no longer affects input latency. Valid range 1..50.
     #[serde(default = "default_input_poll_ms")]
     pub input_poll_ms: u64,
     /// Hold a macOS `caffeinate` assertion while gwae runs, so idle and
