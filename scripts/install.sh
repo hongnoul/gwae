@@ -24,17 +24,37 @@ else
   C_BOLD='' C_DIM='' C_GREEN='' C_RED='' C_RESET=''
 fi
 
-say()  { printf '  %s>%s %s\n' "$C_DIM" "$C_RESET" "$*"; }
-ok()   { printf '  %s>%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
-die()  { printf '  %s> %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
-
-banner() {
-  printf '\n%s  ▄▄▄▄ ▄ ▄%s\n%s   ▄ █ █▄█%s   %sgwae installer%s\n%s   █ █ █ █%s   %spanes that never shrink%s\n%s   █ ▀ █ █%s   %sgithub.com/hongnoul/gwae%s\n%s  ▀▀▀▀ ▀ ▀%s\n\n' \
-    "$C_BOLD" "$C_RESET" "$C_BOLD" "$C_RESET" "$C_BOLD" "$C_RESET" \
-    "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET" \
-    "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET" \
-    "$C_BOLD" "$C_RESET"
+# Transcript-as-logo: every output line carries the next row of the pixel
+# mark as its left gutter, so the whole install *is* the logo: 5 rows, 5
+# lines on the happy path. Extra lines (warnings, PATH notes) continue
+# with a blank gutter of the same width.
+logo_row=0
+gutter() {
+  logo_row=$((logo_row + 1))
+  case $logo_row in
+    1) G='  ▄▄▄▄ ▄ ▄' ;;
+    2) G='   ▄ █ █▄█' ;;
+    3) G='   █ █ █ █' ;;
+    4) G='   █ ▀ █ █' ;;
+    5) G='  ▀▀▀▀ ▀ ▀' ;;
+    *) G='          ' ;;
+  esac
 }
+
+say()  { gutter; printf '%s%s%s   %s>%s %s\n' "$C_BOLD" "$G" "$C_RESET" "$C_DIM" "$C_RESET" "$*"; }
+ok()   { gutter; printf '%s%s%s   %s>%s %s\n' "$C_BOLD" "$G" "$C_RESET" "$C_GREEN" "$C_RESET" "$*"; }
+die()  {
+  gutter
+  printf '%s%s%s   %s> %s%s\n' "$C_BOLD" "$G" "$C_RESET" "$C_RED" "$*" "$C_RESET" >&2
+  # Close the mark so even a failed run paints the whole logo.
+  while [ "$logo_row" -lt 5 ]; do
+    gutter
+    printf '%s%s%s\n' "$C_BOLD" "$G" "$C_RESET" >&2
+  done
+  exit 1
+}
+
+banner() { printf '\n'; }
 
 # Where to put the binary. Explicit `GWAE_INSTALL_DIR` always wins (upgrades
 # pin it so a re-run cannot relocate the binary). Otherwise pick the first
@@ -86,16 +106,14 @@ artifact="gwae-${target}"
 url="https://github.com/${REPO}/releases/latest/download/${artifact}.tar.gz"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-
-say "fetching latest release manifest..."
 manifest_ver=$(curl -fsSL "https://github.com/${REPO}/releases/latest" -o /dev/null -w '%{url_effective}' 2>/dev/null | grep -o '[^/]*$' || true)
-[ -n "${manifest_ver:-}" ] && say "downloading ${manifest_ver}..."
-# On a tty, show curl's own progress bar (the X-of-Y KB display users
-# expect from a download); piped or logged runs stay silent as before.
-if [ -t 1 ]; then curl_progress="--progress-bar"; else curl_progress="-s"; fi
-curl -fSL $curl_progress -o "$tmp/pkg.tar.gz" "$url" \
+
+say "downloading ${manifest_ver:-latest release}..."
+# The download stays quiet (no progress bar): each output line is a row of
+# the logo, and curl's bar would tear the composition mid-mark. The bottle
+# is ~2MB, so silence costs a second or two at worst.
+curl -fsSL -o "$tmp/pkg.tar.gz" "$url" \
   || die "download failed: $url"
-ok "downloaded ${manifest_ver:-latest release}"
 
 # --- checksum (required: every release ships a .sha256) ------------------------
 sha_tool="shasum -a 256"
@@ -179,7 +197,8 @@ fi
 add_to_path() {
   case ":$PATH:" in
     *":$INSTALL_DIR:"*)
-      ok "${INSTALL_DIR} is already on your PATH"
+      # Already reachable: nothing happened, so no line. The happy path
+      # stays exactly as tall as the logo.
       return 0
       ;;
   esac
@@ -253,4 +272,5 @@ add_to_path() {
 
 add_to_path
 
-printf '\n  %s>%s ready. run %sgwae%s to get started.\n\n' "$C_GREEN" "$C_RESET" "$C_BOLD" "$C_RESET"
+ok "ready. run ${C_BOLD}gwae${C_RESET} to get started."
+printf '\n'
