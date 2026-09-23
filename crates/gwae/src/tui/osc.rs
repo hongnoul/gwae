@@ -2,17 +2,29 @@
 
 use gwae_layout::PaneStatus;
 
-/// Scan a PTY output chunk for OSC 133 shell-integration markers and return
-/// the status implied by the *last* one present. The protocol (emitted by
-/// fish/zsh integrations and agent harnesses like jcode):
+/// Scan a PTY output chunk for OSC 133 shell-integration markers and fold
+/// them, in order, over the pane's current status. Returns the resulting
+/// status, or `None` when the chunk carries no marker at all (so the caller
+/// knows the heuristic still stands). The protocol (emitted by fish/zsh
+/// integrations and agent harnesses like jcode):
 ///   `133;A`   prompt shown  -> the pane is waiting for input (Idle)
 ///   `133;C`   command start -> the pane is working (Running)
-///   `133;D;n` command done  -> Done when n == 0 (or omitted), Failed else
+///   `133;D;n` command done  -> Idle when n == 0 (or omitted), Failed else
+///
+/// A clean completion is `Idle`, not a distinct "done": the shell prints its
+/// prompt right after, so success-at-a-prompt and waiting-for-input are the
+/// same user-facing fact. `Failed` is the opposite: the completion marker and
+/// the following prompt (`133;A`) almost always share one PTY read, and
+/// last-marker-wins would erase the verdict before a single frame rendered.
+/// So `Failed` is sticky through prompt markers (within a chunk *and* across
+/// chunks, which is why the fold seeds from `current`) and clears only on
+/// the next command start (`133;C`) or a fresh completion verdict — failure
+/// at a prompt is still failure.
 /// `133;B` (prompt end / input start) is ignored: focus-wise it is still the
 /// prompt. Sequences may be terminated by BEL or ST and may split across
 /// reads; a marker whose terminator hasn't arrived yet is picked up on a
 /// later chunk (the payload we need sits right after the `133;` prefix).
-pub(crate) fn scan_osc133(bytes: &[u8]) -> Option<PaneStatus> {
+pub(crate) fn scan_osc133(current: PaneStatus, bytes: &[u8]) -> Option<PaneStatus> {
     let mut status = None;
     let mut i = 0;
     while i + 6 <= bytes.len() {
@@ -20,7 +32,16 @@ pub(crate) fn scan_osc133(bytes: &[u8]) -> Option<PaneStatus> {
         if bytes[i] == 0x1b && bytes[i + 1] == b']' && bytes[i + 2..i + 6] == *b"133;" {
             let rest = &bytes[i + 6..];
             match rest.first() {
-                Some(b'A') => status = Some(PaneStatus::Idle),
+                // The prompt does not overwrite a standing failure verdict:
+                // the ✗ must survive the prompt redraw. Anything else at a
+                // prompt is simply waiting for input.
+                Some(b'A') => {
+                    if status.unwrap_or(current) != PaneStatus::Failed {
+                        status = Some(PaneStatus::Idle);
+                    } else {
+                        status = Some(PaneStatus::Failed);
+                    }
+                }
                 Some(b'C') => status = Some(PaneStatus::Running),
                 Some(b'D') => {
                     // Exit code follows as `;n` up to BEL/ESC; absent means 0.
@@ -35,7 +56,7 @@ pub(crate) fn scan_osc133(bytes: &[u8]) -> Option<PaneStatus> {
                         })
                         .unwrap_or(0);
                     status = Some(if code == 0 {
-                        PaneStatus::Done
+                        PaneStatus::Idle
                     } else {
                         PaneStatus::Failed
                     });
@@ -73,25 +94,63 @@ mod tests {
 
     #[test]
     fn scan_osc133_maps_protocol_to_status() {
+        let scan = |b: &[u8]| scan_osc133(PaneStatus::Plain, b);
         // Prompt marker -> waiting for input.
-        assert_eq!(scan_osc133(b"\x1b]133;A\x07"), Some(PaneStatus::Idle));
+        assert_eq!(scan(b"\x1b]133;A\x07"), Some(PaneStatus::Idle));
         // Command start -> running.
-        assert_eq!(scan_osc133(b"\x1b]133;C\x07"), Some(PaneStatus::Running));
-        // Command done, exit 0 (and the bare form) -> done.
-        assert_eq!(scan_osc133(b"\x1b]133;D;0\x07"), Some(PaneStatus::Done));
-        assert_eq!(scan_osc133(b"\x1b]133;D\x1b\\"), Some(PaneStatus::Done));
+        assert_eq!(scan(b"\x1b]133;C\x07"), Some(PaneStatus::Running));
+        // Command done, exit 0 (and the bare form) -> back at the prompt,
+        // waiting for input. There is no separate "done" state: the prompt
+        // always follows within the same read, so it could never render.
+        assert_eq!(scan(b"\x1b]133;D;0\x07"), Some(PaneStatus::Idle));
+        assert_eq!(scan(b"\x1b]133;D\x1b\\"), Some(PaneStatus::Idle));
         // Non-zero exit -> failed.
-        assert_eq!(scan_osc133(b"\x1b]133;D;127\x07"), Some(PaneStatus::Failed));
+        assert_eq!(scan(b"\x1b]133;D;127\x07"), Some(PaneStatus::Failed));
         // The *last* marker in a chunk wins (C then D;1 -> failed).
         assert_eq!(
-            scan_osc133(b"\x1b]133;C\x07output\x1b]133;D;1\x07"),
+            scan(b"\x1b]133;C\x07output\x1b]133;D;1\x07"),
             Some(PaneStatus::Failed)
         );
         // Ordinary output and other OSCs carry no status.
-        assert_eq!(scan_osc133(b"plain output"), None);
-        assert_eq!(scan_osc133(b"\x1b]2;title\x07"), None);
+        assert_eq!(scan(b"plain output"), None);
+        assert_eq!(scan(b"\x1b]2;title\x07"), None);
         // B (input start) is not a status change.
-        assert_eq!(scan_osc133(b"\x1b]133;B\x07"), None);
+        assert_eq!(scan(b"\x1b]133;B\x07"), None);
+    }
+
+    #[test]
+    fn failed_verdict_survives_the_prompt() {
+        // The regression the sticky rule exists for: a shell emits
+        // `D;1` (failed) and then its prompt's `A` in the *same* PTY read.
+        // Last-marker-wins would erase the ✗ before a single frame drew it.
+        assert_eq!(
+            scan_osc133(PaneStatus::Plain, b"\x1b]133;D;1\x07\x1b]133;A\x07"),
+            Some(PaneStatus::Failed)
+        );
+        // Split across reads: the verdict landed last chunk (the pane is
+        // `Failed` now), and the prompt marker arrives alone. Still failed.
+        assert_eq!(
+            scan_osc133(PaneStatus::Failed, b"\x1b]133;A\x07"),
+            Some(PaneStatus::Failed)
+        );
+        // A new command start clears the verdict: the user moved on.
+        assert_eq!(
+            scan_osc133(PaneStatus::Failed, b"\x1b]133;C\x07"),
+            Some(PaneStatus::Running)
+        );
+        // ... and so does a fresh clean completion (C ... D;0 ... A).
+        assert_eq!(
+            scan_osc133(
+                PaneStatus::Failed,
+                b"\x1b]133;C\x07ok\x1b]133;D;0\x07\x1b]133;A\x07"
+            ),
+            Some(PaneStatus::Idle)
+        );
+        // A non-failed pane's prompt is plain waiting-for-input.
+        assert_eq!(
+            scan_osc133(PaneStatus::Running, b"\x1b]133;A\x07"),
+            Some(PaneStatus::Idle)
+        );
     }
 
     #[test]
@@ -102,7 +161,7 @@ mod tests {
         // "working" in the HUD sense: the tile stays neutral.
         assert_eq!(osc_status(PaneStatus::Running, false), PaneStatus::Plain);
         // Every other marker is trusted from any integrated shell.
-        for st in [PaneStatus::Idle, PaneStatus::Done, PaneStatus::Failed] {
+        for st in [PaneStatus::Idle, PaneStatus::Failed] {
             assert_eq!(osc_status(st, false), st);
             assert_eq!(osc_status(st, true), st);
         }

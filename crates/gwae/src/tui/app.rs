@@ -568,7 +568,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         // shell) reads as neutral, not "working". The
                         // heuristic below it is agent-only too: a plain
                         // shell's output claims nothing.
-                        if let Some(st) = scan_osc133(&bytes) {
+                        // The scan folds markers over the pane's current
+                        // status, so a `Failed` verdict survives the prompt
+                        // marker that follows it (same read or a later one)
+                        // and clears only on the next command start.
+                        let cur = layout
+                            .panes
+                            .get(&pid)
+                            .map(|lp| lp.status)
+                            .unwrap_or(PaneStatus::Plain);
+                        if let Some(st) = scan_osc133(cur, &bytes) {
                             p.saw_osc133 = true;
                             if let Some(lp) = layout.panes.get_mut(&pid) {
                                 lp.status = osc_status(st, agent_panes.contains(&pid));
@@ -691,13 +700,15 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // a finished agent TUI keeps emitting maintenance output (periodic
         // redraws, ambient notification toasts), so the heuristic above can
         // hold `Running` forever on a done client — demote that tile to
-        // `Idle` (done, waiting on the user). Conversely a generating agent
+        // `Idle` (done, waiting on the user), or to `Failed` when the daemon
+        // says the turn broke. Conversely a generating agent
         // in a quiet stretch (a long tool call with no redraw) goes silent
         // past the quiet window — hold that tile at `Running` instead of
-        // flapping to attention mid-turn. Only heuristic tiles (`Running` /
-        // `Idle`) are touched: a real `Done`/`Failed`/OSC 133 verdict is
-        // sharper than the daemon's coarse lifecycle. Unknown panes (no
-        // title match, no daemon, stale snapshot) keep the heuristic.
+        // flapping to attention mid-turn. A `Failed` tile is included only
+        // so a daemon-busy session (a retry started) un-fails to `Running`;
+        // a failed shell verdict on a settled session stands (`reconcile`
+        // returns `None` for it). Unknown panes (no title match, no daemon,
+        // stale snapshot) keep the heuristic.
         //
         // The mapping is the pane's terminal title, which embeds the
         // session short name (`jcode Iwazaru`, `Release planning (fox)`).
@@ -713,7 +724,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     .panes
                     .iter()
                     .filter(|(_, lp)| {
-                        lp.status == PaneStatus::Running || lp.status == PaneStatus::Idle
+                        matches!(
+                            lp.status,
+                            PaneStatus::Running | PaneStatus::Idle | PaneStatus::Failed
+                        )
                     })
                     .filter_map(|(pid, lp)| {
                         panes

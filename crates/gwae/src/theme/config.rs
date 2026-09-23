@@ -121,8 +121,6 @@ pub struct ThemeConfig {
     pub running: Option<Color>,
     /// Override: idle / wants-attention status tint.
     pub idle: Option<Color>,
-    /// Override: succeeded status tint.
-    pub done: Option<Color>,
     /// Override: failed status tint.
     pub failed: Option<Color>,
 }
@@ -141,7 +139,10 @@ struct ThemeTable {
     label: Option<Color>,
     running: Option<Color>,
     idle: Option<Color>,
-    done: Option<Color>,
+    /// Retired: the `Done` status was removed (success at a prompt is
+    /// `idle`). Accepted and dropped so old configs keep loading.
+    #[allow(dead_code)]
+    done: Option<de::IgnoredAny>,
     failed: Option<Color>,
 }
 
@@ -183,7 +184,6 @@ impl<'de> Deserialize<'de> for ThemeConfig {
                     label: t.label,
                     running: t.running,
                     idle: t.idle,
-                    done: t.done,
                     failed: t.failed,
                 })
             }
@@ -220,9 +220,6 @@ impl ThemeConfig {
         }
         if let Some(c) = self.idle {
             p.idle = c.color();
-        }
-        if let Some(c) = self.done {
-            p.done = c.color();
         }
         if let Some(c) = self.failed {
             p.failed = c.color();
@@ -291,6 +288,21 @@ mod tests {
         assert_eq!(w.theme.resolve(), Palette::RETRO);
         let w: W = toml::from_str("[theme]\npreset = \"nord\"\n").unwrap();
         assert_eq!(w.theme.resolve(), Palette::RETRO);
+    }
+
+    #[test]
+    fn retired_done_key_is_silently_ignored() {
+        // The `Done` status was removed (success at a prompt is `idle`),
+        // but a config that still tints it must keep loading rather than
+        // failing the whole file at startup.
+        #[derive(Deserialize)]
+        struct W {
+            theme: ThemeConfig,
+        }
+        let w: W = toml::from_str("[theme]\ndone = \"#00ff00\"\nidle = 11\n").unwrap();
+        let p = w.theme.resolve();
+        assert_eq!(p.idle, CColor::Idx(11), "live keys still apply");
+        assert_eq!(p.failed, Palette::RETRO.failed);
     }
 
     #[test]

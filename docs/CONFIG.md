@@ -69,8 +69,8 @@ spawn dir, latency) and writes only gwae's own config file.
 ## Colors
 
 gwae paints its own retro chrome: true-black panels with high-contrast
-functional colors (white focus, blue running, amber idle, green done, red
-failed, white text). Panes without agent status (plain shells, TUIs)
+functional colors (white focus, blue running, amber idle, red failed,
+white text). Panes without agent status (plain shells, TUIs)
 paint neutral in the skeleton overlay color and carry a `·` tile. The
 chrome reads the same whatever the host terminal is themed as.
 
@@ -85,9 +85,9 @@ text = "default"    # the terminal's own color for this key
 ```
 
 Keys: `base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`,
-`idle`, `done`, `failed`. Unset keys keep the retro default. A retired
-`theme = "name"` preset string (or a `preset` key inside the table) parses
-as "no overrides". Any other unknown key is a parse error, so a typo fails
+`idle`, `failed`. Unset keys keep the retro default. A retired
+`theme = "name"` preset string (or a `preset` key, or the retired `done`
+key, inside the table) parses as "no overrides". Any other unknown key is a parse error, so a typo fails
 loudly instead of painting a silently wrong chrome.
 
 ## Keeping the Mac awake (`keep_awake`)
@@ -217,11 +217,11 @@ A config file that is not being applied at all points at the syntax error:
 | `startup_panes` | integer | `1` | Number of equal-width quarter panes on screen at first launch. Each pane keeps a fixed `1/4` share of the viewport regardless of this count, so a value below `4` leaves the right side of the screen empty (shown as skeleton placeholder boxes). The default `1` opens a single terminal in the leftmost quarter. |
 | `input_poll_ms` | integer | `1` | Milliseconds the event loop waits for a keystroke before checking PTY output and repainting. gwae sits on the keystroke round trip twice (your key in, the program's echo out), so this costs roughly double. The loop backs off to 30ms once the screen has been quiet for 750ms, so an idle session stays cheap. Run `gwae setup --only latency` to check this and the macOS/terminal settings around it. Valid range 1..50. See `docs/LATENCY.md`. |
 | `keep_awake` | bool | `false` | macOS-only: hold a `caffeinate` assertion (idle/display sleep) while gwae runs, so agents keep working with the display asleep. Off unless you write `keep_awake = true` or toggle it on with `⌥+w`; never asked by setup. Does **not** defeat lid-close sleep outside clamshell mode (power + external display + input) or `sudo pmset disablesleep 1`. Applies live on save. `GWAE_NO_KEEP_AWAKE=1` forces it off. |
-| `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, green `✓` done, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit. Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). For jcode panes the daemon's verdict wins over the heuristic in both directions (settled → idle, still generating → working); `GWAE_NO_HARNESS_STATUS=1` disables the poll. |
+| `minimap.show` | bool | `true` | Draw the minimap dashboard in the bottom-right corner. It appears once there is more than one pane (or more than one strip). Rows of the map are strips; each tile is a pane, its width proportional to the column's real width share. Tiles are tinted by status - blue `»` working, amber `!` wants attention, red `✗` failed (non-zero exit) - the focused pane's tile uses `focus_color`, the focused strip gets a `❯` gutter chevron, and each tile's first cell shows its column digit. Status comes from OSC 133 shell integration when the pane emits it, else from an output-activity heuristic (silent for a few seconds → wants attention). For jcode panes the daemon's verdict wins over the heuristic in both directions (settled → idle, still generating → working); `GWAE_NO_HARNESS_STATUS=1` disables the poll. |
 | `minimap.mode` | string | `"off"` | Chrome presentation: `off` (no persistent row; `⌥`/Alt reveals centered HUD + minimap), `overlay` (bottom-right corner), `edge_ticks` (frame ticks). Legacy `reserved` / `reserved_quasimode` parse as `off` (no bottom row). |
 | `minimap.max_width` | integer | `32` | Width of the minimap. A hard *cap* for both the corner `overlay` and the centered panel revealed by `⌥`/Alt: the centered panel sizes each tile to its content (status glyph + column address) and never pads out to this number. Lower it to shrink the panel; it never exceeds ⅔ of the screen. |
 | `minimap.max_rows` | integer | `6` | Maximum number of strips (map rows) shown. Used for `overlay` and the centered minimap while holding `⌥`/Alt. Both window around focus, so strips past line 6 stay reachable. Strips outside the window are counted (`⋯ +3 strips ↓`, `⋯ +2 strips ↑` on the panel; `+N↑`/`+N↓` in the overlay summary) rather than silently dropped. |
-| `minimap.show_counts` | bool | `true` | Summary tallies, e.g. `5 »2 !1 ✓1 ✗1` (zero counts skipped), above the map. |
+| `minimap.show_counts` | bool | `true` | Summary tallies, e.g. `5 »2 !1 ✗1` (zero counts skipped), above the map. |
 
 ### The centered dashboard (hold `⌥`/Alt)
 
@@ -233,7 +233,7 @@ questions you actually hold the modifier to ask:
   it is doing. Tiles are spatial only, no titles, no ages.
 * **Where should I look.** Panes that want attention carry their status
   color and glyph (`!` idle, `✗` failed); `⌥+g` jumps to the most urgent
-  one (failed, then idle, then done).
+  one (failed, then idle).
 * **What is on screen.** A rule under a strip marks the columns currently in
   the viewport - the one thing an infinite strip cannot show by itself.
 * Strips share one scale, so a 2-column strip reads shorter than a 6-column
@@ -254,7 +254,7 @@ schema changes.
 HUD panels are true black with white text. Minimap tiles carry muted status
 tints with black/white contrast ink, and the focused tile keeps an
 underline on top of the white fill, so focus never depends on color alone.
-Status glyphs (`» ! ✓ ✗`) distinguish state by shape as well as hue. This
+Status glyphs (`» ! ✗`) distinguish state by shape as well as hue. This
 only covers gwae chrome, not programs inside panes. While
 the keep-awake assertion is held a small `keep-awake` badge
 is stamped on the Option HUD frame instead.

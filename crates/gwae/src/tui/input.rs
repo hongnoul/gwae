@@ -509,7 +509,7 @@ pub(crate) fn paste_note(text: &str, bracketed: bool) -> String {
 
 /// Pick the pane a smart-jump (`⌥+g`) should land on: the next pane, in
 /// layout order starting just past the focused one and wrapping, whose status
-/// needs the user. Priority: Failed beats Idle (attention) beats Done;
+/// needs the user. Priority: Failed beats Idle (attention);
 /// Running panes are never targets (they're fine on their own). Returns None
 /// when every other pane is happily working.
 pub(crate) fn smart_jump_target(layout: &Layout) -> Option<PaneId> {
@@ -529,7 +529,6 @@ pub(crate) fn smart_jump_target(layout: &Layout) -> Option<PaneId> {
     let rank = |s: PaneStatus| match s {
         PaneStatus::Failed => Some(0u8),
         PaneStatus::Idle => Some(1),
-        PaneStatus::Done => Some(2),
         PaneStatus::Running | PaneStatus::Plain => None,
     };
     let mut best: Option<(u8, usize, PaneId)> = None;
@@ -1077,14 +1076,14 @@ mod tests {
             .collect();
         // All plain: nothing needs the user.
         assert_eq!(smart_jump_target(&layout), None);
-        // Pane 3 done, pane 2 idle, pane 1 failed: failed wins outright.
-        layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Done;
+        // Pane 3 idle, pane 2 idle, pane 1 failed: failed wins outright.
+        layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Idle;
         assert_eq!(smart_jump_target(&layout), Some(ids[3]));
         layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Idle;
         assert_eq!(
             smart_jump_target(&layout),
             Some(ids[2]),
-            "attention beats done"
+            "nearer attention wins within a rank"
         );
         layout.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Failed;
         assert_eq!(smart_jump_target(&layout), Some(ids[1]), "failed beats all");

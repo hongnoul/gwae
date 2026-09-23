@@ -9,7 +9,7 @@
 **the infinite-scroll terminal multiplexer for macOS.**
 
 - **panes never shrink** — open more columns and the viewport scrolls instead of squeezing them, like niri. widths stay fixed and scroll snaps to column boundaries, no slivers. [layout spec →](docs/LAYOUT-SPEC.md)
-- **never hunt for the stuck one** — every pane is marked `»` working, `!` needs input, `✓` done, `✗` failed. hold `⌥` for the dashboard, `⌥+g` jumps to the pane that needs you. [agents →](docs/agents.md)
+- **never hunt for the stuck one** — every pane is marked `»` working, `!` needs input, `✗` failed. hold `⌥` for the dashboard, `⌥+g` jumps to the pane that needs you. [agents →](docs/agents.md)
 
   ![gwae attention demo: hold Option for the dashboard, tap Option-G to jump to the pane that needs you](docs/assets/gwae-attention.gif)
 
@@ -48,7 +48,7 @@ run `gwae init` for guided setup and `gwae doctor` to check config. upgrade the 
 
 on first launch, dismiss the help overlay with Escape. no agent account needed: skip the agent choice for a shell-only test.
 
-press `⌥+Enter` a few times to add shell panes. keep going past the screen edge: the viewport scrolls, the panes keep their width. use `⌥+h` / `⌥+l` to move left / right, `⌥+r` to cycle the focused column's width, `⌥+/` for help. type `exit` in each shell when you're done.
+press `⌥+Enter` a few times to add shell panes. keep going past the screen edge: the viewport scrolls, the panes keep their width. use `⌥+h` / `⌥+l` to move left / right, `⌥+r` to cycle the focused column's width, `⌥+/` for help. type `exit` in each shell (or `⌥+q` to close the focused pane) when you're done.
 
 if `⌥` types special characters instead of triggering shortcuts, set Option to act as Meta in your terminal (Terminal.app: Preferences → Profiles → Keyboard → Use Option as Meta Key; iTerm2 / Ghostty / WezTerm have the equivalent).
 

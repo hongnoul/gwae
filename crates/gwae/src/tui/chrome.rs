@@ -61,7 +61,6 @@ pub(crate) fn status_glyph_for(s: PaneStatus) -> char {
         PaneStatus::Plain => '\u{00b7}',   // ·
         PaneStatus::Running => '\u{00bb}', // »
         PaneStatus::Idle => '!',
-        PaneStatus::Done => '\u{2713}',   // ✓
         PaneStatus::Failed => '\u{2717}', // ✗
     }
 }
@@ -400,10 +399,9 @@ pub(crate) fn status_tally(layout: &Layout) -> Vec<(String, Option<PaneStatus>)>
     let statuses = [
         PaneStatus::Running,
         PaneStatus::Idle,
-        PaneStatus::Done,
         PaneStatus::Failed,
     ];
-    let mut counts = [0usize; 4];
+    let mut counts = [0usize; 3];
     for p in layout.panes.values() {
         if let Some(i) = statuses.iter().position(|s| *s == p.status) {
             counts[i] += 1;
@@ -1153,7 +1151,6 @@ pub(crate) fn draw_minimap(
             PaneStatus::Plain => '·',
             PaneStatus::Running => '»',
             PaneStatus::Idle => '!',
-            PaneStatus::Done => '✓',
             PaneStatus::Failed => '✗',
         }
     }
@@ -1246,10 +1243,9 @@ pub(crate) fn draw_minimap(
         let statuses = [
             PaneStatus::Running,
             PaneStatus::Idle,
-            PaneStatus::Done,
             PaneStatus::Failed,
         ];
-        let mut counts = [0usize; 4];
+        let mut counts = [0usize; 3];
         for p in layout.panes.values() {
             if let Some(i) = statuses.iter().position(|s| *s == p.status) {
                 counts[i] += 1;
@@ -1309,7 +1305,6 @@ mod tests {
             label: CColor::Idx(8),
             running: CColor::Idx(12),
             idle: CColor::Idx(11),
-            done: CColor::Idx(10),
             failed: CColor::Idx(9),
         }
     }
@@ -1460,14 +1455,14 @@ mod tests {
         let r2 = layout.new_row();
         let p = layout.alloc_pane();
         layout.add_column(r2, Width::Cells(20), vec![p]);
-        // Statuses: pane1 focused (accent), pane2 done, pane3 failed,
+        // Statuses: pane1 focused (accent), pane2 idle, pane3 failed,
         // pane4 idle; the strip-2 pane is set Running explicitly so the
         // summary exercises a running segment.
         let ids: Vec<PaneId> = {
             let row = layout.rows[0].clone();
             row.columns.iter().flat_map(|c| c.panes.clone()).collect()
         };
-        layout.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Done;
+        layout.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Idle;
         layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Failed;
         layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Idle;
         layout.panes.get_mut(&p).unwrap().status = PaneStatus::Running;
@@ -1490,8 +1485,8 @@ mod tests {
         assert!(!cell(ox, y).style.underline, "no focus underline");
         assert_eq!(
             cell(ox + 8, y).style.bg,
-            CColor::Rgb(0xa6, 0xe3, 0xa1),
-            "tile 2 done"
+            CColor::Rgb(0xfa, 0xb3, 0x87),
+            "tile 2 idle"
         );
         assert_eq!(
             cell(ox + 16, y).style.bg,
@@ -1505,15 +1500,15 @@ mod tests {
         );
         // Tiles carry their ⌥+digit address and end-of-tile status glyph.
         assert_eq!(cell(ox + 8, y).ch, '2');
-        assert_eq!(cell(ox + 15, y).ch, '✓', "done glyph");
+        assert_eq!(cell(ox + 15, y).ch, '!', "attention glyph");
         assert_eq!(cell(ox + 23, y).ch, '✗', "failed glyph");
         assert_eq!(cell(ox + 31, y).ch, '!', "attention glyph");
         // Summary counts every reportable status: 5 panes, 1 running
-        // (the strip-2 pane), 1 attention, 1 done, 1 failed. The focused
+        // (the strip-2 pane), 2 attention, 1 failed. The focused
         // pane is Plain, so it contributes to the total but no segment.
         let bar: String = (0..cols).map(|x| cell(x, 5).ch).collect();
         assert!(
-            bar.trim_start().ends_with("5 »1 !1 ✓1 ✗1"),
+            bar.trim_start().ends_with("5 »1 !2 ✗1"),
             "summary tallies by status, got {bar:?}"
         );
     }
@@ -1622,7 +1617,7 @@ mod tests {
             let row = layout.rows[0].clone();
             row.columns.iter().flat_map(|c| c.panes.clone()).collect()
         };
-        layout.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Done;
+        layout.panes.get_mut(&ids[1]).unwrap().status = PaneStatus::Running;
         layout.panes.get_mut(&ids[2]).unwrap().status = PaneStatus::Failed;
         layout.panes.get_mut(&ids[3]).unwrap().status = PaneStatus::Idle;
 
@@ -1648,7 +1643,7 @@ mod tests {
         assert!(!cell(ox, y).style.underline, "no focus underline");
         assert!(cell(ox, y).style.bold, "focus reads via bold");
         for (dx, status) in [
-            (8, PaneStatus::Done),
+            (8, PaneStatus::Running),
             (16, PaneStatus::Failed),
             (24, PaneStatus::Idle),
         ] {
@@ -1659,7 +1654,7 @@ mod tests {
             );
         }
         // ... and the status glyphs carry the palette colors.
-        assert_eq!(cell(ox + 15, y).style.fg, term.done, "done glyph");
+        assert_eq!(cell(ox + 15, y).style.fg, term.running, "running glyph");
         assert_eq!(cell(ox + 23, y).style.fg, term.failed, "failed glyph");
         assert_eq!(cell(ox + 31, y).style.fg, term.idle, "idle glyph");
     }
@@ -1891,7 +1886,7 @@ mod tests {
         for (id, status) in ids.iter().zip([
             PaneStatus::Idle,
             PaneStatus::Running,
-            PaneStatus::Done,
+            PaneStatus::Plain,
             PaneStatus::Failed,
         ]) {
             layout.panes.get_mut(id).unwrap().status = status;

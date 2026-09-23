@@ -996,7 +996,6 @@ pub(crate) mod tests {
             accent,
             running: CColor::Rgb(0x89, 0xb4, 0xfa),
             idle: CColor::Rgb(0xfa, 0xb3, 0x87),
-            done: CColor::Rgb(0xa6, 0xe3, 0xa1),
             failed: CColor::Rgb(0xf3, 0x8b, 0xa8),
             ..Palette::default()
         }
@@ -1014,7 +1013,6 @@ pub(crate) mod tests {
             label: CColor::Rgb(0x58, 0x5b, 0x70),
             running: CColor::Rgb(0x89, 0xb4, 0xfa),
             idle: CColor::Rgb(0xfa, 0xb3, 0x87),
-            done: CColor::Rgb(0xa6, 0xe3, 0xa1),
             failed: CColor::Rgb(0xf3, 0x8b, 0xa8),
             ..Palette::default()
         }

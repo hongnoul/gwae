@@ -2,7 +2,7 @@
 //!
 //! gwae paints its own chrome colors rather than inheriting the terminal
 //! scheme: true-black panels with high-contrast functional colors (white
-//! focus, blue running, amber idle, green done, red failed). Any key can be
+//! focus, blue running, amber idle, red failed). Any key can be
 //! overridden under `[theme]` in the config file (see `theme::ThemeConfig`);
 //! there are no presets and no picker.
 
@@ -35,8 +35,6 @@ pub struct Palette {
     pub running: CColor,
     /// Pane status: idle / wants attention.
     pub idle: CColor,
-    /// Pane status: last command succeeded.
-    pub done: CColor,
     /// Pane status: failed (last command exited non-zero).
     pub failed: CColor,
 }
@@ -58,7 +56,7 @@ impl Default for Palette {
 impl Palette {
     /// The enforced default: true-black panels with high-contrast functional
     /// colors (bold white focus ring, dim gray unfocused chrome, blue running,
-    /// amber idle, green done, red failed). Every entry is an explicit RGB
+    /// amber idle, red failed). Every entry is an explicit RGB
     /// value, so the chrome reads the same whatever the host terminal is
     /// themed as.
     pub const RETRO: Palette = Palette {
@@ -70,7 +68,6 @@ impl Palette {
         label: rgb(0x808080),
         running: rgb(0x0090ff),
         idle: rgb(0xffb000),
-        done: rgb(0x00ff00),
         failed: rgb(0xff0000),
     };
 
@@ -99,7 +96,6 @@ impl Palette {
             S::Plain => self.overlay,
             S::Running => self.running,
             S::Idle => self.idle,
-            S::Done => self.done,
             S::Failed => self.failed,
         }
     }
@@ -120,12 +116,12 @@ mod tests {
         assert_eq!(p.text, CColor::Rgb(0xff, 0xff, 0xff));
         // Functional colors are explicit RGB, one distinct hue per meaning.
         for c in [
-            p.overlay, p.accent, p.label, p.running, p.idle, p.done, p.failed,
+            p.overlay, p.accent, p.label, p.running, p.idle, p.failed,
         ] {
             assert!(matches!(c, CColor::Rgb(..)), "{c:?} is not an RGB color");
         }
         assert_ne!(p.accent, p.running, "focus and running must differ");
-        assert_ne!(p.done, p.failed, "done and failed must differ");
+        assert_ne!(p.idle, p.failed, "idle and failed must differ");
     }
 
     #[test]

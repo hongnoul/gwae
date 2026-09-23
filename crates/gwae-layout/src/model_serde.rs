@@ -27,4 +27,30 @@ mod tests {
         let back: Layout = serde_json::from_str(&json).unwrap();
         assert_eq!(layout, back);
     }
+
+    #[test]
+    fn retired_and_unknown_statuses_degrade_instead_of_failing() {
+        // A dev-reload handover written by an older gwae may carry the
+        // retired `Done` status; a newer one may carry something we have
+        // never heard of. Either way the handover must load (dropping every
+        // pane over one status string would be absurd): `Done` reads as
+        // `Idle` (success at a prompt is waiting for input), unknowns as
+        // `Plain` (no claim).
+        use crate::PaneStatus;
+        let done: PaneStatus = serde_json::from_str("\"Done\"").unwrap();
+        assert_eq!(done, PaneStatus::Idle);
+        let unknown: PaneStatus = serde_json::from_str("\"Sparkling\"").unwrap();
+        assert_eq!(unknown, PaneStatus::Plain);
+        // Live variants still round-trip exactly.
+        for st in [
+            PaneStatus::Plain,
+            PaneStatus::Running,
+            PaneStatus::Idle,
+            PaneStatus::Failed,
+        ] {
+            let json = serde_json::to_string(&st).unwrap();
+            let back: PaneStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(st, back);
+        }
+    }
 }

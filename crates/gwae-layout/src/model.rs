@@ -18,7 +18,12 @@ pub type RowId = u64;
 /// `Running` is asserted only on positive evidence (an OSC 133;C marker or
 /// recent output from a known agent pane). Panes we know nothing about —
 /// plain shells, TUIs, fresh spawns — are `Plain`, never presumed running.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// There is deliberately no `Done` state: success at a prompt *is* waiting
+/// for input, and the prompt marker (`133;A`) always lands in the same PTY
+/// read as the completion marker, so a green tick could never survive a
+/// single frame. Three states, all reachable: working, wants-you, failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum PaneStatus {
     /// A non-agent PTY pane (plain shell, TUI, fresh spawn): no status
     /// claimed. Painted neutral, excluded from tallies, never attention,
@@ -28,13 +33,34 @@ pub enum PaneStatus {
     /// A command is executing (OSC 133;C) or a known agent pane is actively
     /// emitting output (activity heuristic for panes without shell integration).
     Running,
-    /// At the prompt / waiting for input (OSC 133;A) or a known agent pane
-    /// has gone quiet: the pane wants your attention.
+    /// At the prompt / waiting for input (OSC 133;A, or a clean 133;D;0
+    /// completion) or a known agent pane has gone quiet: the pane wants
+    /// your attention.
     Idle,
-    /// The last command finished successfully (OSC 133;D with exit 0).
-    Done,
     /// The last command finished with a non-zero exit (OSC 133;D;n, n != 0).
+    /// Sticky through the following prompt marker: the verdict clears on the
+    /// next command start, not on the prompt redraw an instant later.
     Failed,
+}
+
+impl<'de> Deserialize<'de> for PaneStatus {
+    /// Tolerant of retired variants: a dev-reload handover written by an
+    /// older gwae may carry `"Done"` (retired; success at a prompt is
+    /// `Idle`), and any future-unknown status degrades to `Plain` rather
+    /// than failing the whole handover and dropping every pane.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "Plain" => PaneStatus::Plain,
+            "Running" => PaneStatus::Running,
+            "Idle" | "Done" => PaneStatus::Idle,
+            "Failed" => PaneStatus::Failed,
+            _ => PaneStatus::Plain,
+        })
+    }
 }
 
 impl PaneStatus {

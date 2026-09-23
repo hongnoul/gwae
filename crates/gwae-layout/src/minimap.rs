@@ -263,11 +263,9 @@ mod tests {
         assert!(PaneStatus::Failed.is_attention());
         assert!(!PaneStatus::Plain.is_attention());
         assert!(!PaneStatus::Running.is_attention());
-        assert!(!PaneStatus::Done.is_attention());
         assert!(!PaneStatus::Plain.is_reportable());
         assert!(PaneStatus::Running.is_reportable());
         assert!(PaneStatus::Idle.is_reportable());
-        assert!(PaneStatus::Done.is_reportable());
         assert!(PaneStatus::Failed.is_reportable());
     }
 
@@ -275,9 +273,9 @@ mod tests {
     fn status_is_reportable() {
         let mut l = Layout::new(1);
         let first = *l.panes.keys().next().unwrap();
-        l.panes.get_mut(&first).unwrap().status = PaneStatus::Done;
+        l.panes.get_mut(&first).unwrap().status = PaneStatus::Failed;
         let m = build(&l, 10, 80);
-        assert_eq!(m.cells[0].status, PaneStatus::Done);
+        assert_eq!(m.cells[0].status, PaneStatus::Failed);
     }
 
     #[test]

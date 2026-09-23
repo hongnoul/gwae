@@ -37,6 +37,10 @@ pub struct ClientStatus {
     pub session_id: String,
     /// True while the daemon reports this session as actively generating.
     pub busy: bool,
+    /// True when the daemon reports this session's last turn as failed.
+    /// Settled-but-broken is a sharper fact than plain settled: the tile
+    /// shows ✗ (triage first) instead of the generic wants-attention `!`.
+    pub failed: bool,
 }
 
 /// The latest polled snapshot, shared with the event loop.
@@ -64,6 +68,15 @@ pub type StatusSlot = Arc<Mutex<Snapshot>>;
 /// settled: the agent is not producing output the user is waiting on.
 pub fn status_is_busy(status: &str) -> bool {
     matches!(status, "running" | "streaming" | "thinking")
+}
+
+/// Whether a daemon status string means the session's turn ended broken.
+///
+/// Only the explicit failure verdicts count: `stopped` is a user action and
+/// `ready`/`done` are healthy. A failed session is settled (`!busy`) but
+/// must surface as ✗, not the generic wants-attention `!`.
+pub fn status_is_failed(status: &str) -> bool {
+    matches!(status, "failed" | "error" | "crashed")
 }
 
 /// Parse the JSON body of `jcode debug clients:map` into statuses keyed by
@@ -100,6 +113,7 @@ pub fn parse_clients_map(text: &str) -> HashMap<String, ClientStatus> {
                 name,
                 session_id,
                 busy: status_is_busy(status),
+                failed: status_is_failed(status),
             },
         );
     }
@@ -210,13 +224,19 @@ pub fn status_for_title<'a>(title: &str, snapshot: &'a Snapshot) -> Option<&'a C
 /// nothing about this pane and the heuristic stands:
 /// - tile `Running` + daemon settled -> `Idle` ("wants attention": the agent
 ///   is done and waiting on the user). This is the reported bug: maintenance
-///   output pins the heuristic at `Running` forever.
+///   output pins the heuristic at `Running` forever. When the daemon says
+///   the turn *failed*, the tile claims `Failed` instead: ✗ outranks `!`
+///   in triage, and this is the only path a harness pane has to ✗ at all
+///   (jcode emits no OSC 133).
 /// - tile `Idle` + daemon busy -> `Running` (a quiet stretch mid-generation,
 ///   e.g. a long tool call with no redraw, is still work; the heuristic
 ///   would otherwise flap to attention mid-turn).
-/// - only `Running`/`Idle` tiles are touched: a real `Done`, `Failed`, or
-///   OSC 133 verdict is a sharper fact than the daemon's coarse lifecycle
-///   and must not be clobbered.
+/// - a `Failed` tile un-fails the moment the daemon reports the session busy
+///   again (a new turn started), so a retried agent goes blue instead of
+///   wearing a stale ✗.
+/// - an OSC 133 `Failed` on a pane the daemon calls settled-and-healthy is
+///   kept: the shell's exit-code verdict is sharper than the daemon's
+///   coarse lifecycle.
 pub fn reconcile(
     current: gwae_layout::PaneStatus,
     snapshot: Option<&ClientStatus>,
@@ -224,8 +244,11 @@ pub fn reconcile(
     use gwae_layout::PaneStatus;
     let cs = snapshot?;
     match (current, cs.busy) {
+        (PaneStatus::Running, false) if cs.failed => Some(PaneStatus::Failed),
         (PaneStatus::Running, false) => Some(PaneStatus::Idle),
+        (PaneStatus::Idle, false) if cs.failed => Some(PaneStatus::Failed),
         (PaneStatus::Idle, true) => Some(PaneStatus::Running),
+        (PaneStatus::Failed, true) => Some(PaneStatus::Running),
         _ => None,
     }
 }
@@ -256,6 +279,14 @@ mod tests {
         ]
     }"#;
 
+    const SAMPLE_FAILED: &str = r#"{
+        "count": 1,
+        "clients": [
+            {"session_id": "session_gonzo_3_ghi", "friendly_name": "gonzo",
+             "status": "failed", "working_dir": "/g/gwae"}
+        ]
+    }"#;
+
     #[test]
     fn busy_means_generating_and_nothing_else() {
         for s in ["running", "streaming", "thinking"] {
@@ -275,12 +306,28 @@ mod tests {
     }
 
     #[test]
+    fn failed_means_broken_and_nothing_else() {
+        for s in ["failed", "error", "crashed"] {
+            assert!(status_is_failed(s), "{s} must count as failed");
+        }
+        // `stopped` is a user action, `ready`/`done` are healthy, and an
+        // in-flight turn has no verdict yet.
+        for s in ["ready", "done", "completed", "stopped", "running", ""] {
+            assert!(!status_is_failed(s), "{s} must not count as failed");
+        }
+    }
+
+    #[test]
     fn parse_reads_busy_flags_by_short_name() {
         let m = parse_clients_map(SAMPLE);
         assert_eq!(m.len(), 2);
         assert!(!m["iwazaru"].busy);
         assert!(m["piglet"].busy);
         assert_eq!(m["iwazaru"].session_id, "session_iwazaru_1_abc");
+        assert!(!m["iwazaru"].failed, "ready is settled, not broken");
+        let f = parse_clients_map(SAMPLE_FAILED);
+        assert!(!f["gonzo"].busy, "failed is settled");
+        assert!(f["gonzo"].failed, "failed carries the verdict");
     }
 
     #[test]
@@ -323,6 +370,7 @@ mod tests {
                 name: "bo".to_string(),
                 session_id: "s".to_string(),
                 busy: false,
+                failed: false,
             },
         );
         let bo = Snapshot {
@@ -355,14 +403,40 @@ mod tests {
         // Agreements hold: no flap when both sides say the same thing.
         assert_eq!(reconcile(PaneStatus::Running, Some(working)), None);
         assert_eq!(reconcile(PaneStatus::Idle, Some(done)), None);
-        // Sharper facts are never clobbered, even when the daemon disagrees.
-        for st in [PaneStatus::Done, PaneStatus::Failed, PaneStatus::Plain] {
-            assert_eq!(reconcile(st, Some(done)), None, "{st:?}");
-            assert_eq!(reconcile(st, Some(working)), None, "{st:?}");
-        }
+        // A shell's failed verdict on a settled-and-healthy session stands:
+        // the exit code is sharper than the daemon's coarse lifecycle. A
+        // busy daemon un-fails it: a new turn started, the ✗ is stale.
+        assert_eq!(reconcile(PaneStatus::Failed, Some(done)), None);
+        assert_eq!(
+            reconcile(PaneStatus::Failed, Some(working)),
+            Some(PaneStatus::Running)
+        );
+        // Plain panes carry no claim and are never touched.
+        assert_eq!(reconcile(PaneStatus::Plain, Some(done)), None);
+        assert_eq!(reconcile(PaneStatus::Plain, Some(working)), None);
         // No daemon knowledge -> heuristic stands.
         assert_eq!(reconcile(PaneStatus::Running, None), None);
         assert_eq!(reconcile(PaneStatus::Idle, None), None);
+    }
+
+    #[test]
+    fn daemon_failure_verdict_reaches_the_tile() {
+        // The only path a harness pane has to ✗ at all: jcode emits no
+        // OSC 133, so the daemon's failure verdict must land on the tile,
+        // whether the heuristic currently claims working or waiting.
+        use gwae_layout::PaneStatus;
+        let m = snapshot_of(SAMPLE_FAILED);
+        let broken = &m.clients["gonzo"];
+        assert_eq!(
+            reconcile(PaneStatus::Running, Some(broken)),
+            Some(PaneStatus::Failed)
+        );
+        assert_eq!(
+            reconcile(PaneStatus::Idle, Some(broken)),
+            Some(PaneStatus::Failed)
+        );
+        // Once shown, it holds without flapping.
+        assert_eq!(reconcile(PaneStatus::Failed, Some(broken)), None);
     }
 
     #[test]

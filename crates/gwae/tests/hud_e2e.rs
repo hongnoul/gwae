@@ -403,7 +403,7 @@ fn tile_addresses(text: &str) -> Vec<usize> {
     (1..=16)
         .filter(|n| {
             let n = n.to_string();
-            ["»", "·", "!", "✓", "✗"]
+            ["»", "·", "!", "✗"]
                 .iter()
                 .any(|g| text.contains(&format!("{g}{n}")))
         })
@@ -776,7 +776,7 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
                 (1..140)
                     .filter(|&x| {
                         probe.cell(x, y).ch.is_ascii_digit()
-                            && matches!(probe.cell(x - 1, y).ch, '»' | '·' | '!' | '✓' | '✗')
+                            && matches!(probe.cell(x - 1, y).ch, '»' | '·' | '!' | '✗')
                     })
                     .count()
                     >= 2
@@ -809,7 +809,7 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
             (1..140)
                 .filter(|&x| {
                     grid.cell(x, y).ch.is_ascii_digit()
-                        && matches!(grid.cell(x - 1, y).ch, '»' | '·' | '!' | '✓' | '✗')
+                        && matches!(grid.cell(x - 1, y).ch, '»' | '·' | '!' | '✗')
                 })
                 .count()
                 >= 2
@@ -821,7 +821,7 @@ fn terminal_dashboard_addresses_use_native_colors_without_palette_queries() {
             // The dashboard's address signature is a status glyph + digit.
             if c.ch.is_ascii_digit()
                 && x > 0
-                && matches!(grid.cell(x - 1, y).ch, '»' | '·' | '!' | '✓' | '✗')
+                && matches!(grid.cell(x - 1, y).ch, '»' | '·' | '!' | '✗')
             {
                 addresses += 1;
                 // Retro chrome: tiles carry explicit RGB fills (white focus,
