@@ -5,3 +5,4 @@
 # Local runtime artifacts
 *.log
 bench_out.json
+.astrophile/drafts/
