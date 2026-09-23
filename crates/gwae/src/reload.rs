@@ -89,6 +89,90 @@ pub fn watch_enabled() -> bool {
     )
 }
 
+/// Shared, bounded buffer of a build child's output.
+///
+/// `Arc<Mutex<..>>` because the drain threads write it and the event loop
+/// reads it when the child exits.
+#[allow(dead_code)]
+pub type BuildLog = std::sync::Arc<std::sync::Mutex<String>>;
+
+/// Largest tail kept from a build's output, in bytes.
+///
+/// The overlay only ever shows the last lines, and a long build (or a crate
+/// that warns in a loop) would otherwise grow this without bound for the life
+/// of the session.
+#[allow(dead_code)]
+const BUILD_LOG_CAP: usize = 64 * 1024;
+
+/// Continuously drain a build child's stdout and stderr into a shared buffer.
+///
+/// **This is what keeps the build from deadlocking, and the deadlock is not
+/// hypothetical.** A pipe is a fixed kernel buffer (64KB on macOS). The event
+/// loop polls the child with `try_wait` and never reads, so a build that
+/// out-talks that buffer blocks in `write` and stays blocked: the child never
+/// exits, so `try_wait` returns `None` forever, so nothing ever drains the
+/// pipe. Worse, the wedged `cargo` still holds the target lock, so every later
+/// build in the workspace blocks behind it, and the only symptom in the UI is
+/// a HUD pill that spins forever. (Found one stuck 30+ minutes at 0.06s CPU
+/// with no `rustc` children.)
+///
+/// Both pipes must be drained, not just stderr: cargo writes to both, and
+/// either one filling is enough to stop the child.
+///
+/// Returns immediately; the threads end at EOF, which the child's exit
+/// guarantees.
+#[allow(dead_code)]
+pub fn drain_build_output(child: &mut std::process::Child) -> BuildLog {
+    let log: BuildLog = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let mut readers: Vec<Box<dyn std::io::Read + Send>> = Vec::new();
+    if let Some(e) = child.stderr.take() {
+        readers.push(Box::new(e));
+    }
+    if let Some(o) = child.stdout.take() {
+        readers.push(Box::new(o));
+    }
+    for mut reader in readers {
+        let log = std::sync::Arc::clone(&log);
+        std::thread::spawn(move || {
+            use std::io::Read as _;
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if let Ok(mut s) = log.lock() {
+                            s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                            if s.len() > BUILD_LOG_CAP {
+                                // Keep the tail, and cut on a char boundary:
+                                // slicing mid-UTF-8 would panic, and build
+                                // output is full of non-ASCII (arrows in
+                                // rustc diagnostics, paths).
+                                let mut cut = s.len() - BUILD_LOG_CAP / 2;
+                                while cut < s.len() && !s.is_char_boundary(cut) {
+                                    cut += 1;
+                                }
+                                *s = s[cut..].to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    log
+}
+
+/// The last `max_lines` lines of a drained build log, for the error overlay.
+#[allow(dead_code)]
+pub fn build_log_tail(log: &BuildLog, max_lines: usize) -> String {
+    let Ok(text) = log.lock() else {
+        return String::new();
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].join("\n")
+}
+
 /// Human phase of an in-flight dev rebuild, for the HUD status pill.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -521,6 +605,7 @@ pub fn exec_into(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     /// Serializes the tests that touch process-wide environment variables.
     ///
@@ -586,6 +671,130 @@ mod tests {
             "error: expected `;`"
         );
         assert_eq!(first_error_line("all good"), "build failed");
+    }
+
+    /// A child that out-talks the pipe buffer must still finish.
+    ///
+    /// This is a regression test for a real deadlock, so it asserts against
+    /// the failing shape first. `try_wait` never reads, so an undrained child
+    /// writing more than one pipe buffer (64KB) blocks in `write` forever:
+    /// it never exits, so `try_wait` never reports it, so nothing ever drains
+    /// the pipe. The wedged `cargo` keeps the target lock the whole time,
+    /// which is what blocked every other build in the workspace.
+    ///
+    /// ~256KB of output, several times the buffer, so the undrained case
+    /// cannot pass by luck on a platform with a roomier pipe.
+    #[test]
+    fn a_chatty_build_finishes_only_when_its_output_is_drained() {
+        fn spawn_chatty() -> std::process::Child {
+            std::process::Command::new("sh")
+                .arg("-c")
+                // Both streams, since draining only one still wedges.
+                .arg(
+                    "i=0; while [ $i -lt 2000 ]; do \
+                     echo 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; \
+                     echo 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' >&2; \
+                     i=$((i+1)); done",
+                )
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("spawn chatty child")
+        }
+
+        fn finishes_within(child: &mut std::process::Child, how_long: Duration) -> bool {
+            let deadline = std::time::Instant::now() + how_long;
+            while std::time::Instant::now() < deadline {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            false
+        }
+
+        // The bug: polled but never drained, it wedges.
+        let mut undrained = spawn_chatty();
+        let undrained_finished = finishes_within(&mut undrained, Duration::from_secs(5));
+        let _ = undrained.kill();
+        let _ = undrained.wait();
+        assert!(
+            !undrained_finished,
+            "precondition: an undrained chatty child is supposed to deadlock, \
+             so this test can prove the drain is what fixes it. It finished, \
+             which means the pipe buffer here is large enough to swallow the \
+             test's output and the test is no longer proving anything"
+        );
+
+        // The fix: drained continuously, it completes.
+        let mut drained = spawn_chatty();
+        let log = drain_build_output(&mut drained);
+        assert!(
+            finishes_within(&mut drained, Duration::from_secs(20)),
+            "a drained build must finish; if this hangs, the dev session's \
+             auto-build wedges and holds cargo's target lock"
+        );
+        let _ = drained.wait();
+
+        // And the output is actually captured, since the error overlay reads
+        // it. Give the drain threads a moment to see EOF.
+        std::thread::sleep(Duration::from_millis(300));
+        let tail = build_log_tail(&log, 40);
+        assert!(
+            tail.contains("aaaa") && tail.contains("bbbb"),
+            "both streams must be captured for the overlay; got {} chars",
+            tail.len()
+        );
+    }
+
+    /// The captured log is bounded, and never split mid-character.
+    ///
+    /// A long build would otherwise grow this for the life of the session.
+    /// The truncation keeps the tail, so it must cut on a `char` boundary:
+    /// slicing a `String` inside a UTF-8 sequence panics, and build output is
+    /// full of non-ASCII (rustc's arrows, box drawing, paths).
+    #[test]
+    fn the_build_log_stays_bounded_without_splitting_a_character() {
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            // Multi-byte characters, so a byte-offset cut would panic.
+            .arg("i=0; while [ $i -lt 3000 ]; do printf '→→→→→→→→→→→→→→→→→→→→→→→→→→→→→→→→\\n'; i=$((i+1)); done")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let log = drain_build_output(&mut child);
+        let _ = child.wait();
+        std::thread::sleep(Duration::from_millis(300));
+
+        let len = log.lock().expect("log").len();
+        assert!(
+            len <= BUILD_LOG_CAP,
+            "the build log must stay bounded: {len} > {BUILD_LOG_CAP}"
+        );
+        // Reaching here without a panic is the UTF-8 assertion: an unaligned
+        // cut would have aborted the drain thread inside the mutex.
+        assert!(
+            build_log_tail(&log, 5).contains('→'),
+            "the tail must still be readable text after truncation"
+        );
+    }
+
+    /// A build with nothing to say is not an error.
+    #[test]
+    fn draining_a_silent_child_yields_an_empty_tail() {
+        let mut child = std::process::Command::new("true")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn");
+        let log = drain_build_output(&mut child);
+        let _ = child.wait();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(build_log_tail(&log, 40), "");
     }
 
     #[test]

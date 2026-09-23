@@ -895,6 +895,100 @@ mod tests {
         );
     }
 
+    /// Every adopted pane is nudged, and a pane that dies mid-nudge is not a
+    /// problem for the ones that live.
+    ///
+    /// A reload with four agents is the normal case this feature exists for,
+    /// and a pane whose process exits during the settle window is closed by
+    /// the loop, so the restore has to tolerate its id being gone rather than
+    /// panicking or skipping the rest.
+    #[test]
+    fn the_restore_covers_every_pane_and_tolerates_one_disappearing() {
+        fn pane(size: PtySize) -> PtyPane {
+            let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+            pair.master.resize(size).expect("size");
+            PtyPane {
+                master: PaneIo::Owned(pair.master),
+                writer: Box::new(std::io::sink()),
+                child: PaneProc::Adopted(None),
+                grid: Vt100Grid::new(GridSize {
+                    cols: size.cols,
+                    rows: size.rows,
+                }),
+                pty_size: size,
+                alive: true,
+                h_scroll: 0,
+                last_output: Instant::now(),
+                saw_osc133: false,
+                graphics_stream: Default::default(),
+                graphics: Default::default(),
+                legacy_images: Default::default(),
+                image_view: None,
+                promote_streak: 0,
+                image_activity: None,
+            }
+        }
+
+        let size = PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let mut panes: HashMap<PaneId, PtyPane> = (1u64..=4).map(|id| (id, pane(size))).collect();
+
+        let mut restore = nudge_repaint(&mut panes);
+        for id in 1u64..=4 {
+            let grown = match &panes[&id].master {
+                PaneIo::Owned(m) => m.get_size().expect("size"),
+                #[cfg(unix)]
+                PaneIo::Inherited(_) => unreachable!(),
+            };
+            assert_eq!(
+                grown.rows,
+                size.rows + 1,
+                "pane {id} must be nudged too: a reload with several agents \
+                 must not repaint only the first"
+            );
+        }
+
+        // A pane exits during the settle window and is dropped by the loop.
+        panes.remove(&3);
+        std::thread::sleep(REPAINT_SETTLE + std::time::Duration::from_millis(20));
+        assert!(
+            restore.maybe_apply(&mut panes),
+            "a closed pane must not cancel the restore for the others"
+        );
+        for id in [1u64, 2, 4] {
+            let back = match &panes[&id].master {
+                PaneIo::Owned(m) => m.get_size().expect("size"),
+                #[cfg(unix)]
+                PaneIo::Inherited(_) => unreachable!(),
+            };
+            assert_eq!(
+                (back.rows, back.cols),
+                (size.rows, size.cols),
+                "pane {id} must be restored to its true size"
+            );
+        }
+    }
+
+    /// A session that never reloaded owes no restore and must not be nudged.
+    ///
+    /// `RepaintRestore::default()` is what a normal launch carries, so it has
+    /// to be inert: a stray resize on a fresh session would reflow every
+    /// pane's child for no reason.
+    #[test]
+    fn a_fresh_session_owes_no_repaint_restore() {
+        let mut restore = RepaintRestore::default();
+        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
+        assert!(!restore.is_pending());
+        assert!(
+            !restore.maybe_apply(&mut panes),
+            "a default restore must never claim to have done anything"
+        );
+    }
+
     // Exercise the actual pane event path without launching a child or writing
     // to the host terminal. The inert inherited handles are never accessed.
     #[cfg(unix)]
