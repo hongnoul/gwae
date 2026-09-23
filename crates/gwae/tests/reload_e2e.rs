@@ -6,6 +6,10 @@
 //! the same process keeps running. Chrome itself is fixed to the terminal's
 //! own colors, so reload is about behavior keys, not colors.
 
+// Unix-only end to end: every session here drives a real PTY running
+// `sh` syntax (and asserts with unix tooling); Windows has neither.
+#![cfg(unix)]
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -7,6 +7,10 @@
 //! own via `XDG_CONFIG_HOME`, and asserts on the SGR sequences that actually
 //! reach the terminal.
 
+// Unix-only end to end: every session here drives a real PTY running
+// `sh` syntax (and asserts with unix tooling); Windows has neither.
+#![cfg(unix)]
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};

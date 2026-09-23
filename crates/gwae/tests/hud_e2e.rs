@@ -5,6 +5,10 @@
 //! its disappearance are all products of key *timing* in the real event loop.
 //! These tests therefore run the actual binary and read the bytes it paints.
 
+// Unix-only end to end: every session here drives a real PTY running
+// `sh` syntax (and asserts with unix tooling); Windows has neither.
+#![cfg(unix)]
+
 use gwae_term::{Size, TermGrid, Vt100Grid};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};

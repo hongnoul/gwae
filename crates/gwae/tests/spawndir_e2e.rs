@@ -6,6 +6,10 @@
 //! bug this feature exists to fix, so the assertion is on real `pwd` output
 //! from a real PTY child, not on a resolved `PathBuf`.
 
+// Unix-only end to end: every session here drives a real PTY running
+// `sh` syntax (and asserts with unix tooling); Windows has neither.
+#![cfg(unix)]
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};

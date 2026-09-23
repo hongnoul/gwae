@@ -41,6 +41,7 @@ pub(crate) use pickers::{
     HarnessPicker,
 };
 #[cfg(test)]
+#[cfg(unix)]
 pub(crate) use render::render_frame;
 pub(crate) use render::{focused_pane_views_with_chrome, render_frame_with_images, PaneView};
 

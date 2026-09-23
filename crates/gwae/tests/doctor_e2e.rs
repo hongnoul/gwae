@@ -5,6 +5,10 @@
 //! alternate screen takes over. `doctor` is the one place a user can find
 //! out, so these tests run the real binary against real config files.
 
+// Unix-only end to end: every session here drives a real PTY running
+// `sh` syntax (and asserts with unix tooling); Windows has neither.
+#![cfg(unix)]
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Run `gwae doctor` with `config_body` as the config file (or no file at

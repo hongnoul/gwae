@@ -17,6 +17,10 @@
 //! measures the CPU time the kernel actually charged it. That is the only
 //! measurement that corresponds to the user-visible symptom.
 
+// Unix-only end to end: every session here drives a real PTY running
+// `sh` syntax (and asserts with unix tooling); Windows has neither.
+#![cfg(unix)]
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::Read;
 use std::time::{Duration, Instant};

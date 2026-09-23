@@ -8,6 +8,10 @@
 //! must deliver those exact bytes. Clipboard helpers are isolated from the user's OS.
 //!
 //! macOS-only because the clipboard helper table differs on other platforms.
+
+// Unix-only end to end: every session here drives a real PTY running
+// `sh` syntax (and asserts with unix tooling); Windows has neither.
+#![cfg(unix)]
 #![cfg(target_os = "macos")]
 
 use gwae_term::{Size, TermGrid, Vt100Grid};

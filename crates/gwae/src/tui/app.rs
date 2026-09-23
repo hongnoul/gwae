@@ -278,6 +278,33 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // shape as the update check: the loop only ever locks briefly.
     let harness_slot = crate::harness_status::spawn_poll();
     let (tx, rx) = channel::<PaneMsg>();
+    // Input forwarder: a dedicated thread blocks in `event::read()` and
+    // forwards every host terminal event into the same channel the PTY
+    // readers use. The main loop then has exactly one blocking wait
+    // (`recv_timeout` below) that wakes instantly for a keystroke *or* a
+    // pane byte. The old shape — `event::poll(input_poll_ms)` with pane
+    // output drained between polls — taxed every echo with up to a full
+    // poll tick of queue latency; measured against other multiplexers that
+    // tick was the difference between ~2.5 ms and sub-millisecond echo.
+    // The thread parks in kernel space, costs nothing while idle, and dies
+    // with the process (reads fail once the terminal handle is gone).
+    {
+        let tx = tx.clone();
+        std::thread::spawn(move || loop {
+            match event::read() {
+                Ok(ev) => {
+                    if tx.send(PaneMsg::Input(ev)).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("input forwarder: event read: {e}");
+                    // Don't spin on a persistently failing terminal.
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        });
+    }
     let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
     // What `⌥+;` remembers: the last pick spawns with no UI. Loaded once at
     // startup; the loop owns it from here and saves on every pick.
@@ -542,14 +569,44 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut quit_confirm = false;
     // Pane selection: highlight while dragging, copy on release.
     let mut selection: Option<Selection<PaneId>> = None;
+    // Layout changed and PTYs must be reconciled (spawn missing panes, kill
+    // removed ones). Deferred until *after* the next frame is flushed: a
+    // pane spawn (⌥+Enter) paints its empty frame first and forks the shell
+    // after, so the keypress-to-frame latency never includes openpty+fork
+    // (~3-5 ms). The spawned child's first output wakes the loop again via
+    // the channel and fills the frame in.
+    let mut needs_sync = false;
+    // Host terminal events forwarded by the input thread, not yet handled.
+    // Lives outside the loop because a `break 'drain` (e.g. per-kill frames
+    // under a held ⌥+q) must keep the remaining queued events for the next
+    // iteration instead of dropping them.
+    let mut pending_input: std::collections::VecDeque<Event> = std::collections::VecDeque::new();
 
     'main: loop {
-        while let Ok(msg) = rx.try_recv() {
-            // Any pane traffic (output or an exit) is activity: keep the
-            // input poll tight so a burst of output is drained and drawn at
+        // The loop's single blocking wait: sleep until *any* event source
+        // fires — a keystroke or mouse report (via the input forwarder
+        // thread) or pane output (via the PTY reader threads) — or until the
+        // timer tick expires for the periodic work below (size re-check,
+        // note expiry, status flips, bare-Option HUD detection). A dirty
+        // frame or leftover input skips the block entirely so rendering is
+        // never delayed. `input_poll_interval` keeps its adaptive cadence,
+        // but it now only paces timers: input latency no longer depends on
+        // it, because an event on the channel ends the wait immediately.
+        let mut next_msg = if dirty || !pending_input.is_empty() {
+            rx.try_recv().ok()
+        } else {
+            let tick = input_poll_interval(cfg.input_poll_ms, last_activity.elapsed());
+            rx.recv_timeout(tick).ok()
+        };
+        while let Some(msg) = next_msg.take() {
+            // Any traffic (input, output, or an exit) is activity: keep the
+            // timer tick tight so a burst of output is drained and drawn at
             // full rate rather than at the idle backoff.
             last_activity = Instant::now();
             match msg {
+                PaneMsg::Input(ev) => {
+                    pending_input.push_back(ev);
+                }
                 PaneMsg::Output(pid, bytes) => {
                     if let Some(p) = panes.get_mut(&pid) {
                         p.grid.set_cell_size(cell_pixels.width, cell_pixels.height);
@@ -612,18 +669,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         let _ = layout.apply(Action::ClosePane(pid), v, f);
                         agent_panes.remove(&pid);
                         agent_cmds.remove(&pid);
-                        if let Err(e) = sync_panes(
-                            &mut layout,
-                            &mut panes,
-                            &tx,
-                            (GridSize { cols, rows }, cell_pixels),
-                            &agent_panes,
-                            &agent_cmds,
-                            spawn_dir.as_deref(),
-                            &cfg,
-                        ) {
-                            tracing::error!("sync panes: {e}");
-                        }
+                        needs_sync = true;
                     } else {
                         // Already removed from the layout (explicit kill);
                         // just drop the dead PTY handle.
@@ -633,6 +679,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     dirty = true;
                 }
             }
+            // Drain whatever else is queued without blocking, then move on
+            // to handle input and paint one frame for the whole batch.
+            next_msg = rx.try_recv().ok();
         }
 
         // Keep the frame sized to the live terminal, even when a resize event
@@ -1029,24 +1078,18 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
         }
 
-        // Tight while in use, relaxed once the screen has gone quiet: see
-        // `input_poll_interval`.
-        let poll_for = input_poll_interval(cfg.input_poll_ms, last_activity.elapsed());
-        if event::poll(poll_for).unwrap_or(false) {
+        // Handle the host terminal events forwarded by the input thread.
+        // Batch semantics are unchanged from the old zero-timeout drain:
+        // Korean (Hangul) composition and fast typing queue multiple UTF-8
+        // KeyEvents per frame; handling them all before rendering avoids a
+        // render+wait of latency per syllable. `break 'drain` (per-kill
+        // frames) leaves the remainder queued for the next iteration.
+        if !pending_input.is_empty() {
             last_activity = Instant::now();
-            // Drain coalesced input: Korean (Hangul) composition and fast typing
-            // queue multiple UTF-8 KeyEvents between polls. Processing only one
-            // per frame added a render+poll of latency per syllable. Drain all
-            // pending events without blocking before we render.
-            let mut first = true;
             'drain: loop {
-                let ev = if first {
-                    first = false;
-                    event::read()
-                } else if event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
-                    event::read()
-                } else {
-                    break 'drain;
+                let ev: std::io::Result<Event> = match pending_input.pop_front() {
+                    Some(ev) => Ok(ev),
+                    None => break 'drain,
                 };
                 match ev {
                     Ok(Event::Paste(text)) => {
@@ -1588,18 +1631,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                         lp.status = PaneStatus::Running;
                                                     }
                                                 }
-                                                if let Err(e) = sync_panes(
-                                                    &mut layout,
-                                                    &mut panes,
-                                                    &tx,
-                                                    (GridSize { cols, rows }, cell_pixels),
-                                                    &agent_panes,
-                                                    &agent_cmds,
-                                                    spawn_dir.as_deref(),
-                                                    &cfg,
-                                                ) {
-                                                    tracing::error!("sync panes: {e}");
-                                                }
+                                                needs_sync = true;
                                             }
                                             crate::agent::Plan::Missing { want, found } => {
                                                 harness_pick = Some(HarnessPicker {
@@ -1644,18 +1676,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         continue;
                                     }
                                     let _ = layout.apply(a, v, f);
-                                    if let Err(e) = sync_panes(
-                                        &mut layout,
-                                        &mut panes,
-                                        &tx,
-                                        (GridSize { cols, rows }, cell_pixels),
-                                        &agent_panes,
-                                        &agent_cmds,
-                                        spawn_dir.as_deref(),
-                                        &cfg,
-                                    ) {
-                                        tracing::error!("sync panes: {e}");
-                                    }
+                                    needs_sync = true;
                                     dirty = true;
                                     // A kill must paint before the next key is
                                     // read: holding ⌥+q repeats faster than
@@ -2123,6 +2144,25 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
             dirty = false;
         }
+
+        // Reconcile PTYs with the layout *after* the frame is on screen:
+        // the openpty+fork cost lands behind the paint, not in front of it.
+        // The new child's first output re-wakes the loop and paints again.
+        if needs_sync {
+            needs_sync = false;
+            if let Err(e) = sync_panes(
+                &mut layout,
+                &mut panes,
+                &tx,
+                (GridSize { cols, rows }, cell_pixels),
+                &agent_panes,
+                &agent_cmds,
+                spawn_dir.as_deref(),
+                &cfg,
+            ) {
+                tracing::error!("sync panes: {e}");
+            }
+        }
     }
 
     // Teardown: kill all panes, leave raw mode & alternate screen.
@@ -2140,10 +2180,15 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::super::render::focused_pane_views;
     use super::*;
+    #[cfg(unix)]
     use crate::theme::Palette;
 
+    // Spawns a real `sh` in a PTY: unix-only (Windows has no sh, and
+    // the spawn hangs the suite rather than failing fast).
+    #[cfg(unix)]
     #[test]
     fn content_scroll_reveals_overflow_e2e() {
         let mut layout = Layout::default();
@@ -2167,6 +2212,7 @@ mod tests {
                         break 'feed;
                     }
                 }
+                Ok(PaneMsg::Input(_)) => {}
                 Ok(PaneMsg::Exited(_)) | Err(_) => break 'feed,
             }
         }
@@ -2236,6 +2282,9 @@ mod tests {
     /// (the reported failure width, not divisible by 4). Every screen cell up to
     /// and including the rightmost column must show the pane that owns it, with
     /// pane content never spilling past a column boundary or the screen edge.
+    // Spawns a real `sh` in a PTY: unix-only (Windows has no sh, and
+    // the spawn hangs the suite rather than failing fast).
+    #[cfg(unix)]
     #[test]
     fn four_quarter_panes_render_to_screen_edge_e2e() {
         use gwae_layout::{Preset, Width};
@@ -2290,7 +2339,7 @@ mod tests {
                         p.grid.feed(&bytes);
                     }
                 }
-                Ok(PaneMsg::Exited(_)) => {}
+                Ok(PaneMsg::Exited(_)) | Ok(PaneMsg::Input(_)) => {}
                 Err(_) => {}
             }
         }
@@ -2341,6 +2390,9 @@ mod tests {
     /// (80 cols, half width, 1-cell left frame inset), so a 39-char line fills
     /// exactly one emulator row instead of wrapping at the 38-cell visible
     /// rect the old clamped sizing produced.
+    // Spawns a real `sh` in a PTY: unix-only (Windows has no sh, and
+    // the spawn hangs the suite rather than failing fast).
+    #[cfg(unix)]
     #[test]
     fn widened_last_pane_wraps_at_logical_width_e2e() {
         use gwae_layout::{Action, FollowScroll, Preset, Viewport, Width};
@@ -2398,7 +2450,7 @@ mod tests {
                         p.grid.feed(&bytes);
                     }
                 }
-                Ok(PaneMsg::Exited(_)) => {}
+                Ok(PaneMsg::Exited(_)) | Ok(PaneMsg::Input(_)) => {}
                 Err(_) => {}
             }
         }
@@ -2430,6 +2482,9 @@ mod tests {
     /// wobble by one cell between stops). Walking focus across the whole strip in
     /// the skeleton renderer, the x-positions of the vertical frame edges painted
     /// on a mid-strip row must be identical in every frame.
+    // Spawns a real `sh` in a PTY: unix-only (Windows has no sh, and
+    // the spawn hangs the suite rather than failing fast).
+    #[cfg(unix)]
     #[test]
     fn identical_grids_paint_identically_across_scroll_states_e2e() {
         use gwae_layout::{Action, FollowScroll, Preset, Viewport, Width};
@@ -2564,14 +2619,19 @@ mod tests {
         // A live override is called out: it still wins for ⌥+;, so the pick
         // here only steers this pane. It outranks memory, so with a stale
         // pick alongside, the override is what the notice names.
-        assert_eq!(
-            force_pick_notice("sh", "claude", &ordered),
-            Some("default_agent `sh` still wins for ⌥+;".to_string())
-        );
-        assert_eq!(
-            force_pick_notice("sh", "gone-xyz", &ordered),
-            Some("default_agent `sh` still wins for ⌥+;".to_string())
-        );
+        // (`sh` stands in for an installed override; Windows has no sh, so
+        // these two arms are unix-only.)
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                force_pick_notice("sh", "claude", &ordered),
+                Some("default_agent `sh` still wins for ⌥+;".to_string())
+            );
+            assert_eq!(
+                force_pick_notice("sh", "gone-xyz", &ordered),
+                Some("default_agent `sh` still wins for ⌥+;".to_string())
+            );
+        }
         // Nothing installed at all: same line as the NoneInstalled overlay.
         assert_eq!(
             force_pick_notice("", "", &[]),

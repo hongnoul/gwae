@@ -277,10 +277,14 @@ pub(crate) fn feed_pane_output(
     pane.set_promote_streak(streak);
 }
 
-/// Message a per-pane reader thread sends to the main loop.
+/// Message a background thread sends to the main loop: pane traffic from the
+/// per-pane PTY readers, or a host terminal event from the input forwarder.
+/// One channel means one blocking wait wakes on *any* event source, so a
+/// keystroke's echo never sits in a queue waiting for a poll tick to expire.
 pub(crate) enum PaneMsg {
     Output(PaneId, Vec<u8>),
     Exited(PaneId),
+    Input(crossterm::event::Event),
 }
 
 /// Every descendant of `root`, deepest first, as reported by `ps`.

@@ -7,6 +7,10 @@
 //! the user a working shell if there is nothing to run. These tests drive the
 //! real `gwae agent` binary under a real PTY, which is exactly what a pane is.
 
+// Unix-only end to end: every session here drives a real PTY running
+// `sh` syntax (and asserts with unix tooling); Windows has neither.
+#![cfg(unix)]
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};

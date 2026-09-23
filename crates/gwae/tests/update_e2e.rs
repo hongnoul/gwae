@@ -14,6 +14,10 @@
 //! test can never read or write the developer's own gwae state, and sets
 //! `GWAE_NO_UPDATE_CHECK` where the network is not the thing under test.
 
+// Unix-only end to end: every session here drives a real PTY running
+// `sh` syntax (and asserts with unix tooling); Windows has neither.
+#![cfg(unix)]
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
