@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file (keep-a-
 changelog, updated per PR). The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.1] - 2026-09-22
+
+### Changed
+- **First-run agent pick is an interactive selector.** The onboarding harness list now moves a highlight with `↑`/`↓` or `j`/`k`, picks with Enter, skips with `s`/Esc, and still accepts a bare digit; `t` opens the typed-command escape hatch. Non-tty, `NO_COLOR`, and `TERM=dumb` sessions fall back to the numbered line prompt.
+
 ## [1.6.0] - 2026-09-22
 
 ### Fixed
