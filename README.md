@@ -40,9 +40,9 @@ brew install hongnoul/tap/gwae
 
 > Official docs are still WIP.
 
-| Feature | Key | What it does |
+| Feature | Default | What it does |
 | ------- | --- | ------------ |
-| Heads-up&nbsp;display | default | Live agent status minimap over standard OSC&nbsp;133 with Running, Idle, and Failed states |
+| Heads-up&nbsp;display | hold ⌥ | Live agent status minimap over standard OSC&nbsp;133 with Running, Idle, and Failed states |
 | Smart&nbsp;jump | ⌥+g | Cycles through Idle panes with Failed states ranked first |
 | Hatchery | ⌥+d | Opens the spawn-directory picker to choose where the next agent process starts |
 | Agent&nbsp;selector | ⌥+Shift+; | Opens the harness picker to spawn a specific agent instead of your default choice |
