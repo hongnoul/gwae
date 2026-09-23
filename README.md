@@ -38,7 +38,7 @@ brew install hongnoul/tap/gwae
 
 ## Cool features
 
-> Official docs are still WIP. Quick tour of the good stuff:
+> Official docs are still WIP.
 
 - **Agent dashboard** — hold ⌥ for the center minimap. Panes report status over standard OSC 133, so every tile is tinted by agent state: working, wants attention, done, or failed.
 - **Smart jump** — ⌥+g jumps straight to the pane that needs you.
