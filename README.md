@@ -40,9 +40,9 @@ irm https://hongnoul.github.io/gwae/install.ps1 | iex
 
 ## Tutorial
 
-All keybindings use Option (⌥) on macOS, Alt on Linux and Windows, shown as ⌥ below. Press ⌥+/ anytime for the in-app cheat sheet. If you have used a tiling window manager or Vim motions (h/j/k/l to move), it should feel intuitive.
+⌥ is Option (macOS) / Alt (Linux, Windows). <kbd>⌥</kbd> + <kbd>/</kbd> opens the cheat sheet. Movement is Vim-style <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd>, like a tiling WM.
 
-Beginner? Copy and paste following into your preferred agent harness pane in gwae:
+New here? Paste this into an agent pane:
 
 ```text
 You are teaching me gwae, a scrolling terminal multiplexer. I am inside a
