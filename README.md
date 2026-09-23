@@ -22,18 +22,6 @@
 
 **the infinite-scroll terminal multiplexer.**
 
-- **panes never shrink** — open more columns and the viewport scrolls instead of squeezing them, like niri. widths stay fixed and scroll snaps to column boundaries, no slivers. [layout spec →](docs/LAYOUT-SPEC.md)
-- **never hunt for the stuck one** — every pane is marked `»` working, `!` needs input, `✗` failed. hold `⌥` for the dashboard, `⌥+g` jumps to the pane that needs you. [agents →](docs/agents.md)
-
-  ![gwae attention demo: hold Option for the dashboard, tap Option-G to jump to the pane that needs you](docs/assets/gwae-attention.gif)
-
-  [watch the attention demo as MP4](docs/assets/gwae-attention.mp4)
-
-- **runs what you already run** — claude code, codex, shells, TUIs. `⌥+;` spawns your agent and remembers your pick; `gwae run` starts it from the CLI. [why gwae →](docs/WHY.md)
-- **keyboard and mouse, both first-class** — option-key chords *and* click, drag-to-copy, wheel scroll. [keybinds →](docs/KEYBINDS.md)
-- **macOS, Linux, and Windows** — native clipboard, `caffeinate` keep-awake and CoreGraphics option-key poll on macOS. [comparison →](docs/COMPARISON.md)
-- **one rust binary** — runs in whatever terminal you already use. [architecture →](docs/ARCHITECTURE.md)
-
 ---
 
 ## install
