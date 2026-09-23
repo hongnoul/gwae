@@ -51,7 +51,7 @@ irm https://hongnoul.github.io/gwae/install.ps1 | iex
 paste this into a scratch pane and work through it. ten minutes, every power feature.
 
 ```text
-gwae tutorial: panes never shrink.
+gwae tutorial.
 
 SETUP
   run: gwae init (guided setup), gwae doctor (health check, exit 0 when ok).
