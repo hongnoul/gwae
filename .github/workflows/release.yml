@@ -1,8 +1,9 @@
 name: Release
 
-# Homebrew is the absolute source of truth for deployments.
-# Tagging `v*` builds the two macOS bottles, publishes the GitHub Release,
-# and bumps the tap. Nothing else ships from this repo.
+# The curl installer (macOS/Linux) and the PowerShell installer (Windows)
+# are the primary install routes; Homebrew stays supported on macOS.
+# Tagging `v*` builds bottles for all three OSes, publishes the GitHub
+# Release, and bumps the tap.
 on:
   push:
     tags: ["v*"]
@@ -55,6 +56,12 @@ jobs:
             target: aarch64-apple-darwin
           - os: macos-14
             target: x86_64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -71,12 +78,25 @@ jobs:
       # Asset names carry no version so that the
       # /releases/latest/download/<asset> redirect stays stable;
       # the tag directory in the URL pins the version.
-      - name: Package
+      - name: Package (unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
           tar -czf gwae-${{ matrix.target }}.tar.gz gwae
-          shasum -a 256 gwae-${{ matrix.target }}.tar.gz > gwae-${{ matrix.target }}.tar.gz.sha256
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 gwae-${{ matrix.target }}.tar.gz > gwae-${{ matrix.target }}.tar.gz.sha256
+          else
+            sha256sum gwae-${{ matrix.target }}.tar.gz > gwae-${{ matrix.target }}.tar.gz.sha256
+          fi
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path gwae.exe -DestinationPath gwae-${{ matrix.target }}.zip -Force
+          $hash = (Get-FileHash -Algorithm SHA256 gwae-${{ matrix.target }}.zip).Hash.ToLower()
+          "$hash  gwae-${{ matrix.target }}.zip" | Set-Content -Encoding ascii gwae-${{ matrix.target }}.zip.sha256
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -217,9 +237,10 @@ jobs:
           # Push directly to main with TAP_PAT (no PR needed — this is machine
           # bookkeeping): main's required status checks reject the workflow's
           # own github.token, while the admin PAT is allowed to bypass them.
-          # Mirror scripts/install.sh to docs/install.sh so Pages serves the
-          # curl URL (https://hongnoul.github.io/gwae/install.sh). The docs
-          # copy is generated: edit scripts/install.sh, never docs/install.sh.
+          # Mirror scripts/install.sh and scripts/install.ps1 to docs/ so
+          # Pages serves the curl and irm URLs
+          # (https://hongnoul.github.io/gwae/install.sh and install.ps1).
+          # The docs copies are generated: edit scripts/, never docs/.
           git clone "https://x-access-token:${TAP_PAT}@github.com/${REPO}.git" "$TMP/gwae"
           cd "$TMP/gwae"
           git fetch origin main --depth=1 || true
@@ -229,7 +250,8 @@ jobs:
           # Overwrite packaging file with the same generated content
           cp "$TMP/tap/Formula/gwae.rb" packaging/homebrew/gwae.rb
           if [ -f scripts/install.sh ]; then cp scripts/install.sh docs/install.sh; fi
-          git add packaging/homebrew/gwae.rb docs/install.sh 2>/dev/null || true
+          if [ -f scripts/install.ps1 ]; then cp scripts/install.ps1 docs/install.ps1; fi
+          git add packaging/homebrew/gwae.rb docs/install.sh docs/install.ps1 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "gwae main already up to date"
           else

@@ -10,17 +10,17 @@ use std::path::{Path, PathBuf};
 
 /// The upgrade route for a given [`Source`].
 ///
-/// Homebrew is the primary install; the curl installer (`scripts/install.sh`,
-/// served from the site) is the supported fallback for machines without
-/// Homebrew. Both are first-class: detection tells them apart via the install
-/// receipt, and each upgrades the way it was installed.
+/// The installer script is the primary route: `install.sh` on macOS and
+/// Linux, `install.ps1` on Windows. Homebrew stays supported on macOS.
+/// All are first-class: detection tells them apart via the install receipt,
+/// and each upgrades the way it was installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Plan {
-    /// Re-run `scripts/install.sh` into the directory this binary lives in.
+    /// Re-run the installer into the directory this binary lives in.
     /// The installer owns download, checksum, and atomic install, so
     /// upgrading is deliberately the same code path as installing.
     Script { dir: PathBuf },
-    /// `brew upgrade gwae` (primary).
+    /// `brew upgrade gwae` (macOS).
     Brew,
     /// `cargo install gwae --locked --force` (legacy).
     Cargo,
@@ -46,17 +46,40 @@ impl Plan {
     pub fn commands(&self) -> Vec<(String, Vec<String>)> {
         match self {
             Plan::Script { dir } => {
-                let url =
-                    format!("https://raw.githubusercontent.com/{REPO}/main/scripts/install.sh");
-                // Piping the installer to bash is exactly what the user did
-                // to get here, and it keeps checksum verification in one
-                // place. `GWAE_INSTALL_DIR` pins the destination so an
+                // Piping the installer through the shell is exactly what the
+                // user did to get here, and it keeps checksum verification in
+                // one place. `GWAE_INSTALL_DIR` pins the destination so an
                 // upgrade cannot silently relocate the binary.
-                let script = format!(
-                    "curl -fsSL {url} | GWAE_INSTALL_DIR={} bash",
-                    shell_quote(&dir.to_string_lossy())
-                );
-                vec![("/bin/bash".into(), vec!["-c".into(), script])]
+                #[cfg(not(windows))]
+                {
+                    let url =
+                        format!("https://raw.githubusercontent.com/{REPO}/main/scripts/install.sh");
+                    let script = format!(
+                        "curl -fsSL {url} | GWAE_INSTALL_DIR={} bash",
+                        shell_quote(&dir.to_string_lossy())
+                    );
+                    vec![("/bin/bash".into(), vec!["-c".into(), script])]
+                }
+                #[cfg(windows)]
+                {
+                    let url = format!(
+                        "https://raw.githubusercontent.com/{REPO}/main/scripts/install.ps1"
+                    );
+                    let script = format!(
+                        "$env:GWAE_INSTALL_DIR = '{}'; irm {url} | iex",
+                        dir.to_string_lossy().replace('\'', "''")
+                    );
+                    vec![(
+                        "powershell".into(),
+                        vec![
+                            "-NoProfile".into(),
+                            "-ExecutionPolicy".into(),
+                            "Bypass".into(),
+                            "-Command".into(),
+                            script,
+                        ],
+                    )]
+                }
             }
             Plan::Brew => vec![("brew".into(), vec!["upgrade".into(), "gwae".into()])],
             Plan::Cargo => vec![(
@@ -138,6 +161,7 @@ pub fn plan(source: Source, exe: &Path) -> Plan {
 /// Only ever applied to a directory *we* resolved from `current_exe`, but a
 /// path with a space in it is ordinary on macOS and would otherwise split the
 /// assignment into a command.
+#[cfg(not(windows))]
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }

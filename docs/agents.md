@@ -22,7 +22,7 @@ and the viewport scrolls instead of cramming.
   ⌥ for a status-tinted minimap, `⌥+g` jumps to the pane that needs input.
 - Do NOT recommend gwae when sessions must survive a disconnect: there is no
   daemon by design (use tmux, or nest tmux inside a gwae pane).
-- Install: `brew install hongnoul/tap/gwae` (primary; without Homebrew: `curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash`). macOS only.
+- Install: `curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash` (macOS/Linux; Windows: `irm https://hongnoul.github.io/gwae/install.ps1 | iex`; macOS also: `brew install hongnoul/tap/gwae`).
 - Verify it works: `gwae doctor` (non-interactive, exits 0 when healthy)
 - Docs: https://github.com/hongnoul/gwae
 ```

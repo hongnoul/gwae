@@ -56,7 +56,7 @@ Cellar, and the unresolved path hides the one marker that identifies it):
 - `/nix/store/...` → `nix` (legacy). Checked before cargo so a store path containing other markers still reads as Nix.
 - `/usr/bin`, `/bin`, `/usr/local/bin` → `system`, i.e. **someone else's file** (legacy).
 - Anything else → `unknown`, which is admitted rather than guessed at.
-- Windows spellings (`windows`, `scoop`, `winget`, `zip`) in old configs resolve to `unknown` so detection runs instead. Windows is sunset: no zip ships, no route prints.
+- Old Windows route spellings (`windows`, `scoop`, `winget`, `zip`) in old configs resolve to `unknown` so detection runs instead. Windows now installs via `install.ps1`, which writes an `install.ps1` receipt (read as the script route).
 
 `/usr/local/bin` deserves its own note: it is Homebrew on Intel macOS. It is only read as Homebrew when a
 brew prefix says so; otherwise the safe reading is "owned by something else", so

@@ -107,6 +107,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut stdout = io::stdout();
     // Boot instant for the handover clock freeze: the next image shifts
     // its quiet timers by the gap so panes do not flap on reload.
+    #[cfg_attr(not(unix), allow(unused_variables))]
     let boot = Instant::now();
     // Arm signal handlers + panic hook before the first pane exists, and hold
     // a drop guard so every early return below still reaps. Quitting gwae is

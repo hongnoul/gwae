@@ -9,17 +9,19 @@ use std::path::{Path, PathBuf};
 
 /// How gwae got onto this machine, which decides how it may leave.
 ///
-/// gwae is macOS-only. Homebrew (`brew install hongnoul/tap/gwae`) is the
-/// primary install; the curl installer (`scripts/install.sh`, served from the
-/// site) is the supported fallback. The other variants exist so a binary
-/// installed any other way is still told the truth about its own route
-/// instead of being guessed at.
+/// gwae runs on macOS, Linux, and Windows. The curl installer
+/// (`scripts/install.sh`, served from the site) is the primary route on
+/// macOS and Linux; the PowerShell installer (`scripts/install.ps1`) covers
+/// Windows; Homebrew stays supported on macOS. The other variants exist so a
+/// binary installed any other way is still told the truth about its own
+/// route instead of being guessed at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// `scripts/install.sh` put a release binary in a plain directory. We own
-    /// that file outright, so re-running the installer is the upgrade.
+    /// `scripts/install.sh` (or `install.ps1` on Windows) put a release
+    /// binary in a plain directory. We own that file outright, so re-running
+    /// the installer is the upgrade. The primary route.
     Script,
-    /// Homebrew (the tap). `brew upgrade gwae`. The primary route.
+    /// Homebrew (the tap). `brew upgrade gwae`. Supported on macOS.
     Homebrew,
     /// `cargo install gwae` from crates.io. Legacy: new installs should use
     /// Homebrew.
@@ -63,16 +65,17 @@ impl Source {
     /// bouncing one of them would be pedantry.
     pub fn parse(s: &str) -> Option<Source> {
         match s.trim().to_ascii_lowercase().replace('_', "-").as_str() {
-            "install.sh" | "install-sh" | "script" | "installer" => Some(Source::Script),
+            "install.sh" | "install-sh" | "install.ps1" | "install-ps1" | "script"
+            | "installer" => Some(Source::Script),
             "brew" | "homebrew" => Some(Source::Homebrew),
             "cargo" | "crates.io" | "crates-io" => Some(Source::Cargo),
             "cargo-git" | "git" => Some(Source::CargoGit),
             "source" | "make" | "checkout" | "path" => Some(Source::Source_),
             "nix" => Some(Source::Nix),
             "system" | "apt" | "aur" | "pacman" | "dnf" | "distro" => Some(Source::System),
-            // Windows is sunset: old configs spelling it pin nothing. Fall
-            // through to detection, which on this macOS-only tree will say
-            // what it sees.
+            // These spellings once pinned Windows-specific routes that no
+            // longer exist. Fall through to detection, which will say what
+            // it sees.
             "windows" | "winget" | "scoop" | "zip" => Some(Source::Unknown),
             "unknown" | "auto" | "" => Some(Source::Unknown),
             _ => None,
@@ -80,11 +83,12 @@ impl Source {
     }
 
     /// Every name a user may write, for error messages.
-    /// Brew first, curl second: the two supported routes lead, and the docs
-    /// point there. The rest are legacy routes detection still understands.
+    /// The installer script leads: it is the primary route on every OS.
+    /// Brew follows for macOS. The rest are legacy routes detection still
+    /// understands.
     pub const NAMES: &'static [&'static str] = &[
-        "brew",
         "install.sh",
+        "brew",
         "cargo",
         "cargo-git",
         "source",
@@ -175,6 +179,11 @@ pub fn receipt_path() -> Option<PathBuf> {
 pub fn state_dir() -> Option<PathBuf> {
     if let Some(x) = std::env::var_os("XDG_STATE_HOME").filter(|s| !s.is_empty()) {
         return Some(PathBuf::from(x).join("gwae"));
+    }
+    // Windows: `install.ps1` writes its receipt under `%LOCALAPPDATA%\gwae\state`.
+    #[cfg(windows)]
+    if let Some(x) = std::env::var_os("LOCALAPPDATA").filter(|s| !s.is_empty()) {
+        return Some(PathBuf::from(x).join("gwae").join("state"));
     }
     let home = std::env::var_os("HOME").filter(|s| !s.is_empty())?;
     Some(PathBuf::from(home).join(".local/state/gwae"))

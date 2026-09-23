@@ -1,11 +1,16 @@
 //! Config file writes + hot-reload exec (verbatim move from `tui/mod.rs`).
 
+#[cfg(unix)]
 use std::collections::{HashMap, HashSet};
+#[cfg(unix)]
 use std::time::Instant;
 
+#[cfg(unix)]
 use gwae_layout::{Layout, PaneId};
+#[cfg(unix)]
 use gwae_term::TermGrid;
 
+#[cfg(unix)]
 use super::pty::PtyPane;
 
 /// Persist the picked spawn directory as `agent_dir` in the config file.

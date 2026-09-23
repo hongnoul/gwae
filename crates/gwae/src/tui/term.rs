@@ -4,15 +4,13 @@ use std::io::Write;
 use std::time::Duration;
 
 use crossterm::cursor;
-use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    PopKeyboardEnhancementFlags,
-};
+use crossterm::event::{DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags};
+#[cfg(unix)]
+use crossterm::event::{EnableBracketedPaste, EnableMouseCapture};
 use crossterm::execute;
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, size as term_size, EnterAlternateScreen,
-    LeaveAlternateScreen,
-};
+use crossterm::terminal::{disable_raw_mode, size as term_size, LeaveAlternateScreen};
+#[cfg(unix)]
+use crossterm::terminal::{enable_raw_mode, EnterAlternateScreen};
 
 /// Hand the terminal back to the host: leave the alt screen, drop raw mode,
 /// and undo every mode gwae turned on.

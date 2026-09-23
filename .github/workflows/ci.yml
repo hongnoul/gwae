@@ -1,7 +1,7 @@
 name: CI
 
-# macOS-only project. Linux runners stay as a compile sanity net;
-# Windows is sunset and ships nothing.
+# macOS is the primary platform; Linux and Windows ship binaries via the
+# installer scripts, so all three compile and test here.
 
 on:
   push:
@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15, ubuntu-24.04]
+        os: [macos-14, macos-15, ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5

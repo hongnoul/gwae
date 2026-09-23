@@ -24,16 +24,22 @@
 
 ## install
 
-macOS only. Homebrew is the primary install:
-
-```bash
-brew install hongnoul/tap/gwae
-```
-
-or the curl installer, which lands in `~/.local/bin` and wires up your shell PATH:
+macOS and Linux, one line:
 
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
+```
+
+the installer lands in `~/.local/bin` and wires up your shell PATH. Windows, in PowerShell:
+
+```powershell
+irm https://hongnoul.github.io/gwae/install.ps1 | iex
+```
+
+on macOS, Homebrew also works:
+
+```bash
+brew install hongnoul/tap/gwae
 ```
 
 then start it where the work lives:
@@ -42,7 +48,7 @@ then start it where the work lives:
 gwae
 ```
 
-run `gwae init` for guided setup and `gwae doctor` to check config. upgrade the same way you installed (`brew upgrade gwae`, or re-run the installer). if `command -v gwae` points somewhere other than Homebrew after installing, an older copy earlier on PATH is shadowing it. [quick start →](#quick-start)
+run `gwae init` for guided setup and `gwae doctor` to check config. upgrade the same way you installed (re-run the installer, or `brew upgrade gwae`). if `command -v gwae` points somewhere unexpected after installing, an older copy earlier on PATH is shadowing it. [quick start →](#quick-start)
 
 ## quick start
 

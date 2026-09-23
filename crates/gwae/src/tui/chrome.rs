@@ -98,6 +98,7 @@ pub(crate) struct HudFacts {
 /// The dev autobuild pill: what the session is doing while the user keeps
 /// working on the last good image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) enum BuildPill {
     Building,
     Linking,

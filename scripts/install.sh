@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# gwae installer (curl fallback; Homebrew is the primary install).
+# gwae installer (primary install route for macOS and Linux).
 #   curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 # Fallback: https://raw.githubusercontent.com/hongnoul/gwae/main/scripts/install.sh
+# Windows: use the PowerShell installer (install.ps1) instead.
 #
 # Installs into the first writable `*bin` dir already on PATH (preferring
 # `~/.local/bin`), so `gwae` works in this terminal and every fresh one with
@@ -84,11 +85,14 @@ else
   [ -n "$INSTALL_DIR" ] || INSTALL_DIR="$HOME/.local/bin"
 fi
 
-# --- platform (macOS only) ----------------------------------------------------
+# --- platform (macOS / Linux; Windows uses install.ps1) ------------------------
 banner
 case "$(uname -s)" in
   Darwin) os=macos ;;
-  *) die "gwae is macOS-only. On a Mac: brew install hongnoul/tap/gwae" ;;
+  Linux)  os=linux ;;
+  MINGW* | MSYS* | CYGWIN*)
+    die "on Windows, use PowerShell: irm https://hongnoul.github.io/gwae/install.ps1 | iex" ;;
+  *) die "unsupported OS $(uname -s)" ;;
 esac
 
 case "$(uname -m)" in
@@ -97,7 +101,11 @@ case "$(uname -m)" in
   *) die "unsupported architecture $(uname -m)" ;;
 esac
 ok "detected ${os}/${arch}"
-target="${arch}-apple-darwin"
+if [ "$os" = macos ]; then
+  target="${arch}-apple-darwin"
+else
+  target="${arch}-unknown-linux-gnu"
+fi
 artifact="gwae-${target}"
 
 # --- download -----------------------------------------------------------------

@@ -30,9 +30,11 @@ mod empty_art;
 mod pickers;
 mod render;
 
+#[cfg(unix)]
+pub(crate) use chrome::BuildPill;
 pub(crate) use chrome::{
     draw_center_hud, draw_toast_at, has_attention, hud_pane_at, paint_center_minimap,
-    plan_center_minimap, BuildPill, HudFacts, HudPlan,
+    plan_center_minimap, HudFacts, HudPlan,
 };
 pub(crate) use pickers::{
     draw_dir_picker, draw_harness_picker, draw_quit_confirm, DirPicker, HarnessChoice,
@@ -45,7 +47,9 @@ pub(crate) use render::{focused_pane_views_with_chrome, render_frame_with_images
 mod config_io;
 mod input;
 
-pub(crate) use config_io::{perform_reload, write_harness_dir};
+#[cfg(unix)]
+pub(crate) use config_io::perform_reload;
+pub(crate) use config_io::write_harness_dir;
 pub(crate) use input::{
     focused_pane, handle_key, is_alt_modifier, is_harness_scroll_chord, key_bytes,
     layout_pane_count, paste_note, picker_paste_query, picker_step, smart_jump_target, Cmd,
@@ -59,14 +63,18 @@ pub(crate) use platform::{
     host_supports_kitty_graphics, is_ghostty, macos_option_held, native_modifier_poll_enabled,
 };
 pub use pty::PtyPane;
+#[cfg(unix)]
+pub(crate) use pty::{adopt_pane, descendants};
 pub(crate) use pty::{
-    adopt_pane, descendants, feed_pane_output, kill_pane_tree, nudge_repaint, pane_grid_sizes,
-    spawn_pane, sync_panes, PaneMsg,
+    feed_pane_output, kill_pane_tree, nudge_repaint, pane_grid_sizes, spawn_pane, sync_panes,
+    PaneMsg,
 };
 pub(crate) use term::{
-    first_line, input_poll_interval, re_enter_terminal, refresh_size, restore_terminal,
-    BINARY_SETTLE, CONFIG_POLL, NOTE_LINGER, SIZE_POLL,
+    first_line, input_poll_interval, refresh_size, restore_terminal, CONFIG_POLL, NOTE_LINGER,
+    SIZE_POLL,
 };
+#[cfg(unix)]
+pub(crate) use term::{re_enter_terminal, BINARY_SETTLE};
 
 mod diff;
 mod mouse;

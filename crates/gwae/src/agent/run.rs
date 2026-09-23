@@ -8,6 +8,7 @@ use super::state::{save, HarnessState};
 use std::io::Write;
 use std::path::Path;
 
+#[cfg(unix)]
 fn exec(cmd: &str) -> ! {
     use std::os::unix::process::CommandExt;
     let argv = crate::tui::shell_split(cmd);

@@ -157,12 +157,12 @@
         <p class="tagline">A scrolling terminal multiplexer.<br /><strong>Panes never shrink.</strong></p>
         <p class="intro">Run coding agents, shells, and TUIs side by side. Open more panes and the viewport scrolls instead of squeezing them. Inspired by niri's scrolling tiling.</p>
         <div class="install">
-          <code id="install-cmd">brew install hongnoul/tap/gwae</code>
+          <code id="install-cmd">curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash</code>
           <button id="install-copy" type="button" aria-label="Copy install command">copy</button>
         </div>
         <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
         <p class="links">
-          <a href="#install">macOS · Homebrew</a> ·
+          <a href="#install">macOS · Linux · Windows</a> ·
           <a href="#try">Try it in 30 seconds</a> ·
           <a class="star-link" href="https://github.com/hongnoul/gwae">Star on GitHub</a> ·
           <a href="https://github.com/hongnoul/gwae/releases/latest">Releases</a> · MIT
@@ -175,11 +175,13 @@
 
       <section id="install">
         <h2>Install</h2>
-        <p>macOS only. Homebrew is the primary install and works in the same terminal right after install.</p>
-        <pre><code>brew install hongnoul/tap/gwae</code></pre>
-        <p>No Homebrew? The curl installer lands in <code>~/.local/bin</code>, adds it to your shell PATH, and prints the one line that activates it in the current terminal:</p>
+        <p>macOS and Linux, one line. The installer lands in <code>~/.local/bin</code>, adds it to your shell PATH, and prints the one line that activates it in the current terminal:</p>
         <pre><code>curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash</code></pre>
-        <p>Upgrade the same way you installed: <code>brew upgrade gwae</code>, or re-run the installer. <code>gwae upgrade</code> prints the exact command for your machine. Windows and Linux are sunset: no builds ship.</p>
+        <p>Windows, in PowerShell:</p>
+        <pre><code>irm https://hongnoul.github.io/gwae/install.ps1 | iex</code></pre>
+        <p>On macOS, Homebrew also works:</p>
+        <pre><code>brew install hongnoul/tap/gwae</code></pre>
+        <p>Upgrade the same way you installed: re-run the installer, or <code>brew upgrade gwae</code>. <code>gwae upgrade</code> prints the exact command for your machine.</p>
       </section>
 
       <section id="try">

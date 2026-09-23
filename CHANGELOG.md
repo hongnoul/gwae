@@ -7,6 +7,7 @@ changelog, updated per PR). The format is based on
 ## [1.6.1] - 2026-09-22
 
 ### Changed
+- **The curl installer is the primary route, on macOS and Linux.** `install.sh` now detects Linux (`x86_64`/`aarch64` gnu targets) alongside macOS; Homebrew stays supported on macOS. A new PowerShell installer (`irm https://hongnoul.github.io/gwae/install.ps1 | iex`) covers Windows: checksum-verified download into `%LOCALAPPDATA%\gwae\bin`, user-scope PATH, and the same `install.toml` receipt (read from `%LOCALAPPDATA%\gwae\state`) so `gwae upgrade` prints the PowerShell one-liner there. Releases build all five targets; CI compiles and tests Windows again.
 - **First-run agent pick is an interactive selector.** The onboarding harness list now moves a highlight with `↑`/`↓` or `j`/`k`, picks with Enter, skips with `s`/Esc, and still accepts a bare digit; `t` opens the typed-command escape hatch. Non-tty, `NO_COLOR`, and `TERM=dumb` sessions fall back to the numbered line prompt.
 
 ## [1.6.0] - 2026-09-22
