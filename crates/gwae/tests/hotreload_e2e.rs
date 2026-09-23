@@ -14,6 +14,9 @@
 //! So the tests below assert on the real process table around a real reload of
 //! a real rebuilt binary, in the same spirit as `teardown_e2e.rs`.
 //!
+//! Unix-only end to end: the harness signals with `kill(2)` and the reload
+//! path it exercises (`perform_reload`, fd handover) is `#[cfg(unix)]` too.
+//!
 //! ## The macOS trap these tests encode
 //!
 //! Replacing a Mach-O binary in place invalidates its code signature. The
@@ -28,6 +31,7 @@
 //!
 //! That is why `reload::is_loadable` proves the new image runs in a throwaway
 //! child first, and why `a_broken_new_binary_is_refused` exists.
+#![cfg(unix)]
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};

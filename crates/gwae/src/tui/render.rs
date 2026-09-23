@@ -1029,6 +1029,8 @@ pub(crate) mod tests {
     /// Promoted image pane without a host image channel: the frame must say
     /// why the pane is blank instead of leaving an empty rectangle. With a
     /// channel the same pane paints tiles and no message.
+    /// (`PaneIo::Inherited` / `PaneProc::Adopted` are unix-only reload arms.)
+    #[cfg(unix)]
     #[test]
     fn promoted_pane_without_host_images_explains_itself() {
         use crate::tui::pty::{feed_pane_output, PaneIo, PaneProc, PtyPane};
