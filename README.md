@@ -2,11 +2,10 @@
 
   [website](https://hongnoul.github.io/gwae/) · [install](#install) · [quick start](#quick-start) · [docs](#docs)
 
----
+**Infinite scroll terminal multiplexer for macOS, Windows, and Linux**
 
 ![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
 
-**the infinite-scroll terminal multiplexer for macOS.**
 
 - **panes never shrink** — open more columns and the viewport scrolls instead of squeezing them, like niri. widths stay fixed and scroll snaps to column boundaries, no slivers. [layout spec →](docs/LAYOUT-SPEC.md)
 - **never hunt for the stuck one** — every pane is marked `»` working, `!` needs input, `✗` failed. hold `⌥` for the dashboard, `⌥+g` jumps to the pane that needs you. [agents →](docs/agents.md)
