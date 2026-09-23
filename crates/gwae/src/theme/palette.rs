@@ -115,9 +115,7 @@ mod tests {
         assert_eq!(p.surface, CColor::Rgb(0, 0, 0));
         assert_eq!(p.text, CColor::Rgb(0xff, 0xff, 0xff));
         // Functional colors are explicit RGB, one distinct hue per meaning.
-        for c in [
-            p.overlay, p.accent, p.label, p.running, p.idle, p.failed,
-        ] {
+        for c in [p.overlay, p.accent, p.label, p.running, p.idle, p.failed] {
             assert!(matches!(c, CColor::Rgb(..)), "{c:?} is not an RGB color");
         }
         assert_ne!(p.accent, p.running, "focus and running must differ");

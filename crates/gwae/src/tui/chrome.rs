@@ -396,11 +396,7 @@ pub(crate) struct HudPlan {
 /// claim. Returned with the status rather than a color so the geometry pass
 /// can measure it without a palette.
 pub(crate) fn status_tally(layout: &Layout) -> Vec<(String, Option<PaneStatus>)> {
-    let statuses = [
-        PaneStatus::Running,
-        PaneStatus::Idle,
-        PaneStatus::Failed,
-    ];
+    let statuses = [PaneStatus::Running, PaneStatus::Idle, PaneStatus::Failed];
     let mut counts = [0usize; 3];
     for p in layout.panes.values() {
         if let Some(i) = statuses.iter().position(|s| *s == p.status) {
@@ -1240,11 +1236,7 @@ pub(crate) fn draw_minimap(
     // Summary bar above the map: total pane count plus per-status tallies
     // (zero counts are skipped). Right-aligned flush with the map.
     if mm.show_counts && oy > 0 {
-        let statuses = [
-            PaneStatus::Running,
-            PaneStatus::Idle,
-            PaneStatus::Failed,
-        ];
+        let statuses = [PaneStatus::Running, PaneStatus::Idle, PaneStatus::Failed];
         let mut counts = [0usize; 3];
         for p in layout.panes.values() {
             if let Some(i) = statuses.iter().position(|s| *s == p.status) {
