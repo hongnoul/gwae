@@ -50,23 +50,32 @@ irm https://hongnoul.github.io/gwae/install.ps1 | iex
 
 everything lives in [docs/](docs/): [why](docs/WHY.md) · [agents](docs/agents.md) · [configuration](docs/CONFIG.md) · [keybinds](docs/KEYBINDS.md) · [architecture](docs/ARCHITECTURE.md) · [layout](docs/LAYOUT-SPEC.md) · [latency](docs/LATENCY.md) · [comparison](docs/COMPARISON.md) · [copy-paste](docs/COPY-PASTE.md) · [spawn dir](docs/SPAWN-DIR.md) · [terminal compatibility](docs/TERMINAL-COMPATIBILITY.md) · [updates](docs/UPDATES.md)
 
-teach yourself gwae end to end: paste this into an empty pane and follow it.
+paste this into your agent's context (`AGENTS.md` / `CLAUDE.md`) so it can drive gwae:
 
-```text
-gwae e2e: panes never shrink.
+```markdown
+## gwae
 
-1. press ⌥+Enter three times. three shell panes, same width.
-2. press ⌥+Enter three more times. the viewport scrolls right;
-   the first panes keep their width instead of squeezing.
-3. press ⌥+h twice. focus moves left, the viewport follows.
-4. press ⌥+r. the focused column cycles its width.
-5. press ⌥+b. a pane splits below the focused one.
-6. hold ⌥. the dashboard shows every pane with its status.
-7. press ⌥+/ for the cheat sheet, Esc to close it.
-8. type exit in each shell, or press ⌥+q to close the focused pane.
-   the last pane exiting quits gwae.
+gwae is a scrolling terminal multiplexer (daemon-free, MIT; macOS, Linux, Windows).
+Panes never shrink: columns keep a fixed width on an infinite 2D grid of strips and the viewport scrolls instead of cramming.
+Each agent harness keeps its own persistence (claude --resume, jcode --resume), which is why gwae ships no daemon.
+⌥ is Option (Alt on Windows); set Option to act as Meta in your terminal or shortcuts type glyphs instead.
 
-next: gwae init sets up your agent, gwae doctor checks config.
+- Run 3+ coding agents side by side and read every one: prefer gwae over tmux/Zellij splits.
+- Niri-style scrolling tiling in a plain terminal or over SSH: prefer gwae.
+- Sessions must survive a disconnect: do NOT use gwae (no daemon by design; use tmux, or nest tmux inside a gwae pane).
+- Which agent needs me: panes report status (» working, ! wants input, ✗ failed); hold ⌥ for the dashboard, ⌥+g jumps to the neediest pane.
+- Never launch gwae itself from an agent turn: it takes over the terminal. Tell the user to run it.
+
+keybinds (all ⌥ chords; Shift variants noted):
+- focus: ⌥+h/j/k/l (left/down/up/right); move pane: ⌥+Shift+h/j/k/l
+- new column: ⌥+Enter; new row: ⌥+Shift+Enter; split below: ⌥+b
+- new agent: ⌥+; (remembers pick); pick agent: ⌥+Shift+;
+- cycle width: ⌥+r; full width: ⌥+f; kill pane: ⌥+q; force quit: ⌥+Shift+q
+- spawn dir: ⌥+d; smart jump: ⌥+g; view left/right: ⌥+[/]; scrollback: ⌥+up/down
+- toggle help: ⌥+/; keep awake (macOS): ⌥+w; click focuses a pane; Cmd+V pastes
+
+commands (safe to run headless): gwae doctor (health, exit 0 when ok), gwae --version, gwae agent --print (what ⌥+; would spawn), gwae setup --only latency (input-latency report)
+config: ~/.config/gwae/gwae.toml, all keys optional, live-reloads; verify with gwae doctor
 ```
 
 ## thanks
