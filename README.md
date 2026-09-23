@@ -6,15 +6,11 @@
 [![CI](https://github.com/hongnoul/gwae/actions/workflows/ci.yml/badge.svg)](https://github.com/hongnoul/gwae/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-**A scrolling terminal multiplexer for macOS. Panes never shrink.**
-
-Run coding agents, shells, and TUIs side by side. Open more panes and the viewport scrolls instead of squeezing them. Inspired by niri's scrolling tiling.
+**Infinite scroll terminal multiplexer for macOS**
 
 [Install](#install) · [Try it in 30 seconds](#try-it-in-30-seconds) · [Website](https://hongnoul.github.io/gwae/) · [Releases](https://github.com/hongnoul/gwae/releases)
 
 <img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
-
-Add columns beyond the screen edge, then move between them without shrinking the panes.
 
 </div>
 
@@ -40,8 +36,6 @@ brew upgrade gwae
 
 `gwae doctor` prints the detected install source and the upgrade route. Building from source (`cargo build`, `cargo install --path`) works for development but is not a supported install. If `command -v gwae` points somewhere other than Homebrew after installing, an older copy earlier on PATH is shadowing it: remove it or reorder PATH so `brew install` wins.
 
-> Windows and Linux are sunset. Old binaries keep running but get no updates. Mac-only lets every shortcut, clipboard path, and focus fix assume macOS.
-
 ## Try it in 30 seconds
 
 After installing, run `gwae`. On first launch, dismiss the help overlay with Escape and finish the setup in the first pane. No agent account needed: skip the agent choice for a shell-only test.
@@ -65,23 +59,13 @@ gwae doctor           # check config and setup
 
 New columns appear to the right of focus. `⌥+;` spawns your agent — first press remembers your pick (a lone install launches itself), later presses go straight there. `⌥+Shift+;` always opens the picker instead.
 
-## Why not tmux?
-
-Choose gwae when you want readable panes that scroll beyond the screen, rather than more splits in the same space. Keep tmux when you need detach/attach or processes that survive a disconnected terminal. gwae has no session daemon, and an agent's `--resume` restores its conversation, not its running process.
-
-[Compare layouts and tradeoffs](docs/COMPARISON.md).
-
 ## How it works
 
-* Panes keep fixed width (`1/4` default, `⌥+r` to cycle). Rows scroll past the edge, they do not squeeze.
+* Panes keep fixed width (`1/4` default, `⌥+r` to cycle width). Rows scroll past the edge without squeeze like in niri.
 * Scroll snaps to column boundaries. No slivers.
-* One process. No daemon, no socket. Agent persistence is `claude --resume` or `jcode --resume`.
 * macOS native: `pbcopy` clipboard, `caffeinate` keep-awake, CoreGraphics Option-key poll, macOS focus fixes.
-* Kitty graphics support is partial: pane-local direct RGB/RGBA placements and replies enable tdf's image and zoom path. Quiet Unicode-placeholder images are validated and remapped. See [terminal compatibility](docs/TERMINAL-COMPATIBILITY.md) for limits and verification status.
 
 ## Agent status
-
-Reads standard [OSC 133](https://gitlab.freedesktop.org/terminal-wg/specifications/-/blob/master/docs/OSC-133.md) markers when available. Otherwise, output activity and idle time provide a heuristic, not a guarantee that an agent needs input. For jcode panes the daemon's verdict wins over the heuristic: gwae polls which sessions are actually generating and corrects heuristic tiles both ways, so a finished client that keeps repainting settles to idle instead of sticking at working, and a generating client in a quiet stretch holds working instead of flapping to attention. Set `GWAE_NO_HARNESS_STATUS=1` to disable the poll.
 
 `»` working · `!` needs input · `✓` done · `✗` failed
 
