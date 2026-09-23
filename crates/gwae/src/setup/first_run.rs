@@ -195,11 +195,7 @@ fn remember(state: &mut HarnessState, path: Option<&Path>, cmd: &str, known: boo
 /// and a digit still jumps straight to that entry. Returns `None` when the
 /// terminal cannot do raw input (styling off, no tty, raw mode refused), so
 /// the caller can fall back to the line-based prompt.
-fn interactive_pick(
-    plan: &crate::agent::Plan,
-    choices: &[Found],
-    sty: &Style,
-) -> Option<Choice> {
+fn interactive_pick(plan: &crate::agent::Plan, choices: &[Found], sty: &Style) -> Option<Choice> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
     use crossterm::{cursor, execute, terminal};
     if !sty.on || !std::io::stdin().is_terminal() || choices.is_empty() {
