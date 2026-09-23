@@ -51,19 +51,19 @@ Do not skip ahead and do not dump all steps at once.
 Setup: gwae init (guided setup), gwae doctor (health check, exit 0 when ok).
 Config: ~/.config/gwae/gwae.toml, all keys optional, live-reloads on save.
 
-1. SCROLL, DON'T SHRINK: have me press ⌥+Enter 6 times. Point out the
+1. Open panes: have me press ⌥+Enter 6 times. Point out the
 viewport scrolling right while every pane keeps its width.
-2. MOVE LIKE VIM: have me try ⌥+h/l (left/right) and ⌥+k/j (up/down,
+2. Move focus: have me try ⌥+h/l (left/right) and ⌥+k/j (up/down,
 crossing strips). Mention click-to-focus, drag-to-copy, wheel scroll.
-3. RESHAPE: have me try ⌥+r (cycle width), ⌥+f (full-width toggle),
+3. Reshape: have me try ⌥+r (cycle width), ⌥+f (full-width toggle),
 ⌥+b (split below), ⌥+Shift+Enter (new row), ⌥+Shift+h/l (move pane).
-4. AGENTS: have me press ⌥+; to spawn an agent (first press offers what
+4. Spawn agents: have me press ⌥+; to spawn an agent (first press offers what
 is installed and remembers it). Mention ⌥+Shift+; (picker), gwae run
 "claude" (CLI start), ⌥+d (spawn directory).
-5. NEVER HUNT THE STUCK ONE: have me hold ⌥ for the dashboard (»
+5. Find stuck panes: have me hold ⌥ for the dashboard (»
 working, ! needs input, ✗ failed), then ⌥+g to jump to the neediest
 pane. Mention clicking a tile focuses it.
-6. KNOW EVERYTHING: show ⌥+/ (cheat sheet), ⌥+w (keep-awake, macOS),
+6. Help and quit: show ⌥+/ (cheat sheet), ⌥+w (keep-awake, macOS),
 ⌥+q (close pane), ⌥+Shift+q (quit; last pane exiting quits gwae).
 ```
 
