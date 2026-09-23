@@ -9,11 +9,11 @@ class Gwae < Formula
   license "MIT"
 
   if Hardware::CPU.arm?
-    url "https://github.com/hongnoul/gwae/releases/download/v1.6.0/gwae-aarch64-apple-darwin.tar.gz"
-    sha256 "8268af379ca1a1987151bee6c7ec4652aae5e8308a2afde399b675298b823082"
+    url "https://github.com/hongnoul/gwae/releases/download/v1.6.1/gwae-aarch64-apple-darwin.tar.gz"
+    sha256 "bf07d0f030e1c3a5a8500d861d3708532d47b4215dfead772eee00028981729f"
   else
-    url "https://github.com/hongnoul/gwae/releases/download/v1.6.0/gwae-x86_64-apple-darwin.tar.gz"
-    sha256 "404900f4bb15e3c168d5454255671d09a06c1ced19864c07c4c2181f1fd251d3"
+    url "https://github.com/hongnoul/gwae/releases/download/v1.6.1/gwae-x86_64-apple-darwin.tar.gz"
+    sha256 "357dcaf838b762f8a03e5605c350e7e4ba90c5691cd2877d98f5d53194308857"
   end
 
   def install
@@ -22,7 +22,10 @@ class Gwae < Formula
 
   def caveats
     <<~EOS
-      ready. run 'gwae' to get started.
+      gwae is on your PATH via Homebrew, so it works in this terminal
+      and every fresh one right after install. No setup needed:
+        gwae        # start (Esc dismisses the help overlay)
+        gwae init   # guided setup, safe to re-run
     EOS
   end
 
