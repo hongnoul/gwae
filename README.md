@@ -40,6 +40,8 @@ irm https://hongnoul.github.io/gwae/install.ps1 | iex
 
 ## Tutorial
 
+Copy and paste following into your preferred agent harness pane in gwae:
+
 ```text
 SETUP
   run: gwae init (guided setup), gwae doctor (health check, exit 0 when ok).
