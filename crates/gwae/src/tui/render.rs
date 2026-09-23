@@ -558,8 +558,8 @@ pub(crate) fn render_frame_with_images(
         .map(|c| c.panes.len() > 1)
         .unwrap_or(false);
     // Empty boxes tile the empty right side with bare frames so the grid
-    // reads while strips fill. Their interiors stay blank: no identifiers,
-    // no hints. The only key help is the `⌥+/` cheat-sheet.
+    // reads while strips fill. Their interiors carry a retro stipple dither:
+    // no identifiers, no hints. The only key help is the `⌥+/` cheat-sheet.
     {
         let sk = pal.overlay;
         let inset: u16 = 1;
@@ -640,8 +640,8 @@ pub(crate) fn render_frame_with_images(
             if placeholder {
                 // Interior only: the ring is painted from the canvas below,
                 // and clearing it here would also wipe the left neighbour's
-                // shared edge. A centered placeholder pal keeps the box from
-                // reading as broken; tiny boxes stay blank.
+                // shared edge. A retro stipple keeps the box from reading as
+                // broken; tiny boxes stay blank.
                 for y in inset..boxr.h.saturating_sub(inset) {
                     let row = (boxr.y + y) as usize * cols as usize;
                     for x in inset..boxr.w.saturating_sub(inset) {
@@ -1841,10 +1841,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn placeholder_boxes_carry_a_centered_pal_not_text() {
-        // Empty boxes are bare frames plus one monochrome sprite: their
-        // interiors carry the palette base, the art is half-block cells in
-        // the skeleton color, and there is no text of any kind. The only
+    fn placeholder_boxes_carry_a_retro_stipple_not_text() {
+        // Empty boxes are bare frames plus a sparse dot dither: their
+        // interiors carry the palette base, the art is `·` cells in the
+        // skeleton color, and there is no text of any kind. The only
         // key help is the `⌥+/` cheat-sheet.
         let layout = Layout::new(2); // boxes 3 and 4 are empty
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
@@ -1879,7 +1879,7 @@ pub(crate) mod tests {
                 }
             }
         }
-        // ... and carry no text of any kind: only frames and half-block art.
+        // ... and carry no text of any kind: only frames and stipple dots.
         let text: String = out.iter().map(|c| c.ch).collect();
         let non_frame: String = text
             .chars()
@@ -1887,9 +1887,7 @@ pub(crate) mod tests {
                 !matches!(
                     c,
                     ' ' | '\u{2800}'
-                        | '\u{2580}'
-                        | '\u{2584}'
-                        | '\u{2588}'
+                        | '\u{00b7}'
                         | '\u{2502}'
                         | '\u{2500}'
                         | '\u{256d}'
@@ -1906,24 +1904,19 @@ pub(crate) mod tests {
             .collect();
         assert!(
             non_frame.is_empty(),
-            "empty boxes must paint only frames and pixel art, got {non_frame:?}"
+            "empty boxes must paint only frames and stipple, got {non_frame:?}"
         );
-        // The art is really there: half-block cells in the skeleton color.
-        let art: Vec<_> = out
-            .iter()
-            .filter(|c| matches!(c.ch, '\u{2580}' | '\u{2584}' | '\u{2588}'))
-            .collect();
-        assert!(!art.is_empty(), "empty boxes must paint a sprite");
+        // The art is really there: stipple dots in the skeleton color.
+        let art: Vec<_> = out.iter().filter(|c| c.ch == '·').collect();
+        assert!(!art.is_empty(), "empty boxes must paint a stipple");
         assert!(
             art.iter().all(|c| c.style.fg == skel && c.style.bg == dim),
-            "sprite art must be skeleton ink on the box background"
+            "stipple art must be skeleton ink on the box background"
         );
-        // Tiny boxes degrade to blank: no room for a sprite with breathing room.
+        // Tiny boxes degrade to blank: no room for dots with breathing room.
         let small = placeholder_rows(30, 6).join("\n");
         assert!(
-            !small.contains('\u{2580}')
-                && !small.contains('\u{2584}')
-                && !small.contains('\u{2588}'),
+            !small.contains('·'),
             "tiny boxes must stay blank, got:\n{small}"
         );
     }
