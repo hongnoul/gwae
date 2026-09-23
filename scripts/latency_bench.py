@@ -4,9 +4,10 @@ Usage:
   python3 scripts/latency_bench.py zsh    # bare-shell baseline
   python3 scripts/latency_bench.py gwae   # GWAE_BIN overrides the binary
   python3 scripts/latency_bench.py herdr  # needs herdr installed
+  python3 scripts/latency_bench.py tmux   # default config, default-command zsh -f
 
 Each target runs in an isolated HOME under /tmp/muxbench (create
-home_{zsh,gwae,herdr} with a minimal .zshrc: PS1="%% ").
+home_{zsh,gwae,herdr,tmux} with a minimal .zshrc: PS1="%% ").
 
 Measures, inside a real PTY (120x40):
   startup:    exec -> first output byte, and -> output quiesce (300ms silence)
@@ -180,4 +181,15 @@ if __name__ == "__main__":
         r = run("gwae", [gbin,"run","/bin/zsh -f"], "/tmp/muxbench/home_gwae", b"\x1b\r")
     elif which == "herdr":
         r = run("herdr", ["/Users/justinhong/.local/bin/herdr"], "/tmp/muxbench/home_herdr", b"\x02v")
+    elif which == "tmux":
+        # Isolated server socket + config: default settings except the pane
+        # command is pinned to `/bin/zsh -f` so spawn quiesce is comparable
+        # with the gwae/herdr runs (identical shell, no rc files).
+        conf = "/tmp/muxbench/tmux.conf"
+        with open(conf, "w") as f:
+            f.write('set -g default-command "/bin/zsh -f"\n')
+        os.system("tmux -L muxbench kill-server 2>/dev/null")
+        r = run("tmux", ["tmux","-L","muxbench","-f",conf,"new-session"],
+                "/tmp/muxbench/home_tmux", b"\x02%")
+        os.system("tmux -L muxbench kill-server 2>/dev/null")
     print(json.dumps(r, indent=1))
