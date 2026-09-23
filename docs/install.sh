@@ -25,20 +25,18 @@ else
   C_BOLD='' C_DIM='' C_GREEN='' C_RED='' C_RESET=''
 fi
 
-# Transcript-as-logo: every output line carries the next row of the pixel
-# mark as its left gutter, so the whole install *is* the logo: 5 rows, 5
-# lines on the happy path. Extra lines (warnings, PATH notes) continue
-# with a blank gutter of the same width.
+# Transcript-as-logo: every output line carries a row of the pixel mark as
+# its left gutter, cycling every 5 rows, so the left logo stays visible no
+# matter how many lines print and logs only ever stack on the right.
 logo_row=0
 gutter() {
   logo_row=$((logo_row + 1))
-  case $logo_row in
+  case $(( (logo_row - 1) % 5 + 1 )) in
     1) G='  ▄▄▄▄ ▄ ▄' ;;
     2) G='   ▄ █ █▄█' ;;
     3) G='   █ █ █ █' ;;
     4) G='   █ ▀ █ █' ;;
     5) G='  ▀▀▀▀ ▀ ▀' ;;
-    *) G='          ' ;;
   esac
 }
 
@@ -47,8 +45,8 @@ ok()   { gutter; printf '%s%s%s   %s>%s %s\n' "$C_BOLD" "$G" "$C_RESET" "$C_GREE
 die()  {
   gutter
   printf '%s%s%s   %s> %s%s\n' "$C_BOLD" "$G" "$C_RESET" "$C_RED" "$*" "$C_RESET" >&2
-  # Close the mark so even a failed run paints the whole logo.
-  while [ "$logo_row" -lt 5 ]; do
+  # Close the current mark so even a failed run leaves a whole logo.
+  while [ $(( logo_row % 5 )) -ne 0 ]; do
     gutter
     printf '%s%s%s\n' "$C_BOLD" "$G" "$C_RESET" >&2
   done
@@ -205,8 +203,7 @@ fi
 add_to_path() {
   case ":$PATH:" in
     *":$INSTALL_DIR:"*)
-      # Already reachable: nothing happened, so no line. The happy path
-      # stays exactly as tall as the logo.
+      # Already reachable: nothing happened, so no line.
       return 0
       ;;
   esac

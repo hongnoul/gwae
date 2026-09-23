@@ -10,19 +10,18 @@ $ErrorActionPreference = 'Stop'
 
 $Repo = 'hongnoul/gwae'
 
-# Transcript-as-logo: every output line carries the next row of the pixel
-# mark as its left gutter, so the whole install *is* the logo (5 rows on the
-# happy path). Extra lines continue with a blank gutter of the same width.
+# Transcript-as-logo: every output line carries a row of the pixel mark as
+# its left gutter, cycling every 5 rows, so the left logo stays visible no
+# matter how many lines print and logs only ever stack on the right.
 $script:LogoRow = 0
 function Get-Gutter {
     $script:LogoRow++
-    switch ($script:LogoRow) {
+    switch (($script:LogoRow - 1) % 5 + 1) {
         1 { '  ▄▄▄▄ ▄ ▄' }
         2 { '   ▄ █ █▄█' }
         3 { '   █ █ █ █' }
         4 { '   █ ▀ █ █' }
         5 { '  ▀▀▀▀ ▀ ▀' }
-        default { '          ' }
     }
 }
 
@@ -42,8 +41,8 @@ function Ok([string]$Message) {
 function Fail([string]$Message) {
     $g = Get-Gutter
     Write-Host "$g   > $Message" -ForegroundColor Red
-    # Close the mark so even a failed run paints the whole logo.
-    while ($script:LogoRow -lt 5) {
+    # Close the current mark so even a failed run leaves a whole logo.
+    while ($script:LogoRow % 5 -ne 0) {
         Write-Host (Get-Gutter)
     }
     # `throw`, not `exit`: under `irm | iex` an `exit` would close the
