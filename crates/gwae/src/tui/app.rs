@@ -101,6 +101,17 @@ fn spawn_picked_harness(
     *note_until = Some(Instant::now() + NOTE_LINGER);
 }
 
+/// One end of a build child's piped output, so both can share a drain loop.
+///
+/// `Stdout` and `Stderr` are distinct types with no common trait object in
+/// `std`, and both must be drained: leaving either undrained is what wedges
+/// a build forever once its 64KB pipe buffer fills.
+#[cfg(unix)]
+enum DrainPipe {
+    Out(std::process::ChildStdout),
+    Err(std::process::ChildStderr),
+}
+
 /// Run the interactive TUI.
 pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) -> Result<(), i32> {
     use std::io;
@@ -521,6 +532,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut src_changed_at: Option<Instant> = None;
     #[cfg(unix)]
     let mut build_child: Option<std::process::Child> = None;
+    // Tail of the in-flight build's output, filled by drain threads so the
+    // child never blocks writing into a pipe nobody reads. See the spawn
+    // site: not draining deadlocks the build and holds cargo's target lock.
+    #[cfg(unix)]
+    let mut build_output: Option<std::sync::Arc<std::sync::Mutex<String>>> = None;
     #[cfg(unix)]
     let mut build_phase: Option<crate::reload::BuildPhase> = None;
     #[cfg(unix)]
@@ -889,17 +905,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             if let Some(child) = build_child.as_mut() {
                 match child.try_wait() {
                     Ok(Some(status)) => {
-                        // Reap output for the error overlay. The build ran
-                        // with piped stdio, so this is a bounded read of a
-                        // finished child, never a block on a live one.
+                        // The drain threads own the pipes, so the tail is
+                        // already collected: read it rather than reading
+                        // the child (which would block on a pipe nobody is
+                        // writing to, and whose buffer is long since
+                        // drained anyway).
                         let mut stderr_tail = String::new();
-                        if let Some(mut c) = build_child.take() {
-                            use std::io::Read as _;
-                            if let Some(e) = c.stderr.as_mut() {
-                                let mut buf = Vec::new();
-                                let _ = e.read_to_end(&mut buf);
-                                let text = String::from_utf8_lossy(&buf);
-                                let lines: Vec<&str> = text.lines().collect();
+                        build_child = None;
+                        if let Some(sink) = build_output.take() {
+                            if let Ok(s) = sink.lock() {
+                                let lines: Vec<&str> = s.lines().collect();
                                 let start = lines.len().saturating_sub(40);
                                 stderr_tail = lines[start..].join("\n");
                             }
@@ -944,6 +959,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     }
                     Err(_) => {
                         build_child = None;
+                        build_output = None;
                         build_phase = None;
                     }
                 }
@@ -987,7 +1003,61 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         }
                     }
                     match cmd.spawn() {
-                        Ok(child) => {
+                        Ok(mut child) => {
+                            // Drain both pipes on their own threads.
+                            //
+                            // A pipe is a fixed kernel buffer (64KB here).
+                            // `try_wait` below never reads, so a build that
+                            // out-talks that buffer blocks in `write` and
+                            // stays blocked: the child never exits, so
+                            // `try_wait` returns `None` forever, so nothing
+                            // ever reads the pipe. That deadlock holds
+                            // cargo's target lock, which wedges every later
+                            // build in the workspace too, and the only
+                            // symptom is a dev session whose HUD pill spins
+                            // forever. (Observed exactly that: a `cargo
+                            // build` stuck 30+ minutes at 0.06s CPU with no
+                            // rustc children.) Draining continuously keeps
+                            // the child writable and hands the tail to the
+                            // overlay when it finishes.
+                            let sink = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+                            for pipe in [
+                                child.stderr.take().map(DrainPipe::Err),
+                                child.stdout.take().map(DrainPipe::Out),
+                            ]
+                            .into_iter()
+                            .flatten()
+                            {
+                                let sink = std::sync::Arc::clone(&sink);
+                                std::thread::spawn(move || {
+                                    use std::io::Read as _;
+                                    let mut buf = [0u8; 4096];
+                                    let mut reader: Box<dyn std::io::Read + Send> = match pipe {
+                                        DrainPipe::Err(e) => Box::new(e),
+                                        DrainPipe::Out(o) => Box::new(o),
+                                    };
+                                    loop {
+                                        match reader.read(&mut buf) {
+                                            Ok(0) | Err(_) => break,
+                                            Ok(n) => {
+                                                if let Ok(mut s) = sink.lock() {
+                                                    s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                                                    // Keep only the tail: an
+                                                    // error overlay shows the
+                                                    // last lines, and a long
+                                                    // build must not grow
+                                                    // this without bound.
+                                                    if s.len() > 64 * 1024 {
+                                                        let cut = s.len() - 32 * 1024;
+                                                        *s = s[cut..].to_string();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                            build_output = Some(sink);
                             build_child = Some(child);
                             build_phase = Some(crate::reload::BuildPhase::Building);
                             build_error = None;

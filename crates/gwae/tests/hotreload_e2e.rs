@@ -275,6 +275,91 @@ fn a_reload_swaps_the_binary_and_keeps_the_pane_running() {
     );
 }
 
+/// A reloaded pane must be *told* to repaint, without being sent input.
+///
+/// Keeping the process alive is necessary but not sufficient. The repaint
+/// nudge used to write `Ctrl-L` into every pane, which a plain shell treats as
+/// "redraw" but a full-screen program treats as a real command: jcode maps it
+/// to terminal-style clear, so a hot reload silently wiped the agent's
+/// transcript and left the pane black. The session survived and the *screen*
+/// did not.
+///
+/// `sh -i` is the wrong probe for that, since it reprints its prompt on
+/// practically any stimulus and so looks healthy either way. This pane runs a
+/// program that paints once and then repaints *only* on `SIGWINCH`, which is
+/// how an agent TUI behaves. Seeing its marker again after the reload proves
+/// the window-change signal was delivered; the companion unit test
+/// (`reload_nudge_sends_no_bytes_to_the_child`) proves no keystroke was
+/// injected to achieve it.
+///
+/// The loop is short `sleep`s rather than one long one on purpose: `sh` runs
+/// a trap only between commands, so a single `sleep 30` would swallow the
+/// signal for the whole test and make this pass or fail for the wrong reason.
+///
+/// The probe lives in a script file because gwae's `shell_split` is
+/// deliberately naive (it toggles on any quote character and strips it), so an
+/// inline `sh -c '...'` with nested quotes does not survive being parsed into
+/// argv. A file needs no quoting at all.
+#[test]
+fn a_reloaded_pane_is_asked_to_repaint_without_being_sent_input() {
+    const PAINTED: &str = "GWAEPAINT24810";
+    const REPAINTED: &str = "GWAEREPAINT24811";
+    let _reap = Reaper(PAINTED);
+
+    let script = std::env::temp_dir().join(format!("gwae-repaint-{}.sh", std::process::id()));
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\n\
+             printf '{PAINTED}\\n'\n\
+             trap \"printf '{REPAINTED}\\n'\" WINCH\n\
+             while : ; do sleep 0.2 ; done\n"
+        ),
+    )
+    .expect("write repaint probe script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod probe script");
+    }
+
+    let s = Session::start(&format!("sh {}", script.display()));
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        s.screen().contains(PAINTED),
+        "precondition: the pane must have painted before the reload; got \
+         tail: {:?}",
+        tail_of(&s.screen())
+    );
+    assert!(
+        !s.screen().contains(REPAINTED),
+        "precondition: nothing should have repainted before the reload"
+    );
+
+    s.trigger_reload();
+    std::thread::sleep(Duration::from_secs(8));
+
+    let painted_again = s.screen().contains(REPAINTED);
+    let _ = std::fs::remove_file(&script);
+    assert!(
+        painted_again,
+        "the reloaded pane was never asked to repaint, so an agent TUI comes \
+         back to a blank pane and stays blank until the user types. tail: {:?}",
+        tail_of(&s.screen())
+    );
+}
+
+/// A bounded tail of captured PTY output, for failure messages.
+///
+/// Counted in `char`s rather than bytes: the frame is full of box-drawing
+/// glyphs, and slicing at a byte offset inside one would panic and hide the
+/// real assertion failure.
+fn tail_of(screen: &str) -> String {
+    let tail: Vec<char> = screen.chars().rev().take(1200).collect();
+    tail.into_iter().rev().collect()
+}
+
 /// The dangerous one. Signal handlers are reset by `execve`, so a reloaded
 /// gwae that does not re-arm the reaper leaks every pane's detached jobs.
 #[test]

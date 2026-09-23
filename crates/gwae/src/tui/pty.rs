@@ -565,14 +565,35 @@ pub(crate) fn adopt_pane(
 /// Ask every adopted pane's child to repaint, so a reloaded screen is not
 /// blank until the user types.
 ///
-/// `Ctrl-L` is the closest thing to a universal "redraw" a terminal program
-/// understands: shells redraw their prompt, and full-screen apps (vim, agent
-/// TUIs) repaint their whole surface. Sending it costs nothing when the child
-/// ignores it.
+/// This re-asserts each pane's current size through the PTY master and then
+/// signals the pane's foreground process group with `SIGWINCH`. Full-screen
+/// programs (vim, less, agent TUIs) repaint on that signal without consuming
+/// any input, and shells redraw their prompt the same way. The belt and the
+/// suspenders are both load-bearing: the kernel only delivers `SIGWINCH` on
+/// an *actual size change*, and gwae's panes come through a reload at exactly
+/// the size they already were, so the re-assert alone is a no-op for the
+/// steady-state case. The explicit signal covers it.
+///
+/// This deliberately sends no bytes to the child. The previous shape wrote
+/// `Ctrl-L` (`\x0c`) into every pane, which reads as a redraw request in a
+/// plain shell but is a real command elsewhere: jcode maps it to
+/// terminal-style clear, so a hot reload wiped the agent transcript and left
+/// the pane black. A window-change signal asks for a repaint and nothing else.
 pub(crate) fn nudge_repaint(panes: &mut HashMap<PaneId, PtyPane>) {
     for p in panes.values_mut() {
-        let _ = p.writer.write_all(b"\x0c");
-        let _ = p.writer.flush();
+        let _ = p.master.resize(p.pty_size);
+        // The kernel only SIGWINCHes on a real size change, and a reload
+        // re-asserts the size the pane already had, so the resize above is
+        // usually silent. Signal the pane root's group explicitly: the
+        // root is a session leader on its own PTY, so its group is the
+        // foreground group in the steady state, and a stray WINCH to a
+        // wrong-but-live group is still only a repaint request.
+        #[cfg(unix)]
+        if let Some(pid) = p.child.process_id() {
+            unsafe {
+                libc::kill(-(pid as libc::pid_t), libc::SIGWINCH);
+            }
+        }
     }
 }
 
@@ -688,6 +709,65 @@ mod tests {
         .pty_size(78, 28);
         inherited.resize(next).unwrap();
         assert_eq!(master.get_size().unwrap(), next);
+    }
+
+    /// The reload repaint must not inject input into the child.
+    ///
+    /// The nudge used to write `Ctrl-L` into every pane, which is a redraw
+    /// in a plain shell but a real command in jcode (terminal-style clear):
+    /// a hot reload wiped the agent transcript and left the pane black.
+    /// `SIGWINCH` (via a size re-assert) asks for a repaint with no bytes.
+    #[test]
+    fn reload_nudge_sends_no_bytes_to_the_child() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+        let size = PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        pair.master.resize(size).expect("set initial size");
+        let sink = Sink::default();
+        let mut panes = HashMap::from([(
+            1u64,
+            PtyPane {
+                master: PaneIo::Owned(pair.master),
+                writer: Box::new(sink.clone()),
+                child: PaneProc::Adopted(None),
+                grid: Vt100Grid::new(GridSize { cols: 80, rows: 24 }),
+                pty_size: size,
+                alive: true,
+                h_scroll: 0,
+                last_output: Instant::now(),
+                saw_osc133: false,
+                graphics_stream: Default::default(),
+                graphics: Default::default(),
+                legacy_images: Default::default(),
+                image_view: None,
+                promote_streak: 0,
+                image_activity: None,
+            },
+        )]);
+        nudge_repaint(&mut panes);
+        assert!(
+            sink.0.lock().unwrap().is_empty(),
+            "the reload repaint must send no input bytes to the child"
+        );
     }
 
     // Exercise the actual pane event path without launching a child or writing
