@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://hongnoul.github.io/gwae/">website</a> · <a href="#install">install</a> · <a href="#quick-start">quick start</a> · <a href="#docs">docs</a>
+  <a href="#macos">macOS</a> · <a href="#windows">Windows</a> · <a href="#linux">Linux</a> · <a href="#docs">docs</a>
 </p>
 
 <p align="center">
@@ -38,15 +38,15 @@
 
 ## install
 
-macOS and Linux:
+### macOS
 
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
-or `brew install hongnoul/tap/gwae` on macOS.
+or `brew install hongnoul/tap/gwae`.
 
-Windows (PowerShell):
+### Windows
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "irm https://hongnoul.github.io/gwae/install.ps1 | iex"
@@ -57,6 +57,12 @@ checksum, and adds that directory to your user `PATH` (no admin rights
 needed). Fresh terminals pick it up automatically. Override the directory
 with `$env:GWAE_INSTALL_DIR`, or set `$env:GWAE_NO_MODIFY_PATH = "1"` to
 skip the PATH edit.
+
+### Linux
+
+```bash
+curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
+```
 
 Prebuilt [binaries](https://github.com/hongnoul/gwae/releases) for all
 five targets (`aarch64`/`x86_64` macOS, `x86_64`/`aarch64` Linux,
