@@ -22,7 +22,7 @@
 
 ## Install
 
-> Developed and tested on macOS only. Contributions for other operating systems are welcome.
+> Developed and tested on macOS only. Contributions for Windows are welcome. Linux users: we recommend [niri](https://github.com/YaLTeR/niri), the scrolling window manager that inspired gwae.
 
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
