@@ -106,18 +106,35 @@ def bench_throughput(m, n=100000):
         if not m.alive: break
     return None, len(buf)
 
-def bench_spawn(m, chord, times=5):
+def bench_spawn(m, chord, times=5, quiet=0.25, cap=5.0):
+    """TTFB = first byte after the chord; quiesce = last byte before
+    `quiet` seconds of silence.
+
+    TTFB is the mux metric. Quiesce is dominated by the spawned shell's
+    own startup (zsh with system rc files ~180 ms, fish ~40 ms on the
+    same host), so only compare quiesce across muxes configured with the
+    identical shell. One read loop tracks both ends, so a
+    deferred fork (frame first, shell prompt later) is measured honestly
+    instead of quiesce collapsing to TTFB."""
     res = []
     for _ in range(times):
         ensure_quiet(m, quiet=0.2, cap=4.0)
         t0 = now()
         m.write(chord)
-        d, t_first = m.read_avail(0.6)
-        buf2, t_last = m.drain_until_quiet(quiet=0.25, cap=5.0)
+        t_first = None; t_last = None; total = 0
+        deadline = now() + cap
+        while now() < deadline:
+            r,_,_ = select.select([m.fd],[],[],quiet)
+            if not r: break
+            try: dd = os.read(m.fd, 65536)
+            except OSError: m.alive=False; break
+            if not dd: m.alive=False; break
+            t_now = now()
+            if t_first is None: t_first = t_now
+            t_last = t_now; total += len(dd)
         ttfb = (t_first - t0)*1000 if t_first else None
-        # quiesce time: last byte seen relative to t0
-        tq = ((t_last - t0)*1000) if t_last else (ttfb if ttfb else None)
-        res.append((ttfb, tq, len(d)+len(buf2)))
+        tq = (t_last - t0)*1000 if t_last else None
+        res.append((ttfb, tq, total))
         time.sleep(0.2)
     return res
 
