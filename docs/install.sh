@@ -252,4 +252,4 @@ add_to_path() {
 
 add_to_path
 
-printf '\n  %s✓ ready.%s run %sgwae%s to get started.\n\n' "$C_GREEN" "$C_RESET" "$C_BOLD" "$C_RESET"
+printf '\n  %s✓ welcome to gwae.%s type %sgwae%s and you'"'"'re in.\n\n' "$C_GREEN" "$C_RESET" "$C_BOLD" "$C_RESET"

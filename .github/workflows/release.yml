@@ -189,10 +189,10 @@ jobs:
             def caveats
               <<~EOS
                 ▄▄▄▄ ▄ ▄
-                 ▄ █ █▄█   gwae is on your PATH via Homebrew, so it works in this
-                 █ █ █ █   terminal and every fresh one right after install.
+                 ▄ █ █▄█   welcome to gwae — panes that never shrink.
+                 █ █ █ █   installed and on your PATH, nothing to configure.
                  █ ▀ █ █
-                ▀▀▀▀ ▀ ▀   ready. run 'gwae' to get started.
+                ▀▀▀▀ ▀ ▀   type `gwae` and you're in.
               EOS
             end
 
