@@ -14,6 +14,11 @@
 //! laptop that means a process burning CPU for hours after its session is
 //! gone. These tests drive real quits against a real gwae and assert on the
 //! actual process table afterwards.
+//!
+//! Unix-only end to end: the harness signals with `kill(2)` and asserts on
+//! `ps`; Windows has neither, and the teardown path it would exercise is
+//! `#[cfg(unix)]` too.
+#![cfg(unix)]
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};

@@ -654,10 +654,10 @@ pub(crate) fn sync_panes(
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn owned_and_inherited_pty_resize_preserve_pixel_dimensions() {
         let pair = native_pty_system().openpty(PtySize::default()).unwrap();
