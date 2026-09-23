@@ -52,11 +52,11 @@ does not work, stop and help me fix it before continuing. Do not skip
 ahead and do not dump all steps at once.
 
 0. Fix the modifier key first. Nothing below works without this. Have me
-hold ⌥ and press h. If focus moves left, it works. If a special character
-types instead, tell me to set Option to act as Meta in my terminal
-(Terminal.app: Preferences, Profiles, Keyboard, Use Option as Meta Key;
-iTerm2, Ghostty, WezTerm have the equivalent), then retry. Do not proceed
-until ⌥+h moves focus.
+press ⌥+/ . If the cheat sheet opens, it works; press Esc to close it.
+If a special character types instead, tell me to set Option to act as
+Meta in my terminal (Terminal.app: Preferences, Profiles, Keyboard, Use
+Option as Meta Key; iTerm2, Ghostty, WezTerm have the equivalent), then
+retry. Do not proceed until ⌥+/ opens the cheat sheet.
 1. Open a pane: have me press ⌥+Enter once. Confirm a new shell pane
 appears to the right.
 2. Open more: have me press ⌥+Enter until there are 6 panes. Point out
