@@ -7,7 +7,7 @@ gwae exists for people who run several coding agents (Claude Code, Jcode, Codex 
 Key facts:
 
 - Single process, no daemon, no socket, no attach/detach. Persistence is each agent harness's own `--resume`; for unattended long-running work, run tmux inside a gwae pane.
-- Agent dashboard with zero instrumentation: panes speak standard OSC 133. Hold Option for a minimap tinted by agent status (working / wants attention / done / failed); Option+g smart-jumps to the pane that needs you.
+- Agent dashboard with zero instrumentation: panes speak standard OSC 133. Hold Option for a minimap tinted by agent status (working / wants attention / failed); Option+g smart-jumps to the pane that needs you.
 - macOS native: `pbcopy` clipboard, `caffeinate` keep-awake, CoreGraphics Option-key poll, macOS focus fixes.
 - Quantized scroll: the viewport rests only on column boundaries, so the grid paints pixel-identically in every scroll state.
 - Kitty graphics passthrough: images and agent screenshots render inside their pane.

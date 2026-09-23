@@ -42,7 +42,7 @@ brew install hongnoul/tap/gwae
 
 | Feature | Key | What it does |
 | ------- | --- | ------------ |
-| Heads-up display | hold ⌥ | Center minimap tinted by agent status over standard OSC 133: working, wants attention, done, or failed |
+| Heads-up display | hold ⌥ | Center minimap tinted by agent status over standard OSC 133: working, wants attention, or failed |
 | Smart jump | ⌥+g | Jumps straight to the pane that needs you |
 | Hatchery | ⌥+d | Spawn-directory picker to choose where the next agent starts |
 | Agent selector | ⌥+Shift+; | Harness picker to spawn a specific agent instead of your default |
