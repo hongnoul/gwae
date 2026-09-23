@@ -40,11 +40,13 @@ brew install hongnoul/tap/gwae
 
 > Official docs are still WIP.
 
-- **Heads-up display** — hold ⌥ for the center minimap. Panes report status over standard OSC 133, so every tile is tinted by agent state: working, wants attention, done, or failed.
-- **Smart jump** — ⌥+g jumps straight to the pane that needs you.
-- **Hatchery** — ⌥+d opens the spawn-directory picker to choose where the next agent starts.
-- **Agent selector** — ⌥+Shift+; opens the harness picker to spawn a specific agent instead of your default.
-- **Caffeinate** — ⌥+w toggles the macOS `caffeinate` assertion so a long run never sleeps mid-job.
+| Feature | Key | What it does |
+| ------- | --- | ------------ |
+| Heads-up display | hold ⌥ | Center minimap tinted by agent status over standard OSC 133: working, wants attention, done, or failed |
+| Smart jump | ⌥+g | Jumps straight to the pane that needs you |
+| Hatchery | ⌥+d | Spawn-directory picker to choose where the next agent starts |
+| Agent selector | ⌥+Shift+; | Harness picker to spawn a specific agent instead of your default |
+| Caffeinate | ⌥+w | Toggles the macOS `caffeinate` assertion so a long run never sleeps mid-job |
 
 ## Interactive tutorial
 
