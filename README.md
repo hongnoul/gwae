@@ -6,7 +6,7 @@
 [![CI](https://github.com/hongnoul/gwae/actions/workflows/ci.yml/badge.svg)](https://github.com/hongnoul/gwae/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-**Infinite scroll terminal multiplexer for macOS**
+**Infinite scroll terminal multiplexer for macOS, Windows, and Linux**
 
 [Install](#install) · [Try it in 30 seconds](#try-it-in-30-seconds) · [Website](https://hongnoul.github.io/gwae/) · [Releases](https://github.com/hongnoul/gwae/releases)
 
