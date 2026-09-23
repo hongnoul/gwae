@@ -565,35 +565,116 @@ pub(crate) fn adopt_pane(
 /// Ask every adopted pane's child to repaint, so a reloaded screen is not
 /// blank until the user types.
 ///
-/// This re-asserts each pane's current size through the PTY master and then
-/// signals the pane's foreground process group with `SIGWINCH`. Full-screen
-/// programs (vim, less, agent TUIs) repaint on that signal without consuming
-/// any input, and shells redraw their prompt the same way. The belt and the
-/// suspenders are both load-bearing: the kernel only delivers `SIGWINCH` on
-/// an *actual size change*, and gwae's panes come through a reload at exactly
-/// the size they already were, so the re-assert alone is a no-op for the
-/// steady-state case. The explicit signal covers it.
+/// An adopted pane's grid starts empty (contents are not carried across the
+/// exec), so the child has to redraw *everything*. Getting that to happen
+/// without typing into the pane is subtler than it looks.
 ///
-/// This deliberately sends no bytes to the child. The previous shape wrote
-/// `Ctrl-L` (`\x0c`) into every pane, which reads as a redraw request in a
-/// plain shell but is a real command elsewhere: jcode maps it to
-/// terminal-style clear, so a hot reload wiped the agent transcript and left
-/// the pane black. A window-change signal asks for a repaint and nothing else.
-pub(crate) fn nudge_repaint(panes: &mut HashMap<PaneId, PtyPane>) {
-    for p in panes.values_mut() {
-        let _ = p.master.resize(p.pty_size);
-        // The kernel only SIGWINCHes on a real size change, and a reload
-        // re-asserts the size the pane already had, so the resize above is
-        // usually silent. Signal the pane root's group explicitly: the
-        // root is a session leader on its own PTY, so its group is the
-        // foreground group in the steady state, and a stray WINCH to a
-        // wrong-but-live group is still only a repaint request.
-        #[cfg(unix)]
-        if let Some(pid) = p.child.process_id() {
-            unsafe {
-                libc::kill(-(pid as libc::pid_t), libc::SIGWINCH);
+/// What does not work, and why:
+///
+/// 1. **Writing `Ctrl-L`** (the original shape). Only a shell reads `\x0c` as
+///    "redraw"; to a full-screen program it is an ordinary key. jcode binds it
+///    to terminal-style clear, so every reload pushed the agent transcript
+///    off-screen and left the pane black. Any byte written here is input, and
+///    input means guessing at the child's keymap.
+/// 2. **Re-asserting the same size**, with or without a hand-delivered
+///    `SIGWINCH`. The kernel only raises the signal when the winsize actually
+///    changes, and ratatui's `Terminal::flush` diffs each frame against its
+///    *own* previous buffer, which still holds the pre-reload frame.
+///    `autoresize` only force-clears when the area changed, so the diff comes
+///    out empty: the child dutifully "repaints" and writes nothing. Measured
+///    against a real ratatui app: 25 bytes, none of them content.
+/// 3. **Growing and restoring back to back.** Both `ioctl`s land before the
+///    child is scheduled, so it only ever observes the final size and the
+///    change collapses to case 2. Also measured at 25 bytes.
+///
+/// What works is a size change the child can actually *observe*: grow by one
+/// row, let it run, then restore. It then repaints its full surface (measured:
+/// 92 bytes, content included) and ends at exactly the size it started with.
+///
+/// This returns the panes that still need restoring, so the caller can do it
+/// after a short delay instead of blocking the event loop in a sleep. See
+/// [`RepaintRestore`].
+///
+/// Growing rather than shrinking is deliberate: a pane on the normal screen
+/// can never scroll content off the top on the way out, and the restore is
+/// what returns it to the true size. Nothing is ever written to the child.
+#[must_use = "the pane sizes must be restored or every pane is left one row too tall"]
+pub(crate) fn nudge_repaint(panes: &mut HashMap<PaneId, PtyPane>) -> RepaintRestore {
+    let mut pending = Vec::new();
+    for (id, p) in panes.iter_mut() {
+        // A height change, not a width one: changing width makes
+        // text-wrapping children rewrap twice, which is visible. Alt-screen
+        // programs (every agent TUI) have no scrollback to disturb at all.
+        let grown = PtySize {
+            rows: p.pty_size.rows.saturating_add(1),
+            ..p.pty_size
+        };
+        if p.master.resize(grown).is_ok() {
+            pending.push((*id, p.pty_size));
+        }
+    }
+    RepaintRestore {
+        pending,
+        at: Instant::now() + REPAINT_SETTLE,
+    }
+}
+
+/// How long a repaint nudge leaves the pane one row taller before restoring.
+///
+/// The child has to be scheduled in between or it never sees two distinct
+/// sizes and never fully repaints (see [`nudge_repaint`] case 3). Measured
+/// sufficient at 50ms against a real ratatui app; doubled for headroom on a
+/// loaded machine, and still far below the ~6s a reload already takes.
+pub(crate) const REPAINT_SETTLE: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// The second half of a repaint nudge: sizes to put back, and when.
+///
+/// Carried rather than slept on so the event loop keeps painting and stays
+/// responsive to input while the panes are momentarily one row taller.
+#[derive(Debug)]
+pub(crate) struct RepaintRestore {
+    pending: Vec<(PaneId, PtySize)>,
+    at: Instant,
+}
+
+impl Default for RepaintRestore {
+    /// An empty restore, owed to nobody. `Instant` has no `Default`, and the
+    /// timestamp is meaningless while `pending` is empty (every method checks
+    /// that first), so "now" is the honest placeholder.
+    fn default() -> Self {
+        Self {
+            pending: Vec::new(),
+            at: Instant::now(),
+        }
+    }
+}
+
+impl RepaintRestore {
+    /// Whether anything is still waiting to be restored.
+    pub(crate) fn is_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// When the restore is due, so the caller can bound its wait and not
+    /// oversleep past it.
+    pub(crate) fn due_at(&self) -> Instant {
+        self.at
+    }
+
+    /// Restore the real sizes once the settle window has passed.
+    ///
+    /// A no-op until then, and a no-op forever after: a pane that was closed
+    /// in the meantime is simply skipped, since the restore is keyed by id.
+    pub(crate) fn maybe_apply(&mut self, panes: &mut HashMap<PaneId, PtyPane>) -> bool {
+        if self.pending.is_empty() || Instant::now() < self.at {
+            return false;
+        }
+        for (id, size) in self.pending.drain(..) {
+            if let Some(p) = panes.get_mut(&id) {
+                let _ = p.master.resize(size);
             }
         }
+        true
     }
 }
 
@@ -711,14 +792,15 @@ mod tests {
         assert_eq!(master.get_size().unwrap(), next);
     }
 
-    /// The reload repaint must not inject input into the child.
+    /// The reload repaint must not inject input into the child, and must put
+    /// the pane back at exactly the size it started with.
     ///
-    /// The nudge used to write `Ctrl-L` into every pane, which is a redraw
-    /// in a plain shell but a real command in jcode (terminal-style clear):
-    /// a hot reload wiped the agent transcript and left the pane black.
-    /// `SIGWINCH` (via a size re-assert) asks for a repaint with no bytes.
+    /// The nudge used to write `Ctrl-L` into every pane, which is a redraw in
+    /// a plain shell but a real command in jcode (terminal-style clear): a hot
+    /// reload wiped the agent transcript and left the pane black. It now asks
+    /// for a repaint with a brief, observable size change and no bytes at all.
     #[test]
-    fn reload_nudge_sends_no_bytes_to_the_child() {
+    fn reload_nudge_repaints_with_no_bytes_and_restores_the_size() {
         use std::io::Write;
         use std::sync::{Arc, Mutex};
 
@@ -763,10 +845,49 @@ mod tests {
                 image_activity: None,
             },
         )]);
-        nudge_repaint(&mut panes);
+
+        let mut restore = nudge_repaint(&mut panes);
+        // Phase one: the pane is deliberately one row taller, which is the
+        // only thing that makes a ratatui child redraw its whole surface.
+        let grown = match &panes[&1].master {
+            PaneIo::Owned(m) => m.get_size().expect("size after nudge"),
+            #[cfg(unix)]
+            PaneIo::Inherited(_) => unreachable!("owned in this test"),
+        };
+        assert_eq!(
+            grown.rows,
+            size.rows + 1,
+            "the nudge must change the size for real; an identical size is a \
+             no-op that leaves the pane blank"
+        );
+        assert!(restore.is_pending(), "the restore must still be owed");
+
+        // Phase two is time-gated, so it does nothing yet and everything once
+        // the window has passed.
+        assert!(
+            !restore.maybe_apply(&mut panes),
+            "the restore must wait: applied immediately, the child never sees \
+             two distinct sizes and never repaints"
+        );
+        std::thread::sleep(REPAINT_SETTLE + std::time::Duration::from_millis(20));
+        assert!(restore.maybe_apply(&mut panes), "the restore must fire");
+        let back = match &panes[&1].master {
+            PaneIo::Owned(m) => m.get_size().expect("size after restore"),
+            #[cfg(unix)]
+            PaneIo::Inherited(_) => unreachable!("owned in this test"),
+        };
+        assert_eq!(
+            (back.rows, back.cols),
+            (size.rows, size.cols),
+            "the pane must end at its true size, or the frame no longer fits"
+        );
+        assert!(!restore.is_pending(), "the restore must be consumed once");
+
         assert!(
             sink.0.lock().unwrap().is_empty(),
-            "the reload repaint must send no input bytes to the child"
+            "the reload repaint must send no input bytes to the child: any \
+             byte here is a keystroke the child may act on (Ctrl-L cleared \
+             jcode's transcript, which is the bug this replaced)"
         );
     }
 

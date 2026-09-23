@@ -275,45 +275,49 @@ fn a_reload_swaps_the_binary_and_keeps_the_pane_running() {
     );
 }
 
-/// A reloaded pane must be *told* to repaint, without being sent input.
+/// A reloaded pane must actually *repaint*, not merely be poked.
 ///
-/// Keeping the process alive is necessary but not sufficient. The repaint
-/// nudge used to write `Ctrl-L` into every pane, which a plain shell treats as
-/// "redraw" but a full-screen program treats as a real command: jcode maps it
-/// to terminal-style clear, so a hot reload silently wiped the agent's
-/// transcript and left the pane black. The session survived and the *screen*
-/// did not.
+/// Keeping the process alive is necessary but not sufficient, and this is the
+/// case that made the pane look black. Two facts combine:
 ///
-/// `sh -i` is the wrong probe for that, since it reprints its prompt on
-/// practically any stimulus and so looks healthy either way. This pane runs a
-/// program that paints once and then repaints *only* on `SIGWINCH`, which is
-/// how an agent TUI behaves. Seeing its marker again after the reload proves
-/// the window-change signal was delivered; the companion unit test
-/// (`reload_nudge_sends_no_bytes_to_the_child`) proves no keystroke was
-/// injected to achieve it.
+/// * an adopted pane's grid starts **empty**, since grid contents are not
+///   carried across the exec, so the child must redraw everything; and
+/// * a real TUI does not redraw on request. ratatui's `Terminal::flush` diffs
+///   each frame against its *own* previous buffer, which still holds the
+///   pre-reload frame, and `autoresize` only force-clears when the area
+///   changed. Asked to repaint at an unchanged size it emits an empty diff and
+///   writes nothing, leaving gwae's blank grid blank.
 ///
-/// The loop is short `sleep`s rather than one long one on purpose: `sh` runs
-/// a trap only between commands, so a single `sleep 30` would swallow the
-/// signal for the whole test and make this pass or fail for the wrong reason.
+/// So the probe here only paints when it observes the terminal size *change*,
+/// which is exactly the behaviour that defeats a naive nudge. Measured against
+/// a real ratatui program first: an unchanged-size nudge produced 25 bytes and
+/// no content, while an observable size change produced 92 bytes including the
+/// content. A `printf`-on-signal probe would pass either way and prove
+/// nothing, which is the trap this avoids.
 ///
-/// The probe lives in a script file because gwae's `shell_split` is
-/// deliberately naive (it toggles on any quote character and strips it), so an
-/// inline `sh -c '...'` with nested quotes does not survive being parsed into
-/// argv. A file needs no quoting at all.
+/// Counting occurrences rather than looking for a one-shot marker keeps the
+/// test honest about *when* the paint happened: gwae legitimately sizes a pane
+/// during startup, so the claim is that a further paint happens after the
+/// reload.
 #[test]
-fn a_reloaded_pane_is_asked_to_repaint_without_being_sent_input() {
-    const PAINTED: &str = "GWAEPAINT24810";
-    const REPAINTED: &str = "GWAEREPAINT24811";
-    let _reap = Reaper(PAINTED);
+fn a_reloaded_pane_actually_repaints_itself() {
+    const MARK: &str = "RTPAINT24810";
 
     let script = std::env::temp_dir().join(format!("gwae-repaint-{}.sh", std::process::id()));
     std::fs::write(
         &script,
+        // Paint only on an observed size change, like ratatui's diff does.
         format!(
             "#!/bin/sh\n\
-             printf '{PAINTED}\\n'\n\
-             trap \"printf '{REPAINTED}\\n'\" WINCH\n\
-             while : ; do sleep 0.2 ; done\n"
+             last=''\n\
+             while : ; do\n\
+             \tnow=$(stty size 2>/dev/null)\n\
+             \tif [ \"$now\" != \"$last\" ] ; then\n\
+             \t\tprintf '{MARK}\\n'\n\
+             \t\tlast=$now\n\
+             \tfi\n\
+             \tsleep 0.1\n\
+             done\n"
         ),
     )
     .expect("write repaint probe script");
@@ -325,27 +329,26 @@ fn a_reloaded_pane_is_asked_to_repaint_without_being_sent_input() {
     }
 
     let s = Session::start(&format!("sh {}", script.display()));
-    std::thread::sleep(Duration::from_secs(2));
+    std::thread::sleep(Duration::from_secs(3));
+    let before = s.screen().matches(MARK).count();
     assert!(
-        s.screen().contains(PAINTED),
-        "precondition: the pane must have painted before the reload; got \
-         tail: {:?}",
+        before > 0,
+        "precondition: the probe must have painted at least once before the \
+         reload; got tail: {:?}",
         tail_of(&s.screen())
-    );
-    assert!(
-        !s.screen().contains(REPAINTED),
-        "precondition: nothing should have repainted before the reload"
     );
 
     s.trigger_reload();
     std::thread::sleep(Duration::from_secs(8));
-
-    let painted_again = s.screen().contains(REPAINTED);
+    let after = s.screen().matches(MARK).count();
     let _ = std::fs::remove_file(&script);
+
     assert!(
-        painted_again,
-        "the reloaded pane was never asked to repaint, so an agent TUI comes \
-         back to a blank pane and stays blank until the user types. tail: {:?}",
+        after > before,
+        "the reloaded pane never repainted ({before} paints before, {after} \
+         after), so a real TUI comes back to an empty grid and stays blank \
+         until the user types. A nudge that cannot survive a repaint-on-change \
+         child is the black-pane bug. tail: {:?}",
         tail_of(&s.screen())
     );
 }

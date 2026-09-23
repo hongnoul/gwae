@@ -68,7 +68,7 @@ pub use pty::PtyPane;
 pub(crate) use pty::{adopt_pane, descendants};
 pub(crate) use pty::{
     feed_pane_output, kill_pane_tree, nudge_repaint, pane_grid_sizes, spawn_pane, sync_panes,
-    PaneMsg,
+    PaneMsg, RepaintRestore,
 };
 pub(crate) use term::{
     first_line, input_poll_interval, refresh_size, restore_terminal, CONFIG_POLL, NOTE_LINGER,

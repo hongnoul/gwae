@@ -488,9 +488,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     agent_panes.extend(reloaded_agents.iter().copied());
     // An adopted pane's grid starts empty (contents are not carried across a
     // reload), so ask each child to redraw. Without this the screen stays
-    // blank until the user types, which reads as a crash.
+    // blank until the user types, which reads as a crash. The nudge is a
+    // deliberate, observable size change, so it finishes in two phases: the
+    // restore lands a moment later, from the loop.
+    let mut repaint_restore = RepaintRestore::default();
     if reloading {
-        nudge_repaint(&mut panes);
+        repaint_restore = nudge_repaint(&mut panes);
     }
     // The title currently shown on the host terminal; we only write when it
     // changes so we don't spam the host with identical OSC sequences.
@@ -617,7 +620,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         let mut next_msg = if dirty || !pending_input.is_empty() {
             rx.try_recv().ok()
         } else {
-            let tick = input_poll_interval(cfg.input_poll_ms, last_activity.elapsed());
+            let mut tick = input_poll_interval(cfg.input_poll_ms, last_activity.elapsed());
+            // A pending repaint restore is a deadline: sleeping past it would
+            // leave every adopted pane one row taller than it should be for a
+            // whole idle tick (up to 30ms), which the user would see as the
+            // frame not quite fitting.
+            if repaint_restore.is_pending() {
+                let until = repaint_restore
+                    .due_at()
+                    .saturating_duration_since(Instant::now());
+                tick = tick.min(until.max(std::time::Duration::from_millis(1)));
+            }
             rx.recv_timeout(tick).ok()
         };
         while let Some(msg) = next_msg.take() {
@@ -739,6 +752,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             // Drain whatever else is queued without blocking, then move on
             // to handle input and paint one frame for the whole batch.
             next_msg = rx.try_recv().ok();
+        }
+
+        // Second half of the reload repaint nudge: put the real sizes back
+        // once the child has had time to notice it grew. Doing this here
+        // rather than sleeping in the adopt path keeps the loop responsive
+        // while the panes are momentarily one row taller.
+        if repaint_restore.maybe_apply(&mut panes) {
+            dirty = true;
         }
 
         // Keep the frame sized to the live terminal, even when a resize event
@@ -1786,7 +1807,27 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         dirty = true;
                                         continue;
                                     }
+                                    let is_swap = matches!(
+                                        a,
+                                        Action::MovePaneLeft
+                                            | Action::MovePaneRight
+                                            | Action::MovePaneUp
+                                            | Action::MovePaneDown
+                                    );
+                                    let before = is_swap.then(|| layout.clone());
                                     let _ = layout.apply(a, v, f);
+                                    // Every real pane swap redeals the
+                                    // background pals: the empty boxes reload
+                                    // to a fresh cast instead of sitting
+                                    // frozen on the launch shuffle. Focus,
+                                    // widths, and no-op moves (a swap pressed
+                                    // at the edge) leave the lineup alone.
+                                    if is_swap
+                                        && before
+                                            .is_some_and(|b| layout.pane_order() != b.pane_order())
+                                    {
+                                        super::empty_art::reshuffle();
+                                    }
                                     needs_sync = true;
                                     dirty = true;
                                     // A kill must paint before the next key is
