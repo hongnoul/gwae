@@ -10,10 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-666666?labelColor=333333" alt="MIT license" /></a>
-  <a href="https://github.com/hongnoul/gwae/releases"><img src="https://img.shields.io/github/downloads/hongnoul/gwae/total?labelColor=333333&color=666666" alt="total GitHub release downloads" /></a>
-  <a href="https://github.com/hongnoul/gwae/stargazers"><img src="https://img.shields.io/github/stars/hongnoul/gwae?labelColor=333333&color=666666&logo=github" alt="GitHub stars" /></a>
-  <a href="https://github.com/hongnoul/gwae/releases/latest"><img src="https://img.shields.io/github/v/release/hongnoul/gwae?label=release&labelColor=333333&color=666666" alt="latest stable release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-white?labelColor=black" alt="MIT license" /></a>
+  <a href="https://github.com/hongnoul/gwae/releases"><img src="https://img.shields.io/github/downloads/hongnoul/gwae/total?labelColor=black&color=white" alt="total GitHub release downloads" /></a>
+  <a href="https://github.com/hongnoul/gwae/stargazers"><img src="https://img.shields.io/github/stars/hongnoul/gwae?labelColor=black&color=white&logo=github&logoColor=black" alt="GitHub stars" /></a>
+  <a href="https://github.com/hongnoul/gwae/releases/latest"><img src="https://img.shields.io/github/v/release/hongnoul/gwae?label=release&labelColor=black&color=white" alt="latest stable release" /></a>
 </p>
 
 ---
@@ -38,11 +38,30 @@
 
 ## install
 
+macOS and Linux:
+
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
-or `brew install hongnoul/tap/gwae` · windows: `powershell -ExecutionPolicy Bypass -c "irm https://hongnoul.github.io/gwae/install.ps1 | iex"` · [binaries](https://github.com/hongnoul/gwae/releases)
+or `brew install hongnoul/tap/gwae` on macOS.
+
+Windows (PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://hongnoul.github.io/gwae/install.ps1 | iex"
+```
+
+This installs `gwae.exe` into `%LOCALAPPDATA%\gwae\bin`, verifies the
+checksum, and adds that directory to your user `PATH` (no admin rights
+needed). Fresh terminals pick it up automatically. Override the directory
+with `$env:GWAE_INSTALL_DIR`, or set `$env:GWAE_NO_MODIFY_PATH = "1"` to
+skip the PATH edit.
+
+Prebuilt [binaries](https://github.com/hongnoul/gwae/releases) for all
+five targets (`aarch64`/`x86_64` macOS, `x86_64`/`aarch64` Linux,
+`x86_64` Windows) ship with every release. On ARM64 Windows the x64 binary
+runs under emulation; there is no native ARM64 build yet.
 
 then start it where the work lives:
 
