@@ -6,10 +6,6 @@
 </p>
 
 <p align="center">
-  <a href="#install">macOS</a>
-</p>
-
-<p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-white?labelColor=black" alt="MIT license" /></a>
   <a href="https://github.com/hongnoul/gwae/releases"><img src="https://img.shields.io/github/downloads/hongnoul/gwae/total?labelColor=black&color=white" alt="total GitHub release downloads" /></a>
   <a href="https://github.com/hongnoul/gwae/stargazers"><img src="https://img.shields.io/github/stars/hongnoul/gwae?labelColor=black&color=white&logo=github&logoColor=black" alt="GitHub stars" /></a>
@@ -19,6 +15,8 @@
 ![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
 
 ## Install
+
+> Developed and tested on macOS only. Contributions for other operating systems are welcome.
 
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
