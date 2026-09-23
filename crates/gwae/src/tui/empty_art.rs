@@ -9,8 +9,9 @@
 //!
 //! The rules that kept hints out still apply, so the art obeys them:
 //! no text (nothing to translate, nothing that drifts from the keybinds),
-//! stable within a session (the frame differ sees a still image, never a
-//! repaint) with a fresh random lineup each launch, palette-only color
+//! stable between swaps (the frame differ sees a still image, never a
+//! repaint) with a fresh random lineup each launch and on every pane swap,
+//! palette-only color
 //! (`overlay` on `base`, so only the focus ring ever signals focus), and
 //! tiny boxes degrade to blank.
 
@@ -23,10 +24,11 @@ pub(crate) const SPRITE_H: usize = 12;
 /// Cell rows one sprite occupies: two sprite pixels per half-block cell.
 pub(crate) const SPRITE_CELL_H: u16 = (SPRITE_H / 2) as u16;
 
-/// The pals, in box order. The lineup is shuffled once per launch (see
-/// [`shuffled_order`]), so every session opens with a surprise cast, but a
-/// box always shows the same pal whatever the occupancy: filling a neighbour
-/// never changes the art you are already looking at.
+/// The pals, in box order. The lineup is shuffled on launch and redealt on
+/// every pane swap (see [`reshuffle`]), so the empty boxes always open with
+/// a surprise cast, but a box always shows the same pal whatever the
+/// occupancy: filling a neighbour never changes the art you are already
+/// looking at.
 const SPRITES: [&[&str; SPRITE_H]; 8] = [&BOT, &INVADER, &GHOST, &CAT, &FROG, &CRAB, &SLIME, &DINO];
 
 const GHOST: [&str; SPRITE_H] = [
@@ -155,34 +157,71 @@ fn pixel(art: &[&str; SPRITE_H], x: usize, y: usize) -> bool {
         .is_some_and(|b| *b == b'X')
 }
 
-/// One shuffled lineup of the pals, drawn lazily on first paint and frozen
-/// for the rest of the session. The seed mixes the wall clock with the
-/// process id, so every launch opens with a surprise cast while the frame
-/// differ still sees a still image within the session. No rng crate needed:
-/// a tiny xorshift shuffles the eight indices in place.
-fn shuffled_order() -> &'static [usize; 8] {
-    use std::sync::OnceLock;
+/// One shuffled lineup of the pals, drawn lazily on first paint. The seed
+/// mixes the wall clock, the process id, and a monotonic salt, so every
+/// launch opens with a surprise cast and every pane swap deals a fresh one,
+/// while the frame differ still sees a still image between swaps. No rng
+/// crate needed: a tiny xorshift shuffles the eight indices in place.
+static ORDER: std::sync::OnceLock<std::sync::RwLock<[usize; 8]>> = std::sync::OnceLock::new();
+static RESHUFFLE_SALT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn fresh_seed() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    static ORDER: OnceLock<[usize; 8]> = OnceLock::new();
-    ORDER.get_or_init(|| {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 32))
-            .unwrap_or(0x9E37_79B9_7F4A_7C15);
-        let mut seed = nanos ^ ((std::process::id() as u64) << 32).wrapping_mul(0x9E37_79B9);
-        if seed == 0 {
-            seed = 0x9E37_79B9_7F4A_7C15;
-        }
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 32))
+        .unwrap_or(0x9E37_79B9_7F4A_7C15);
+    let salt = RESHUFFLE_SALT.fetch_add(0x9E37_79B9_7F4A_7C15, std::sync::atomic::Ordering::SeqCst);
+    let seed = nanos ^ ((std::process::id() as u64).wrapping_mul(0x9E37_79B9)) ^ salt;
+    if seed == 0 {
+        0x9E37_79B9_7F4A_7C15
+    } else {
+        seed
+    }
+}
+
+fn shuffle_into(order: &mut [usize; 8], mut seed: u64) {
+    if seed == 0 {
+        seed = 0x9E37_79B9_7F4A_7C15;
+    }
+    // Fisher-Yates with xorshift64.
+    for i in (1..order.len()).rev() {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        order.swap(i, (seed % (i as u64 + 1)) as usize);
+    }
+}
+
+fn shuffled_order() -> [usize; 8] {
+    *ORDER
+        .get_or_init(|| {
+            let mut order = [0usize, 1, 2, 3, 4, 5, 6, 7];
+            shuffle_into(&mut order, fresh_seed());
+            std::sync::RwLock::new(order)
+        })
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+/// Deal a fresh random lineup, so the next paint shows new pals. Called on
+/// every pane swap (`Alt+Shift+hjkl`): the empty boxes reload to a surprise
+/// cast instead of sitting frozen on the launch shuffle. Retries a few times
+/// so a swap that redraws immediately never visibly keeps the old cast.
+pub(crate) fn reshuffle() {
+    let lock = ORDER.get_or_init(|| {
         let mut order = [0usize, 1, 2, 3, 4, 5, 6, 7];
-        // Fisher-Yates with xorshift64.
-        for i in (1..order.len()).rev() {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            order.swap(i, (seed % (i as u64 + 1)) as usize);
+        shuffle_into(&mut order, fresh_seed());
+        std::sync::RwLock::new(order)
+    });
+    let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
+    let prev = *guard;
+    for _ in 0..4 {
+        shuffle_into(&mut guard, fresh_seed());
+        if *guard != prev {
+            return;
         }
-        order
-    })
+    }
 }
 
 /// Paint one centered sprite inside `boxr` (frame included: the sprite is
@@ -283,18 +322,31 @@ mod tests {
     }
 
     #[test]
-    fn shuffled_lineup_is_a_stable_permutation() {
+    fn shuffled_lineup_is_a_stable_permutation_between_swaps() {
         // The launch shuffle must cover every pal exactly once, and the
-        // frozen order must be identical on every call within the session
-        // (the frame differ sees a still image).
+        // order must stay identical across paints until a swap redeals it
+        // (the frame differ sees a still image between swaps).
         let a = shuffled_order();
         let b = shuffled_order();
-        assert_eq!(a, b, "lineup changed within the session");
+        assert_eq!(a, b, "lineup changed between paints with no swap");
         let mut seen = [false; 8];
         for &i in a.iter() {
             assert!(i < SPRITES.len(), "lineup index {i} out of range");
             assert!(!seen[i], "lineup repeats pal {i}");
             seen[i] = true;
         }
+        // A swap redeals the lineup: still a full permutation, but a fresh
+        // cast rather than the launch one.
+        reshuffle();
+        let c = shuffled_order();
+        let mut seen = [false; 8];
+        for &i in c.iter() {
+            assert!(i < SPRITES.len(), "lineup index {i} out of range");
+            assert!(!seen[i], "lineup repeats pal {i}");
+            seen[i] = true;
+        }
+        assert_ne!(c, a, "a swap must redeal the lineup");
+        let d = shuffled_order();
+        assert_eq!(c, d, "lineup changed with no swap after a reshuffle");
     }
 }

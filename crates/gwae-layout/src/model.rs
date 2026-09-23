@@ -311,6 +311,23 @@ impl Layout {
         None
     }
 
+    /// Every live pane's grid position, in paint order. Compares cheaply
+    /// before/after a move verb: a no-op swap at the edge leaves the order
+    /// identical, while a real swap (including a pane hopping strips) changes
+    /// it. Focus and widths are excluded by construction, so focus moves
+    /// never count as swaps.
+    pub fn pane_order(&self) -> Vec<(RowId, usize, usize, PaneId)> {
+        let mut out = Vec::with_capacity(self.panes.len());
+        for row in &self.rows {
+            for (ci, col) in row.columns.iter().enumerate() {
+                for (pi, pid) in col.panes.iter().enumerate() {
+                    out.push((row.id, ci, pi, *pid));
+                }
+            }
+        }
+        out
+    }
+
     pub fn column_x_ranges(&self, row: RowId, viewport_cols: u16) -> Option<Vec<(u32, u32)>> {
         let row = self.row(row)?;
         // Each column renders at its own width: preset fractions are a *fixed
