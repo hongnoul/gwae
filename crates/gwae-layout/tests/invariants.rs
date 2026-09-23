@@ -36,10 +36,7 @@ fn random_actions() -> impl Strategy<Value = Vec<Action>> {
 /// Actions that must preserve every column's width.
 fn width_preserving_actions() -> impl Strategy<Value = Vec<Action>> {
     use Action::*;
-    let action = prop_oneof![
-        Just(MovePaneLeft),
-        Just(MovePaneRight),
-    ];
+    let action = prop_oneof![Just(MovePaneLeft), Just(MovePaneRight),];
     prop::collection::vec(action, 0..30)
 }
 

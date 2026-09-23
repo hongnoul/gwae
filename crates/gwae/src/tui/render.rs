@@ -28,12 +28,12 @@ pub(crate) fn chrome_rows(_cfg: &Config) -> u16 {
 #[derive(Debug)]
 pub(crate) struct PaneView {
     pub(crate) pid: PaneId,
-    pub(crate) col: usize,    // index of the owning column in the focused strip
-    pub(crate) rect: Rect,    // screen rect (already clipped to viewport horizontally)
-    pub(crate) col_x0: u16,   // grid column at the left edge of `rect`
+    pub(crate) col: usize,  // index of the owning column in the focused strip
+    pub(crate) rect: Rect,  // screen rect (already clipped to viewport horizontally)
+    pub(crate) col_x0: u16, // grid column at the left edge of `rect`
     pub(crate) grid_cols: u16, // full logical content width of the grid
     pub(crate) grid_rows: u16, // vertical size of the grid
-    pub(crate) peek: bool,    // squished neighbour shown as a 3-cell faded hint
+    pub(crate) peek: bool,  // squished neighbour shown as a 3-cell faded hint
 }
 
 /// Compute visible pane views for the focused row.
@@ -1936,7 +1936,7 @@ pub(crate) mod tests {
                     let mut layout = Layout::new(8);
                     layout.rows[0].columns[2].width = Width::Preset(gwae_layout::Preset::Third);
                     layout.rows[0].columns[4].width = Width::Cells(47);
-                                let mut sizes = HashMap::new();
+                    let mut sizes = HashMap::new();
                     let mut stops = HashSet::new();
                     for action in std::iter::repeat_n(Action::FocusRight, 7)
                         .chain(std::iter::repeat_n(Action::FocusLeft, 7))

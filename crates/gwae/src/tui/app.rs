@@ -1826,13 +1826,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             }
                         }
                         let chrome = chrome_rows(&cfg);
-                        let views = focused_pane_views_with_chrome(
-                            &layout,
-                            cols,
-                            rows,
-                            0,
-                            true, chrome,
-                        );
+                        let views =
+                            focused_pane_views_with_chrome(&layout, cols, rows, 0, true, chrome);
                         // A drag that wanders outside the pane (or off-screen)
                         // must still extend and finish the selection, exactly as
                         // it does in a browser or a native terminal. So resolve

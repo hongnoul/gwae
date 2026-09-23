@@ -143,8 +143,8 @@ pub(crate) fn clamped_pane_point(
     let r = v.rect;
     let sx = x.clamp(r.x, r.x + r.w.saturating_sub(1));
     let sy = y.clamp(r.y, r.y + r.h.saturating_sub(1));
-    let gx = ((sx - r.x) as i32 + v.col_x0 as i32)
-        .clamp(0, v.grid_cols.saturating_sub(1) as i32) as u16;
+    let gx =
+        ((sx - r.x) as i32 + v.col_x0 as i32).clamp(0, v.grid_cols.saturating_sub(1) as i32) as u16;
     Some((pid, gx, sy - r.y))
 }
 

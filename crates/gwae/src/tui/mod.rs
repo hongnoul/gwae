@@ -82,8 +82,8 @@ mod mouse;
 
 pub(crate) use diff::paint;
 use mouse::{
-    clamped_pane_point, mouse_role, pane_at, sgr_mouse_report,
-    wheel_alt_screen_keys, wheel_scroll_delta, MouseRole, WHEEL_SCROLL_LINES,
+    clamped_pane_point, mouse_role, pane_at, sgr_mouse_report, wheel_alt_screen_keys,
+    wheel_scroll_delta, MouseRole, WHEEL_SCROLL_LINES,
 };
 
 mod osc;
