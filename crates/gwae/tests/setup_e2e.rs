@@ -59,9 +59,11 @@ fn check_writes_nothing_and_never_flags_the_retired_knob() {
     // asserted; the retired knob's absence and the no-write guarantee are.
     let dir = sandbox(Some("input_poll_ms = 10\n"));
     let (out, _, _code) = setup(&dir, &["--check"]);
+    // A fully healthy host prints only the summary line; a host with
+    // pending macOS/kitty settings names the latency stage. Both are fine.
     assert!(
-        out.contains("latency"),
-        "check should name the stage:\n{out}"
+        out.contains("latency") || out.contains("all stages healthy"),
+        "check should name the stage or report healthy:\n{out}"
     );
     assert!(
         !out.contains("input_poll_ms"),
@@ -86,10 +88,11 @@ fn only_latency_scopes_the_audit() {
     let dir = sandbox(Some("input_poll_ms = 10\n"));
     let (out, _, _code) = setup(&dir, &["--check", "--only", "latency"]);
     // Exit code is platform-dependent (macOS/kitty settings may or may not
-    // be pending); the scoping itself is what this test pins.
+    // be pending); the scoping itself is what this test pins. A healthy
+    // host prints only the summary line instead of the stage name.
     assert!(
-        out.contains("latency"),
-        "scoped check names its stage:\n{out}"
+        out.contains("latency") || out.contains("all stages healthy"),
+        "scoped check names its stage or reports healthy:\n{out}"
     );
     assert!(
         !out.contains("input_poll_ms"),
