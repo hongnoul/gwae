@@ -10,9 +10,13 @@
   <a href="https://github.com/hongnoul/gwae/releases"><img src="https://img.shields.io/github/downloads/hongnoul/gwae/total?labelColor=black&color=white" alt="total GitHub release downloads" /></a>
   <a href="https://github.com/hongnoul/gwae/stargazers"><img src="https://img.shields.io/github/stars/hongnoul/gwae?labelColor=black&color=white&logo=github&logoColor=black" alt="GitHub stars" /></a>
   <a href="https://github.com/hongnoul/gwae/releases/latest"><img src="https://img.shields.io/github/v/release/hongnoul/gwae?label=release&labelColor=black&color=white" alt="latest stable release" /></a>
+
+  ![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
+
+  **Light weight, light speed**
 </p>
 
-![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
+
 
 ## Install
 
