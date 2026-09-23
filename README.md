@@ -18,7 +18,7 @@
 
 ![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
 
-## install
+## Install
 
 ### macOS and Linux
 
@@ -38,15 +38,7 @@ brew install hongnoul/tap/gwae
 irm https://hongnoul.github.io/gwae/install.ps1 | iex
 ```
 
-## benchmark
-
-| Metric    | Method                                                        | gwae        | herdr 0.9.1   |
-| --------- | ------------------------------------------------------------- | ----------- | ------------- |
-| Echo p50  | Keystroke to visible echo in a real PTY harness, median       | 0.34 ms     | 0.48–0.50 ms  |
-| Echo p90  | Keystroke to visible echo in a real PTY harness, 90th pct     | 0.36–0.38 ms | 0.54 ms      |
-| Spawn p50 | New pane request to first painted frame, median               | 0.48–0.52 ms | 0.63–0.70 ms |
-
-## tutorial
+## Tutorial
 
 ```text
 SETUP
@@ -80,11 +72,7 @@ SETUP
   ⌥+Shift+q: quit. last pane exiting quits gwae.
 ```
 
-## agent instructions
-
-if you are an ai agent driving gwae, read [`docs/agents.md`](docs/agents.md) before spawning panes.
-
-## development
+## Development
 
 ```bash
 git clone https://github.com/hongnoul/gwae
@@ -92,3 +80,15 @@ cd gwae
 cargo build
 cargo test --workspace
 ```
+
+## Benchmark
+
+| Metric    | Method                                                        | gwae        | herdr 0.9.1   |
+| --------- | ------------------------------------------------------------- | ----------- | ------------- |
+| Echo p50  | Keystroke to visible echo in a real PTY harness, median       | 0.34 ms     | 0.48–0.50 ms  |
+| Echo p90  | Keystroke to visible echo in a real PTY harness, 90th pct     | 0.36–0.38 ms | 0.54 ms      |
+| Spawn p50 | New pane request to first painted frame, median               | 0.48–0.52 ms | 0.63–0.70 ms |
+
+## Agent Instructions
+
+if you are an ai agent driving gwae, read [`docs/agents.md`](docs/agents.md) before spawning panes.
