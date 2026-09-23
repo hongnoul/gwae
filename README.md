@@ -79,9 +79,7 @@ Confirm the focus ring follows. Then have me press ⌥+k and ⌥+j.
 Mention click-to-focus only after these work.
 3. Open more: have me press ⌥+Enter until there are 6 panes. If I get
 lost, remind me ⌥+h/l moves between panes. Point out the viewport
-scrolling right while every pane keeps its width. Then have me press
-⌥+[ and ⌥+] to scroll the viewport left and right without moving focus.
-Confirm the strip slides but focus stays put.
+scrolling right while every pane keeps its width.
 4. Reshape: have me press ⌥+r to cycle the focused column's width, then
 ⌥+b to split below. Mention ⌥+f
 (full width) and ⌥+Shift+h/j/k/l (move pane in all four directions)
@@ -90,11 +88,11 @@ only after these work.
 is installed and remembers it). Confirm Cmd+V pastes text into the pane
 (native terminal paste). Mention ⌥+Shift+; (picker), ⌥+d (spawn
 directory), and gwae run "claude" (CLI start) after.
-6. History: have me press ⌥+↑ and ⌥+↓ to scroll the focused pane's
-history (add Shift or use PgUp/PgDn for a bigger jump). Then have me
+6. History: have me press ⌥ plus the up and down arrows to scroll the
+focused pane's history (add Shift for a bigger jump). Then have me
 press ⌃+⇧+K and ⌃+⇧+J for the three-line transcript scroll, noting it
-goes to the agent itself inside agent panes. Then have me press ⌥+←
-and ⌥+→ to pan content sideways. Confirm each moves content without
+goes to the agent itself inside agent panes. Left and right arrows
+always type into the pane, never scroll. Confirm history moves without
 moving focus.
 7. Stuck panes: have me hold ⌥ for the dashboard (» working, ! needs
 input, ✗ failed), then ⌥+g to jump to the neediest pane. Mention

@@ -1191,7 +1191,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             cols,
                             rows,
                             0,
-                            &panes,
                             true,
                             chrome_rows(&cfg),
                         )
@@ -1628,15 +1627,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     });
                                     dirty = true;
                                 }
-                                Cmd::Scroll(d) => {
-                                    let v = Viewport::new(cols);
-                                    let _ = layout.apply(
-                                        Action::ScrollViewport(d),
-                                        v,
-                                        FollowScroll::default(),
-                                    );
-                                    dirty = true;
-                                }
                                 Cmd::ScrollBack(d) => {
                                     if let Some(pid) = focused_pane(&layout) {
                                         if let Some(p) = panes.get_mut(&pid) {
@@ -1652,15 +1642,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                 }
                                                 let _ = p.writer.flush();
                                             } else if p.grid.scroll_by(d) {
-                                                dirty = true;
-                                            }
-                                        }
-                                    }
-                                }
-                                Cmd::ScrollPane(d) => {
-                                    if let Some(pid) = focused_pane(&layout) {
-                                        if let Some(p) = panes.get_mut(&pid) {
-                                            if p.scroll_pane(d) {
                                                 dirty = true;
                                             }
                                         }
@@ -1846,7 +1827,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         }
                         let chrome = chrome_rows(&cfg);
                         let views = focused_pane_views_with_chrome(
-                            &layout, cols, rows, 0, &panes, true, chrome,
+                            &layout,
+                            cols,
+                            rows,
+                            0,
+                            true, chrome,
                         );
                         // A drag that wanders outside the pane (or off-screen)
                         // must still extend and finish the selection, exactly as
@@ -1914,18 +1899,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                 let _ = p.writer.write_all(key);
                                             }
                                             let _ = p.writer.flush();
-                                        } else if is_horizontal_wheel(me.kind) {
-                                            // Sideways flick pans wide content
-                                            // (same stride as `⌥+←/→`), never
-                                            // vertical history: the child is
-                                            // a plain shell with no sidescroll
-                                            // of its own, so gwae pans for it.
-                                            // `scroll_pane` is a no-op repaint
-                                            // false here only for alt-screen,
-                                            // already handled above.
-                                            if p.scroll_pane(wheel_pan_delta(me.kind)) {
-                                                dirty = true;
-                                            }
                                         } else if p.grid.scroll_by(wheel_scroll_delta(me.kind)) {
                                             dirty = true;
                                         }
@@ -2021,8 +1994,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 // A child that asked for mouse reporting owns the
                                 // event, translated into its own grid coordinates,
                                 // so vim/less/jcode behave exactly as they would
-                                // natively. The wheel reaches here only for such
-                                // a child (plain panes scroll above); a finished
+                                // natively. Horizontal flicks never scroll here
+                                // (gwae pans nothing); they forward only when
+                                // the child reports mouse. A finished
                                 // drag-selection never does.
                                 if p.grid.wants_mouse() {
                                     if let Some(bytes) = sgr_mouse_report(&me, gx, gy) {
@@ -2280,97 +2254,6 @@ mod tests {
     #[cfg(unix)]
     use crate::theme::Palette;
 
-    // Spawns a real `sh` in a PTY: unix-only (Windows has no sh, and
-    // the spawn hangs the suite rather than failing fast).
-    #[cfg(unix)]
-    #[test]
-    fn content_scroll_reveals_overflow_e2e() {
-        let mut layout = Layout::default();
-        let pid = focused_pane(&layout).expect("default layout has a focused pane");
-        // Widen the single default column to the full viewport so we see 80 cells.
-        if let Some(row) = layout.row_mut(layout.focus.row) {
-            row.columns[0].width = gwae_layout::Width::Cells(80);
-        }
-        let (tx, rx) = channel::<PaneMsg>();
-        let cmd = "sh -c \"for i in $(seq 1 240); do printf '%s' $((i % 10)); done; echo\"";
-        let pane = spawn_pane(pid, cmd, 240, 10, tx.clone(), None, CellPixels::default())
-            .expect("spawn pane");
-        let mut pane = pane;
-        // Feed PTY output until the 240-cell digit line has landed.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        'feed: while std::time::Instant::now() < deadline {
-            match rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(PaneMsg::Output(_, bytes)) => {
-                    pane.grid.feed(&bytes);
-                    if pane.grid.cell(239, 0).ch != ' ' {
-                        break 'feed;
-                    }
-                }
-                Ok(PaneMsg::Input(_)) => {}
-                Ok(PaneMsg::Exited(_)) | Err(_) => break 'feed,
-            }
-        }
-        let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
-        panes.insert(pid, pane);
-        let mut out = Vec::new();
-
-        // At scroll 0 the viewport shows content columns 0..79 (digits 1,2,...,0).
-        panes.get_mut(&pid).unwrap().h_scroll = 0;
-        render_frame(
-            &mut out,
-            &layout,
-            &mut panes,
-            80,
-            10,
-            240,
-            &Palette::default(),
-            &crate::config::Minimap::default(),
-            None,
-        );
-        // Content is inset 1 cell inside the column frame: grid (x,0) is at
-        // screen (x + 1, 1).
-        let at = |out: &Vec<Cell>, x: usize| out[80 + 1 + x].ch;
-        assert_eq!(at(&out, 0), '1'); // content col 0 -> first content cell
-        assert_eq!(at(&out, 9), '0'); // content col 9
-        assert_eq!(at(&out, 77), '8'); // content col 77
-
-        // Scrolling 60 pans 60 cells; content col 60 leads at screen x=0.
-        panes.get_mut(&pid).unwrap().h_scroll = 60;
-        render_frame(
-            &mut out,
-            &layout,
-            &mut panes,
-            80,
-            10,
-            240,
-            &Palette::default(),
-            &crate::config::Minimap::default(),
-            None,
-        );
-        assert_eq!(at(&out, 0), '1'); // content col 60
-        assert_eq!(at(&out, 1), '2'); // content col 61
-        assert_eq!(at(&out, 77), '8'); // content col 137
-
-        // Past the 240-col content the window reveals blanks.
-        panes.get_mut(&pid).unwrap().h_scroll = 200;
-        render_frame(
-            &mut out,
-            &layout,
-            &mut panes,
-            80,
-            10,
-            240,
-            &Palette::default(),
-            &crate::config::Minimap::default(),
-            None,
-        );
-        assert_eq!(at(&out, 0), '1'); // content col 200
-        assert_eq!(at(&out, 39), '0'); // content col 239
-        assert_eq!(at(&out, 45), ' '); // past content end -> blank
-
-        panes.get_mut(&pid).unwrap().child.kill();
-    }
-
     /// End-to-end acceptance for the quarter-pane overflow fix: four real PTY
     /// children, one per quarter column, rendered by `render_frame` at 342 cols
     /// (the reported failure width, not divisible by 4). Every screen cell up to
@@ -2509,7 +2392,7 @@ mod tests {
         for _ in 0..2 {
             let _ = layout.apply(Action::CycleWidth, vp, FollowScroll::default());
         }
-        let views = focused_pane_views(&layout, cols, rows, 0, &HashMap::new(), true);
+        let views = focused_pane_views(&layout, cols, rows, 0, true);
         let v = views.iter().find(|v| v.col == 3).unwrap();
         assert_eq!(v.grid_cols, 39, "pane 4 keeps its logical grid width");
 

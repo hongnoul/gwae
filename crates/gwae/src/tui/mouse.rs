@@ -39,16 +39,14 @@ pub(crate) fn mouse_role(
         return MouseRole::Select;
     }
     if is_wheel(kind) {
-        let horizontal = matches!(
-            kind,
-            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight
-        );
         // A reporting child owns the wheel (jcode scrolls its own
         // transcript, vim its own buffer) - except vertical Shift+wheel,
         // the escape hatch that scrolls gwae's history instead.
-        // Horizontal flicks always stay with a reporting child: only the
-        // child knows wide content.
-        if child_wants_mouse && (!shift || horizontal) {
+        // Horizontal flicks always go to the child: gwae pans nothing.
+        if is_horizontal_wheel(kind) {
+            return MouseRole::Forward;
+        }
+        if child_wants_mouse && !shift {
             return MouseRole::Forward;
         }
         return MouseRole::Wheel;
@@ -84,24 +82,8 @@ pub(crate) fn is_horizontal_wheel(kind: MouseEventKind) -> bool {
     )
 }
 
-/// One horizontal flick in content columns: matches the keyboard `⌥+←/→`
-/// single step so trackpad, wheel, and keys agree on the stride.
-pub(crate) const WHEEL_PAN_COLS: i32 = 1;
-
-/// The content-pan delta for one horizontal flick: left pans back toward
-/// column 0, right pans forward. Only runs for plain panes; fullscreen
-/// children get Left/Right arrows via `wheel_alt_screen_keys` instead.
-pub(crate) fn wheel_pan_delta(kind: MouseEventKind) -> i32 {
-    match kind {
-        MouseEventKind::ScrollLeft => -WHEEL_PAN_COLS,
-        MouseEventKind::ScrollRight => WHEEL_PAN_COLS,
-        _ => 0,
-    }
-}
-
 /// The scrollback delta for one vertical wheel notch: up goes back into
-/// history, down comes forward. Horizontal flicks never reach here (see
-/// `wheel_pan_delta`); a reporting child keeps all of its own wheel
+/// history, down comes forward. A reporting child keeps all of its own wheel
 /// (see `mouse_role`), so this mapping only runs for plain panes.
 pub(crate) fn wheel_scroll_delta(kind: MouseEventKind) -> i32 {
     match kind {
@@ -113,8 +95,7 @@ pub(crate) fn wheel_scroll_delta(kind: MouseEventKind) -> i32 {
 /// The arrow keys a full-screen child (vim, less) expects for one wheel
 /// notch: it owns its own scrolling and keeps no scrollback of ours, so the
 /// wheel becomes the keys it would get natively. Vertical notches map to
-/// Up/Down, horizontal flicks to Left/Right. Mirrors the `ScrollBack` /
-/// `ScrollPane` arms, which do the same translation for the keyboard route.
+/// Up/Down, horizontal flicks to Left/Right.
 pub(crate) fn wheel_alt_screen_keys(kind: MouseEventKind) -> &'static [u8] {
     match kind {
         MouseEventKind::ScrollUp => b"\x1b[A",
@@ -134,7 +115,7 @@ pub(crate) fn pane_at(views: &[PaneView], x: u16, y: u16) -> Option<(PaneId, u16
     views.iter().find_map(|v| {
         let r = v.rect;
         if x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h {
-            let gx = (x - r.x) as i32 + v.col_x0 as i32 + v.h_scroll;
+            let gx = (x - r.x) as i32 + v.col_x0 as i32;
             if gx < 0 || gx >= v.grid_cols as i32 {
                 return None;
             }
@@ -162,7 +143,7 @@ pub(crate) fn clamped_pane_point(
     let r = v.rect;
     let sx = x.clamp(r.x, r.x + r.w.saturating_sub(1));
     let sy = y.clamp(r.y, r.y + r.h.saturating_sub(1));
-    let gx = ((sx - r.x) as i32 + v.col_x0 as i32 + v.h_scroll)
+    let gx = ((sx - r.x) as i32 + v.col_x0 as i32)
         .clamp(0, v.grid_cols.saturating_sub(1) as i32) as u16;
     Some((pid, gx, sy - r.y))
 }
@@ -227,13 +208,21 @@ mod tests {
     fn wheel_scrolls_a_plain_pane_but_reaches_a_reporting_child() {
         use MouseEventKind::*;
         let plain = KeyModifiers::NONE;
-        // A plain shell keeps no mouse of its own: the wheel scrolls gwae's
-        // history directly (vertical and horizontal alike), like jcode.
-        for kind in [ScrollUp, ScrollDown, ScrollLeft, ScrollRight] {
+        // A plain shell keeps no mouse of its own: the vertical wheel scrolls
+        // gwae's history directly, like jcode. Horizontal flicks always go
+        // to the child: gwae pans nothing.
+        for kind in [ScrollUp, ScrollDown] {
             assert_eq!(
                 mouse_role(kind, plain, false),
                 MouseRole::Wheel,
                 "{kind:?} over a plain pane should scroll history"
+            );
+        }
+        for kind in [ScrollLeft, ScrollRight] {
+            assert_eq!(
+                mouse_role(kind, plain, false),
+                MouseRole::Forward,
+                "{kind:?} must reach the child, gwae pans nothing"
             );
         }
         // A child that asked for mouse reporting owns the wheel (jcode
@@ -263,8 +252,7 @@ mod tests {
     #[test]
     fn wheel_helpers_map_notches_to_deltas_and_arrow_keys() {
         // Vertical notches move history by exactly one step constant so
-        // keyboard, wheel and e2e agree on the stride; horizontal flicks pan
-        // content instead (same stride as `⌥+←/→`).
+        // keyboard, wheel and e2e agree on the stride.
         assert_eq!(
             wheel_scroll_delta(MouseEventKind::ScrollUp),
             WHEEL_SCROLL_LINES
@@ -277,12 +265,7 @@ mod tests {
         assert!(is_horizontal_wheel(MouseEventKind::ScrollRight));
         assert!(!is_horizontal_wheel(MouseEventKind::ScrollUp));
         assert!(!is_horizontal_wheel(MouseEventKind::ScrollDown));
-        assert_eq!(wheel_pan_delta(MouseEventKind::ScrollLeft), -WHEEL_PAN_COLS);
-        assert_eq!(wheel_pan_delta(MouseEventKind::ScrollRight), WHEEL_PAN_COLS);
-        assert_eq!(wheel_pan_delta(MouseEventKind::ScrollUp), 0);
-        assert_eq!(wheel_pan_delta(MouseEventKind::ScrollDown), 0);
-        // A full-screen child gets the arrows it expects, matching the
-        // `ScrollBack` / `ScrollPane` arms' translation for the keyboard route.
+        // A full-screen child gets the arrows it expects.
         assert_eq!(wheel_alt_screen_keys(MouseEventKind::ScrollUp), b"\x1b[A");
         assert_eq!(wheel_alt_screen_keys(MouseEventKind::ScrollDown), b"\x1b[B");
         assert_eq!(wheel_alt_screen_keys(MouseEventKind::ScrollLeft), b"\x1b[D");
@@ -387,8 +370,7 @@ mod tests {
             let p = layout.alloc_pane();
             layout.add_column(row, Width::Preset(Preset::Half), vec![p]);
         }
-        let panes = HashMap::new();
-        let views = focused_pane_views(&layout, 80, 24, 0, &panes, false);
+        let views = focused_pane_views(&layout, 80, 24, 0, false);
         assert_eq!(views.len(), 2);
         // A click in the left half hits the left pane at its own grid column.
         let (pid, gx, gy) = pane_at(&views, 5, 3).expect("hit left pane");
@@ -417,8 +399,7 @@ mod tests {
             let p = layout.alloc_pane();
             layout.add_column(row, Width::Preset(Preset::Half), vec![p]);
         }
-        let panes = HashMap::new();
-        let views = focused_pane_views(&layout, 80, 24, 0, &panes, false);
+        let views = focused_pane_views(&layout, 80, 24, 0, false);
         let left = views[0].pid;
         let r = views[0].rect;
         // Inside the pane the clamp is a no-op: same answer as `pane_at`.

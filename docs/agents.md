@@ -31,6 +31,6 @@ keybinds (all ⌥ chords; Shift variants noted):
 - new column: ⌥+Enter; split below: ⌥+b
 - new agent: ⌥+; (remembers pick); pick agent: ⌥+Shift+;
 - cycle width: ⌥+r; full width: ⌥+f; kill pane: ⌥+q; force quit: ⌥+Shift+q
-- spawn dir: ⌥+d; smart jump: ⌥+g; view left/right: ⌥+[/]; scrollback: ⌥+up/down
+- spawn dir: ⌥+d; smart jump: ⌥+g; scrollback: ⌥+up/down
 - help: ⌥+/; quit: ⌥+Shift+q in the confirm dialog
 ```

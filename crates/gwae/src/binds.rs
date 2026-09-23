@@ -70,8 +70,6 @@ pub enum Effect {
     ToggleKeepAwake,
     /// Quit gwae.
     Quit,
-    /// Scroll the row viewport by this many cells.
-    Scroll(i32),
     /// Scroll the focused pane's history by this many rows (positive = back).
     ScrollBack(i32),
     /// Not a single dispatcher outcome (prose entries).
@@ -178,20 +176,6 @@ pub const BINDS: &[Bind] = &[
         effect: Effect::SmartJump,
     },
     Bind {
-        trigger: Trigger::Chord('['),
-        glyph: None,
-        group: Group::Navigate,
-        desc: "view left",
-        effect: Effect::Scroll(-200),
-    },
-    Bind {
-        trigger: Trigger::Chord(']'),
-        glyph: None,
-        group: Group::Navigate,
-        desc: "view right",
-        effect: Effect::Scroll(200),
-    },
-    Bind {
         trigger: Trigger::ModProse("↑/↓"),
         glyph: None,
         group: Group::Navigate,
@@ -211,13 +195,6 @@ pub const BINDS: &[Bind] = &[
         group: Group::Navigate,
         desc: "scroll down",
         effect: Effect::ScrollBack(-3),
-    },
-    Bind {
-        trigger: Trigger::ModProse("←/→"),
-        glyph: None,
-        group: Group::Navigate,
-        desc: "pan content",
-        effect: Effect::Unverifiable,
     },
     Bind {
         trigger: Trigger::Prose("click"),

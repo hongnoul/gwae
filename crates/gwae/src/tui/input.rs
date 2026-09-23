@@ -68,8 +68,6 @@ pub(crate) fn is_harness_scroll_chord(ev: &KeyEvent) -> bool {
 #[derive(Debug, PartialEq)]
 pub(crate) enum Cmd {
     Act(Action),
-    Scroll(i32),
-    ScrollPane(i32),
     /// Move the focused pane's *vertical* scrollback by this many rows
     /// (positive = back into history). Reached from the keyboard
     /// (`⌥+↑/↓`, Ctrl+Shift+J/K) and from the wheel over a plain pane;
@@ -381,13 +379,6 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         if let Some(a) = act {
             return Some(Cmd::Act(a));
         }
-        if matches!(c, '[' | ']') {
-            return Some(if c == '[' {
-                Cmd::Scroll(-200)
-            } else {
-                Cmd::Scroll(200)
-            });
-        }
     }
     // Up/Down move the focused pane's scrollback: the wheel joins them as
     // a per-notch line step (see the mouse arm), and Ctrl+Shift+J/K match
@@ -404,20 +395,10 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             _ => Cmd::ScrollBack(-step),
         });
     }
-    // Shift+arrow and plain arrow scroll the pane content.
+    // Left/Right belong to the focused pane (shell line editing, readline
+    // word ops, vim motions): gwae claims no horizontal pan.
     if matches!(ev.code, Left | Right) {
-        if shift {
-            return Some(match ev.code {
-                Left => Cmd::ScrollPane(-16),
-                Right => Cmd::ScrollPane(16),
-                _ => unreachable!(),
-            });
-        }
-        return Some(match ev.code {
-            Left => Cmd::ScrollPane(-1),
-            Right => Cmd::ScrollPane(1),
-            _ => unreachable!(),
-        });
+        return Some(Cmd::Input(key_bytes(ev)));
     }
     if ev.code == Enter {
         if shift {
@@ -426,13 +407,7 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         }
         return Some(Cmd::Act(Action::NewColumn));
     }
-    // Alt+digit/punct not listed above: check the original code directly
-    // since those don't need case folding.
-    match ev.code {
-        Char('[') => return Some(Cmd::Scroll(-200)),
-        Char(']') => return Some(Cmd::Scroll(200)),
-        _ => {}
-    }
+    // Alt+digit/punct not listed above belong to the pane.
     Some(Cmd::Input(key_bytes(ev)))
 }
 
@@ -658,11 +633,16 @@ mod tests {
             handle_key(&KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)),
             Some(Cmd::Input(_))
         ));
-        // And the horizontal pan it sits next to still works.
-        assert_eq!(
-            handle_key(&KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)),
-            Some(Cmd::ScrollPane(-1))
-        );
+        // Horizontal arrows belong to the pane: no horizontal pan exists.
+        for code in [KeyCode::Left, KeyCode::Right] {
+            assert!(
+                matches!(
+                    handle_key(&KeyEvent::new(code, KeyModifiers::ALT)),
+                    Some(Cmd::Input(_))
+                ),
+                "{code:?} with Alt must reach the pane"
+            );
+        }
     }
 
     #[test]
@@ -859,7 +839,6 @@ mod tests {
         for cmd in [
             Cmd::Act(Action::FocusLeft),
             Cmd::Act(Action::SpawnAgent),
-            Cmd::Scroll(200),
             Cmd::ScrollBack(3),
             Cmd::SmartJump,
             Cmd::Input(vec![b'x']),
@@ -1108,7 +1087,6 @@ mod tests {
                 Effect::ToggleHud => Cmd::ToggleHud,
                 Effect::ToggleKeepAwake => Cmd::ToggleKeepAwake,
                 Effect::Quit => Cmd::Quit,
-                Effect::Scroll(n) => Cmd::Scroll(n),
                 Effect::ScrollBack(n) => Cmd::ScrollBack(n),
                 Effect::Unverifiable => return None,
             })

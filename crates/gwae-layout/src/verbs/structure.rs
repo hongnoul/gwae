@@ -1,7 +1,7 @@
-//! Structure verbs: split, kill, spawn, widths, scroll, and jumps.
+//! Structure verbs: split, kill, spawn, widths, and jumps.
 
 use crate::model::Layout;
-use crate::viewport::{scroll_stops, snap_scroll, Viewport};
+use crate::viewport::{snap_scroll, Viewport};
 use crate::width::{Preset, Width};
 use crate::{FollowScroll, LayoutError, LayoutResult, PaneId, RowId};
 
@@ -313,30 +313,6 @@ impl Layout {
         // The new column may be off-screen (e.g. whatever fixed width it has).
         // Follow-scroll so the freshly spawned pane is immediately in view.
         self.refocus_scroll(viewport, follow);
-        self.focused_scroll()
-    }
-
-    pub(super) fn apply_scroll(&mut self, delta: i32, viewport: Viewport) -> i32 {
-        // Quantized scrolling: a manual scroll pages to the next/previous
-        // stop (column boundary, or the end stop that pins the last column to
-        // the right edge) rather than panning by cells. Stops never pass the
-        // strip extent, so scrolling can never reveal background on the right.
-        if delta == 0 {
-            return self.focused_scroll();
-        }
-        let row = self.focus.row;
-        let stops = scroll_stops(self, row, viewport.cols);
-        let cur = self.focused_scroll();
-        let next = if delta > 0 {
-            stops.iter().copied().find(|b| *b > cur)
-        } else {
-            stops.iter().rev().copied().find(|b| *b < cur)
-        };
-        // Off-stop (e.g. stale state): snap toward the requested direction.
-        let target = next.unwrap_or_else(|| snap_scroll(self, row, viewport.cols, cur));
-        if let Some(r) = self.row_mut(row) {
-            r.scroll_x = target;
-        }
         self.focused_scroll()
     }
 

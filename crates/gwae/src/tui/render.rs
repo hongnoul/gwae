@@ -30,8 +30,7 @@ pub(crate) struct PaneView {
     pub(crate) pid: PaneId,
     pub(crate) col: usize,    // index of the owning column in the focused strip
     pub(crate) rect: Rect,    // screen rect (already clipped to viewport horizontally)
-    pub(crate) col_x0: u16,   // grid column at the left edge of `rect` (before content scroll)
-    pub(crate) h_scroll: i32, // pane content scroll in cells
+    pub(crate) col_x0: u16,   // grid column at the left edge of `rect`
     pub(crate) grid_cols: u16, // full logical content width of the grid
     pub(crate) grid_rows: u16, // vertical size of the grid
     pub(crate) peek: bool,    // squished neighbour shown as a 3-cell faded hint
@@ -47,10 +46,9 @@ pub(crate) fn focused_pane_views(
     cols: u16,
     rows: u16,
     content_width: u16,
-    panes: &HashMap<PaneId, PtyPane>,
     inset: bool,
 ) -> Vec<PaneView> {
-    focused_pane_views_with_chrome(layout, cols, rows, content_width, panes, inset, 0)
+    focused_pane_views_with_chrome(layout, cols, rows, content_width, inset, 0)
 }
 
 /// Logical dimensions depend on the column and terminal, never on focus or
@@ -91,7 +89,6 @@ pub(crate) fn focused_pane_views_with_chrome(
     cols: u16,
     rows: u16,
     content_width: u16,
-    panes: &HashMap<PaneId, PtyPane>,
     inset: bool,
     chrome_rows: u16,
 ) -> Vec<PaneView> {
@@ -197,7 +194,6 @@ pub(crate) fn focused_pane_views_with_chrome(
             if h == 0 {
                 continue;
             }
-            let h_scroll = panes.get(pid).map(|p| p.h_scroll).unwrap_or(0);
             out.push(PaneView {
                 pid: *pid,
                 col: ci,
@@ -208,7 +204,6 @@ pub(crate) fn focused_pane_views_with_chrome(
                     h,
                 },
                 col_x0,
-                h_scroll,
                 grid_cols: size.cols,
                 grid_rows: size.rows,
                 peek: peek_col,
@@ -219,16 +214,11 @@ pub(crate) fn focused_pane_views_with_chrome(
 }
 
 /// The grid-column range `[start, end)` of a pane's content revealed by `w`
-/// screen cells, given the viewport column offset `col_x0`, the pane content
-/// scroll `h_scroll`, and the content width `grid_cols`. Returns `None` when
-/// the window is fully clipped (offscreen or past the content).
-pub(crate) fn pane_window(
-    col_x0: u16,
-    h_scroll: i32,
-    w: u16,
-    grid_cols: u16,
-) -> Option<(u16, u16)> {
-    let start = col_x0 as i32 + h_scroll;
+/// screen cells, given the viewport column offset `col_x0` and the content
+/// width `grid_cols`. Returns `None` when the window is fully clipped
+/// (offscreen or past the content).
+pub(crate) fn pane_window(col_x0: u16, w: u16, grid_cols: u16) -> Option<(u16, u16)> {
+    let start = col_x0 as i32;
     if start < 0 || start >= grid_cols as i32 {
         return None;
     }
@@ -348,7 +338,7 @@ pub(crate) fn render_frame_with_images(
 
     let focused = focused_pane(layout);
     let mut focused_cursor_abs: Option<(u16, u16, bool)> = None; // (screen x,y, hide)
-    let pane_views = focused_pane_views(layout, cols, rows, content_width, panes, true);
+    let pane_views = focused_pane_views(layout, cols, rows, content_width, true);
     // The ring follows the *layout*, not the pty: a pane whose process has not
     // been spawned (or has already exited) still occupies its rect and can
     // still be focused, so take the rect from the view list rather than from
@@ -369,7 +359,7 @@ pub(crate) fn render_frame_with_images(
             cols: v.grid_cols,
             rows: v.grid_rows,
         });
-        let (g_start, g_end) = match pane_window(v.col_x0, v.h_scroll, v.rect.w, v.grid_cols) {
+        let (g_start, g_end) = match pane_window(v.col_x0, v.rect.w, v.grid_cols) {
             Some(x) => x,
             None => {
                 continue;
@@ -1059,7 +1049,6 @@ pub(crate) mod tests {
             }
             .pty_size(40, 12),
             alive: true,
-            h_scroll: 0,
             last_output: std::time::Instant::now(),
             saw_osc133: false,
             graphics_stream: Default::default(),
@@ -1171,33 +1160,15 @@ pub(crate) mod tests {
 
     #[test]
     fn pane_window_shows_leading_content() {
-        // 240-col content, 80-col rect, no scroll: reveal [0, 80).
-        assert_eq!(pane_window(0, 0, 80, 240), Some((0, 80)));
-    }
-
-    #[test]
-    fn pane_scroll_reveals_overflow() {
-        // Scrolling 10 cells pans the window right within the content.
-        assert_eq!(pane_window(0, 10, 80, 240), Some((10, 90)));
-    }
-
-    #[test]
-    fn pane_scroll_clamps_to_content_end() {
-        // Scrolling near the end reveals a partial (clipped) window.
-        assert_eq!(pane_window(0, 200, 80, 240), Some((200, 240)));
-    }
-
-    #[test]
-    fn pane_scroll_beyond_content_is_clipped() {
-        // Scrolling past the content yields nothing.
-        assert_eq!(pane_window(0, 250, 80, 240), None);
+        // 240-col content, 80-col rect: reveal [0, 80).
+        assert_eq!(pane_window(0, 80, 240), Some((0, 80)));
     }
 
     #[test]
     fn offscreen_column_is_clipped() {
-        // A column fully left of the viewport (col_x0 negative equivalent:
-        // h_scroll cannot hold it, but a col offset past content is clipped).
-        assert_eq!(pane_window(240, 0, 80, 240), None);
+        // A column fully left of the viewport (a col offset past content
+        // is clipped).
+        assert_eq!(pane_window(240, 80, 240), None);
     }
 
     /// A vertical split must tile the whole strip no matter how many panes
@@ -1208,7 +1179,6 @@ pub(crate) mod tests {
     #[test]
     fn a_vertical_stack_tiles_the_full_strip_at_any_pane_count() {
         use gwae_layout::{Preset, Width};
-        let panes_map = HashMap::new();
         let (cols, rows) = (80u16, 40u16);
         for p in 1..=12usize {
             let mut layout = Layout::new(1);
@@ -1219,7 +1189,7 @@ pub(crate) mod tests {
             let ids: Vec<_> = (0..p).map(|_| layout.alloc_pane()).collect();
             layout.add_column(row, Width::Preset(Preset::Full), ids);
             for inset in [false, true] {
-                let views = focused_pane_views(&layout, cols, rows, 0, &panes_map, inset);
+                let views = focused_pane_views(&layout, cols, rows, 0, inset);
                 assert_eq!(views.len(), p, "{p} panes, inset={inset}");
                 let b = inset as u16;
                 let inner_top = b;
@@ -1269,9 +1239,8 @@ pub(crate) mod tests {
             let p = layout.alloc_pane();
             layout.add_column(row, Width::Preset(Preset::Quarter), vec![p]);
         }
-        let panes = HashMap::new();
         for cols in [342u16, 341, 343, 80, 81] {
-            let views = focused_pane_views(&layout, cols, 40, 0, &panes, false);
+            let views = focused_pane_views(&layout, cols, 40, 0, false);
             assert_eq!(views.len(), 4, "all four panes visible at cols={cols}");
             // Panes tile the full width: start at 0, no gaps, end at the edge.
             assert_eq!(views[0].rect.x, 0);
@@ -1300,7 +1269,6 @@ pub(crate) mod tests {
         // on screen. Before the fix the grid was clamped to the visible
         // rect, so pane 4 shrank while pane 1 overflowed.
         use gwae_layout::{Preset, Width};
-        let panes = HashMap::new();
         let cols: u16 = 80;
         let rows: u16 = 10;
         let mut widths = HashMap::new();
@@ -1320,7 +1288,7 @@ pub(crate) mod tests {
             for _ in 0..2 {
                 let _ = layout.apply(gwae_layout::Action::CycleWidth, vp, FollowScroll::default());
             }
-            let views = focused_pane_views(&layout, cols, rows, 0, &panes, true);
+            let views = focused_pane_views(&layout, cols, rows, 0, true);
             let v = views.iter().find(|v| v.col == focus_col).unwrap();
             widths.insert(focus_col, v.grid_cols);
         }
@@ -1360,8 +1328,7 @@ pub(crate) mod tests {
         if let Some(r) = layout.row_mut(layout.focus.row) {
             r.scroll_x = 55;
         }
-        let panes: HashMap<PaneId, PtyPane> = HashMap::new();
-        let views = focused_pane_views(&layout, 120, 30, 0, &panes, true);
+        let views = focused_pane_views(&layout, 120, 30, 0, true);
         let focused_pid = layout.focused_pane_id().unwrap();
         let fv = views.iter().find(|v| v.pid == focused_pid).unwrap();
         assert!(!fv.peek, "focused pane must not be a peek");
@@ -1388,7 +1355,7 @@ pub(crate) mod tests {
         if let Some(r) = layout.row_mut(layout.focus.row) {
             r.scroll_x = 0;
         }
-        let views_narrow = focused_pane_views(&layout, 30, 30, 0, &panes, true);
+        let views_narrow = focused_pane_views(&layout, 30, 30, 0, true);
         for v in &views_narrow {
             if v.peek {
                 panic!("narrow viewport incorrectly produced a peek: {:?}", v);
@@ -1500,7 +1467,7 @@ pub(crate) mod tests {
         let ranges = layout.column_x_ranges(row, cols).unwrap();
         let (cs, ce) = ranges[layout.focus.column];
         let (cs, ce) = (cs as u16, (ce as u16).min(cols - 1));
-        let views = focused_pane_views(&layout, cols, rows, 0, &panes, true);
+        let views = focused_pane_views(&layout, cols, rows, 0, true);
         let stacked: Vec<&PaneView> = views
             .iter()
             .filter(|v| v.col == layout.focus.column)
@@ -1637,7 +1604,7 @@ pub(crate) mod tests {
             None,
         );
         let at = |x: u16, y: u16| out[y as usize * cols as usize + x as usize];
-        let views = focused_pane_views(&layout, cols, rows, 0, &panes, true);
+        let views = focused_pane_views(&layout, cols, rows, 0, true);
         let stacked: Vec<&PaneView> = views
             .iter()
             .filter(|v| v.col == layout.focus.column)
@@ -1753,11 +1720,10 @@ pub(crate) mod tests {
         // frame ring: content starts at (s+1, 1) and ends at (e-1, strip_h-1),
         // so the frame never covers a cell a program can draw to.
         let layout = Layout::default();
-        let panes = HashMap::new();
         let cols: u16 = 80;
         let rows: u16 = 10;
         let ranges = layout.column_x_ranges(layout.focus.row, cols).unwrap();
-        let views = focused_pane_views(&layout, cols, rows, 0, &panes, true);
+        let views = focused_pane_views(&layout, cols, rows, 0, true);
         assert_eq!(views.len(), 4);
         for (v, (s, e)) in views.iter().zip(&ranges) {
             assert_eq!(v.rect.x, *s as u16 + 1, "content starts inside frame");
@@ -1778,7 +1744,7 @@ pub(crate) mod tests {
             assert_eq!(v.grid_rows, v.rect.h);
         }
         // Full-bleed mode is unchanged: rects span the whole column and strip.
-        let full = focused_pane_views(&layout, cols, rows, 0, &panes, false);
+        let full = focused_pane_views(&layout, cols, rows, 0, false);
         assert_eq!(full[0].rect.x, 0);
         assert_eq!(full[0].rect.y, 0);
         let last = full.last().unwrap();
@@ -1970,8 +1936,7 @@ pub(crate) mod tests {
                     let mut layout = Layout::new(8);
                     layout.rows[0].columns[2].width = Width::Preset(gwae_layout::Preset::Third);
                     layout.rows[0].columns[4].width = Width::Cells(47);
-                    let panes = HashMap::new();
-                    let mut sizes = HashMap::new();
+                                let mut sizes = HashMap::new();
                     let mut stops = HashSet::new();
                     for action in std::iter::repeat_n(Action::FocusRight, 7)
                         .chain(std::iter::repeat_n(Action::FocusLeft, 7))
@@ -1985,7 +1950,6 @@ pub(crate) mod tests {
                             cols,
                             30,
                             content_width,
-                            &panes,
                             inset,
                             2,
                         ) {
@@ -2055,7 +2019,7 @@ pub(crate) mod tests {
     #[test]
     fn tiny_pane_pty_geometry_matches_the_emulator_minimum() {
         let layout = Layout::new(1);
-        let views = focused_pane_views(&layout, 8, 6, 0, &HashMap::new(), true);
+        let views = focused_pane_views(&layout, 8, 6, 0, true);
         assert_eq!(views.len(), 1);
         let v = &views[0];
         assert_eq!(v.rect.w, 1, "only one cell fits between the frames");

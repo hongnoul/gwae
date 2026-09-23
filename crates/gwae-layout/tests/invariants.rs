@@ -28,7 +28,6 @@ fn random_actions() -> impl Strategy<Value = Vec<Action>> {
         Just(SpawnAgent),
         Just(MovePaneLeft),
         Just(MovePaneRight),
-        prop::collection::vec(0..5, 1).prop_map(|v| ScrollViewport(v[0] - 2)),
         Just(KillPane),
     ];
     prop::collection::vec(action, 0..40)
@@ -40,7 +39,6 @@ fn width_preserving_actions() -> impl Strategy<Value = Vec<Action>> {
     let action = prop_oneof![
         Just(MovePaneLeft),
         Just(MovePaneRight),
-        prop::collection::vec(0..5, 1).prop_map(|v| ScrollViewport(v[0] - 2)),
     ];
     prop::collection::vec(action, 0..30)
 }
@@ -296,14 +294,6 @@ fn focusing_rightmost_of_exact_fit_strip_never_scrolls() {
             let scroll = layout.apply(Action::FocusRight, vp, follow()).unwrap();
             assert_eq!(scroll, 0, "over-scrolled at cols={cols}");
         }
-        // Manual scroll right is also clamped: nothing to reveal.
-        let scroll = layout
-            .apply(Action::ScrollViewport(10), vp, follow())
-            .unwrap();
-        assert_eq!(
-            scroll, 0,
-            "manual scroll revealed background at cols={cols}"
-        );
     }
 }
 
@@ -321,11 +311,6 @@ fn overflowing_strip_scroll_clamps_to_last_column_edge() {
     let ranges = layout.column_x_ranges(layout.focus.row, vp.cols).unwrap();
     let total = ranges.last().unwrap().1 as i32;
     assert_eq!(scroll, total - vp.cols as i32, "scroll stops at strip edge");
-    // Further manual scrolling stays clamped.
-    let scroll = layout
-        .apply(Action::ScrollViewport(50), vp, follow())
-        .unwrap();
-    assert_eq!(scroll, total - vp.cols as i32);
 }
 
 #[test]
@@ -544,49 +529,6 @@ proptest! {
         layout.clamp_scrolls(vp);
         assert_scrolls_on_stops(&layout, vp, &format!("after resize to {cols}"));
     }
-}
-
-#[test]
-fn manual_scroll_pages_between_column_boundaries() {
-    // Six 1/4 columns overflow a 120-col viewport (each column is 30 cells).
-    // Manual scrolls land exactly on column boundaries, ending at max_scroll,
-    // and reverse the same way.
-    let q = Width::Preset(Preset::Quarter);
-    let mut layout = layout_with_widths(&[q, q, q, q, q, q]);
-    let vp = Viewport::new(120);
-    let ranges = layout.column_x_ranges(layout.focus.row, vp.cols).unwrap();
-    let total = ranges.last().unwrap().1 as i32;
-    let max_scroll = total - vp.cols as i32;
-    let starts: Vec<i32> = ranges.iter().map(|(s, _)| *s as i32).collect();
-    let mut seen = vec![0];
-    loop {
-        let before = layout.row(layout.focus.row).unwrap().scroll_x;
-        let after = layout
-            .apply(Action::ScrollViewport(1), vp, follow())
-            .unwrap();
-        if after == before {
-            break;
-        }
-        assert!(
-            starts.contains(&after) || after == max_scroll,
-            "scroll {after} is not a column boundary or the end stop"
-        );
-        seen.push(after);
-    }
-    assert_eq!(
-        *seen.last().unwrap(),
-        max_scroll,
-        "paging reaches the end stop"
-    );
-    assert!(seen.len() > 2, "multiple stops traversed");
-    // And back: the same stops in reverse, ending at 0.
-    for want in seen.iter().rev().skip(1) {
-        let after = layout
-            .apply(Action::ScrollViewport(-1), vp, follow())
-            .unwrap();
-        assert_eq!(after, *want, "reverse paging retraces the stops");
-    }
-    assert_eq!(layout.row(layout.focus.row).unwrap().scroll_x, 0);
 }
 
 #[test]
