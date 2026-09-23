@@ -3,8 +3,9 @@
 
 <p align="center">
   <img src="docs/assets/gwae.svg" alt="gwae" width="100" />
-  **Light Weight, Light Speed**
 </p>
+
+<p align="center"><strong>Lightweight, Lightspeed</strong></p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-white?labelColor=black" alt="MIT license" /></a>
