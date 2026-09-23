@@ -229,12 +229,19 @@ fn focusing_attention_panes_never_turns_redraws_into_work() {
         .chain((0..7).rev().map(|p| (b'h', p)))
     {
         s.send(&alt(key));
-        let painted = s.peek(250);
-        assert_eq!(
-            s.screen.title(),
-            format!("pane-{pane}"),
-            "focus must actually move"
-        );
+        let mut painted = s.peek(250);
+        // The move itself may paint late on a loaded runner: keep reading
+        // until the title flips (bounded), but judge the no-`»` invariant
+        // over everything painted since the chord.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while s.screen.title() != format!("pane-{pane}") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "focus must actually move: title {:?}, wanted pane-{pane}",
+                s.screen.title()
+            );
+            painted.push_str(&s.peek(100));
+        }
         assert!(s.screen.visible_text().contains('╭'), "HUD must be visible");
         assert!(
             s.screen.visible_text().contains("·1"),
