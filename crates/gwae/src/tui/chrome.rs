@@ -1125,7 +1125,7 @@ pub(crate) fn draw_edge_ticks(
 /// just a position indicator. Rows of the map are strips, each tile is a pane
 /// (columns subdivided by their stacks) with width proportional to the
 /// column's real width share. Every tile is painted in its *status* color
-/// (working / wants-attention / failed), carries the pane's column
+/// (Running / Idle / Failed), carries the pane's column
 /// digit and, when wide enough, a status
 /// glyph. The focused pane's tile is painted in the focus accent and the
 /// focused strip gets a `❯` chevron in the gutter. An optional one-line
