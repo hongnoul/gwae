@@ -42,7 +42,7 @@ brew install hongnoul/tap/gwae
 
 | Feature            | Key        | What it does                                                                                       |
 | ------------------ | ---------- | -------------------------------------------------------------------------------------------------- |
-| Heads-up display   | hold ⌥     | Center minimap tinted by agent status over standard OSC 133: Running, Idle, or Failed               |
+| Heads-up display   | default    | Center minimap tinted by agent status over standard OSC 133: Running, Idle, or Failed               |
 | Smart jump         | ⌥+g        | Cycles through Idle panes, Failed first                                                            |
 | Hatchery           | ⌥+d        | Spawn-directory picker to choose where the next agent starts                                       |
 | Agent selector     | ⌥+Shift+;  | Harness picker to spawn a specific agent instead of your default                                   |
