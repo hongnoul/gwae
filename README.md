@@ -16,7 +16,7 @@
   ![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
 </p>
 
-<p align="center">Tested with Ghostty and <a href="https://github.com/1jehuang/jcode">Jcode</a> on MacBook Pro M4</p>
+<p align="center">Tested with <a href="https://ghostty.org">Ghostty</a> and <a href="https://github.com/1jehuang/jcode">Jcode</a> on MacBook Pro M4</p>
 
 
 
