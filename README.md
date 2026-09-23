@@ -79,20 +79,30 @@ Confirm the focus ring follows. Then have me press ⌥+k and ⌥+j.
 Mention click-to-focus only after these work.
 3. Open more: have me press ⌥+Enter until there are 6 panes. If I get
 lost, remind me ⌥+h/l moves between panes. Point out the viewport
-scrolling right while every pane keeps its width.
+scrolling right while every pane keeps its width. Then have me press
+⌥+[ and ⌥+] to scroll the viewport left and right without moving focus.
+Confirm the strip slides but focus stays put.
 4. Reshape: have me press ⌥+r to cycle the focused column's width, then
 ⌥+b to split below. Mention ⌥+f
-(full width) and ⌥+Shift+h/l (move pane) only after these work.
+(full width) and ⌥+Shift+h/j/k/l (move pane in all four directions)
+only after these work.
 5. Agents: have me press ⌥+; to spawn an agent (first press offers what
-is installed and remembers it). Mention ⌥+Shift+; (picker), ⌥+d (spawn
+is installed and remembers it). Confirm Cmd+V pastes text into the pane
+(native terminal paste). Mention ⌥+Shift+; (picker), ⌥+d (spawn
 directory), and gwae run "claude" (CLI start) after.
-6. Stuck panes: have me hold ⌥ for the dashboard (» working, ! needs
+6. History: have me press ⌥+↑ and ⌥+↓ to scroll the focused pane's
+history (add Shift or use PgUp/PgDn for a bigger jump). Then have me
+press ⌃+⇧+K and ⌃+⇧+J for the three-line transcript scroll, noting it
+goes to the agent itself inside agent panes. Then have me press ⌥+←
+and ⌥+→ to pan content sideways. Confirm each moves content without
+moving focus.
+7. Stuck panes: have me hold ⌥ for the dashboard (» working, ! needs
 input, ✗ failed), then ⌥+g to jump to the neediest pane. Mention
 clicking a tile focuses it.
-7. Help and quit: show ⌥+/ (cheat sheet), ⌥+q (close pane),
+8. Help and quit: show ⌥+/ (cheat sheet), ⌥+q (close pane),
 ⌥+Shift+q (quit; last pane exiting quits gwae). Mention ⌥+w
 (keep-awake) last.
-8. Health: only now, have me type exit in panes until one shell is left,
+9. Health: only now, have me type exit in panes until one shell is left,
 then run gwae doctor in it and confirm exit 0. If anything fails, run
 gwae init. Mention ~/.config/gwae/gwae.toml (all keys optional,
 live-reloads) only here, at the end.
