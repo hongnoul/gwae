@@ -18,8 +18,6 @@
 
 ![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
 
-**the infinite-scroll terminal multiplexer.**
-
 ## install
 
 ### macOS and Linux
@@ -39,19 +37,6 @@ brew install hongnoul/tap/gwae
 ```powershell
 irm https://hongnoul.github.io/gwae/install.ps1 | iex
 ```
-
-Prebuilt [binaries](https://github.com/hongnoul/gwae/releases) for all
-five targets (`aarch64`/`x86_64` macOS, `x86_64`/`aarch64` Linux,
-`x86_64` Windows) ship with every release. On ARM64 Windows the x64 binary
-runs under emulation; there is no native ARM64 build yet.
-
-then start it where the work lives:
-
-```bash
-gwae
-```
-
-run `gwae init` for guided setup, `gwae doctor` to check config. upgrade the same way you installed.
 
 ## thanks
 
