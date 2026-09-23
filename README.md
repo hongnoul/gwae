@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="#macos">macOS</a> · <a href="#windows">Windows</a> · <a href="#linux">Linux</a> · <a href="#docs">docs</a>
+  <a href="#macos-and-linux">macOS / Linux</a> · <a href="#windows">Windows</a> · <a href="#docs">docs</a>
 </p>
 
 <p align="center">
@@ -22,13 +22,13 @@
 
 ## install
 
-### macOS
+### macOS and Linux
 
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
-or with Homebrew:
+or with Homebrew (macOS):
 
 ```bash
 brew install hongnoul/tap/gwae
@@ -38,12 +38,6 @@ brew install hongnoul/tap/gwae
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "irm https://hongnoul.github.io/gwae/install.ps1 | iex"
-```
-
-### Linux
-
-```bash
-curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
 Prebuilt [binaries](https://github.com/hongnoul/gwae/releases) for all
