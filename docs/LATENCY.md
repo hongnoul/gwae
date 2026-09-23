@@ -37,7 +37,7 @@ affects every app you use, is not something a multiplexer should do.
 | kitty | `input_delay` | `0` | kitty's own wait before processing what a program printed — i.e. exactly the echo you are waiting to see. Default `3`. |
 | kitty | `repaint_delay` | `1` | Minimum gap between screen updates. Default `10` caps you at ~100 FPS. |
 | kitty | `sync_to_monitor` | `no` | Default `yes` caps drawing at your monitor's refresh. See the note below — under gwae this is safe. |
-| gwae | `input_poll_ms` | `1` | How long gwae's loop waits for a keystroke. It is on the round trip twice, so this costs double. |
+| gwae | — | — | Nothing to tune. The loop blocks on a channel that a keystroke or a pane byte wakes immediately; there is no poll interval on the input path. |
 
 The macOS values go below what System Settings exposes: its "Fast" slider
 stops at `KeyRepeat 2`, and `1` is faster still.
@@ -50,28 +50,30 @@ update** markers (`ESC[?2026h` / `ESC[?2026l`). The terminal buffers the whole
 frame and applies it atomically, so a frame can never be shown half-drawn
 even without vsync. You get the latency win and keep a clean screen.
 
-## Why gwae has `input_poll_ms` at all
+## Why gwae has no latency knob of its own
 
-gwae's main loop waits for a keystroke with a **timeout**. The wait itself
-is not the cost — the cost is being late to notice. Three ways to spend an
-idle moment:
+gwae's main loop used to wait for keystrokes with a timeout
+(`input_poll_ms`), draining pane output between polls — so every echoed
+byte paid up to a poll tick of queue latency. Three ways to spend an idle
+moment:
 
 | Strategy | Added latency | Idle CPU | How the OS scheduler sees you |
 |---|---|---|---|
-| Timeout (`input_poll_ms`) | up to that many ms | wakes 1000×/sec at `1` | sleepy, priority kept high |
+| Timeout (the old `input_poll_ms`) | up to that many ms | wakes 1000×/sec at `1` | sleepy, priority kept high |
 | Busy spin (no wait) | ~0 in theory | 100% of a core | **CPU hog, priority lowered** |
 | Block until ready | ~5µs | ~0 | asleep, priority kept high |
 
-Removing the wait entirely is the tempting-looking option and the worst one.
-A spinning process gets demoted by the scheduler, and a demoted process can
-be preempted for a full ~10ms quantum — with the pane's echo sitting unread
-in the channel the whole time. You would trade a 1ms constant for 10ms of
-jitter, and jitter is far more noticeable than a constant offset.
+gwae now takes the third row: a dedicated thread blocks in the terminal
+event read and forwards into the same channel the pane readers use, and the
+main loop's single blocking wait wakes on an interrupt for a keystroke or a
+pane byte alike. Measured in a real-PTY harness this cut echo p50 from
+~2.5ms to ~0.34ms — faster than mux designs that put a server process on
+the round trip, because in-process there is nothing between the keyboard
+and the PTY.
 
-The genuinely better fix is a **blocking** read on stdin (which is what the
-pane readers already do), so the loop wakes on an interrupt instead of a
-timer. That would remove `input_poll_ms` entirely rather than tune it. Until
-then, `1` is the right value.
+`input_poll_ms` still parses for config compatibility, but it only paces
+periodic housekeeping (terminal-size re-check, note expiry, status flips).
+`gwae doctor` no longer reports it as a latency setting at any value.
 
 ## Scale check
 
@@ -82,7 +84,7 @@ Roughly, per keystroke round trip:
 | USB keyboard polling | ~8ms |
 | macOS input stack | ~1-2ms |
 | kitty (`input_delay 0`) | ~0-3ms |
-| gwae (both directions) | ~2ms at `input_poll_ms = 1` |
+| gwae (both directions) | ~0.3ms (event-driven wake) |
 | Display refresh @120Hz | ~8ms |
 
 USB polling and display refresh dominate and no software here can change
