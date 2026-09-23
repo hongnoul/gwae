@@ -169,10 +169,13 @@ fn doctor_names_a_dead_override_even_when_memory_covers_it() {
 fn doctor_reports_whether_input_latency_is_tuned() {
     // Latency settings are invisible until you notice typing feels sluggish,
     // so doctor has to surface them alongside everything else it checks.
+    // `input_poll_ms` is retired as a recommendation: the event-driven loop
+    // wakes on keystrokes directly, so any configured value must read as
+    // tuned rather than pointing at a fix that no longer helps.
     let out = doctor(Some("input_poll_ms = 10\n"));
     assert!(out.contains("latency:"), "got:\n{out}");
     assert!(
-        out.contains("gwae setup"),
-        "must point at the fix; got:\n{out}"
+        !out.contains("input_poll_ms"),
+        "retired knob must not be flagged; got:\n{out}"
     );
 }
