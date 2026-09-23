@@ -42,11 +42,12 @@ brew install hongnoul/tap/gwae
 
 | Feature | Key | What it does |
 | ------- | --- | ------------ |
-| Heads-up&nbsp;display | default | Live agent status minimap (OSC 133) |
-| Smart&nbsp;jump | ⌥+g | Cycle Idle panes, Failed first |
-| Hatchery | ⌥+d | Pick where the next agent spawns |
-| Agent&nbsp;selector | ⌥+Shift+; | Spawn a specific agent |
-| Caffeinate | ⌥+w | Keep the Mac awake mid-job |
+| Heads-up&nbsp;display | default | Live agent status minimap over standard OSC&nbsp;133 with Running, Idle, and Failed states |
+| Smart&nbsp;jump | ⌥+g | Cycles through Idle panes with Failed states ranked first |
+| Hatchery | ⌥+d | Opens the spawn-directory picker to choose where the next agent process starts |
+| Agent&nbsp;selector | ⌥+Shift+; | Opens the harness picker to spawn a specific agent instead of your default choice |
+| Smart&nbsp;paste | Cmd+V | Native bracketed paste with newline normalization and a line-count toast confirmation |
+| Caffeinate | ⌥+w | Toggles the macOS caffeinate assertion so a long-running job never sleeps mid-task |
 
 ## Interactive tutorial
 
