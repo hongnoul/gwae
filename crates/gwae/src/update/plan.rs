@@ -220,6 +220,8 @@ mod tests {
     use crate::update::source::Source;
     use std::path::Path;
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn the_script_plan_pins_the_install_dir_and_quotes_it() {
         let p = plan(Source::Script, Path::new("/Users/my name/.local/bin/gwae"));

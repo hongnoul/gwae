@@ -329,6 +329,8 @@ mod tests {
         );
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn search_roots_default_to_home_and_are_overridable() {
         let home = PathBuf::from(std::env::var("HOME").unwrap());

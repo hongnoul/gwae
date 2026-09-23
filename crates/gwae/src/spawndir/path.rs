@@ -181,6 +181,8 @@ pub fn check(raw: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn tilde_paths_expand_to_home() {
         let home = std::env::var("HOME").unwrap();
@@ -200,6 +202,8 @@ mod tests {
         assert_eq!(expand("100$"), PathBuf::from("100$"));
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn cli_beats_config_and_missing_dirs_are_ignored() {
         let home = std::env::var("HOME").unwrap();
@@ -216,6 +220,8 @@ mod tests {
         assert_eq!(resolve(None, ""), cwd);
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn check_explains_itself() {
         assert!(check("").is_err());

@@ -289,6 +289,8 @@ fn confirm() -> bool {
 mod tests {
     use super::*;
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn sweep_drives_owners_first_then_lists_everything() {
         let exe = PathBuf::from("/Users/x/.bun/bin/gwae");

@@ -41,6 +41,8 @@ mod tests {
         }
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn conf_path_respects_kitty_config_directory() {
         let dir = kitty_conf_path().expect("a path on any machine");

@@ -218,6 +218,7 @@ mod tests {
     use super::super::config::{fallback_shell, plan, Plan};
     use super::super::detect::Found;
     use super::super::state::HarnessState;
+    #[cfg(unix)]
     use super::Choice;
     use super::*;
     use std::path::PathBuf;
@@ -248,6 +249,8 @@ mod tests {
         }
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn a_resolvable_configured_agent_short_circuits_every_prompt() {
         let s = HarnessState::default();
@@ -291,6 +294,8 @@ mod tests {
         );
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn rendering_lists_every_choice_and_names_the_missing_agent() {
         let (text, choices) = render(&Plan::Missing {
@@ -364,6 +369,8 @@ mod tests {
         assert!(plain.contains("Enter for a shell"), "{plain}");
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn parse_choice_accepts_indexes_typed_commands_and_shell() {
         assert_eq!(parse_choice("2", 3), Ok(Choice::Listed(1)));

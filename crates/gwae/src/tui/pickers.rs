@@ -779,6 +779,8 @@ mod tests {
         assert!(text.contains("(default)"), "got:\n{text}");
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn the_harness_picker_filters_and_offers_typed_commands() {
         let mut pick = harness_pick(&["claude", "aider"]);

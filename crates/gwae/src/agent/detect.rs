@@ -278,6 +278,8 @@ pub fn detect() -> Vec<Found> {
 mod tests {
     use super::*;
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn which_resolves_path_names_and_rejects_missing_or_non_executable() {
         assert!(which("sh").is_some());
@@ -289,6 +291,8 @@ mod tests {
         assert!(which("").is_none());
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn command_available_probes_only_the_executable_word() {
         assert!(command_available("sh -c 'echo hi'"));

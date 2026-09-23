@@ -216,6 +216,8 @@ mod tests {
         assert_eq!(v["agent_dir"].as_str(), Some("~/b"));
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn a_remembered_pick_beats_everything_but_the_explicit_override() {
         let s = HarnessState {
@@ -282,6 +284,8 @@ mod tests {
         );
     }
 
+    // Asserts unix facts (`sh` on PATH, `$HOME`, unix paths/quoting).
+    #[cfg(unix)]
     #[test]
     fn a_resolvable_configured_agent_short_circuits_every_prompt() {
         let s = HarnessState::default();
