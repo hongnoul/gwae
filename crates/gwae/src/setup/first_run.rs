@@ -44,18 +44,11 @@ impl Style {
     fn green(&self, s: &str) -> String {
         self.paint("32", s)
     }
-    fn yellow(&self, s: &str) -> String {
-        self.paint("33", s)
-    }
     /// A completed step: `✓ agent: jcode — ⌥+; goes straight there`.
     fn done(&self, s: &str) {
         println!("{} {s}", self.green("✓"));
     }
-    /// Something to act on later: `! latency: run `…``.
-    fn note(&self, s: &str) {
-        println!("{} {s}", self.yellow("!"));
-    }
-    /// A step header: `[1/2] agent`.
+    /// A step header: `[1/1] agent`.
     fn step(&self, i: usize, n: usize, name: &str) {
         println!("{} {}", self.dim(&format!("[{i}/{n}]")), self.bold(name));
     }
@@ -110,11 +103,10 @@ pub fn ensure(cfg_path: &Path, force: bool) -> Config {
         sty.dim("· one-time setup in this terminal")
     );
 
-    sty.step(1, 2, "agent");
+    sty.step(1, 1, "agent");
     agent_step(cfg_path, &sty);
-    println!();
-    sty.step(2, 2, "latency");
-    latency_step(cfg_path, &sty);
+
+    tune_latency_silently(cfg_path);
 
     println!(
         "\n{} {}\n",
@@ -309,32 +301,15 @@ fn interactive_pick(
     Some(choice)
 }
 
-/// Our own latency knob is ours to write: set it silently, report the rest
-/// with the exact fix command instead of touching anything.
-fn latency_step(cfg_path: &Path, sty: &Style) {
+/// Our own latency knob is ours to write: set it silently. macOS and kitty
+/// settings stay visible in `gwae doctor` and `gwae setup`, never here.
+fn tune_latency_silently(cfg_path: &Path) {
     let cfg = Config::load(cfg_path);
     let audit = crate::latency::audit(cfg.input_poll_ms);
     let pending = crate::latency::pending(&audit);
-    let (ours, theirs) = crate::latency::ours_and_theirs(&pending);
+    let (ours, _) = crate::latency::ours_and_theirs(&pending);
     if !ours.is_empty() {
-        match crate::latency::save_input_poll(cfg_path, 1) {
-            Ok(()) => sty.done("latency: set input_poll_ms = 1"),
-            Err(e) => sty.note(&format!(
-                "latency: could not write {}: {e}",
-                cfg_path.display()
-            )),
-        }
-    } else {
-        sty.done("latency: all layers tuned");
-    }
-    for s in theirs {
-        if let Some(fix) = &s.fix {
-            sty.note(&format!(
-                "latency: {}: run `{fix}` {}",
-                s.key,
-                sty.dim(&format!("({})", s.why))
-            ));
-        }
+        let _ = crate::latency::save_input_poll(cfg_path, 1);
     }
 }
 
