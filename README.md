@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="#macos-and-linux">macOS / Linux</a> · <a href="#windows">Windows</a> · <a href="#docs">docs</a>
+  <a href="#macos-and-linux">macOS / Linux</a> · <a href="#windows">Windows</a>
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@ brew install hongnoul/tap/gwae
 ### Windows
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://hongnoul.github.io/gwae/install.ps1 | iex"
+irm https://hongnoul.github.io/gwae/install.ps1 | iex
 ```
 
 Prebuilt [binaries](https://github.com/hongnoul/gwae/releases) for all
@@ -51,30 +51,7 @@ then start it where the work lives:
 gwae
 ```
 
-run `gwae init` for guided setup, `gwae doctor` to check config. upgrade the same way you installed. [quick start →](#quick-start)
-
-## quick start
-
-on first launch, dismiss the help overlay with Escape. no agent account needed: skip the agent choice for a shell-only test.
-
-press `⌥+Enter` a few times to add shell panes. keep going past the screen edge: the viewport scrolls, the panes keep their width. use `⌥+h` / `⌥+l` to move left / right, `⌥+r` to cycle the focused column's width, `⌥+/` for help. type `exit` in each shell (or `⌥+q` to close the focused pane) when you're done.
-
-if `⌥` types special characters instead of triggering shortcuts, set Option to act as Meta in your terminal (Terminal.app: Preferences → Profiles → Keyboard → Use Option as Meta Key; iTerm2 / Ghostty / WezTerm have the equivalent).
-
-bring your agents:
-
-```bash
-gwae init             # guided setup, safe to re-run
-gwae run "claude"     # start with Claude Code in the first pane
-gwae run "codex"      # or Codex CLI
-gwae doctor           # check config and setup
-```
-
-config lives at `~/.config/gwae/gwae.toml` (`$XDG_CONFIG_HOME/gwae/gwae.toml`), all keys optional. full key reference: press `⌥+/` in gwae. [configuration →](docs/CONFIG.md)
-
-## docs
-
-everything lives in [docs/](docs/): [why](docs/WHY.md) · [agents](docs/agents.md) · [configuration](docs/CONFIG.md) · [keybinds](docs/KEYBINDS.md) · [architecture](docs/ARCHITECTURE.md) · [layout](docs/LAYOUT-SPEC.md) · [latency](docs/LATENCY.md) · [comparison](docs/COMPARISON.md) · [copy-paste](docs/COPY-PASTE.md) · [spawn dir](docs/SPAWN-DIR.md) · [terminal compatibility](docs/TERMINAL-COMPATIBILITY.md) · [updates](docs/UPDATES.md)
+run `gwae init` for guided setup, `gwae doctor` to check config. upgrade the same way you installed.
 
 ## thanks
 
