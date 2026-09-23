@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="#macos-and-linux">macOS / Linux</a> · <a href="#windows">Windows</a>
+  <a href="#install">macOS</a>
 </p>
 
 <p align="center">
@@ -20,27 +20,19 @@
 
 ## Install
 
-### macOS and Linux
-
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
-or with Homebrew (macOS):
+or with Homebrew:
 
 ```bash
 brew install hongnoul/tap/gwae
 ```
 
-### Windows
-
-```powershell
-irm https://hongnoul.github.io/gwae/install.ps1 | iex
-```
-
 ## Tutorial
 
-⌥ is Option (macOS) / Alt (Linux, Windows). <kbd>⌥</kbd> + <kbd>/</kbd> opens the cheat sheet. Movement is Vim-style <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd>, like a tiling WM.
+⌥ is the Option key. <kbd>⌥</kbd> + <kbd>/</kbd> opens the cheat sheet. Movement is Vim-style <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd>, like a tiling WM.
 
 New here? Paste this into an agent pane:
 
@@ -78,7 +70,7 @@ input, ✗ failed), then ⌥+g to jump to the neediest pane. Mention
 clicking a tile focuses it.
 7. Help and quit: show ⌥+/ (cheat sheet), ⌥+q (close pane),
 ⌥+Shift+q (quit; last pane exiting quits gwae). Mention ⌥+w
-(keep-awake, macOS) last.
+(keep-awake) last.
 8. Health: only now, have me type exit in panes until one shell is left,
 then run gwae doctor in it and confirm exit 0. If anything fails, run
 gwae init. Mention ~/.config/gwae/gwae.toml (all keys optional,
