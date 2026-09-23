@@ -185,8 +185,7 @@ pub fn state_dir() -> Option<PathBuf> {
     if let Some(x) = std::env::var_os("LOCALAPPDATA").filter(|s| !s.is_empty()) {
         return Some(PathBuf::from(x).join("gwae").join("state"));
     }
-    let home = std::env::var_os("HOME").filter(|s| !s.is_empty())?;
-    Some(PathBuf::from(home).join(".local/state/gwae"))
+    Some(crate::config::home_dir()?.join(".local/state/gwae"))
 }
 
 /// Decide the install source. Pure.

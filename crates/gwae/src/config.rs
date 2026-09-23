@@ -18,6 +18,21 @@ fn default_input_poll_ms() -> u64 {
     1
 }
 
+/// The user's home directory, portably.
+///
+/// `HOME` on unix; on Windows `HOME` is usually unset and `USERPROFILE` is
+/// the real answer. One helper so no call site encodes the difference.
+pub fn home_dir() -> Option<PathBuf> {
+    if let Some(h) = std::env::var_os("HOME").filter(|s| !s.is_empty()) {
+        return Some(PathBuf::from(h));
+    }
+    #[cfg(windows)]
+    if let Some(h) = std::env::var_os("USERPROFILE").filter(|s| !s.is_empty()) {
+        return Some(PathBuf::from(h));
+    }
+    None
+}
+
 fn default_keep_awake() -> bool {
     false
 }
@@ -127,8 +142,7 @@ impl Config {
         if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
             return PathBuf::from(xdg).join("gwae/gwae.toml");
         }
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
+        home_dir()
             .unwrap_or_default()
             .join(".config/gwae/gwae.toml")
     }

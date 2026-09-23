@@ -127,8 +127,8 @@ pub fn search_roots(configured: &[String]) -> Vec<PathBuf> {
     if !configured.is_empty() {
         return configured.iter().map(|r| expand(r)).collect();
     }
-    std::env::var_os("HOME")
-        .map(|h| vec![PathBuf::from(h)])
+    crate::config::home_dir()
+        .map(|h| vec![h])
         .unwrap_or_default()
 }
 

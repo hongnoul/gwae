@@ -111,8 +111,7 @@ pub fn default_path() -> Option<PathBuf> {
     if let Some(x) = std::env::var_os("XDG_STATE_HOME").filter(|s| !s.is_empty()) {
         return Some(PathBuf::from(x).join("gwae/harness.json"));
     }
-    let home = std::env::var_os("HOME").filter(|s| !s.is_empty())?;
-    Some(PathBuf::from(home).join(".local/state/gwae/harness.json"))
+    Some(crate::config::home_dir()?.join(".local/state/gwae/harness.json"))
 }
 
 /// Load the state file, or the default when it is missing or corrupt. A

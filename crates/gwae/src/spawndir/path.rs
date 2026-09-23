@@ -68,7 +68,9 @@ pub(super) const MAX_SCAN: usize = 4000;
 /// with a baffling "no such directory: ~/git" instead.
 pub fn expand(raw: &str) -> PathBuf {
     let s = raw.trim();
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::config::home_dir()
+        .map(|h| h.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let s = if s == "~" {
         home.clone()
     } else if let Some(rest) = s.strip_prefix("~/") {

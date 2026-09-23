@@ -19,7 +19,9 @@ pub struct Candidate {
 /// Shorten an absolute path for display by re-introducing `~`.
 pub fn tilde(p: &Path) -> String {
     let s = p.to_string_lossy().to_string();
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::config::home_dir()
+        .map(|h| h.to_string_lossy().into_owned())
+        .unwrap_or_default();
     if home.is_empty() {
         return s;
     }
@@ -142,8 +144,8 @@ pub fn candidates(
     for r in search_roots {
         push(&mut out, &mut seen, r, "root");
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        push(&mut out, &mut seen, PathBuf::from(home), "home");
+    if let Some(home) = crate::config::home_dir() {
+        push(&mut out, &mut seen, home, "home");
     }
     // Rebuilt on every picker open, not cached for the session: a running
     // agent can scaffold a directory without initializing any VCS marker.
