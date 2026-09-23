@@ -40,7 +40,9 @@ irm https://hongnoul.github.io/gwae/install.ps1 | iex
 
 ## Tutorial
 
-Copy and paste following into your preferred agent harness pane in gwae:
+All keybindings use Option (⌥) on macOS, Alt on Linux and Windows, shown as ⌥ below. Press ⌥+/ anytime for the in-app cheat sheet. If you have used a tiling window manager or Vim motions (h/j/k/l to move), it should feel intuitive.
+
+Beginner? Copy and paste following into your preferred agent harness pane in gwae:
 
 ```text
 You are teaching me gwae, a scrolling terminal multiplexer. I am inside a
