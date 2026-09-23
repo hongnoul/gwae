@@ -10,7 +10,7 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
 
-use crate::agent::{parse_choice, render, Choice, HarnessState};
+use crate::agent::{parse_choice, render, Choice, Found, HarnessState};
 use crate::config::Config;
 
 /// Styling for the first-run lines, gated the way clig.dev prescribes: no
@@ -145,10 +145,20 @@ fn agent_step(cfg_path: &Path, sty: &Style) {
             sty.done(&format!("agent: {cmd} {}", sty.dim("(only one installed)")));
         }
         ref chooser @ (Plan::Choose(_) | Plan::Missing { .. }) => {
-            let (text, choices) = render(chooser);
-            print!("{}", sty.filter(&text));
-            let _ = std::io::stdout().flush();
-            match prompt_loop(choices.len(), sty) {
+            let choices = match chooser {
+                Plan::Choose(f) => f.clone(),
+                Plan::Missing { found, .. } => found.clone(),
+                _ => unreachable!(),
+            };
+            let choice = interactive_pick(chooser, &choices, sty).unwrap_or_else(|| {
+                // No tty control (or raw mode failed): the numbered prompt
+                // still works everywhere a line can be read.
+                let (text, cs) = render(chooser);
+                print!("{}", sty.filter(&text));
+                let _ = std::io::stdout().flush();
+                prompt_loop(cs.len(), sty)
+            });
+            match choice {
                 Choice::Listed(i) => {
                     let cmd = choices.get(i).map(|f| f.cmd.clone()).unwrap_or_default();
                     if !cmd.is_empty() {
@@ -186,6 +196,117 @@ fn remember(state: &mut HarnessState, path: Option<&Path>, cmd: &str, known: boo
     if let Some(p) = path {
         let _ = crate::agent::save_harness_state(p, state);
     }
+}
+
+/// Arrow-key selector for the harness list: ↑/↓ or j/k move a highlight,
+/// Enter picks, `s`/Esc take a shell, `t` drops to the typed-command prompt,
+/// and a digit still jumps straight to that entry. Returns `None` when the
+/// terminal cannot do raw input (styling off, no tty, raw mode refused), so
+/// the caller can fall back to the line-based prompt.
+fn interactive_pick(
+    plan: &crate::agent::Plan,
+    choices: &[Found],
+    sty: &Style,
+) -> Option<Choice> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::{cursor, execute, terminal};
+    if !sty.on || !std::io::stdin().is_terminal() || choices.is_empty() {
+        return None;
+    }
+    // Paths would wrap in a narrow terminal, which breaks the redraw's
+    // MoveUp arithmetic, so they only paint when there is room.
+    let cols = terminal::size().map(|(c, _)| c as usize).unwrap_or(80);
+    let show_paths = cols >= 60;
+    terminal::enable_raw_mode().ok()?;
+    let mut out = std::io::stdout();
+    let header = match plan {
+        crate::agent::Plan::Missing { want, .. } => format!(
+            "{}\r\n{}\r\n",
+            sty.paint("33;1", &format!("`{want}` is not installed.")),
+            sty.dim("Your config asks for it, but it is not on PATH. Pick another:")
+        ),
+        _ => format!(
+            "{}\r\n{}\r\n",
+            sty.bold("Which agent should ⌥+; launch?"),
+            sty.dim("↑/↓ or j/k move · Enter picks · s shell · t type a command")
+        ),
+    };
+    let _ = write!(out, "{header}");
+    // The shell opt-out is a real row, so every outcome is reachable with
+    // just the arrows and Enter.
+    let total = choices.len() + 1;
+    let draw = |out: &mut std::io::Stdout, sel: usize| {
+        let row = |out: &mut std::io::Stdout, i: usize, label: &str, note: &str| {
+            let (marker, name) = if i == sel {
+                (sty.paint("36;1", "❯"), sty.paint("36;1", label))
+            } else {
+                (" ".to_string(), sty.bold(label))
+            };
+            let _ = write!(out, "  {marker} {name}  {}\r\n", sty.dim(note));
+        };
+        for (i, f) in choices.iter().enumerate() {
+            let note = if show_paths {
+                f.path.display().to_string()
+            } else {
+                String::new()
+            };
+            row(out, i, &f.label, &note);
+        }
+        row(out, choices.len(), "just a shell", "skip, don't save");
+        let _ = out.flush();
+    };
+    let mut sel = 0usize;
+    draw(&mut out, sel);
+    let choice = loop {
+        match event::read() {
+            Ok(Event::Key(k)) if k.kind != KeyEventKind::Release => {
+                match (k.code, k.modifiers) {
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        let _ = terminal::disable_raw_mode();
+                        let _ = write!(out, "\r\n");
+                        std::process::exit(130);
+                    }
+                    (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+                        sel = if sel == 0 { total - 1 } else { sel - 1 };
+                    }
+                    (KeyCode::Down, _) | (KeyCode::Char('j'), _) => sel = (sel + 1) % total,
+                    (KeyCode::Enter, _) => {
+                        break if sel < choices.len() {
+                            Choice::Listed(sel)
+                        } else {
+                            Choice::Shell
+                        };
+                    }
+                    (KeyCode::Esc, _) | (KeyCode::Char('q'), _) | (KeyCode::Char('s'), _) => {
+                        break Choice::Shell;
+                    }
+                    (KeyCode::Char('t'), _) | (KeyCode::Char('/'), _) => {
+                        // The escape hatch for a harness we did not detect:
+                        // back to cooked input for one typed command line.
+                        let _ = terminal::disable_raw_mode();
+                        println!(
+                            "{}",
+                            sty.dim("Type a command (e.g. hermes --resume), a number, or s for a shell.")
+                        );
+                        return Some(prompt_loop(choices.len(), sty));
+                    }
+                    (KeyCode::Char(c), _) if c.is_ascii_digit() => {
+                        let i = (c as u8 - b'0') as usize;
+                        if (1..=choices.len()).contains(&i) {
+                            break Choice::Listed(i - 1);
+                        }
+                    }
+                    _ => {}
+                }
+                let _ = execute!(out, cursor::MoveUp(total as u16));
+                draw(&mut out, sel);
+            }
+            Ok(_) => {}
+            Err(_) => break Choice::Shell,
+        }
+    };
+    let _ = terminal::disable_raw_mode();
+    Some(choice)
 }
 
 /// Our own latency knob is ours to write: set it silently, report the rest
