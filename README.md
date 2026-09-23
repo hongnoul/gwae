@@ -20,19 +20,10 @@
 
 
 
-## Cool features
-
-> Official docs are still WIP. Quick tour of the good stuff:
-
-- **Agent dashboard** — hold ⌥ for the center minimap. Panes report status over standard OSC 133, so every tile is tinted by agent state: working, wants attention, done, or failed.
-- **Smart jump** — ⌥+g jumps straight to the pane that needs you.
-- **Spawn dir** — ⌥+d opens the spawn-directory picker to choose where the next agent starts.
-- **Pick agent** — ⌥+Shift+; opens the harness picker to spawn a specific agent instead of your default.
-- **Keep awake** — ⌥+w toggles the macOS `caffeinate` assertion so a long run never sleeps mid-job.
-
 ## Install
 
 > Developed and tested on macOS only. Contributions for Windows are welcome.
+>
 > Linux users: I recommend [niri](https://github.com/YaLTeR/niri), the scrolling window manager that inspired gwae.
 
 ```bash
@@ -44,6 +35,16 @@ or with Homebrew:
 ```bash
 brew install hongnoul/tap/gwae
 ```
+
+## Cool features
+
+> Official docs are still WIP. Quick tour of the good stuff:
+
+- **Agent dashboard** — hold ⌥ for the center minimap. Panes report status over standard OSC 133, so every tile is tinted by agent state: working, wants attention, done, or failed.
+- **Smart jump** — ⌥+g jumps straight to the pane that needs you.
+- **Spawn dir** — ⌥+d opens the spawn-directory picker to choose where the next agent starts.
+- **Pick agent** — ⌥+Shift+; opens the harness picker to spawn a specific agent instead of your default.
+- **Keep awake** — ⌥+w toggles the macOS `caffeinate` assertion so a long run never sleeps mid-job.
 
 ## Interactive tutorial
 
