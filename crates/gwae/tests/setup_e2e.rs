@@ -51,15 +51,21 @@ fn print_lists_every_stage_without_writing() {
 }
 
 #[test]
-fn check_writes_nothing_and_reports_latency() {
-    // input_poll_ms 10 is suboptimal on every platform, so --check must
-    // fail with no writes even where macOS/kitty settings do not apply.
+fn check_writes_nothing_and_never_flags_the_retired_knob() {
+    // `input_poll_ms` is retired: the event-driven loop wakes on input
+    // directly, so a configured value — any value — must not fail the
+    // check or be named as fixable. Whether the check exits nonzero here
+    // depends on the host's macOS/kitty settings, so the exit code is not
+    // asserted; the retired knob's absence and the no-write guarantee are.
     let dir = sandbox(Some("input_poll_ms = 10\n"));
-    let (out, _, code) = setup(&dir, &["--check"]);
-    assert_ne!(code, 0, "check should fail on untuned latency");
+    let (out, _, _code) = setup(&dir, &["--check"]);
     assert!(
         out.contains("latency"),
         "check should name the stage:\n{out}"
+    );
+    assert!(
+        !out.contains("input_poll_ms"),
+        "retired knob must not be flagged:\n{out}"
     );
     let after = std::fs::read_to_string(dir.join("gwae/gwae.toml")).unwrap();
     assert!(
@@ -78,11 +84,16 @@ fn unknown_stage_is_an_error() {
 #[test]
 fn only_latency_scopes_the_audit() {
     let dir = sandbox(Some("input_poll_ms = 10\n"));
-    let (out, _, code) = setup(&dir, &["--check", "--only", "latency"]);
-    assert_ne!(code, 0, "scoped check should still fail");
+    let (out, _, _code) = setup(&dir, &["--check", "--only", "latency"]);
+    // Exit code is platform-dependent (macOS/kitty settings may or may not
+    // be pending); the scoping itself is what this test pins.
     assert!(
         out.contains("latency"),
         "scoped check names its stage:\n{out}"
+    );
+    assert!(
+        !out.contains("input_poll_ms"),
+        "retired knob must not be flagged:\n{out}"
     );
     assert!(
         !out.contains("keep-awake"),
