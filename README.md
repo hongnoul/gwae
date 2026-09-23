@@ -48,8 +48,6 @@ irm https://hongnoul.github.io/gwae/install.ps1 | iex
 
 ## docs
 
-everything lives in [docs/](docs/): [why](docs/WHY.md) · [agents](docs/agents.md) · [configuration](docs/CONFIG.md) · [keybinds](docs/KEYBINDS.md) · [architecture](docs/ARCHITECTURE.md) · [layout](docs/LAYOUT-SPEC.md) · [latency](docs/LATENCY.md) · [comparison](docs/COMPARISON.md) · [copy-paste](docs/COPY-PASTE.md) · [spawn dir](docs/SPAWN-DIR.md) · [terminal compatibility](docs/TERMINAL-COMPATIBILITY.md) · [updates](docs/UPDATES.md)
-
 paste this into your agent's context (`AGENTS.md` / `CLAUDE.md`) so it can drive gwae:
 
 ```markdown
