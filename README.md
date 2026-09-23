@@ -59,10 +59,12 @@ Option as Meta Key; iTerm2, Ghostty, WezTerm have the equivalent), then
 retry. Do not proceed until ⌥+/ opens the cheat sheet.
 1. Open a pane: have me press ⌥+Enter once. Confirm a new shell pane
 appears to the right.
-2. Open more: have me press ⌥+Enter until there are 6 panes. Point out
-the viewport scrolling right while every pane keeps its width.
-3. Move: have me press ⌥+h and ⌥+l to move left and right, then ⌥+k
-and ⌥+j for up and down. Confirm the focus ring follows.
+2. Move: have me press ⌥+h and ⌥+l to move between the two panes.
+Confirm the focus ring follows. Then have me press ⌥+k and ⌥+j.
+Mention click-to-focus only after these work.
+3. Open more: have me press ⌥+Enter until there are 6 panes. If I get
+lost, remind me ⌥+h/l moves between panes. Point out the viewport
+scrolling right while every pane keeps its width.
 4. Reshape: have me press ⌥+r to cycle the focused column's width, then
 ⌥+b to split below, then ⌥+Shift+Enter for a new row. Mention ⌥+f
 (full width) and ⌥+Shift+h/l (move pane) only after these work.
