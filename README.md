@@ -55,7 +55,7 @@ brew install hongnoul/tap/gwae
 
 <kbd>⌥</kbd> + <kbd>/</kbd> opens the cheat sheet.
 
-Vim-style movement, like a tiling WM: <kbd>h</kbd> left · <kbd>j</kbd> down · <kbd>k</kbd> up · <kbd>l</kbd> right
+Vim-style movement, like a tiling WM: <kbd>⌥</kbd> + <kbd>h</kbd> left · <kbd>⌥</kbd> + <kbd>j</kbd> down · <kbd>⌥</kbd> + <kbd>k</kbd> up · <kbd>⌥</kbd> + <kbd>l</kbd> right
 
 Paste this into an agent pane:
 
