@@ -1,11 +1,26 @@
 # gwae
 
-  [website](https://hongnoul.github.io/gwae/) · [install](#install) · [quick start](#quick-start) · [docs](#docs)
 
-**Infinite scroll terminal multiplexer for macOS, Windows, and Linux**
+<p align="center">
+  <img src="docs/assets/gwae.svg" alt="gwae" width="100" />
+</p>
+
+<p align="center">
+  <a href="https://hongnoul.github.io/gwae/">website</a> · <a href="#install">install</a> · <a href="#quick-start">quick start</a> · <a href="#docs">docs</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-666666?labelColor=333333" alt="MIT license" /></a>
+  <a href="https://github.com/hongnoul/gwae/releases"><img src="https://img.shields.io/github/downloads/hongnoul/gwae/total?labelColor=333333&color=666666" alt="total GitHub release downloads" /></a>
+  <a href="https://github.com/hongnoul/gwae/stargazers"><img src="https://img.shields.io/github/stars/hongnoul/gwae?labelColor=333333&color=666666&logo=github" alt="GitHub stars" /></a>
+  <a href="https://github.com/hongnoul/gwae/releases/latest"><img src="https://img.shields.io/github/v/release/hongnoul/gwae?label=release&labelColor=333333&color=666666" alt="latest stable release" /></a>
+</p>
+
+---
 
 ![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
 
+**the infinite-scroll terminal multiplexer.**
 
 - **panes never shrink** — open more columns and the viewport scrolls instead of squeezing them, like niri. widths stay fixed and scroll snaps to column boundaries, no slivers. [layout spec →](docs/LAYOUT-SPEC.md)
 - **never hunt for the stuck one** — every pane is marked `»` working, `!` needs input, `✗` failed. hold `⌥` for the dashboard, `⌥+g` jumps to the pane that needs you. [agents →](docs/agents.md)
@@ -16,30 +31,18 @@
 
 - **runs what you already run** — claude code, codex, shells, TUIs. `⌥+;` spawns your agent and remembers your pick; `gwae run` starts it from the CLI. [why gwae →](docs/WHY.md)
 - **keyboard and mouse, both first-class** — option-key chords *and* click, drag-to-copy, wheel scroll. [keybinds →](docs/KEYBINDS.md)
-- **macOS native** — `pbcopy` clipboard, `caffeinate` keep-awake, CoreGraphics option-key poll, focus fixes. [comparison →](docs/COMPARISON.md)
+- **macOS, Linux, and Windows** — native clipboard, `caffeinate` keep-awake and CoreGraphics option-key poll on macOS. [comparison →](docs/COMPARISON.md)
 - **one rust binary** — runs in whatever terminal you already use. [architecture →](docs/ARCHITECTURE.md)
 
 ---
 
 ## install
 
-macOS and Linux, one line:
-
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
-the installer lands in `~/.local/bin` and wires up your shell PATH. Windows, in PowerShell:
-
-```powershell
-irm https://hongnoul.github.io/gwae/install.ps1 | iex
-```
-
-on macOS, Homebrew also works:
-
-```bash
-brew install hongnoul/tap/gwae
-```
+or `brew install hongnoul/tap/gwae` · windows: `powershell -ExecutionPolicy Bypass -c "irm https://hongnoul.github.io/gwae/install.ps1 | iex"` · [binaries](https://github.com/hongnoul/gwae/releases)
 
 then start it where the work lives:
 
@@ -47,7 +50,7 @@ then start it where the work lives:
 gwae
 ```
 
-run `gwae init` for guided setup and `gwae doctor` to check config. upgrade the same way you installed (re-run the installer, or `brew upgrade gwae`). if `command -v gwae` points somewhere unexpected after installing, an older copy earlier on PATH is shadowing it. [quick start →](#quick-start)
+run `gwae init` for guided setup, `gwae doctor` to check config. upgrade the same way you installed. [quick start →](#quick-start)
 
 ## quick start
 
@@ -74,7 +77,7 @@ everything lives in [docs/](docs/): [why](docs/WHY.md) · [agents](docs/agents.m
 
 ## thanks
 
-if gwae fits your workflow, [give it a star](https://github.com/hongnoul/gwae). found a rough edge? [report it](https://github.com/hongnoul/gwae/issues/new/choose) with your macOS version and terminal so we can improve the next person's first run.
+if gwae fits your workflow, [give it a star](https://github.com/hongnoul/gwae). found a rough edge? [report it](https://github.com/hongnoul/gwae/issues/new/choose) with your OS version and terminal so we can improve the next person's first run.
 
 ## agent instructions
 
