@@ -13,6 +13,12 @@ use std::time::Duration;
 /// flicker, short enough that a finished agent surfaces quickly.
 const QUIET_AFTER: Duration = Duration::from_secs(4);
 
+/// How long after boot a sole agent pane's instant death falls back to the
+/// gateway picker instead of quitting gwae. A broken remembered command dies
+/// in well under a second; a real session the user chose to leave lasts
+/// longer than this.
+const STARTUP_FALLBACK_GRACE: Duration = Duration::from_secs(5);
+
 /// Notice line for the `⌥+⇧+;` force-pick overlay, which always opens the
 /// picker instead of taking the fast path.
 ///
@@ -660,6 +666,42 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     }
                     let total = layout_pane_count(&layout);
                     let in_layout = layout.locate_pane(pid).is_some();
+                    // Startup fallback: a directly-resolved harness (a
+                    // remembered pick or a lone install) that dies straight
+                    // away would otherwise take the whole session with it —
+                    // gwae quits when the last pane exits, so a stale
+                    // `harness.json` pointing at a broken command produced a
+                    // flash of a frame and an exit 0 with no explanation.
+                    // Instead, the sole pane respawns as the gateway picker,
+                    // names the command that died, and the poisoned memory is
+                    // dropped so the next bare launch does not repeat it.
+                    // Only within a short grace window: a harness the user
+                    // has been working in for minutes exiting is a normal
+                    // quit, not a broken command. An explicit `gwae run cmd`
+                    // never lands here (it is not an agent pane), so a fast
+                    // one-shot command still exits cleanly by design.
+                    if in_layout && total <= 1 && boot.elapsed() < STARTUP_FALLBACK_GRACE {
+                        if let Some(died) = agent_cmds.remove(&pid) {
+                            if harness_state.last == died {
+                                harness_state.last.clear();
+                                harness_state.mru.retain(|c| c != &died);
+                                if let Some(path) = harness_state_path.as_deref() {
+                                    let _ =
+                                        crate::agent::save_harness_state(path, &harness_state);
+                                }
+                            }
+                            panes.remove(&pid);
+                            agent_panes.insert(pid);
+                            needs_sync = true;
+                            reload_note =
+                                Some(format!("`{died}` exited immediately; pick an agent"));
+                            reload_note_anchor = None;
+                            reload_note_until = Some(Instant::now() + NOTE_LINGER * 2);
+                            dirty = true;
+                            next_msg = rx.try_recv().ok();
+                            continue;
+                        }
+                    }
                     if in_layout && total <= 1 {
                         break 'main;
                     }

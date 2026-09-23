@@ -1096,3 +1096,58 @@ fn a_configured_agent_never_sees_the_latency_prompt() {
     assert!(sb.read_config().contains("input_poll_ms = 10"));
     p.kill();
 }
+
+#[test]
+fn a_remembered_command_that_dies_instantly_falls_back_to_the_picker() {
+    // The stale-memory footgun: `harness.json` remembers a command that
+    // still resolves on PATH but exits immediately (a broken wrapper, a
+    // one-shot command recorded by accident). Pane 1.1 spawns it directly,
+    // it dies, and — being the last pane — it used to take the whole
+    // session down: a flash of a frame, exit 0, no explanation. The
+    // acceptance behavior is a session that stays up, falls back to the
+    // gateway picker in the same pane, names the dead command, and drops
+    // the poisoned memory so the next bare launch is clean.
+    let sb = Sandbox::new(&["claude"]);
+    sb.write_config("");
+    // A remembered pick that resolves but dies at once. It must be in the
+    // sandbox bin (so `command_available` accepts it) and exit 0 instantly.
+    let dud = sb.bin.join("dud-agent");
+    std::fs::write(&dud, "#!/bin/sh\nexit 0\n").expect("dud stub");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dud, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    std::fs::create_dir_all(sb.dir.join("state/gwae")).expect("state dir");
+    std::fs::write(
+        sb.state_path(),
+        "{\"last\":\"dud-agent\",\"mru\":[\"dud-agent\"],\"custom\":[\"dud-agent\"]}",
+    )
+    .expect("stale memory");
+
+    let mut p = sb.spawn_tui_bare();
+    // The session must survive and re-open pane 1.1 on the gateway picker
+    // (which lists the real install). Poke ⌥+/ past the startup HUD.
+    let seen = p.collect_until_poking(Duration::from_secs(20), "\x1b/", |raw| {
+        screen_text(raw).contains("Claude Code")
+    });
+    let text = screen_text(&seen);
+    assert!(
+        text.contains("Claude Code"),
+        "expected the gateway picker after the dud died; got:\n{text}"
+    );
+    // The poisoned memory is gone: `last` no longer names the dud, so the
+    // next bare launch will not spawn it again.
+    let state = sb.read_state();
+    assert!(
+        !state.contains("\"last\":\"dud-agent\""),
+        "stale `last` must be dropped; got: {state}"
+    );
+    // And the fallback is genuinely usable: pick the real harness.
+    p.send("1\n");
+    let seen = p.collect_until(Duration::from_secs(15), |raw| {
+        screen_text(raw).contains("AGENT-RAN:claude")
+    });
+    assert!(screen_text(&seen).contains("AGENT-RAN:claude"));
+    p.kill();
+}
