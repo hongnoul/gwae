@@ -43,35 +43,28 @@ irm https://hongnoul.github.io/gwae/install.ps1 | iex
 Copy and paste following into your preferred agent harness pane in gwae:
 
 ```text
-SETUP
-  run: gwae init (guided setup), gwae doctor (health check, exit 0 when ok).
-  config: ~/.config/gwae/gwae.toml, all keys optional, live-reloads on save.
+You are teaching me gwae, a scrolling terminal multiplexer. I am inside a
+gwae pane talking to you. Walk me through each step below one at a time:
+explain what to press, wait for me to confirm it worked, then move on.
+Do not skip ahead and do not dump all steps at once.
 
-1. SCROLL, DON'T SHRINK
-  press ⌥+Enter 6 times. the viewport scrolls right; every pane keeps
-  its width.
+Setup: gwae init (guided setup), gwae doctor (health check, exit 0 when ok).
+Config: ~/.config/gwae/gwae.toml, all keys optional, live-reloads on save.
 
-2. MOVE LIKE VIM
-  ⌥+h/l: focus left/right. ⌥+k/j: focus up/down, crossing strips.
-  click any pane to focus it. drag to copy, wheel scrolls.
-
-3. RESHAPE
-  ⌥+r: cycle the focused column's width. ⌥+f: full-width toggle.
-  ⌥+b: split below. ⌥+Shift+Enter: new row below.
-  ⌥+Shift+h/l: move a pane between columns.
-
-4. AGENTS
-  ⌥+;: spawn your agent (first press offers what is installed and
-  remembers it). ⌥+Shift+;: picker every time.
-  gwae run "claude": start from the CLI. ⌥+d: pick the spawn directory.
-
-5. NEVER HUNT THE STUCK ONE
-  hold ⌥: dashboard with every pane's status (» working, ! needs input,
-  ✗ failed). ⌥+g: jump to the neediest pane. click a tile to focus it.
-
-6. KNOW EVERYTHING
-  ⌥+/: cheat sheet. ⌥+w: keep-awake toggle (macOS). ⌥+q: close pane,
-  ⌥+Shift+q: quit. last pane exiting quits gwae.
+1. SCROLL, DON'T SHRINK: have me press ⌥+Enter 6 times. Point out the
+viewport scrolling right while every pane keeps its width.
+2. MOVE LIKE VIM: have me try ⌥+h/l (left/right) and ⌥+k/j (up/down,
+crossing strips). Mention click-to-focus, drag-to-copy, wheel scroll.
+3. RESHAPE: have me try ⌥+r (cycle width), ⌥+f (full-width toggle),
+⌥+b (split below), ⌥+Shift+Enter (new row), ⌥+Shift+h/l (move pane).
+4. AGENTS: have me press ⌥+; to spawn an agent (first press offers what
+is installed and remembers it). Mention ⌥+Shift+; (picker), gwae run
+"claude" (CLI start), ⌥+d (spawn directory).
+5. NEVER HUNT THE STUCK ONE: have me hold ⌥ for the dashboard (»
+working, ! needs input, ✗ failed), then ⌥+g to jump to the neediest
+pane. Mention clicking a tile focuses it.
+6. KNOW EVERYTHING: show ⌥+/ (cheat sheet), ⌥+w (keep-awake, macOS),
+⌥+q (close pane), ⌥+Shift+q (quit; last pane exiting quits gwae).
 ```
 
 ## Development
