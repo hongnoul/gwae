@@ -39,6 +39,33 @@ Horizontal scroll of a strip is a **full repaint** (terminals can't blit
 horizontally), so frames must be fast: budget < 4ms for a 300x80 viewport.
 Scroll animation is optional and gated on sync-update support and frame budget.
 
+## The event loop (and what `input_poll_ms` does)
+
+The main loop in `tui/app.rs::run_tui` has **one blocking wait**: an mpsc
+channel that every event source feeds. Each pane owns a reader thread that
+pushes `PaneMsg::Output` bytes; a dedicated input thread blocks in
+crossterm's `event::read()` and forwards host terminal events as
+`PaneMsg::Input`; exits arrive as `PaneMsg::Exited`. The loop sleeps in
+`rx.recv_timeout(tick)` until *any* source fires, then drains whatever else
+is queued and paints one frame for the whole batch.
+
+That shape is why input latency no longer depends on any poll interval. The
+old loop blocked in `event::poll(input_poll_ms)` and drained pane output
+between polls, so every echoed byte waited out the rest of a poll tick plus a
+housekeeping pass (about 2.5 ms p50 in a real-PTY harness). Now a keystroke
+or a pane byte ends the wait immediately, and echo p50 is about 0.34 ms.
+
+`input_poll_ms` still exists in the config, but it only paces the `tick`
+argument to that wait: the periodic housekeeping that runs when the timer
+expires with no traffic (terminal-size re-check, note expiry, status flips,
+bare-Option HUD detection). The default is 1 ms while the session is active,
+backing off to 30 ms after 750 ms of quiet (`tui/term.rs::input_poll_interval`,
+range clamped to 1..50). It sleeps in kernel space either way: a timeout is
+not a spin, so the idle session costs nothing while keeping its scheduling
+priority. `gwae doctor` never reports it, at any value. Full numbers and the
+three-layer latency story (macOS, kitty, gwae) live in
+[`LATENCY.md`](LATENCY.md).
+
 ## Pane sizing
 
 Panes have a **logical size** (cols x rows) set by their column width and strip
@@ -168,7 +195,8 @@ asserts against the actual process table for each of these paths.
 gwae updates itself **the way it was installed, or not at all** (ADR-016).
 `crates/gwae/src/update.rs` detects the install source (config, then a legacy
 receipt, then the binary's path), maps it to a route, and prints the exact
-command — `brew upgrade gwae` for the canonical Homebrew install. `gwae
+command — `brew upgrade gwae` for a Homebrew install, the installer re-run
+for a script install. `gwae
 upgrade` is check-only and never executes a package manager. Nix store paths,
 distro packages, checkouts, and retired routes get their own instruction
 printed instead: overwriting a file another package manager tracks leaves that

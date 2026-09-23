@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::geometry::CellPixels;
 
 use super::shell::agent_gateway_cmd;
+use super::shell::default_shell;
 use super::shell::shell_split;
 
 /// How a pane's PTY is owned.
@@ -396,7 +397,7 @@ pub(crate) fn spawn_pane(
     let master = pair.master;
     let slave = pair.slave;
     let argv = if cmd.trim().is_empty() {
-        vec![std::env::var("SHELL").unwrap_or_else(|_| "sh".into())]
+        vec![default_shell()]
     } else {
         shell_split(cmd)
     };

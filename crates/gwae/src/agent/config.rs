@@ -53,8 +53,12 @@ pub fn plan(default_agent: &str, state: &HarnessState, found: Vec<Found>) -> Pla
 }
 
 /// The shell to fall back to when there is no harness to run.
+///
+/// One helper (`tui::default_shell`) so the gateway fallback and fresh-pane
+/// spawn cannot disagree: unix reads `$SHELL` (else `sh`), Windows falls
+/// back to PowerShell, which ConPTY hosts natively.
 pub fn fallback_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "sh".into())
+    crate::tui::default_shell()
 }
 
 /// Rewrite a top-level key in a config file *without* disturbing anything

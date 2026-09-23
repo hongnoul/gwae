@@ -21,13 +21,13 @@ What gwae is deliberately *not*: an Orca-in-a-TTY. Feature parity on diff review
 - macOS is unfriendly to tiling WMs by design (real tiling via yabai requires partially disabling SIP) and niri itself is Wayland-only.[^10] gwae delivers the niri layout model inside any macOS terminal instead.
 - GUI ADEs cannot copy the structural properties of a terminal tool: runs over SSH, inside any terminal, on the machine the agents already run on, no daemon, no Electron.[^1]
 - gwae runs over SSH, including on headless machines, if you want to allocate every resource to your agents.
-- **The only bottleneck should be your brain.** Between your keystroke and the pane there is one process and no daemon round-trip: 2.5 ms echo RTT measured, ~1/6 of a 60 Hz frame.[^11]
+- **The only bottleneck should be your brain.** Between your keystroke and the pane there is one process and no daemon round-trip: sub-millisecond echo (0.34 ms p50 measured in a real-PTY harness), a fraction of a 60 Hz frame.[^11]
 
 ### Benchmarks: gwae vs the incumbents
 
 Every mux runs headless in a real PTY, driven the way a terminal drives it, on the same machine in the same run: raw JSON in [`docs/bench-2026-08-25.json`](bench-2026-08-25.json).[^11]
 
-#### Footprint and speed (measured 2026-08-25)
+#### Footprint and speed (measured 2026-08-25, pre-event-loop numbers kept for the record)
 
 | Metric                               | **gwae**                   | tmux 3.7c             | Zellij 0.45.0     | bare `/bin/sh` (floor) |
 | ------------------------------------ | -------------------------- | --------------------- | ----------------- | ---------------------- |

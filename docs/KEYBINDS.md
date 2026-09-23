@@ -78,8 +78,9 @@ Two honest caveats to document rather than paper over:
   current unconditional match arms.
 
 `Chord` also gets `FromStr` and `Display`, so `Chord::mod_('h').to_string()`
-is `⌥+h`. That is what the HUD and the cow print. gwae is macOS-only, so
-there is no Alt-elsewhere spelling.
+is `⌥+h`. That is what the HUD and the cow print. The labels use the macOS
+glyphs everywhere (`⌥` for the modifier, on Windows the Alt key), so there
+is no second spelling to maintain.
 
 ### 2. Keymap as data
 

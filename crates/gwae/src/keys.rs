@@ -1,9 +1,9 @@
-//! macOS key naming for the one modifier gwae uses.
+//! Key naming for the one modifier gwae uses.
 //!
-//! gwae is macOS-only, so every user-facing string uses the macOS glyphs:
-//! `⌥` (Option), `↵` (Return), `⇧` (Shift), `⌃` (Control), `Cmd+V` for
+//! Every user-facing string uses the macOS glyphs: `⌥` (Option, the Alt key
+//! on Windows), `↵` (Return), `⇧` (Shift), `⌃` (Control), `Cmd+V` for
 //! paste. All bindings go through here so the cheat-sheet HUD spells every
-//! chord the same way.
+//! chord the same way on every platform.
 
 /// The modifier's display name: `⌥` (Option).
 pub fn mod_key() -> &'static str {

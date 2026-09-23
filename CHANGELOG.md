@@ -7,6 +7,7 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Fixed
+- **Windows panes open PowerShell, not a missing `sh`.** Fresh panes and the agent fallback inherited `$SHELL` (else `sh`), which is unset and not on PATH on stock Windows, so a bare `gwae` launch spawned a command ConPTY cannot run. Both paths now share one `tui::default_shell` helper: unix keeps `$SHELL`-else-`sh`, Windows falls back to `powershell.exe`.
 - **A broken remembered agent no longer kills the session at launch.** `harness.json` remembering a command that still resolves but exits immediately (a broken wrapper, a one-shot recorded by accident) made a bare `gwae` launch flash one frame and exit 0 with no explanation: pane 1.1 spawned the command directly, it died, and the last-pane-exits rule quit the mux. Within a 5-second startup grace window, a sole agent pane's instant death now falls back to the gateway picker in the same pane, shows a toast naming the dead command, and drops the poisoned `last`/MRU entries so the next launch is clean. A long-lived harness exiting later still quits gwae as before, and an explicit `gwae run cmd` is untouched (being specific still wins, including fast one-shot commands).
 
 ### Changed

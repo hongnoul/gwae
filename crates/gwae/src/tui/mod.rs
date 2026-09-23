@@ -92,7 +92,7 @@ mod title;
 
 use osc::{osc_status, scan_osc133};
 use shell::agent_gateway_cmd;
-pub use shell::shell_split;
+pub use shell::{default_shell, shell_split};
 use title::emit_title;
 
 /// Rectangle in cells.

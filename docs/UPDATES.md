@@ -6,12 +6,14 @@ this file is the decision and its reasoning (ADR-016).
 
 ## The rule
 
-**Homebrew is the primary install; the curl installer is the supported fallback.**
-`brew install hongnoul/tap/gwae` is the main route (`brew upgrade gwae` to
-update). Without Homebrew, `curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash`
-installs to `~/.local/bin` with checksum verification, PATH setup, and an
-install receipt, and re-running it is the upgrade. Every other route below is
-legacy: detection still tells the truth about old installs.
+**Install with the script for your OS, upgrade the same way.** macOS and
+Linux use the curl installer (`curl -fsSL
+https://hongnoul.github.io/gwae/install.sh | bash`), Windows uses the
+PowerShell installer (`irm https://hongnoul.github.io/gwae/install.ps1 |
+iex`), and Homebrew stays supported on macOS (`brew install
+hongnoul/tap/gwae`, `brew upgrade gwae` to update). Re-running the script
+that installed gwae is the upgrade; every other route below is legacy:
+detection still tells the truth about old installs.
 
 **gwae updates itself the way it was installed, or not at all.**
 

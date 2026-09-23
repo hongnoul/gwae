@@ -1,5 +1,23 @@
 //! Shell word splitting + the agent gateway command (verbatim move from `tui/mod.rs`).
 
+/// The interactive shell a fresh pane runs when no command was given.
+///
+/// Unix reads `$SHELL` (else `sh`). Windows has neither: `$SHELL` is
+/// normally unset and `sh` is not on PATH, so fall back to PowerShell,
+/// which ConPTY hosts natively.
+pub fn default_shell() -> String {
+    #[cfg(windows)]
+    {
+        return std::env::var("SHELL")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|_| "powershell.exe".into());
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "sh".into())
+    }
+}
+
 /// The command an agent pane runs: this very binary's `agent` subcommand.
 ///
 /// `current_exe` rather than a bare `gwae`, so a binary that is not on

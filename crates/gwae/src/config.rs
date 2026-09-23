@@ -429,8 +429,9 @@ mod tests {
     #[test]
     fn cheat_sheet_labels_name_the_platform_modifier() {
         // The cheat-sheet is the only keybinding doc most users ever read,
-        // so its labels must speak the Mac keyboard's vocabulary: `⌥`, never
-        // `Alt`. gwae is macOS-only. The two ⌃+⇧ scroll rows and the host's
+        // so its labels must speak the ⌥ vocabulary, never `Alt` — the
+        // labels use the macOS glyphs on every platform (on Windows that
+        // is the Alt key). The two ⌃+⇧ scroll rows and the host's
         // native paste are exceptions: they name their own modifier.
         let m = keys::mod_key();
         let ctrl = keys::ctrl_key();
