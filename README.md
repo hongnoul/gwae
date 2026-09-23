@@ -28,11 +28,15 @@ or with Homebrew:
 brew install hongnoul/tap/gwae
 ```
 
-## Tutorial
+## Interactive tutorial
 
-⌥ is the Option key. <kbd>⌥</kbd> + <kbd>/</kbd> opens the cheat sheet. Movement is Vim-style <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd>, like a tiling WM.
+<kbd>⌥</kbd> + <kbd>/</kbd> opens the cheat sheet (Option on Mac, Alt elsewhere).
 
-New here? Paste this into an agent pane:
+Vim-style movement, like a tiling WM:
+
+<kbd>h</kbd> left · <kbd>j</kbd> down · <kbd>k</kbd> up · <kbd>l</kbd> right
+
+Paste this into an agent pane:
 
 ```text
 You are teaching me gwae, a scrolling terminal multiplexer. I am inside a
@@ -92,6 +96,6 @@ cargo test --workspace
 | Echo p90  | Keystroke to visible echo in a real PTY harness, 90th pct     | 0.36–0.38 ms | 0.54 ms      |
 | Spawn p50 | New pane request to first painted frame, median               | 0.48–0.52 ms | 0.63–0.70 ms |
 
-## Agent Instructions
+## Agent instructions
 
 if you are an ai agent driving gwae, read [`docs/agents.md`](docs/agents.md) before spawning panes.
