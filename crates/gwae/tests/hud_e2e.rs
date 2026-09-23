@@ -615,6 +615,78 @@ fn a_busy_daemon_session_holds_a_quiet_tile_running() {
     s.kill();
 }
 
+/// A harness pane has no OSC 133 (jcode emits none), so the daemon's
+/// failure verdict is its *only* path to `✗`. A crashed session's tile
+/// must paint the failed glyph, not the generic wants-attention `!` the
+/// settled path produces.
+#[cfg(unix)]
+#[test]
+fn a_failed_daemon_session_paints_the_failed_glyph() {
+    let mut s = spawn_with_double("failed", "chatty", "failed");
+    let _ = s.drain();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let shown = visible(&reveal_raw(&mut s));
+        if shown.contains("✗1") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "tile never showed the failure verdict: {shown:?}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    s.kill();
+}
+
+/// The verdict-then-prompt read that made `Failed` unrenderable before the
+/// sticky rule: a shell-integrated pane emits `133;D;1` (failed) and its
+/// prompt's `133;A` in one burst. The ✗ must survive to the dashboard, and
+/// a new command start must clear it back to a live status.
+#[cfg(unix)]
+#[test]
+fn a_shell_failure_verdict_survives_its_own_prompt() {
+    // The helper emits the exact burst a real fish/zsh integration writes
+    // after a failed command, then waits; on any input it starts a new
+    // "command" (133;C), which must clear the verdict.
+    const FAILING_SHELL: &str = "#!/bin/sh\n\
+        stty -echo\n\
+        printf '\\033]2;pane-failed\\007'\n\
+        printf '\\033]133;D;1\\007\\033]133;A\\007$ '\n\
+        while read -r _; do\n\
+            printf '\\033]133;C\\007working...'\n\
+        done\n";
+    let mut s = Session::start_with_helper("startup_panes = 1\n", FAILING_SHELL, 140, true);
+    let _ = s.drain();
+    // The ✗ verdict must reach the dashboard tile and stick there.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let shown = visible(&reveal_raw(&mut s));
+        if shown.contains("✗1") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the failure verdict never survived the prompt: {shown:?}"
+        );
+    }
+    // A new command start clears it: the pane moved on. (The helper is a
+    // plain pane, so `133;C` reads neutral `·`, not the agent-only `»`.)
+    s.send(b"\r");
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let shown = visible(&reveal_raw(&mut s));
+        if !shown.contains("✗1") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a new command must clear the stale verdict: {shown:?}"
+        );
+    }
+    s.kill();
+}
+
 /// Reveal the dashboard until `cond` holds on the emulator screen.
 /// Re-sending the chord is free (each press re-opens the hold), so a loaded
 /// runner that catches a mid-paint frame just retries instead of flaking.
