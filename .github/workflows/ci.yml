@@ -19,6 +19,7 @@ jobs:
       matrix:
         os: [macos-14, macos-15, ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
       - name: Install Rust
@@ -33,4 +34,10 @@ jobs:
       - name: check
         run: cargo check --workspace
       - name: test
+        if: runner.os != 'Windows'
         run: cargo test --workspace
+      # The e2e suites drive real PTYs with unix shells and hang under
+      # ConPTY, so Windows runs the unit tests only.
+      - name: test (unit only)
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --lib --bins
