@@ -2,8 +2,7 @@
 
 Copy-pasteable `gwae.toml` configs. Drop one at
 `~/.config/gwae/gwae.toml` (or `$XDG_CONFIG_HOME/gwae/gwae.toml`) and
-gwae live-reloads the config file while running. All keys are optional;
-see [docs/CONFIG.md](../docs/CONFIG.md) for every key and default.
+gwae live-reloads the config file while running. All keys are optional.
 Chrome is retro (true-black panels, functional colors) unless overridden under `[theme]`.
 
 | File | For |

@@ -205,7 +205,6 @@ gwae doctor           # check config</code></pre>
       <section>
         <h2>Why not tmux?</h2>
         <p>Choose gwae when you want readable panes that scroll beyond the screen, rather than more splits in the same space. Keep tmux when you need detach/attach or processes that survive a disconnected terminal. gwae has no session daemon, and an agent's <code>--resume</code> restores its conversation, not its running process.</p>
-        <p><a href="https://github.com/hongnoul/gwae/blob/main/docs/COMPARISON.md">Compare layouts and tradeoffs</a>.</p>
       </section>
 
       <section>
@@ -232,9 +231,8 @@ gwae doctor           # check config</code></pre>
 
       <section>
         <h2>Keys</h2>
-        <p>All chords use <code>⌥</code> (Option). Other keys go to the focused pane.</p>
+        <p>All chords use <code class="mod">⌥</code> (<span class="mod-name">Option</span>). Other keys go to the focused pane.</p>
         <pre><code>⌥+Enter        new column to right of focus
-⌥+Shift+Enter  new strip below
 ⌥+;            spawn agent
 ⌥+h/j/k/l      focus left/down/up/right
 ⌥+Shift+h/j/k/l move pane
@@ -243,7 +241,7 @@ gwae doctor           # check config</code></pre>
 ⌥+q            kill pane
 click          focus pane
 drag           select and copy</code></pre>
-        <p>Full key reference: press <code>⌥+/</code> in gwae. <a href="https://github.com/hongnoul/gwae/blob/main/docs/KEYBINDS.md">Keybinding design notes</a>.</p>
+        <p>Full key reference: press <code>⌥+/</code> in gwae.</p>
       </section>
 
       <section>
@@ -253,17 +251,6 @@ drag           select and copy</code></pre>
 theme = "catppuccin-mocha"
 default_agent = "claude"
 startup_panes = 1</code></pre>
-        <p><a href="https://github.com/hongnoul/gwae/blob/main/docs/CONFIG.md">docs/CONFIG.md</a></p>
-      </section>
-
-      <section>
-        <h2>Docs</h2>
-        <p>
-          <a href="https://github.com/hongnoul/gwae/blob/main/docs/WHY.md">Why</a> ·
-          <a href="https://github.com/hongnoul/gwae/blob/main/docs/ARCHITECTURE.md">Architecture</a> ·
-          <a href="https://github.com/hongnoul/gwae/blob/main/docs/LAYOUT-SPEC.md">Layout spec</a> ·
-          <a href="https://github.com/hongnoul/gwae/blob/main/docs/COMPARISON.md">Comparison</a>
-        </p>
       </section>
 
       <footer>
@@ -283,6 +270,19 @@ startup_panes = 1</code></pre>
           status.textContent = 'Copy unavailable. Select the command above to copy it.';
         }
       });
+      // Show the modifier key for the visitor's OS: ⌥/Option on macOS and
+      // iOS, Alt elsewhere. The Keys section is the only place chords are
+      // listed, so only it needs rewriting.
+      (() => {
+        const platform = (navigator.userAgentData && navigator.userAgentData.platform)
+          || navigator.platform || '';
+        if (/mac|iphone|ipad|ipod/i.test(platform)) return;
+        document.querySelectorAll('.mod').forEach((el) => { el.textContent = 'Alt'; });
+        document.querySelectorAll('.mod-name').forEach((el) => { el.textContent = 'Alt'; });
+        document.querySelectorAll('section pre code').forEach((el) => {
+          el.textContent = el.textContent.replaceAll('⌥', 'Alt');
+        });
+      })();
     </script>
   </body>
 </html>

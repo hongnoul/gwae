@@ -18,10 +18,11 @@ from it. This keeps the codebase clean.
 
 Layout/behavior changes are spec-first:
 
-1. Layout changes require a `docs/LAYOUT-SPEC.md` PR first (the spec is
-   normative; when in doubt, the spec wins).
-2. Then the code PR links to it and adds/updates the relevant `proptest`
-   invariants in `crates/gwae-layout/tests/invariants.rs`.
+1. State the intended behavior in the PR description before changing code; the
+   README's layout model (fixed-width columns, viewport scroll-snap) is the
+   normative contract.
+2. Then the code PR adds/updates the relevant `proptest` invariants in
+   `crates/gwae-layout/tests/invariants.rs`.
 
 ## What to work on
 

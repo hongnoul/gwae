@@ -143,7 +143,7 @@ impl Preset {
 /// ```
 ///
 /// The derived enum representation only ever accepted `{ Preset = "Half" }`,
-/// which is nobody's idea of a config file and did not match `docs/CONFIG.md`.
+/// which is nobody's idea of a config file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum WireWidth {
