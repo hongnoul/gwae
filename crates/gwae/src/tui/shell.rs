@@ -9,8 +9,9 @@ pub fn default_shell() -> String {
     #[cfg(windows)]
     {
         return std::env::var("SHELL")
+            .ok()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|_| "powershell.exe".into());
+            .unwrap_or_else(|| "powershell.exe".into());
     }
     #[cfg(not(windows))]
     {
