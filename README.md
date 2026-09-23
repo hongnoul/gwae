@@ -48,18 +48,14 @@ irm https://hongnoul.github.io/gwae/install.ps1 | iex
 
 ## tutorial
 
-paste this into a scratch pane and work through it. ten minutes, every power feature.
-
 ```text
-gwae tutorial.
-
 SETUP
   run: gwae init (guided setup), gwae doctor (health check, exit 0 when ok).
   config: ~/.config/gwae/gwae.toml, all keys optional, live-reloads on save.
 
 1. SCROLL, DON'T SHRINK
   press ⌥+Enter 6 times. the viewport scrolls right; every pane keeps
-  its width. tmux would have squeezed all six onto one screen.
+  its width.
 
 2. MOVE LIKE VIM
   ⌥+h/l: focus left/right. ⌥+k/j: focus up/down, crossing strips.
@@ -82,9 +78,6 @@ SETUP
 6. KNOW EVERYTHING
   ⌥+/: cheat sheet. ⌥+w: keep-awake toggle (macOS). ⌥+q: close pane,
   ⌥+Shift+q: quit. last pane exiting quits gwae.
-
-done when: six panes open, you jumped to a stuck one with ⌥+g,
-and doctor reports healthy.
 ```
 
 ## thanks
