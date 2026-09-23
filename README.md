@@ -44,27 +44,41 @@ Copy and paste following into your preferred agent harness pane in gwae:
 
 ```text
 You are teaching me gwae, a scrolling terminal multiplexer. I am inside a
-gwae pane talking to you. Walk me through each step below one at a time:
-explain what to press, wait for me to confirm it worked, then move on.
-Do not skip ahead and do not dump all steps at once.
+gwae pane talking to you. I am a beginner: assume I know nothing beyond
+typing in a terminal. Walk me through each step below one at a time. For
+each step, tell me exactly what to press, what I should see, and how to
+confirm it worked. Wait for my confirmation before moving on. If something
+does not work, stop and help me fix it before continuing. Do not skip
+ahead and do not dump all steps at once.
 
-Setup: gwae init (guided setup), gwae doctor (health check, exit 0 when ok).
-Config: ~/.config/gwae/gwae.toml, all keys optional, live-reloads on save.
-
-1. Open panes: have me press ⌥+Enter 6 times. Point out the
-viewport scrolling right while every pane keeps its width.
-2. Move focus: have me try ⌥+h/l (left/right) and ⌥+k/j (up/down,
-crossing strips). Mention click-to-focus, drag-to-copy, wheel scroll.
-3. Reshape: have me try ⌥+r (cycle width), ⌥+f (full-width toggle),
-⌥+b (split below), ⌥+Shift+Enter (new row), ⌥+Shift+h/l (move pane).
-4. Spawn agents: have me press ⌥+; to spawn an agent (first press offers what
-is installed and remembers it). Mention ⌥+Shift+; (picker), gwae run
-"claude" (CLI start), ⌥+d (spawn directory).
-5. Find stuck panes: have me hold ⌥ for the dashboard (»
-working, ! needs input, ✗ failed), then ⌥+g to jump to the neediest
-pane. Mention clicking a tile focuses it.
-6. Help and quit: show ⌥+/ (cheat sheet), ⌥+w (keep-awake, macOS),
-⌥+q (close pane), ⌥+Shift+q (quit; last pane exiting quits gwae).
+0. Fix the modifier key first. Nothing below works without this. Have me
+hold ⌥ and press h. If focus moves left, it works. If a special character
+types instead, tell me to set Option to act as Meta in my terminal
+(Terminal.app: Preferences, Profiles, Keyboard, Use Option as Meta Key;
+iTerm2, Ghostty, WezTerm have the equivalent), then retry. Do not proceed
+until ⌥+h moves focus.
+1. Open a pane: have me press ⌥+Enter once. Confirm a new shell pane
+appears to the right.
+2. Open more: have me press ⌥+Enter until there are 6 panes. Point out
+the viewport scrolling right while every pane keeps its width.
+3. Move: have me press ⌥+h and ⌥+l to move left and right, then ⌥+k
+and ⌥+j for up and down. Confirm the focus ring follows.
+4. Reshape: have me press ⌥+r to cycle the focused column's width, then
+⌥+b to split below, then ⌥+Shift+Enter for a new row. Mention ⌥+f
+(full width) and ⌥+Shift+h/l (move pane) only after these work.
+5. Agents: have me press ⌥+; to spawn an agent (first press offers what
+is installed and remembers it). Mention ⌥+Shift+; (picker), ⌥+d (spawn
+directory), and gwae run "claude" (CLI start) after.
+6. Stuck panes: have me hold ⌥ for the dashboard (» working, ! needs
+input, ✗ failed), then ⌥+g to jump to the neediest pane. Mention
+clicking a tile focuses it.
+7. Help and quit: show ⌥+/ (cheat sheet), ⌥+q (close pane),
+⌥+Shift+q (quit; last pane exiting quits gwae). Mention ⌥+w
+(keep-awake, macOS) last.
+8. Health: only now, have me type exit in panes until one shell is left,
+then run gwae doctor in it and confirm exit 0. If anything fails, run
+gwae init. Mention ~/.config/gwae/gwae.toml (all keys optional,
+live-reloads) only here, at the end.
 ```
 
 ## Development
