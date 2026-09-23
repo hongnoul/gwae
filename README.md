@@ -44,7 +44,7 @@ brew install hongnoul/tap/gwae
 | ------- | --- | ------------ |
 | Heads-up&nbsp;display | hold ⌥ | Live agent status minimap over standard OSC&nbsp;133 with Running, Idle, and Failed states |
 | Smart&nbsp;jump | ⌥+g | Cycles through Idle panes with Failed states ranked first |
-| Hatchery | ⌥+d | Opens the spawn-directory picker to choose where the next agent process starts |
+| Hatchery | ⌥+d | Opens the spawn-directory picker to choose where the next pane process starts |
 | Agent&nbsp;selector | ⌥+Shift+; | Opens the harness picker to spawn a specific agent instead of your default choice |
 | Drag&nbsp;to&nbsp;copy | drag | Left-drag selects and copies on release via pbcopy with OSC 52 fallback for remote sessions |
 | Caffeinate | ⌥+w | Toggles the macOS caffeinate assertion so a long-running job never sleeps mid-task |
