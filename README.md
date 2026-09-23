@@ -1,54 +1,58 @@
-<div align="center">
-
 # gwae
 
-[![Latest Release](https://badgen.net/github/release/hongnoul/gwae?icon=github)](https://github.com/hongnoul/gwae/releases)
-[![CI](https://github.com/hongnoul/gwae/actions/workflows/ci.yml/badge.svg)](https://github.com/hongnoul/gwae/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+  [website](https://hongnoul.github.io/gwae/) · [install](#install) · [quick start](#quick-start) · [docs](#docs)
 
-**Infinite scroll terminal multiplexer for macOS**
+---
 
-[Install](#install) · [Try it in 30 seconds](#try-it-in-30-seconds) · [Website](https://hongnoul.github.io/gwae/) · [Releases](https://github.com/hongnoul/gwae/releases)
+![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
 
-<img src="docs/assets/gwae-demo.gif" alt="gwae demo: agents on an infinite no-shrink strip grid" width="900">
+**the infinite-scroll terminal multiplexer for macOS.**
 
-</div>
+- **panes never shrink** — open more columns and the viewport scrolls instead of squeezing them, like niri. widths stay fixed and scroll snaps to column boundaries, no slivers. [layout spec →](docs/LAYOUT-SPEC.md)
+- **never hunt for the stuck one** — every pane is marked `»` working, `!` needs input, `✓` done, `✗` failed. hold `⌥` for the dashboard, `⌥+g` jumps to the pane that needs you. [agents →](docs/agents.md)
 
-## Install
+  ![gwae attention demo: hold Option for the dashboard, tap Option-G to jump to the pane that needs you](docs/assets/gwae-attention.gif)
 
-macOS only. Homebrew is the primary install and works in the same terminal right after install.
+  [watch the attention demo as MP4](docs/assets/gwae-attention.mp4)
+
+- **runs what you already run** — claude code, codex, shells, TUIs. `⌥+;` spawns your agent and remembers your pick; `gwae run` starts it from the CLI. [why gwae →](docs/WHY.md)
+- **keyboard and mouse, both first-class** — option-key chords *and* click, drag-to-copy, wheel scroll. [keybinds →](docs/KEYBINDS.md)
+- **macOS native** — `pbcopy` clipboard, `caffeinate` keep-awake, CoreGraphics option-key poll, focus fixes. [comparison →](docs/COMPARISON.md)
+- **one rust binary** — runs in whatever terminal you already use. [architecture →](docs/ARCHITECTURE.md)
+
+---
+
+## install
+
+macOS only. Homebrew is the primary install:
 
 ```bash
 brew install hongnoul/tap/gwae
 ```
 
-No Homebrew? The curl installer lands in `~/.local/bin`, adds it to your shell PATH, and prints the one line that activates it in the current terminal:
+or the curl installer, which lands in `~/.local/bin` and wires up your shell PATH:
 
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
-Upgrade the same way you installed (`brew upgrade gwae`, or re-run the installer):
+then start it where the work lives:
 
 ```bash
-brew upgrade gwae
+gwae
 ```
 
-`gwae doctor` prints the detected install source and the upgrade route. Building from source (`cargo build`, `cargo install --path`) works for development but is not a supported install. If `command -v gwae` points somewhere other than Homebrew after installing, an older copy earlier on PATH is shadowing it: remove it or reorder PATH so `brew install` wins.
+run `gwae init` for guided setup and `gwae doctor` to check config. upgrade the same way you installed (`brew upgrade gwae`, or re-run the installer). if `command -v gwae` points somewhere other than Homebrew after installing, an older copy earlier on PATH is shadowing it. [quick start →](#quick-start)
 
-## Try it in 30 seconds
+## quick start
 
-After installing, run `gwae`. On first launch, dismiss the help overlay with Escape and finish the setup in the first pane. No agent account needed: skip the agent choice for a shell-only test.
+on first launch, dismiss the help overlay with Escape. no agent account needed: skip the agent choice for a shell-only test.
 
-1. Press `⌥+Enter` a few times to add shell panes. Keep going past the screen edge: the viewport scrolls, the panes keep their width.
-2. Use `⌥+h` / `⌥+l` to move left / right. Press `⌥+r` to cycle the focused column's width.
-3. Press `⌥+/` for help. Type `exit` in each shell when you're done.
+press `⌥+Enter` a few times to add shell panes. keep going past the screen edge: the viewport scrolls, the panes keep their width. use `⌥+h` / `⌥+l` to move left / right, `⌥+r` to cycle the focused column's width, `⌥+/` for help. type `exit` in each shell when you're done.
 
-If `⌥` types special characters instead of triggering shortcuts, set Option to act as Meta in your terminal (Terminal.app: Preferences → Profiles → Keyboard → Use Option as Meta Key; iTerm2 / Ghostty / WezTerm have the equivalent). `gwae doctor` checks gwae's configuration.
+if `⌥` types special characters instead of triggering shortcuts, set Option to act as Meta in your terminal (Terminal.app: Preferences → Profiles → Keyboard → Use Option as Meta Key; iTerm2 / Ghostty / WezTerm have the equivalent).
 
-### Bring your agents
-
-Use an already-installed CLI agent, or run your usual shell tools:
+bring your agents:
 
 ```bash
 gwae init             # guided setup, safe to re-run
@@ -57,68 +61,29 @@ gwae run "codex"      # or Codex CLI
 gwae doctor           # check config and setup
 ```
 
-New columns appear to the right of focus. `⌥+;` spawns your agent — first press remembers your pick (a lone install launches itself), later presses go straight there. `⌥+Shift+;` always opens the picker instead.
+config lives at `~/.config/gwae/gwae.toml` (`$XDG_CONFIG_HOME/gwae/gwae.toml`), all keys optional. full key reference: press `⌥+/` in gwae. [configuration →](docs/CONFIG.md)
 
-## How it works
+## docs
 
-* Panes keep fixed width (`1/4` default, `⌥+r` to cycle width). Rows scroll past the edge without squeeze like in niri.
-* Scroll snaps to column boundaries. No slivers.
-* macOS native: `pbcopy` clipboard, `caffeinate` keep-awake, CoreGraphics Option-key poll, macOS focus fixes.
+everything lives in [docs/](docs/): [why](docs/WHY.md) · [agents](docs/agents.md) · [configuration](docs/CONFIG.md) · [keybinds](docs/KEYBINDS.md) · [architecture](docs/ARCHITECTURE.md) · [layout](docs/LAYOUT-SPEC.md) · [latency](docs/LATENCY.md) · [comparison](docs/COMPARISON.md) · [copy-paste](docs/COPY-PASTE.md) · [spawn dir](docs/SPAWN-DIR.md) · [terminal compatibility](docs/TERMINAL-COMPATIBILITY.md) · [updates](docs/UPDATES.md)
 
-## Agent status
+## thanks
 
-`»` working · `!` needs input · `✓` done · `✗` failed
+if gwae fits your workflow, [give it a star](https://github.com/hongnoul/gwae). found a rough edge? [report it](https://github.com/hongnoul/gwae/issues/new/choose) with your macOS version and terminal so we can improve the next person's first run.
 
-Hold `⌥` for dashboard. `⌥+g` jumps to the pane that needs you.
+## agent instructions
 
-<img src="docs/assets/gwae-attention.gif" alt="gwae Option-G smart-jump: hold Option to reveal the dashboard, tap Option-G to jump to the pane that needs attention" width="900">
+if you are an ai agent driving gwae, read [`docs/agents.md`](docs/agents.md) before spawning panes.
 
-[Watch the attention demo as MP4](docs/assets/gwae-attention.mp4).
+## development
 
-## Keys
-
-All chords use `⌥` (Option). Other keys go to the focused pane.
-
-```
-⌥+Enter        new column to right of focus
-⌥+Shift+Enter  new strip below
-⌥+;            spawn agent
-⌥+Shift+;      pick agent (always opens the picker, even with a remembered pick)
-⌥+h/j/k/l      focus left/down/up/right
-⌥+Shift+h/j/k/l move pane
-⌥+g            jump to pane that needs attention
-⌥+w            keep Mac awake (keep-awake badge on the Option HUD)
-⌥+/            help
-⌥+q            kill pane
-click          focus pane
-drag           select and copy
-wheel          scroll this pane's history (child TUIs keep their own)
-Ctrl+Shift+J/K scroll this pane's history three lines, like jcode's default (in an agent pane the harness keeps the chord and its own speed)
-Ctrl+J/K       always reach the pane (jcode: prompt jump); gwae never claims them
+```bash
+git clone https://github.com/hongnoul/gwae
+cd gwae
+cargo build
+cargo test --workspace
 ```
 
-Full key reference: press `⌥+/` in gwae. [Keybinding design notes](docs/KEYBINDS.md).
+## license
 
-## Config
-
-File: `~/.config/gwae/gwae.toml` (`$XDG_CONFIG_HOME/gwae/gwae.toml`). All keys optional.
-
-```toml
-default_column_width = "quarter"
-startup_panes = 1
-default_agent = "claude"
-```
-
-See [docs/CONFIG.md](docs/CONFIG.md).
-
-## Docs
-
-[Why gwae](docs/WHY.md) · [Architecture](docs/ARCHITECTURE.md) · [Layout spec](docs/LAYOUT-SPEC.md) · [Latency](docs/LATENCY.md) · [Comparison](docs/COMPARISON.md)
-
-## Help gwae grow
-
-If gwae fits your workflow, [give it a star](https://github.com/hongnoul/gwae). Found a rough edge? [Report it](https://github.com/hongnoul/gwae/issues/new/choose) with your macOS version and terminal so we can improve the next person's first run.
-
-## License
-
-[MIT](LICENSE)
+gwae is licensed under the [MIT](LICENSE) license.
