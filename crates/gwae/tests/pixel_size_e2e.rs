@@ -608,8 +608,17 @@ fn hot_reload_inherits_live_pty_and_preserves_pixel_query_parity() {
     session.query(0, "status", size);
     let (source, destination) = session.reload_binary.as_ref().unwrap();
     install_binary(source, destination);
+    // The adoption repaint is an observable size change now: the new image
+    // grows every adopted pane by one row, lets the child see it, and then
+    // restores the true size (no bytes are written to the child; Ctrl-L was
+    // input and wrong). The helper records both transitions, and that pair is
+    // the evidence a real adoption nudged this pane. Pixel metrics are not
+    // asserted on the grown row: an adopted pane's pixels start zeroed and are
+    // refreshed by the sizing pass only after the nudge resolves.
+    session.wait_line(0, &format!("SIZE {} {} ", size.rows + 1, size.cols));
+    session.wait_size(0, size);
+    eprintln!("observed real adoption repaint nudge: grow one row, restore");
     let deadline = Instant::now() + timeout();
-    let mut saw_repaint = false;
     loop {
         let sequence = session.request(0, "cursor");
         let line = session.wait_line(0, &format!("QUERY {sequence} "));
@@ -617,18 +626,7 @@ fn hot_reload_inherits_live_pty_and_preserves_pixel_query_parity() {
         let reply = line
             .strip_prefix(&prefix)
             .expect("geometry survives reload");
-        // The real adoption path also sends Ctrl+L to repaint the child. A
-        // probe in flight during exec may be lost, leaving just this input.
-        // Observe it explicitly rather than pretending it is a query reply.
-        if reply.contains("0c") {
-            assert!(!saw_repaint, "only one reload repaint is expected");
-            assert_eq!(reply.matches("0c").count(), 1);
-            saw_repaint = true;
-            eprintln!("observed real adoption repaint input: {line}");
-        }
-        let reply = reply.replace("0c", "");
         if reply == hex(b"\x1b[1;1R") {
-            assert!(saw_repaint, "new grid must follow real PTY adoption");
             assert_eq!(
                 session.wait_line(0, &format!("PROCESS {sequence} ")),
                 format!("PROCESS {sequence} {helper_pid}"),
@@ -637,8 +635,10 @@ fn hot_reload_inherits_live_pty_and_preserves_pixel_query_parity() {
             eprintln!("observed reconstructed emulator after reload: {line}");
             break;
         }
+        // A probe in flight during the exec can be lost outright, leaving an
+        // empty reply; before the swap the old emulator still answers 3;7.
         assert!(
-            reply == hex(b"\x1b[3;7R") || (reply.is_empty() && saw_repaint),
+            reply == hex(b"\x1b[3;7R") || reply.is_empty(),
             "unexpected transition response: {line}"
         );
         assert!(Instant::now() < deadline, "never observed a real reload");

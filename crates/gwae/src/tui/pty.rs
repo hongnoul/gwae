@@ -611,6 +611,11 @@ pub(crate) fn nudge_repaint(panes: &mut HashMap<PaneId, PtyPane>) -> RepaintRest
         };
         if p.master.resize(grown).is_ok() {
             pending.push((*id, p.pty_size));
+            // Record what the kernel now has, so the state stays honest. The
+            // sizing pass in the event loop must also *skip* covered panes
+            // (see [`RepaintRestore::covers`]): correcting the "wrong" size
+            // right back would collapse the nudge into case 3 above.
+            p.pty_size = grown;
         }
     }
     RepaintRestore {
@@ -659,6 +664,17 @@ impl RepaintRestore {
         !self.pending.is_empty()
     }
 
+    /// Whether this pane is mid-nudge, deliberately one row taller.
+    ///
+    /// The event loop's sizing pass must leave such a pane alone: it would
+    /// otherwise "correct" the grown size on the very next iteration, before
+    /// the child was ever scheduled, which collapses the nudge into the
+    /// unobservable back-to-back change it exists to avoid (case 3 in
+    /// [`nudge_repaint`]).
+    pub(crate) fn covers(&self, id: PaneId) -> bool {
+        self.pending.iter().any(|(pid, _)| *pid == id)
+    }
+
     /// When the restore is due, so the caller can bound its wait and not
     /// oversleep past it.
     pub(crate) fn due_at(&self) -> Instant {
@@ -675,7 +691,13 @@ impl RepaintRestore {
         }
         for (id, size) in self.pending.drain(..) {
             if let Some(p) = panes.get_mut(&id) {
-                let _ = p.master.resize(size);
+                if p.master.resize(size).is_ok() {
+                    // An adopted pane's stored size has zeroed pixel metrics
+                    // on purpose; writing it back makes the sizing pass (which
+                    // no longer skips this pane) reassert the real metrics in
+                    // this same iteration.
+                    p.pty_size = size;
+                }
             }
         }
         true

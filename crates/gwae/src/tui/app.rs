@@ -2065,6 +2065,13 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     dirty = true;
                 }
                 p.grid.set_cell_size(cell_pixels.width, cell_pixels.height);
+                // A pane mid-repaint-nudge is deliberately one row taller;
+                // "correcting" it here before the child is scheduled would
+                // collapse the nudge into an unobservable no-op and leave an
+                // adopted pane blank. The restore reasserts the true size.
+                if repaint_restore.covers(pid) {
+                    continue;
+                }
                 let pty_size = cell_pixels.pty_size(size.cols, size.rows);
                 if p.pty_size != pty_size {
                     match p.master.resize(pty_size) {

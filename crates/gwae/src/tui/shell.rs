@@ -7,16 +7,13 @@
 /// which ConPTY hosts natively.
 pub fn default_shell() -> String {
     #[cfg(windows)]
-    {
-        return std::env::var("SHELL")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "powershell.exe".into());
-    }
+    const FALLBACK: &str = "powershell.exe";
     #[cfg(not(windows))]
-    {
-        std::env::var("SHELL").unwrap_or_else(|_| "sh".into())
-    }
+    const FALLBACK: &str = "sh";
+    std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| FALLBACK.into())
 }
 
 /// The command an agent pane runs: this very binary's `agent` subcommand.
