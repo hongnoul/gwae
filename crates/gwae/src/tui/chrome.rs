@@ -2491,7 +2491,7 @@ mod tests {
             let dstart = drow.find(expect).unwrap() - 1;
             assert_eq!(
                 dstart,
-                (60 * 3 / 4).saturating_sub(badge_len / 2),
+                (60usize * 3 / 4).saturating_sub(badge_len / 2),
                 "{pill:?} must dodge keep-awake, got {drow:?}"
             );
             assert!(
