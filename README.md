@@ -80,12 +80,6 @@ SETUP
   ⌥+Shift+q: quit. last pane exiting quits gwae.
 ```
 
-## thanks
-
-if gwae fits your workflow, [give it a star](https://github.com/hongnoul/gwae). found a rough edge? [report it](https://github.com/hongnoul/gwae/issues/new/choose) with your OS version and terminal so we can improve the next person's first run.
-
-gwae is licensed under the [MIT](LICENSE) license.
-
 ## agent instructions
 
 if you are an ai agent driving gwae, read [`docs/agents.md`](docs/agents.md) before spawning panes.
