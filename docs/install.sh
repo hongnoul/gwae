@@ -24,9 +24,9 @@ else
   C_BOLD='' C_DIM='' C_GREEN='' C_RED='' C_RESET=''
 fi
 
-say()  { printf '  %s\n' "$*"; }
-ok()   { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
-die()  { printf '  %s✗ %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
+say()  { printf '  %s>%s %s\n' "$C_DIM" "$C_RESET" "$*"; }
+ok()   { printf '  %s>%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+die()  { printf '  %s> %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
 
 banner() {
   printf '\n%s  ▄▄▄▄ ▄ ▄%s\n%s   ▄ █ █▄█%s   %sgwae installer%s\n%s   █ █ █ █%s   %spanes that never shrink%s\n%s   █ ▀ █ █%s   %sgithub.com/hongnoul/gwae%s\n%s  ▀▀▀▀ ▀ ▀%s\n\n' \
@@ -253,4 +253,4 @@ add_to_path() {
 
 add_to_path
 
-printf '\n  %s✓ welcome to gwae.%s type %sgwae%s and you'"'"'re in.\n\n' "$C_GREEN" "$C_RESET" "$C_BOLD" "$C_RESET"
+printf '\n  %s>%s ready. run %sgwae%s to get started.\n\n' "$C_GREEN" "$C_RESET" "$C_BOLD" "$C_RESET"
