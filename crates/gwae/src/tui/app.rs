@@ -686,8 +686,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 harness_state.last.clear();
                                 harness_state.mru.retain(|c| c != &died);
                                 if let Some(path) = harness_state_path.as_deref() {
-                                    let _ =
-                                        crate::agent::save_harness_state(path, &harness_state);
+                                    let _ = crate::agent::save_harness_state(path, &harness_state);
                                 }
                             }
                             panes.remove(&pid);
