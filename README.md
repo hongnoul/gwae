@@ -28,19 +28,17 @@
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
 ```
 
-or `brew install hongnoul/tap/gwae`.
+or with Homebrew:
+
+```bash
+brew install hongnoul/tap/gwae
+```
 
 ### Windows
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "irm https://hongnoul.github.io/gwae/install.ps1 | iex"
 ```
-
-This installs `gwae.exe` into `%LOCALAPPDATA%\gwae\bin`, verifies the
-checksum, and adds that directory to your user `PATH` (no admin rights
-needed). Fresh terminals pick it up automatically. Override the directory
-with `$env:GWAE_INSTALL_DIR`, or set `$env:GWAE_NO_MODIFY_PATH = "1"` to
-skip the PATH edit.
 
 ### Linux
 
