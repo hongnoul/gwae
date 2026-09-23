@@ -3,6 +3,7 @@
 
 <p align="center">
   <img src="docs/assets/gwae.svg" alt="gwae" width="100" />
+  **Light Weight, Light Speed**
 </p>
 
 <p align="center">
@@ -12,8 +13,6 @@
   <a href="https://github.com/hongnoul/gwae/releases/latest"><img src="https://img.shields.io/github/v/release/hongnoul/gwae?label=release&labelColor=black&color=white" alt="latest stable release" /></a>
 
   ![gwae demo: agents on an infinite no-shrink strip grid](docs/assets/gwae-demo.gif)
-
-  **Light weight, light speed**
 </p>
 
 
