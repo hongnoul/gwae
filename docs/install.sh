@@ -29,9 +29,10 @@ ok()   { printf '  %s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
 die()  { printf '  %s✗ %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
 
 banner() {
-  printf '\n%s  ▄▄▄▄ ▄ ▄%s\n%s   ▄ █ █▄█%s   %sgwae installer%s\n%s   █ █ █ █%s   %sgithub.com/hongnoul/gwae%s\n%s   █ ▀ █ █%s\n%s  ▀▀▀▀ ▀ ▀%s\n\n' \
+  printf '\n%s  ▄▄▄▄ ▄ ▄%s\n%s   ▄ █ █▄█%s   %sgwae installer%s\n%s   █ █ █ █%s   %spanes that never shrink%s\n%s   █ ▀ █ █%s   %sgithub.com/hongnoul/gwae%s\n%s  ▀▀▀▀ ▀ ▀%s\n\n' \
     "$C_BOLD" "$C_RESET" "$C_BOLD" "$C_RESET" "$C_BOLD" "$C_RESET" \
-    "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET" "$C_BOLD" "$C_RESET" \
+    "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET" \
+    "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET" \
     "$C_BOLD" "$C_RESET"
 }
 

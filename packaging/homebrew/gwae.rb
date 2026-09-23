@@ -25,8 +25,8 @@ class Gwae < Formula
       ▄▄▄▄ ▄ ▄
        ▄ █ █▄█   welcome to gwae — panes that never shrink.
        █ █ █ █   installed and on your PATH, nothing to configure.
-       █ ▀ █ █
-      ▀▀▀▀ ▀ ▀   type `gwae` and you're in.
+       █ ▀ █ █   type `gwae` and you're in.
+      ▀▀▀▀ ▀ ▀
     EOS
   end
 
