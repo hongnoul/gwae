@@ -153,8 +153,9 @@ pub(crate) fn stamp_dev_badge(out: &mut [Cell], cols: u16, rect: super::Rect, pa
     }
 }
 
-/// Stamp the dev autobuild pill onto the top frame row of `rect`, right of
-/// center so it never collides with the keep-awake badge. Dim by design:
+/// Stamp the dev autobuild pill onto the top frame row of `rect`. Centered
+/// when the keep-awake badge is absent; shifted right of center only while
+/// keep-awake owns the center, so the two never collide. Dim by design:
 /// the build is background work and the panes keep showing the last good
 /// image. No-op when the panel is too narrow.
 pub(crate) fn stamp_build_pill(
@@ -163,6 +164,7 @@ pub(crate) fn stamp_build_pill(
     rect: super::Rect,
     pal: &Palette,
     pill: BuildPill,
+    keep_awake: bool,
 ) {
     let badge: &str = match pill {
         BuildPill::Building => " building… ",
@@ -175,8 +177,12 @@ pub(crate) fn stamp_build_pill(
         return;
     }
     let y = rect.y as usize;
-    // Right-of-center: keep-awake owns the center.
-    let start = rect.x as usize + (rect.w as usize * 3 / 4).saturating_sub(n / 2);
+    // Centered by default: right-of-center only to dodge keep-awake.
+    let start = if keep_awake {
+        rect.x as usize + (rect.w as usize * 3 / 4).saturating_sub(n / 2)
+    } else {
+        rect.x as usize + (rect.w as usize - n) / 2
+    };
     for (i, ch) in badge.chars().enumerate() {
         let idx = y * cols as usize + start + i;
         let Some(c) = out.get_mut(idx) else { continue };
@@ -812,7 +818,7 @@ pub(crate) fn paint_center_minimap(
         stamp_dev_badge(out, cols, plan.rect, pal);
     }
     if let Some(pill) = facts.build {
-        stamp_build_pill(out, cols, plan.rect, pal, pill);
+        stamp_build_pill(out, cols, plan.rect, pal, pill, facts.keep_awake);
     }
     if let Some(held) = facts.held.as_deref() {
         stamp_held_note(out, cols, plan.rect, pal, held);
@@ -2456,7 +2462,7 @@ mod tests {
             BuildPill::Failed,
         ] {
             let mut out = vec![Cell::default(); 60 * 8];
-            stamp_build_pill(&mut out, 60, rect, &pal, pill);
+            stamp_build_pill(&mut out, 60, rect, &pal, pill, false);
             let row: String = out[0..60].iter().map(|c| c.ch).collect();
             let expect = match pill {
                 BuildPill::Building => "building",
@@ -2465,6 +2471,33 @@ mod tests {
                 BuildPill::Failed => "build failed",
             };
             assert!(row.contains(expect), "{pill:?} stamps, got {row:?}");
+            // No keep-awake: the pill reads centered on the frame row.
+            let badge_len = match pill {
+                BuildPill::Building => " building… ".chars().count(),
+                BuildPill::Linking => " linking… ".chars().count(),
+                BuildPill::Signing => " signing… ".chars().count(),
+                BuildPill::Failed => " build failed ".chars().count(),
+            };
+            let start = row.find(expect).unwrap() - 1;
+            assert_eq!(
+                start,
+                (60 - badge_len) / 2,
+                "{pill:?} must center without keep-awake, got {row:?}"
+            );
+            // Keep-awake owns the center: the pill dodges right of center.
+            let mut dodged = vec![Cell::default(); 60 * 8];
+            stamp_build_pill(&mut dodged, 60, rect, &pal, pill, true);
+            let drow: String = dodged[0..60].iter().map(|c| c.ch).collect();
+            let dstart = drow.find(expect).unwrap() - 1;
+            assert_eq!(
+                dstart,
+                (60 * 3 / 4).saturating_sub(badge_len / 2),
+                "{pill:?} must dodge keep-awake, got {drow:?}"
+            );
+            assert!(
+                dstart > start,
+                "{pill:?} dodged start must sit right of center, got {drow:?}"
+            );
         }
         // Held note reads on its own row and degrades on tiny frames.
         let mut out = vec![Cell::default(); 60 * 8];
@@ -2483,6 +2516,7 @@ mod tests {
             },
             &pal,
             BuildPill::Building,
+            false,
         );
         assert!(tiny.iter().all(|c| c.ch == ' '), "tiny frame stays clean");
     }
