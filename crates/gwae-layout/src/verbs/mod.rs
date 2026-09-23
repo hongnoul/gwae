@@ -34,7 +34,6 @@ pub enum Action {
     /// layout exactly like `KillPane` does for the focused pane.
     ClosePane(PaneId),
     NewColumn,
-    NewRow,
     SpawnAgent,
     ScrollViewport(i32),
     /// Jump focus directly to a pane anywhere in the grid (smart-jump: the
@@ -66,7 +65,6 @@ impl Layout {
             Action::KillPane => self.apply_kill_pane(viewport, follow),
             Action::ClosePane(pid) => self.apply_close_pane(pid, viewport, follow),
             Action::NewColumn => Ok(self.apply_new_column(viewport, follow)),
-            Action::NewRow => Ok(self.apply_new_row(viewport, follow)),
             Action::SpawnAgent => Ok(self.apply_new_column(viewport, follow)),
             Action::ScrollViewport(d) => Ok(self.apply_scroll(d, viewport)),
             Action::FocusPane(pid) => self.apply_focus_pane(pid, viewport, follow),

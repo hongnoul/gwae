@@ -25,7 +25,6 @@ fn random_actions() -> impl Strategy<Value = Vec<Action>> {
         Just(FocusDown),
         Just(SplitBelow),
         Just(NewColumn),
-        Just(NewRow),
         Just(SpawnAgent),
         Just(MovePaneLeft),
         Just(MovePaneRight),

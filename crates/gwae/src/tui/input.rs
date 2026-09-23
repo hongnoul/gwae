@@ -420,11 +420,11 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
         });
     }
     if ev.code == Enter {
-        return Some(Cmd::Act(if shift {
-            Action::NewRow
-        } else {
-            Action::NewColumn
-        }));
+        if shift {
+            // Unbound: Opt+Shift+Enter belongs to the focused pane.
+            return Some(Cmd::Input(key_bytes(ev)));
+        }
+        return Some(Cmd::Act(Action::NewColumn));
     }
     // Alt+digit/punct not listed above: check the original code directly
     // since those don't need case folding.
@@ -1161,11 +1161,8 @@ mod tests {
                         );
                     }
                 }
-                Trigger::EnterChord { shift } => {
-                    let mut mods = KeyModifiers::ALT;
-                    if shift {
-                        mods |= KeyModifiers::SHIFT;
-                    }
+                Trigger::EnterChord => {
+                    let mods = KeyModifiers::ALT;
                     assert_eq!(
                         handle_key(&KeyEvent::new(KeyCode::Enter, mods)),
                         want,
@@ -1182,6 +1179,17 @@ mod tests {
                             Some(Cmd::Input(_))
                         ),
                         "bare Return must reach the pane, not the layout"
+                    );
+                    // Opt+Shift+Enter is unbound and belongs to the pane too.
+                    assert!(
+                        matches!(
+                            handle_key(&KeyEvent::new(
+                                KeyCode::Enter,
+                                KeyModifiers::ALT | KeyModifiers::SHIFT
+                            )),
+                            Some(Cmd::Input(_))
+                        ),
+                        "shifted Return must reach the pane, not the layout"
                     );
                 }
                 Trigger::ModProse(_) | Trigger::Prose(_) => continue,

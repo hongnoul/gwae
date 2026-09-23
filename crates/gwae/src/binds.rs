@@ -30,11 +30,11 @@ pub enum Trigger {
     /// Labelled from [`crate::keys::ctrl_shift_chord`] so it reads `⌃+⇧+K`
     /// on macOS.
     CtrlShift(char),
-    /// `$mod` + Return, optionally with Shift. Spelled by the platform module
+    /// `$mod` + Return. Spelled by the platform module
     /// so it reads `⌥+↵` on macOS. Machine-checkable
     /// like the character chords: the dispatcher only produces these commands
     /// with the modifier held, so the label must say so.
-    EnterChord { shift: bool },
+    EnterChord,
     /// `$mod` + something the cheat-sheet can only describe in prose (digit
     /// ranges, arrows). Still labelled with the modifier, because pressing the
     /// key alone does nothing.
@@ -101,11 +101,10 @@ impl Bind {
             Trigger::Chord(c) => keys::chord(&c.to_string()),
             Trigger::ShiftChord(c) => keys::shift_chord(&c.to_string()),
             Trigger::CtrlShift(c) => keys::ctrl_shift_chord(&c.to_string()),
-            // The two Enter rows are `$mod` chords like everything else; the
+            // The Enter row is a `$mod` chord like everything else; the
             // label has to carry the modifier or it would read as a bare
             // Return, which just goes to the focused pane.
-            Trigger::EnterChord { shift: false } => keys::chord(keys::enter_key()),
-            Trigger::EnterChord { shift: true } => keys::shift_chord(keys::enter_key()),
+            Trigger::EnterChord => keys::chord(keys::enter_key()),
             Trigger::ModProse(s) => keys::chord(s),
             Trigger::Prose(s) => s.to_string(),
         }
@@ -308,18 +307,11 @@ pub const BINDS: &[Bind] = &[
         effect: Effect::ToggleKeepAwake,
     },
     Bind {
-        trigger: Trigger::EnterChord { shift: false },
+        trigger: Trigger::EnterChord,
         glyph: None,
         group: Group::Panes,
         desc: "new column",
         effect: Effect::Act(Action::NewColumn),
-    },
-    Bind {
-        trigger: Trigger::EnterChord { shift: true },
-        glyph: None,
-        group: Group::Panes,
-        desc: "new row",
-        effect: Effect::Act(Action::NewRow),
     },
 ];
 

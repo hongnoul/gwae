@@ -446,7 +446,7 @@ mod tests {
             match b.trigger {
                 crate::binds::Trigger::Chord(_)
                 | crate::binds::Trigger::ShiftChord(_)
-                | crate::binds::Trigger::EnterChord { .. }
+                | crate::binds::Trigger::EnterChord
                 | crate::binds::Trigger::ModProse(_) => {
                     chords += 1;
                     assert!(label.contains(m), "label {label:?} does not mention {m:?}");

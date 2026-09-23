@@ -723,19 +723,24 @@ fn dashboard_window_follows_focus_past_max_rows() {
     // must follow focus so the focused strip always has a tile, instead of
     // pinning the first rows and stranding focus past line 6.
     //
-    // Kitty CSI-u `ESC[13;4u` is the wire form of Alt+Shift+Enter (13 =
-    // Enter, mods 4 = Alt+Shift); `ESC q`-style chords are deliberate
-    // single presses, as in the kill-repeat test above.
-    const NEW_STRIP: &[u8] = b"\x1b[13;4u";
+    // Strips are created by walking focus down past the last one (niri
+    // workspace semantics): each step opens an empty strip, and spawning a
+    // column (`⌥+Enter`) into it keeps it. `ESC q`-style chords are
+    // deliberate single presses, as in the kill-repeat test above.
     let mut s = Session::start("startup_panes = 1\n");
     let _ = s.drain();
     for _ in 0..7 {
-        s.send(NEW_STRIP);
+        // Step down onto a fresh empty strip, then spawn a column there so
+        // leaving it later does not discard it.
+        s.send(&alt(b'j'));
+        std::thread::sleep(Duration::from_millis(200));
+        s.send(ALT_ENTER);
         std::thread::sleep(Duration::from_millis(250));
     }
     let _ = s.drain();
     // Eight strips exist: the dashboard must say exactly two are cut, which
-    // also proves every Alt+Shift+Enter landed (fewer strips → "+1 strip").
+    // also proves every focus-down plus new-column landed
+    // (fewer strips → "+1 strip").
     // New strips take focus, so the window hangs off the bottom: cut above
     // only, never below.
     let bottom = reveal_until(

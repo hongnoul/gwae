@@ -60,7 +60,7 @@ Mention click-to-focus only after these work.
 lost, remind me ⌥+h/l moves between panes. Point out the viewport
 scrolling right while every pane keeps its width.
 4. Reshape: have me press ⌥+r to cycle the focused column's width, then
-⌥+b to split below, then ⌥+Shift+Enter for a new row. Mention ⌥+f
+⌥+b to split below. Mention ⌥+f
 (full width) and ⌥+Shift+h/l (move pane) only after these work.
 5. Agents: have me press ⌥+; to spawn an agent (first press offers what
 is installed and remembers it). Mention ⌥+Shift+; (picker), ⌥+d (spawn

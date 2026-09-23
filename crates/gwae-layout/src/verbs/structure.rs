@@ -316,18 +316,6 @@ impl Layout {
         self.focused_scroll()
     }
 
-    pub(super) fn apply_new_row(&mut self, viewport: Viewport, follow: FollowScroll) -> i32 {
-        let row = self.new_row();
-        let pane = self.alloc_pane();
-        self.add_column(row, Width::DEFAULT, vec![pane]);
-        self.focus.row = row;
-        self.focus.column = 0;
-        self.focus.pane = 0;
-        self.remember_focus();
-        self.refocus_scroll(viewport, follow);
-        self.focused_scroll()
-    }
-
     pub(super) fn apply_scroll(&mut self, delta: i32, viewport: Viewport) -> i32 {
         // Quantized scrolling: a manual scroll pages to the next/previous
         // stop (column boundary, or the end stop that pins the last column to
