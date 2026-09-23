@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file (keep-a-
 changelog, updated per PR). The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- **The event loop is event-driven; echo latency dropped ~7x.** The main loop used to block only in `event::poll(input_poll_ms)`, draining pane output between polls, so every echoed byte waited out the rest of a poll tick plus a housekeeping pass (~2.5 ms p50 measured in a real-PTY harness). A dedicated input thread now forwards host terminal events into the same channel the PTY readers use, and the loop's single blocking wait (`recv_timeout`) wakes instantly for a keystroke or a pane byte; `input_poll_ms` now paces only periodic work (size re-check, note expiry, status flips). Pane spawn also stopped taxing the keypress: the ⌥+Enter frame paints first and the openpty+fork reconcile runs after the flush, cutting spawn-to-first-frame from ~5 ms to ~0.5 ms. Measured against herdr 0.9.1 in the same harness (3 interleaved rounds, 60 echo samples each): echo p50 0.34 ms vs 0.48–0.50 ms, echo max 0.44–0.91 ms vs 0.64–0.75 ms, spawn p50 0.48–0.52 ms vs 0.63–0.70 ms — gwae leads every metric with no server process.
+
 ## [1.6.1] - 2026-09-22
 
 ### Changed
