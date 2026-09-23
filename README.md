@@ -40,11 +40,11 @@ irm https://hongnoul.github.io/gwae/install.ps1 | iex
 
 ## benchmark
 
-| Metric | gwae | herdr 0.9.1 |
-|---|---|---|
-| Echo p50 | 0.34 ms | 0.48–0.50 ms |
-| Echo p90 | 0.36–0.38 ms | 0.54 ms |
-| Spawn p50 | 0.48–0.52 ms | 0.63–0.70 ms |
+| Metric    | Method                                                        | gwae        | herdr 0.9.1   |
+| --------- | ------------------------------------------------------------- | ----------- | ------------- |
+| Echo p50  | Keystroke to visible echo in a real PTY harness, median       | 0.34 ms     | 0.48–0.50 ms  |
+| Echo p90  | Keystroke to visible echo in a real PTY harness, 90th pct     | 0.36–0.38 ms | 0.54 ms      |
+| Spawn p50 | New pane request to first painted frame, median               | 0.48–0.52 ms | 0.63–0.70 ms |
 
 ## thanks
 
