@@ -6,12 +6,14 @@
 //! plus one line in [`crate::setup::stages`]. Nothing else changes.
 
 mod config_file;
+mod focus;
 mod harness;
 mod latency;
 mod spawn_dir;
 mod updates;
 
 pub use config_file::ConfigFileStage;
+pub use focus::FocusStage;
 pub use harness::HarnessStage;
 pub use latency::LatencyStage;
 pub use spawn_dir::SpawnDirStage;

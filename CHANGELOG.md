@@ -7,6 +7,15 @@ changelog, updated per PR). The format is based on
 ## [1.7.0] - 2026-09-23
 
 ### Fixed
+- **`gwae doctor` now catches the macOS fullscreen focus trap, per terminal.**
+  A terminal in native fullscreen owns its own Space; returning to it can
+  leave the window main-but-not-key, so every keystroke is dropped until a
+  click. The old remedy (a kitty-only NSWorkspace daemon) died with the docs
+  purge and silently stopped mattering when the terminal changed. A new
+  `focus` setup stage detects kitty or Ghostty, reads the config the terminal
+  actually loads, and prints the one-line non-native-fullscreen fix when it
+  is missing. Info-only: gwae never writes another program's config.
+
 - **Windows panes open PowerShell, not a missing `sh`.** Fresh panes and the agent fallback inherited `$SHELL` (else `sh`), which is unset and not on PATH on stock Windows, so a bare `gwae` launch spawned a command ConPTY cannot run. Both paths now share one `tui::default_shell` helper: unix keeps `$SHELL`-else-`sh`, Windows falls back to `powershell.exe`.
 - **A broken remembered agent no longer kills the session at launch.** `harness.json` remembering a command that still resolves but exits immediately (a broken wrapper, a one-shot recorded by accident) made a bare `gwae` launch flash one frame and exit 0 with no explanation: pane 1.1 spawned the command directly, it died, and the last-pane-exits rule quit the mux. Within a 5-second startup grace window, a sole agent pane's instant death now falls back to the gateway picker in the same pane, shows a toast naming the dead command, and drops the poisoned `last`/MRU entries so the next launch is clean. A long-lived harness exiting later still quits gwae as before, and an explicit `gwae run cmd` is untouched (being specific still wins, including fast one-shot commands).
 

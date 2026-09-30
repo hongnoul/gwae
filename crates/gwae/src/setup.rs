@@ -98,6 +98,7 @@ pub fn stages() -> Vec<Box<dyn SetupStage>> {
         Box::new(setup_stages::UpdatesStage),
         Box::new(setup_stages::SpawnDirStage),
         Box::new(setup_stages::LatencyStage),
+        Box::new(setup_stages::FocusStage),
     ]
 }
 
@@ -237,7 +238,7 @@ mod tests {
     fn registry_lists_every_shipped_stage_in_doctor_order() {
         assert_eq!(
             stage_ids(),
-            vec!["config file", "agent", "updates", "spawn dir", "latency",]
+            vec!["config file", "agent", "updates", "spawn dir", "latency", "focus",]
         );
     }
 

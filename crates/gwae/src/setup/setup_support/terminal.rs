@@ -26,6 +26,38 @@ pub fn in_kitty() -> bool {
             .unwrap_or(false)
 }
 
+/// True when running under ghostty, so ghostty-specific advice is relevant.
+pub fn in_ghostty() -> bool {
+    std::env::var_os("GHOSTTY_RESOURCES_DIR").is_some()
+        || std::env::var("TERM_PROGRAM")
+            .map(|t| t.eq_ignore_ascii_case("ghostty"))
+            .unwrap_or(false)
+}
+
+/// The ghostty config files ghostty itself would load, in load order.
+///
+/// On macOS ghostty reads both the XDG path and the Application Support
+/// path; either may carry the setting, so callers check both.
+pub fn ghostty_conf_paths() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let base = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        Some(PathBuf::from(xdg))
+    } else {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config"))
+    };
+    if let Some(base) = base {
+        out.push(base.join("ghostty/config"));
+    }
+    if cfg!(target_os = "macos") {
+        if let Some(home) = std::env::var_os("HOME") {
+            out.push(
+                PathBuf::from(home).join("Library/Application Support/com.mitchellh.ghostty/config"),
+            );
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
