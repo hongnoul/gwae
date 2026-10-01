@@ -58,6 +58,10 @@ func ghosttyRefocus() -> Bool {
 /// skipped exactly when it was needed. `focus` on the already-focused
 /// terminal is idempotent, so the correct move is to assert, wait out the
 /// Space transition, and assert again.
+///
+/// Failures are always logged: a silent daemon with denied Automation
+/// permission looks identical to a working one, and the log is the only
+/// witness. Check `/tmp/gwae-focus-fix.log` when keys still drop.
 func repairFocus() {
     repairLock.lock()
     if Date().timeIntervalSince(lastRepair) < 0.5 {
@@ -74,10 +78,25 @@ func repairFocus() {
         // Let macOS finish the Space transition before the first assert,
         // otherwise the window is not yet on screen to become key.
         Thread.sleep(forTimeInterval: 0.10)
-        ghosttyRefocus()
+        let first = ghosttyRefocus()
         Thread.sleep(forTimeInterval: 0.15)
-        ghosttyRefocus()
+        let second = ghosttyRefocus()
+        if !first && !second {
+            log("warning: osascript focus failed twice; check Automation permission for gwae-focus-fix in System Settings > Privacy & Security > Automation")
+        }
     }
+}
+
+// `--once`: run one repair synchronously and exit. Proves the primitive
+// (Automation permission, scripting bridge) without waiting for a Space
+// switch: `gwae-focus-fix --once; echo $?` should print 0.
+if CommandLine.arguments.contains("--once") {
+    Thread.sleep(forTimeInterval: 0.10)
+    let ok = ghosttyRefocus() || ghosttyRefocus()
+    if !ok {
+        log("warning: --once repair failed; check Automation permission")
+    }
+    exit(ok ? 0 : 1)
 }
 
 let nc = NSWorkspace.shared.notificationCenter

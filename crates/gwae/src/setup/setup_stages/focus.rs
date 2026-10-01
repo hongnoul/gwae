@@ -22,7 +22,7 @@
 //! another program's config file.
 
 use super::super::{Ctx, SetupStage, StageKind};
-use crate::setup::setup_support::{ghostty_conf, kitty_conf, terminal};
+use crate::setup::setup_support::{embed, ghostty_conf, kitty_conf, terminal};
 
 /// Launchd label for the rekey daemon.
 pub const FOCUS_DAEMON_LABEL: &str = "com.gwae.focus-fix";
@@ -50,8 +50,17 @@ enum Probe {
 
 /// Where the compiled daemon lives.
 fn daemon_binary_path() -> Option<std::path::PathBuf> {
+    embed::focus_binary_path()
+}
+
+/// Where the LaunchAgent plist lives.
+fn daemon_plist_path() -> Option<std::path::PathBuf> {
     let home = std::env::var_os("HOME")?;
-    Some(std::path::PathBuf::from(home).join(".local/bin/gwae-focus-fix"))
+    Some(
+        std::path::PathBuf::from(home)
+            .join("Library/LaunchAgents")
+            .join(format!("{FOCUS_DAEMON_LABEL}.plist")),
+    )
 }
 
 /// True when the LaunchAgent is loaded and its binary exists.
@@ -161,8 +170,7 @@ impl SetupStage for FocusStage {
         }
         match p {
             Probe::Ghostty { .. } => vec![
-                "compile the rekey daemon: swiftc -O scripts/macos/gwae-focus-fix.swift -o ~/.local/bin/gwae-focus-fix (from the gwae repo)".into(),
-                "render scripts/macos/com.gwae.focus-fix.plist with your absolute binary path into ~/Library/LaunchAgents/com.gwae.focus-fix.plist, then `launchctl load -w` it".into(),
+                "compile the rekey daemon and load the LaunchAgent (`gwae setup --only focus --yes`)".into(),
                 "allow the one-time Automation prompt (control Ghostty), then re-enter fullscreen".into(),
                 "fallback without a daemon: add `macos-non-native-fullscreen = true` to ~/.config/ghostty/config".into(),
             ],
@@ -173,6 +181,107 @@ impl SetupStage for FocusStage {
             Probe::NotMacos | Probe::Unknown => Vec::new(),
         }
     }
+
+    /// Compile the daemon from the embedded source, write the plist with
+    /// the absolute binary path, and load it. The daemon binary and plist
+    /// are gwae's own install artifacts under `$HOME`; ghostty's config is
+    /// never touched.
+    fn apply(&self, _ctx: &Ctx, _yes: bool) -> Vec<String> {
+        if Self::healthy(&Self::probe()) {
+            return Vec::new();
+        }
+        let (Some(bin), Some(plist)) = (daemon_binary_path(), daemon_plist_path()) else {
+            return vec!["no HOME; cannot place the daemon".to_string()];
+        };
+        if let Some(parent) = bin.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                return vec![format!("could not create {}", parent.display())];
+            }
+        }
+        let src_path = bin.with_extension("swift");
+        if std::fs::write(&src_path, embed::FOCUS_FIX_SWIFT).is_err() {
+            return vec![format!("could not write {}", src_path.display())];
+        }
+        let compiled = std::process::Command::new("swiftc")
+            .args([
+                "-O",
+                &src_path.display().to_string(),
+                "-o",
+                &bin.display().to_string(),
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !compiled {
+            return vec![
+                "swiftc failed; install Xcode command-line tools and re-run".to_string(),
+            ];
+        }
+        let body = embed::render_focus_plist(&bin);
+        if let Some(parent) = plist.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if std::fs::write(&plist, body).is_err() {
+            return vec![format!("compiled {}, but could not write {}", bin.display(), plist.display())];
+        }
+        let _ = std::process::Command::new("launchctl")
+            .args(["bootout", &format!("gui/{}/{}", users_uid(), FOCUS_DAEMON_LABEL)])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        let loaded = std::process::Command::new("launchctl")
+            .args(["bootstrap", &format!("gui/{}", users_uid()), &plist.display().to_string()])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if loaded {
+            vec![format!(
+                "compiled {} and loaded {FOCUS_DAEMON_LABEL}",
+                bin.display()
+            )]
+        } else {
+            // Older launchctl path for compat.
+            let legacy = std::process::Command::new("launchctl")
+                .args(["load", "-w", &plist.display().to_string()])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if legacy {
+                vec![format!(
+                    "compiled {} and loaded {FOCUS_DAEMON_LABEL}",
+                    bin.display()
+                )]
+            } else {
+                vec![format!(
+                    "compiled {}, wrote {}, but `launchctl` load failed",
+                    bin.display(),
+                    plist.display()
+                )]
+            }
+        }
+    }
+}
+
+/// Current user's uid for `launchctl bootstrap gui/<uid>`.
+fn users_uid() -> u32 {
+    // `id -u` is universal on macOS; fall back to 501 (first admin user).
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(501)
 }
 
 #[cfg(test)]

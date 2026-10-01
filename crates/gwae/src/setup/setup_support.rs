@@ -4,7 +4,9 @@
 //! * [`terminal`]: OS and terminal identity every kitty-gated stage needs.
 //! * [`kitty_conf`]: parse one `key value` setting out of kitty's config.
 //! * [`ghostty_conf`]: parse one `key = value` setting out of ghostty's config.
+//! * [`embed`]: install payloads embedded in the binary (focus daemon).
 
+pub mod embed;
 pub mod ghostty_conf;
 pub mod kitty_conf;
 pub mod terminal;
