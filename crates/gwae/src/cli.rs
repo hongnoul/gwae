@@ -25,6 +25,12 @@ pub struct Cli {
     /// works as the shell alias people actually write.
     #[arg(long, global = true, value_name = "PATH")]
     pub dir: Option<String>,
+    /// Start fresh: discard the saved session instead of resuming it.
+    /// Only meaningful with GWAE_SESSION_RESTORE=1 (dev-gated session
+    /// resurrection); the old state is archived to `session.json.bak`,
+    /// never deleted outright.
+    #[arg(long, global = true)]
+    pub new: bool,
 }
 
 #[derive(Debug, Subcommand)]

@@ -52,6 +52,14 @@ fn main() {
 
 fn run(cli: Cli, cfg: Config) -> Result<(), i32> {
     let dir = cli.dir.clone();
+    // `--new` discards the saved session before the TUI looks for it, so a
+    // fresh start is a launch flag rather than a keybind: discarding is rare
+    // and deliberate, and a chord could fat-finger a whole session away.
+    if cli.new {
+        if let Some(path) = session::default_path() {
+            session::discard(&path);
+        }
+    }
     match cli.command.unwrap_or(Command::Run { command: None }) {
         Command::Run { command } => {
             // First run configures in the native terminal, before the TUI

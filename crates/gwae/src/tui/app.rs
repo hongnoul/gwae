@@ -102,6 +102,46 @@ fn spawn_picked_harness(
 }
 
 /// Run the interactive TUI.
+/// Snapshot the live session for `crate::session` persistence.
+///
+/// Cwd is read from each pane's root process at snapshot time (libproc), so
+/// a shell that `cd`-ed since spawn restores where it *is*, not where it
+/// was born. A pane whose pid or cwd is unreadable saves `None` and falls
+/// back to the spawn dir on restore.
+#[allow(clippy::implicit_hasher)]
+fn snapshot_session(
+    layout: &Layout,
+    panes: &HashMap<PaneId, PtyPane>,
+    agent_panes: &HashSet<PaneId>,
+    agent_cmds: &HashMap<PaneId, String>,
+    resume_ids: &HashMap<PaneId, String>,
+    spawn_dir: Option<&std::path::Path>,
+    keep_awake: bool,
+) -> crate::session::SessionState {
+    let mut ids: Vec<PaneId> = layout.panes.keys().copied().collect();
+    ids.sort_unstable();
+    let records = ids
+        .into_iter()
+        .map(|pid| crate::session::PaneRecord {
+            id: pid,
+            cwd: panes
+                .get(&pid)
+                .and_then(|p| p.child.process_id())
+                .and_then(crate::session::pid_cwd),
+            is_agent: agent_panes.contains(&pid),
+            agent_cmd: agent_cmds.get(&pid).cloned(),
+            resume: resume_ids.get(&pid).cloned(),
+        })
+        .collect();
+    crate::session::SessionState {
+        layout: layout.clone(),
+        panes: records,
+        spawn_dir: spawn_dir.map(|p| p.to_path_buf()),
+        keep_awake,
+    }
+}
+
+/// Run the interactive TUI.
 pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) -> Result<(), i32> {
     use std::io;
     // Config is re-resolved whenever the config file changes on disk (see
@@ -254,15 +294,48 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // (see `crate::reload`). Taken before the default layout is built so the
     // adopted tree replaces it rather than racing it.
     let handover = crate::reload::Handover::take();
+    // Session resurrection (dev-gated, see `crate::session`): a saved
+    // session restores its layout and respawns each pane in its old cwd,
+    // jcode panes on their exact conversation. A live handover outranks it:
+    // a hot reload's panes are *alive*, resurrection is for cold starts.
+    // An explicit `run <cmd>` also wins — the user being specific beats
+    // memory, same precedence as the startup harness.
+    let session_path = crate::session::enabled()
+        .then(crate::session::default_path)
+        .flatten();
+    let restored: Option<crate::session::SessionState> = match (&handover, &command) {
+        (None, None) => session_path.as_deref().and_then(crate::session::load),
+        _ => None,
+    };
     let mut layout = match &handover {
         Some(h) => h.layout.clone(),
-        None => Layout::new(cfg.startup_panes.max(1)),
+        None => match &restored {
+            Some(s) if !s.layout.panes.is_empty() => s.layout.clone(),
+            _ => Layout::new(cfg.startup_panes.max(1)),
+        },
     };
     // A ⌥+d choice made before the reload must not be forgotten by the new
     // image, so the handover's value wins over re-resolving the config.
     if let Some(h) = &handover {
         if h.spawn_dir.is_some() {
             spawn_dir = h.spawn_dir.clone();
+        }
+    }
+    // Same memory rule for a resurrected session's ⌥+d choice, but only
+    // when the directory still exists: a deleted tree falls back to the
+    // config's resolution rather than spawning panes into ENOENT.
+    if let Some(s) = &restored {
+        if let Some(dir) = &s.spawn_dir {
+            if dir.is_dir() {
+                spawn_dir = Some(dir.clone());
+            }
+        }
+        if s.keep_awake {
+            // Through `cfg.keep_awake`, not just the guard: the config
+            // reload path refreshes the guard from the flag, so a guard
+            // the flag disagrees with would drop on the next config edit.
+            cfg.keep_awake = true;
+            keep_awake.refresh(true);
         }
     }
     // Clock continuity: adopted panes start their `last_output` at
@@ -382,13 +455,24 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     #[cfg(not(unix))]
     let reloaded_agents: HashSet<PaneId> = HashSet::new();
     let reloading = handover.is_some();
+    // Resurrection records by pane id. When present the per-pane spawn below
+    // uses the record's command (jcode `--resume`, a bare harness, or a
+    // shell) and the record's cwd instead of the startup defaults.
+    let restore_recs: HashMap<PaneId, crate::session::PaneRecord> = restored
+        .as_ref()
+        .map(|s| s.panes.iter().map(|r| (r.id, r.clone())).collect())
+        .unwrap_or_default();
+    let restoring = !restore_recs.is_empty();
     for (i, pid) in pane_ids.iter().enumerate() {
         // Already adopted above; spawning would start a second child on a
         // pane that already has a live one.
         if reloading {
             break;
         }
-        let cmd = if i == 0 {
+        let rec = restore_recs.get(pid);
+        let cmd = if let Some(rec) = rec {
+            crate::session::restore_cmd(rec)
+        } else if i == 0 && !restoring {
             if initial.trim().is_empty() {
                 first_is_agent = true;
                 match resolve_startup_cmd(&cfg.default_agent, &harness_state) {
@@ -404,6 +488,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         } else {
             String::new()
         };
+        // The record's cwd (captured live from the old child) wins over the
+        // session spawn dir, but only while it still exists: a deleted tree
+        // falls back rather than failing the spawn.
+        let pane_dir: Option<&std::path::Path> = match rec {
+            Some(r) => r
+                .cwd
+                .as_deref()
+                .filter(|d| d.is_dir())
+                .or(spawn_dir.as_deref()),
+            None => spawn_dir.as_deref(),
+        };
         let size = initial_sizes[pid];
         match spawn_pane(
             *pid,
@@ -411,7 +506,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             size.cols,
             size.rows,
             tx.clone(),
-            spawn_dir.as_deref(),
+            pane_dir,
             cell_pixels,
         ) {
             Ok(p) => {
@@ -475,6 +570,26 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // the set stays consistent with the layout it describes across a reload
     // rather than silently emptying.
     agent_panes.extend(reloaded_agents.iter().copied());
+    // Resurrected agent panes keep their marking and their exact harness
+    // command, so a mid-session respawn (⌥+q then re-open, or the exit
+    // respawn path) re-runs the harness rather than a bare shell. The
+    // `--resume` decoration stays out of `agent_cmds` deliberately: a
+    // respawn later in the session should start the harness fresh, not
+    // re-resume a conversation that may have moved on in another pane.
+    for (pid, rec) in &restore_recs {
+        if !rec.is_agent || !layout.panes.contains_key(pid) {
+            continue;
+        }
+        agent_panes.insert(*pid);
+        if let Some(cmd) = &rec.agent_cmd {
+            agent_cmds.insert(*pid, cmd.clone());
+        }
+        // An agent respawn is positive evidence of work, same claim the
+        // ⌥+; spawn makes; the OSC protocol or the daemon corrects it.
+        if let Some(lp) = layout.panes.get_mut(pid) {
+            lp.status = PaneStatus::Running;
+        }
+    }
     // An adopted pane's grid starts empty (contents are not carried across a
     // reload), so ask each child to redraw. Without this the screen stays
     // blank until the user types, which reads as a crash. The nudge is a
@@ -492,6 +607,21 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let cfg_path = Config::default_path();
     let mut cfg_mtime = Config::mtime(&cfg_path);
     let mut reload_check = Instant::now();
+    // Session persistence (dev-gated): the loop snapshots on a slow tick and
+    // at teardown, writing only when the serialized state changed. Resume
+    // ids are sticky: captured whenever the daemon snapshot matches a pane
+    // title, kept across stale polls, so a daemon hiccup at save time never
+    // downgrades a resumable pane to a fresh spawn.
+    let mut session_save_check = Instant::now();
+    let mut session_last_json: Option<String> = None;
+    // Set when the session ends by its own hand (last pane's process
+    // exiting): the saved state is discarded and the teardown save below
+    // must not write it back.
+    let mut session_ended = false;
+    let mut session_resume_ids: HashMap<PaneId, String> = restore_recs
+        .iter()
+        .filter_map(|(pid, r)| r.resume.clone().map(|id| (*pid, id)))
+        .collect();
     // Hot reload (dev): watch our own binary and swap into the new build
     // in place, keeping every pane. See `crate::reload`.
     #[cfg(unix)]
@@ -720,6 +850,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         }
                     }
                     if in_layout && total <= 1 {
+                        // The user exited the last process themselves: the
+                        // session ended, it did not crash. Resurrecting it
+                        // next launch would undo a deliberate goodbye, so
+                        // the saved state is discarded, not finalized. The
+                        // teardown save below skips an already-cleared path
+                        // because the layout still carries this dead pane.
+                        if let Some(path) = session_path.as_deref() {
+                            crate::session::discard(path);
+                        }
+                        session_ended = true;
                         break 'main;
                     }
                     if in_layout {
@@ -864,6 +1004,57 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
         }
 
+        // Session persistence tick (dev-gated). Two steps, both cheap:
+        //
+        // 1. Capture resume ids: the daemon snapshot already maps pane
+        //    titles to jcode sessions for status reconciliation; the same
+        //    match yields the session id `--resume` needs. Sticky on
+        //    purpose — a stale poll keeps the last known id, because an id
+        //    that *was* right is a better resurrection than none.
+        // 2. Snapshot + save when changed: serialize the tiny state and
+        //    write only when the bytes moved, so an idle session costs one
+        //    string compare per tick and zero I/O.
+        if session_path.is_some()
+            && session_save_check.elapsed() >= crate::session::SAVE_POLL
+        {
+            session_save_check = Instant::now();
+            if let Ok(slot) = harness_slot.lock() {
+                if !slot.clients.is_empty() {
+                    for (pid, p) in panes.iter() {
+                        if !agent_panes.contains(pid) {
+                            continue;
+                        }
+                        if let Some(cs) =
+                            crate::harness_status::status_for_title(p.grid.title(), &slot)
+                        {
+                            if !cs.session_id.trim().is_empty() {
+                                session_resume_ids.insert(*pid, cs.session_id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            session_resume_ids.retain(|pid, _| layout.panes.contains_key(pid));
+            let snap = snapshot_session(
+                &layout,
+                &panes,
+                &agent_panes,
+                &agent_cmds,
+                &session_resume_ids,
+                spawn_dir.as_deref(),
+                cfg.keep_awake,
+            );
+            if let (Some(path), Some(json)) =
+                (session_path.as_deref(), crate::session::serialize(&snap))
+            {
+                if session_last_json.as_deref() != Some(json.as_str()) {
+                    match crate::session::save_serialized(path, &json) {
+                        Ok(()) => session_last_json = Some(json),
+                        Err(e) => tracing::warn!("session save: {e}"),
+                    }
+                }
+            }
+        }
         // Live config reload. Editing the config file repaints the running
         // session, so a config edit is a save away rather than a restart:
         // restarting would kill every pane, which is exactly what someone
@@ -2229,6 +2420,32 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     }
 
     // Teardown: kill all panes, leave raw mode & alternate screen.
+    //
+    // Final session snapshot first, while the children are still alive and
+    // their cwds still readable. Every quit is a saved quit: ⌥+Shift+q,
+    // last pane exiting, either way the next launch resumes. A session the
+    // user emptied on purpose (no panes left) clears the file instead, so
+    // quitting out of everything does not resurrect a ghost strip.
+    if let Some(path) = session_path.as_deref().filter(|_| !session_ended) {
+        if layout.panes.is_empty() {
+            crate::session::discard(path);
+        } else {
+            let snap = snapshot_session(
+                &layout,
+                &panes,
+                &agent_panes,
+                &agent_cmds,
+                &session_resume_ids,
+                spawn_dir.as_deref(),
+                cfg.keep_awake,
+            );
+            if let Some(json) = crate::session::serialize(&snap) {
+                if let Err(e) = crate::session::save_serialized(path, &json) {
+                    tracing::warn!("session save at quit: {e}");
+                }
+            }
+        }
+    }
     for p in panes.values_mut() {
         kill_pane_tree(&mut p.child);
     }
