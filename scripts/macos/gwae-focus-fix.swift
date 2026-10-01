@@ -36,6 +36,12 @@ func log(_ msg: String) {
     FileHandle.standardError.write("[\(ts)] \(msg)\n".data(using: .utf8)!)
 }
 
+/// The last osascript stderr, for diagnosable failure logs: a TCC denial
+/// (-1743) reads completely differently from a transient window-reference
+/// error (-1719), and the warning is useless without that distinction.
+let lastErrLock = NSLock()
+var lastErr = ""
+
 /// Ask Ghostty to re-focus its front terminal via AppleScript. Returns true
 /// when osascript exits 0.
 @discardableResult
@@ -44,9 +50,18 @@ func ghosttyRefocus() -> Bool {
     p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
     p.arguments = ["-e", "tell application id \"\(ghosttyBundleID)\" to focus (focused terminal of selected tab of front window)"]
     p.standardOutput = Pipe()
-    p.standardError = Pipe()
+    let errPipe = Pipe()
+    p.standardError = errPipe
     do { try p.run() } catch { return false }
+    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
     p.waitUntilExit()
+    if p.terminationStatus != 0 {
+        let msg = String(data: errData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        lastErrLock.lock()
+        lastErr = msg
+        lastErrLock.unlock()
+    }
     return p.terminationStatus == 0
 }
 
@@ -125,7 +140,10 @@ func repairFocus() {
         guard ghosttyIsFrontmost() && ghosttyOnActiveSpace() else { return }
         let second = ghosttyRefocus()
         if !first && !second {
-            log("warning: osascript focus failed twice; check Automation permission for gwae-focus-fix in System Settings > Privacy & Security > Automation")
+            lastErrLock.lock()
+            let detail = lastErr
+            lastErrLock.unlock()
+            log("warning: osascript focus failed twice (\(detail)); -1743 means grant Automation for gwae-focus-fix in System Settings > Privacy & Security > Automation")
         }
     }
 }
@@ -137,7 +155,7 @@ if CommandLine.arguments.contains("--once") {
     Thread.sleep(forTimeInterval: 0.10)
     let ok = ghosttyRefocus() || ghosttyRefocus()
     if !ok {
-        log("warning: --once repair failed; check Automation permission")
+        log("warning: --once repair failed (\(lastErr)); check Automation permission")
     }
     exit(ok ? 0 : 1)
 }
