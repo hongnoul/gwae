@@ -6,6 +6,25 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Session resurrection (dev-gated): quit gwae, relaunch, get your session
+  back.** With `GWAE_SESSION_RESTORE=1`, the layout tree, each pane's live
+  working directory (libproc at save time, so a shell that `cd`-ed restores
+  where it *is*), the `⌥+d` spawn dir, and keep-awake are continuously
+  snapshotted to `$XDG_STATE_HOME/gwae/session.json` (atomic temp+rename,
+  written only when the bytes changed). A cold launch rebuilds the strip:
+  shells respawn in their old cwd, and jcode panes respawn on their *exact*
+  conversation via `jcode --resume <session id>`, with the id captured from
+  the same daemon poll that powers the HUD status — unambiguous even with
+  many agent panes in one directory. Other harnesses respawn fresh rather
+  than guess at a "most recent" session that may belong to another pane.
+  Every quit is a saved quit, so no new keybinds: `⌥+⇧+q` resumes next
+  launch, a deliberate `exit` of the last pane ends the session for good,
+  and `gwae --new` starts fresh (the old state archives to `.bak`). A hot
+  reload handover and an explicit `gwae run <cmd>` both outrank
+  resurrection. Not shipped as default behavior: the gate mirrors
+  `GWAE_DEV_RELOAD`.
+
 ### Fixed
 - **Native Ghostty fullscreen keeps keystrokes via a rekey daemon.**
   The `focus` stage recommended non-native fullscreen, which surrenders the
