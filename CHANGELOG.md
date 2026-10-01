@@ -19,6 +19,17 @@ changelog, updated per PR). The format is based on
   Automation-permission fix, and `gwae-focus-fix --once` proves the
   primitive without waiting for a Space switch.
 
+- **The rekey daemon never yanks you out of another workspace.** Swiping
+  away from Ghostty's fullscreen Space leaves Ghostty the *global*
+  frontmost app until a click lands, so the Space-change trigger could
+  fire mid-swipe and the focus assert dragged the user back to Ghostty's
+  Space while they were clicking UI elsewhere. Every assert is now gated,
+  at assert time, on Ghostty being frontmost *and* having a window on the
+  active Space (per-Space CGWindowList, layer 0); either failing stands
+  the repair down. Failure warnings also carry osascript's stderr so a
+  TCC Automation denial (-1743) is distinguishable from a transient
+  mid-transition error.
+
 ## [1.7.0] - 2026-09-23
 
 ### Fixed
