@@ -36,7 +36,11 @@ use std::path::Path;
 pub enum StageKind {
     /// Writes only gwae's own TOML. Safe to apply silently or with `--yes`.
     Config,
-    /// Read-only facts for `doctor`. Never applies.
+    /// Read-only facts for `doctor`, plus installers of gwae's own
+    /// artifacts (the focus daemon binary and plist under `$HOME`).
+    /// Applies behind the same confirmation as `Config`; pure-advice
+    /// stages just report their steps. Never writes another program's
+    /// config.
     Info,
 }
 
