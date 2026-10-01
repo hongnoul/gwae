@@ -50,6 +50,39 @@ func ghosttyRefocus() -> Bool {
     return p.terminationStatus == 0
 }
 
+/// True when Ghostty is the frontmost app right now. Checked immediately
+/// before every assert, not just at trigger time: the asserts run 100-250ms
+/// after the notification, and Ghostty's `focus` verb raises its window.
+/// Asserting after the user already moved to another app or Space would
+/// yank them back to Ghostty's Space.
+func ghosttyIsFrontmost() -> Bool {
+    NSWorkspace.shared.frontmostApplication?.bundleIdentifier == ghosttyBundleID
+}
+
+/// True when a Ghostty window is on the *active* Space right now.
+///
+/// `frontmostApplication` is global, not per-Space: swiping away from
+/// Ghostty's fullscreen Space leaves Ghostty frontmost until the user
+/// clicks something, so frontmost alone cannot distinguish "returned to
+/// Ghostty's Space" (repair) from "left it" (stand down). The on-screen
+/// window list is per-Space and makes that call.
+func ghosttyOnActiveSpace() -> Bool {
+    guard let ghostty = NSRunningApplication.runningApplications(
+        withBundleIdentifier: ghosttyBundleID
+    ).first else { return false }
+    guard let wins = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+    ) as? [[String: Any]] else {
+        // Cannot tell (no Screen Recording permission): err on repairing,
+        // the frontmost gate still protects the common click-away case.
+        return true
+    }
+    return wins.contains { win in
+        (win[kCGWindowOwnerPID as String] as? Int32) == ghostty.processIdentifier
+            && (win[kCGWindowLayer as String] as? Int ?? 1) == 0
+    }
+}
+
 /// Re-assert focus after Ghostty becomes active.
 ///
 /// This deliberately asserts unconditionally instead of probing key state
@@ -58,6 +91,11 @@ func ghosttyRefocus() -> Bool {
 /// skipped exactly when it was needed. `focus` on the already-focused
 /// terminal is idempotent, so the correct move is to assert, wait out the
 /// Space transition, and assert again.
+///
+/// Every assert is gated on Ghostty still being frontmost at that instant.
+/// The repair exists to fix a window that is active yet not key; the moment
+/// the user activates anything else, the premise is gone and the repair
+/// must stand down instead of stealing the Space back.
 ///
 /// Failures are always logged: a silent daemon with denied Automation
 /// permission looks identical to a working one, and the log is the only
@@ -78,8 +116,13 @@ func repairFocus() {
         // Let macOS finish the Space transition before the first assert,
         // otherwise the window is not yet on screen to become key.
         Thread.sleep(forTimeInterval: 0.10)
+        guard ghosttyIsFrontmost() && ghosttyOnActiveSpace() else {
+            if verbose { log("stand down: ghostty not frontmost on the active space") }
+            return
+        }
         let first = ghosttyRefocus()
         Thread.sleep(forTimeInterval: 0.15)
+        guard ghosttyIsFrontmost() && ghosttyOnActiveSpace() else { return }
         let second = ghosttyRefocus()
         if !first && !second {
             log("warning: osascript focus failed twice; check Automation permission for gwae-focus-fix in System Settings > Privacy & Security > Automation")
