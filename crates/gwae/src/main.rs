@@ -21,6 +21,7 @@ mod latency;
 mod reap;
 mod reload;
 mod select;
+mod session;
 mod setup;
 mod spawndir;
 mod theme;
