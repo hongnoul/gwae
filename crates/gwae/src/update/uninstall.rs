@@ -103,12 +103,25 @@ pub fn plan_sweep(
             paths.push(p);
         }
     }
+    // The focus rekey daemon rides with the binaries: its binary plus the
+    // source next to it. run_uninstall boots the agent out first; the plist
+    // joins after the sort with the dirs.
+    if let Some(bin) = crate::setup::setup_stages::daemon_binary_path() {
+        for p in [bin.clone(), bin.with_extension("swift")] {
+            if seen.insert(p.clone()) {
+                paths.push(p);
+            }
+        }
+    }
     paths.sort();
     if let Some(dir) = config_dir() {
         paths.push(dir);
     }
     if let Some(dir) = state_dir() {
         paths.push(dir);
+    }
+    if let Some(plist) = crate::setup::setup_stages::daemon_plist_path() {
+        paths.push(plist);
     }
     Sweep {
         owner_cmds,
@@ -205,6 +218,9 @@ pub fn run_uninstall(_configured: Option<super::source::Source>, yes: bool) -> i
         println!("aborted; nothing removed.");
         return 1;
     }
+    // Stop the focus daemon first so launchd does not keep a removed
+    // binary's job alive.
+    crate::setup::setup_stages::daemon_bootout();
     let mut failed = false;
     for p in &sweep.paths {
         if let Err(e) = remove_path(p) {
@@ -307,12 +323,17 @@ mod tests {
             s.owner_cmds.iter().any(|c| c.contains("cargo uninstall")),
             "{s:?}"
         );
-        // Every binary plus our two dirs; dirs last.
+        // Binaries (incl. the focus daemon) sorted, then our two dirs,
+        // then the LaunchAgent plist last.
         assert!(s.paths.contains(&exe), "{s:?}");
         let n = s.paths.len();
-        assert!(s.paths[n - 2].ends_with(".config/gwae"), "{s:?}");
-        assert!(s.paths[n - 1].ends_with("state/gwae"), "{s:?}");
-        let bins = &s.paths[..n - 2];
+        assert!(
+            s.paths[n - 1].ends_with("com.gwae.focus-fix.plist"),
+            "{s:?}"
+        );
+        assert!(s.paths[n - 3].ends_with(".config/gwae"), "{s:?}");
+        assert!(s.paths[n - 2].ends_with("state/gwae"), "{s:?}");
+        let bins = &s.paths[..n - 3];
         let mut sorted = bins.to_vec();
         sorted.sort();
         assert_eq!(bins, sorted, "binaries sorted: {s:?}");
@@ -324,6 +345,19 @@ mod tests {
         let s = plan_sweep(exe.clone(), Vec::new(), Vec::new(), false, false);
         assert!(s.owner_cmds.is_empty(), "{s:?}");
         assert!(s.paths.contains(&exe), "{s:?}");
+        // The focus daemon artifacts ride along: binary, its source, plist.
+        assert!(
+            s.paths
+                .iter()
+                .any(|p| p.ends_with(".local/bin/gwae-focus-fix")),
+            "{s:?}"
+        );
+        assert!(
+            s.paths
+                .iter()
+                .any(|p| p.ends_with("com.gwae.focus-fix.plist")),
+            "{s:?}"
+        );
     }
 
     #[test]

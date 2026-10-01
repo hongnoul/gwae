@@ -14,6 +14,7 @@ mod updates;
 
 pub use config_file::ConfigFileStage;
 pub use focus::FocusStage;
+pub use focus::{daemon_binary_path, daemon_bootout, daemon_plist_path};
 pub use harness::HarnessStage;
 pub use latency::LatencyStage;
 pub use spawn_dir::SpawnDirStage;

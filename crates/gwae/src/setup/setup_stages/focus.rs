@@ -27,6 +27,35 @@ use crate::setup::setup_support::{embed, ghostty_conf, kitty_conf, terminal};
 /// Launchd label for the rekey daemon.
 pub const FOCUS_DAEMON_LABEL: &str = "com.gwae.focus-fix";
 
+/// Where the compiled daemon lives. Public so `uninstall` can sweep it.
+pub fn daemon_binary_path() -> Option<std::path::PathBuf> {
+    embed::focus_binary_path()
+}
+
+/// Where the LaunchAgent plist lives. Public so `uninstall` can sweep it.
+pub fn daemon_plist_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(
+        std::path::PathBuf::from(home)
+            .join("Library/LaunchAgents")
+            .join(format!("{FOCUS_DAEMON_LABEL}.plist")),
+    )
+}
+
+/// Boot out the loaded LaunchAgent, if any. Best-effort: uninstall must not
+/// fail because launchctl did.
+pub fn daemon_bootout() {
+    let _ = std::process::Command::new("launchctl")
+        .args([
+            "bootout",
+            &format!("gui/{}/{}", users_uid(), FOCUS_DAEMON_LABEL),
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
 /// Stage for the `focus` doctor line.
 pub struct FocusStage;
 
@@ -46,21 +75,6 @@ enum Probe {
     Kitty(Option<String>),
     /// Some other terminal: nothing actionable to say.
     Unknown,
-}
-
-/// Where the compiled daemon lives.
-fn daemon_binary_path() -> Option<std::path::PathBuf> {
-    embed::focus_binary_path()
-}
-
-/// Where the LaunchAgent plist lives.
-fn daemon_plist_path() -> Option<std::path::PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(
-        std::path::PathBuf::from(home)
-            .join("Library/LaunchAgents")
-            .join(format!("{FOCUS_DAEMON_LABEL}.plist")),
-    )
 }
 
 /// True when the LaunchAgent is loaded and its binary exists.
