@@ -264,7 +264,14 @@ mod tests {
     fn registry_lists_every_shipped_stage_in_doctor_order() {
         assert_eq!(
             stage_ids(),
-            vec!["config file", "agent", "updates", "spawn dir", "latency", "focus",]
+            vec![
+                "config file",
+                "agent",
+                "updates",
+                "spawn dir",
+                "latency",
+                "focus",
+            ]
         );
     }
 

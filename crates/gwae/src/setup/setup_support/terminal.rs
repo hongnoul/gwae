@@ -51,7 +51,8 @@ pub fn ghostty_conf_paths() -> Vec<PathBuf> {
     if cfg!(target_os = "macos") {
         if let Some(home) = std::env::var_os("HOME") {
             out.push(
-                PathBuf::from(home).join("Library/Application Support/com.mitchellh.ghostty/config"),
+                PathBuf::from(home)
+                    .join("Library/Application Support/com.mitchellh.ghostty/config"),
             );
         }
     }

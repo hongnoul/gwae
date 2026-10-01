@@ -115,9 +115,7 @@ impl FocusStage {
     fn healthy(p: &Probe) -> bool {
         match p {
             Probe::NotMacos | Probe::Unknown => true,
-            Probe::Ghostty { setting, daemon } => {
-                Self::ghostty_non_native(setting) || *daemon
-            }
+            Probe::Ghostty { setting, daemon } => Self::ghostty_non_native(setting) || *daemon,
             Probe::Kitty(v) => matches!(v.as_deref(), Some("yes") | Some("true")),
         }
     }
@@ -186,9 +184,21 @@ impl SetupStage for FocusStage {
     /// the absolute binary path, and load it. The daemon binary and plist
     /// are gwae's own install artifacts under `$HOME`; ghostty's config is
     /// never touched.
+    ///
+    /// Redirected `HOME`s (tests, sandboxes) resolve the binary into the
+    /// sandbox but `launchctl bootstrap gui/<uid>` loads into the real GUI
+    /// session, so installing from a sandbox would repoint the user's live
+    /// daemon at a temp path. Refuse there: the doctor line already names
+    /// the manual steps, and a sandboxed load is never what was asked.
     fn apply(&self, _ctx: &Ctx, _yes: bool) -> Vec<String> {
         if Self::healthy(&Self::probe()) {
             return Vec::new();
+        }
+        if std::env::var_os("GWAE_SETUP_TEST").is_some() {
+            return vec![
+                "refusing to load a LaunchAgent from a test HOME; re-run without GWAE_SETUP_TEST"
+                    .to_string(),
+            ];
         }
         let (Some(bin), Some(plist)) = (daemon_binary_path(), daemon_plist_path()) else {
             return vec!["no HOME; cannot place the daemon".to_string()];
@@ -216,25 +226,34 @@ impl SetupStage for FocusStage {
             .map(|s| s.success())
             .unwrap_or(false);
         if !compiled {
-            return vec![
-                "swiftc failed; install Xcode command-line tools and re-run".to_string(),
-            ];
+            return vec!["swiftc failed; install Xcode command-line tools and re-run".to_string()];
         }
         let body = embed::render_focus_plist(&bin);
         if let Some(parent) = plist.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         if std::fs::write(&plist, body).is_err() {
-            return vec![format!("compiled {}, but could not write {}", bin.display(), plist.display())];
+            return vec![format!(
+                "compiled {}, but could not write {}",
+                bin.display(),
+                plist.display()
+            )];
         }
         let _ = std::process::Command::new("launchctl")
-            .args(["bootout", &format!("gui/{}/{}", users_uid(), FOCUS_DAEMON_LABEL)])
+            .args([
+                "bootout",
+                &format!("gui/{}/{}", users_uid(), FOCUS_DAEMON_LABEL),
+            ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
         let loaded = std::process::Command::new("launchctl")
-            .args(["bootstrap", &format!("gui/{}", users_uid()), &plist.display().to_string()])
+            .args([
+                "bootstrap",
+                &format!("gui/{}", users_uid()),
+                &plist.display().to_string(),
+            ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -317,5 +336,28 @@ mod tests {
     fn unknown_and_non_macos_are_healthy() {
         assert!(FocusStage::healthy(&Probe::Unknown));
         assert!(FocusStage::healthy(&Probe::NotMacos));
+    }
+
+    /// A redirected HOME (tests, sandboxes) must never repoint the live
+    /// daemon: `launchctl bootstrap gui/<uid>` escapes the sandbox into the
+    /// real GUI session, which is how a proof run hijacked the device's
+    /// daemon to a temp path.
+    #[test]
+    fn apply_refuses_a_test_home() {
+        std::env::set_var("GWAE_SETUP_TEST", "1");
+        let cfg = crate::config::Config::default();
+        let ctx = crate::setup::Ctx {
+            cfg: &cfg,
+            cfg_path: std::path::Path::new("/nonexistent/gwae.toml"),
+            dir: None,
+        };
+        let out = FocusStage.apply(&ctx, true);
+        std::env::remove_var("GWAE_SETUP_TEST");
+        // Healthy hosts no-op (empty vec); unhealthy hosts must refuse, not
+        // install. Either way no LaunchAgent load is attempted.
+        assert!(
+            out.is_empty() || out.iter().any(|l| l.contains("refusing")),
+            "apply under GWAE_SETUP_TEST must refuse or no-op, got {out:?}"
+        );
     }
 }

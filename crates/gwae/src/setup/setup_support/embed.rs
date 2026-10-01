@@ -7,8 +7,7 @@
 
 /// The Ghostty Space focus-repair daemon source
 /// (`scripts/macos/gwae-focus-fix.swift`).
-pub const FOCUS_FIX_SWIFT: &str =
-    include_str!("../../../../../scripts/macos/gwae-focus-fix.swift");
+pub const FOCUS_FIX_SWIFT: &str = include_str!("../../../../../scripts/macos/gwae-focus-fix.swift");
 
 /// The launchd plist template (`scripts/macos/com.gwae.focus-fix.plist`).
 ///
@@ -43,7 +42,10 @@ mod tests {
         let bin = std::path::Path::new("/tmp/sandbox/bin/gwae-focus-fix");
         let out = render_focus_plist(bin);
         assert!(out.contains("/tmp/sandbox/bin/gwae-focus-fix"), "{out}");
-        assert!(!out.contains("$HOME"), "launchd does not expand $HOME: {out}");
+        assert!(
+            !out.contains("$HOME"),
+            "launchd does not expand $HOME: {out}"
+        );
         assert!(out.contains("com.gwae.focus-fix"), "{out}");
     }
 

@@ -43,7 +43,14 @@ fn print_lists_every_stage_without_writing() {
     let before = std::fs::read_to_string(dir.join("gwae/gwae.toml")).unwrap();
     let (out, _, code) = setup(&dir, &["--print"]);
     assert_eq!(code, 0, "print should exit cleanly");
-    for id in ["config file", "agent", "updates", "spawn dir", "latency", "focus"] {
+    for id in [
+        "config file",
+        "agent",
+        "updates",
+        "spawn dir",
+        "latency",
+        "focus",
+    ] {
         assert!(out.contains(id), "print missing stage {id}:\n{out}");
     }
     let after = std::fs::read_to_string(dir.join("gwae/gwae.toml")).unwrap();
