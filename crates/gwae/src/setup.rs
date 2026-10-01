@@ -169,13 +169,15 @@ pub fn run_setup(ctx: &Ctx, check: bool, yes: bool, only: Option<&str>, print: b
         return 0;
     }
 
-    // Non-interactive apply: Config stages write their own file; everything
-    // else is reported for the user to run.
+    // Non-interactive apply: Config stages write their own file; Info
+    // stages with an installer (focus daemon) run it after confirmation.
+    // Pure-advice Info stages report their steps for the user to run.
     let mut code = 0;
     for s in &picked {
         if s.check(ctx) {
             continue;
         }
+        let steps = s.steps(ctx);
         match s.kind() {
             StageKind::Config => {
                 if !yes && !at_tty() {
@@ -188,9 +190,33 @@ pub fn run_setup(ctx: &Ctx, check: bool, yes: bool, only: Option<&str>, print: b
                 }
             }
             StageKind::Info => {
-                println!("{}: {}", s.id(), s.doctor_line(ctx));
-                for step in s.steps(ctx) {
-                    println!("  -> {step}");
+                // An Info stage that names no steps is pure advice; one that
+                // does may also carry an installer behind confirmation.
+                if steps.is_empty() {
+                    println!("{}: {}", s.id(), s.doctor_line(ctx));
+                    continue;
+                }
+                if !yes && !at_tty() {
+                    println!("{}: {}", s.id(), s.doctor_line(ctx));
+                    for step in &steps {
+                        println!("  -> {step}");
+                    }
+                    println!("{}: needs confirmation; re-run with --yes", s.id());
+                    code = 1;
+                    continue;
+                }
+                let out = s.apply(ctx, yes);
+                if out.is_empty() {
+                    // No installer: default apply is a no-op, so the steps
+                    // are the whole story. Report them like before.
+                    println!("{}: {}", s.id(), s.doctor_line(ctx));
+                    for step in &steps {
+                        println!("  -> {step}");
+                    }
+                } else {
+                    for line in out {
+                        println!("{}: {line}", s.id());
+                    }
                 }
             }
         }

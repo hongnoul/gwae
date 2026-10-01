@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file (keep-a-
 changelog, updated per PR). The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Native Ghostty fullscreen keeps keystrokes via a rekey daemon.**
+  The `focus` stage recommended non-native fullscreen, which surrenders the
+  fullscreen Space, swipe, and animations. A new Swift LaunchAgent
+  (`scripts/macos/gwae-focus-fix.swift`, `com.gwae.focus-fix`) watches for
+  Ghostty activation and Space changes and re-asserts key focus through
+  Ghostty's AppleScript `focus` verb, so native fullscreen survives the
+  main-but-not-key return path with no clicks. `gwae setup --only focus`
+  compiles the embedded source and loads the agent; non-native fullscreen
+  stays as the no-daemon fallback. Double-repair failures log with the
+  Automation-permission fix, and `gwae-focus-fix --once` proves the
+  primitive without waiting for a Space switch.
+
 ## [1.7.0] - 2026-09-23
 
 ### Fixed
