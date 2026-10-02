@@ -7,11 +7,18 @@
 // keystroke until you click the pane. gwae never sees the keys; they die
 // between macOS and the terminal.
 //
-// This daemon listens for Ghostty becoming the active app (plus Space
-// changes where Ghostty stays frontmost) and asks Ghostty itself to re-focus
-// its front terminal over AppleScript. The `focus` verb runs in Ghostty's
-// process and re-asserts key-window state, which is exactly the missing
-// step. No cursor movement, no synthetic clicks.
+// Two triggers, two rules:
+//
+// * App activation (cmd-tab): conservatively re-assert key focus once,
+//   gated on Ghostty staying frontmost, so a fast app switch is never
+//   stolen from.
+// * Space arrival (swipe/ctrl-arrow INTO a Space): if the destination
+//   Space's layer-0 windows belong exclusively to Ghostty — the signature
+//   of its fullscreen Space — Ghostty gets focus *unconditionally*. A
+//   fullscreen Space contains nothing else to interact with, so this can
+//   never steal; and on every other Space the daemon is inert, so other
+//   workspaces are never touched. Swiping into gwae means gwae has focus,
+//   no click needed.
 //
 // Successor to the kitty `kitten @ focus-window` daemon: same triggers,
 // Ghostty's scripting bridge instead of kitty's remote-control socket, so
@@ -45,14 +52,19 @@ var lastErr = ""
 /// Ask Ghostty to re-focus its front terminal via AppleScript. Returns true
 /// when osascript exits 0.
 ///
-/// The script re-checks frontmost *inside itself*, immediately before the
-/// focus verb: the daemon's Swift-side gates run ~50-150ms before osascript
-/// actually executes, and a fast app switch inside that race would
-/// otherwise be stolen from. exit 0 with "skip" output counts as success:
-/// standing down is a correct outcome, not a failure.
+/// With `gated: true` the script re-checks frontmost *inside itself*,
+/// immediately before the focus verb: the daemon's Swift-side gates run
+/// ~50-150ms before osascript executes, and a fast app switch inside that
+/// race would otherwise be stolen from. exit 0 with "skip" output counts
+/// as success: standing down is a correct outcome, not a failure.
+///
+/// With `gated: false` (Space arrival onto Ghostty's own fullscreen
+/// Space) the gate is deliberately absent: the previous app *is* still
+/// frontmost there — that is the bug being fixed — and the destination
+/// Space holds nothing else to steal from.
 @discardableResult
-func ghosttyRefocus() -> Bool {
-    let script = """
+func ghosttyRefocus(gated: Bool = true) -> Bool {
+    let gate = gated ? """
     try
         tell application "System Events"
             set front_bid to bundle identifier of first process whose frontmost is true
@@ -64,6 +76,9 @@ func ghosttyRefocus() -> Bool {
         -- the dominant protection. Proceed rather than silently killing
         -- every repair.
     end try
+
+    """ : ""
+    let script = gate + """
     tell application id "\(ghosttyBundleID)" to focus (focused terminal of selected tab of front window)
     """
     let p = Process()
@@ -116,6 +131,33 @@ func ghosttyOnActiveSpace() -> Bool {
         (win[kCGWindowOwnerPID as String] as? Int32) == ghostty.processIdentifier
             && (win[kCGWindowLayer as String] as? Int ?? 1) == 0
     }
+}
+
+/// True when the active Space is Ghostty's *fullscreen* Space: every
+/// layer-0 on-screen window belongs to Ghostty (and there is at least
+/// one). On such a Space there is nothing else to interact with, so
+/// activating Ghostty cannot steal focus from anything the user wants.
+/// A shared/tiled Space fails this test and gets no unconditional focus.
+///
+/// Returns nil when the window list is unavailable (no permission):
+/// callers must then fall back to the conservative gated path.
+func activeSpaceIsGhosttyFullscreen() -> Bool? {
+    guard let ghostty = NSRunningApplication.runningApplications(
+        withBundleIdentifier: ghosttyBundleID
+    ).first else { return false }
+    guard let wins = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+    ) as? [[String: Any]] else { return nil }
+    var sawGhostty = false
+    for win in wins {
+        guard (win[kCGWindowLayer as String] as? Int ?? 1) == 0 else { continue }
+        if (win[kCGWindowOwnerPID as String] as? Int32) == ghostty.processIdentifier {
+            sawGhostty = true
+        } else {
+            return false
+        }
+    }
+    return sawGhostty
 }
 
 /// Re-assert focus after Ghostty becomes active.
@@ -177,6 +219,61 @@ func repairFocus() {
     }
 }
 
+/// Space arrival: the user shifted workspaces. If the destination settles
+/// as Ghostty's own fullscreen Space, give Ghostty focus unconditionally
+/// (activate + focus verb): the previous app is still frontmost after a
+/// swipe until a click lands, which is precisely the state the frontmost
+/// gates can never repair. On any other Space, do nothing at all.
+func spaceArrival() {
+    repairLock.lock()
+    if Date().timeIntervalSince(lastRepair) < 0.5 {
+        repairLock.unlock()
+        return
+    }
+    lastRepair = Date()
+    repairLock.unlock()
+
+    DispatchQueue.global(qos: .userInitiated).async {
+        if verbose { log("space changed -> probing destination") }
+        // Wait for the transition to settle: poll until the window list
+        // reports a stable verdict twice in a row.
+        let deadline = Date().addingTimeInterval(1.5)
+        var last: Bool? = nil
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.15)
+            guard let fullscreen = activeSpaceIsGhosttyFullscreen() else {
+                // No window-list permission: cannot prove the Space is
+                // safe for unconditional focus. Fall back to the gated
+                // repair, which requires Ghostty frontmost.
+                if verbose { log("no window list; falling back to gated repair") }
+                if ghosttyIsFrontmost() { ghosttyRefocus() }
+                return
+            }
+            if fullscreen && last == true {
+                if verbose { log("arrived on ghostty fullscreen space -> taking focus") }
+                NSRunningApplication.runningApplications(
+                    withBundleIdentifier: ghosttyBundleID
+                ).first?.activate()
+                if !ghosttyRefocus(gated: false) {
+                    lastErrLock.lock()
+                    let detail = lastErr
+                    lastErrLock.unlock()
+                    log("warning: arrival focus failed (\(detail))")
+                } else if verbose {
+                    log("focus taken on arrival")
+                }
+                return
+            }
+            if !fullscreen && last == false {
+                if verbose { log("destination is not ghostty's space; inert") }
+                return
+            }
+            last = fullscreen
+        }
+        if verbose { log("space probe window closed unsettled") }
+    }
+}
+
 // `--once`: run one repair synchronously and exit. Proves the primitive
 // (Automation permission, scripting bridge) without waiting for a Space
 // switch: `gwae-focus-fix --once; echo $?` should print 0.
@@ -201,15 +298,15 @@ nc.addObserver(
     repairFocus()
 }
 
-// Space changes can arrive without an app-activation notification (Ghostty
-// was already the active app), so cover that path too.
+// Space changes are the swipe-in path. No frontmost gate here: after a
+// swipe the *previous* app is still frontmost until a click, which is
+// exactly the state spaceArrival exists to fix. Destination safety is
+// decided inside (only Ghostty's own fullscreen Space takes focus).
 NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.activeSpaceDidChangeNotification,
     object: nil, queue: .main
 ) { _ in
-    guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == ghosttyBundleID
-    else { return }
-    repairFocus()
+    spaceArrival()
 }
 
 log("gwae-focus-fix watching ghostty")
