@@ -133,11 +133,18 @@ func ghosttyOnActiveSpace() -> Bool {
     }
 }
 
-/// True when the active Space is Ghostty's *fullscreen* Space: every
-/// layer-0 on-screen window belongs to Ghostty (and there is at least
-/// one). On such a Space there is nothing else to interact with, so
-/// activating Ghostty cannot steal focus from anything the user wants.
-/// A shared/tiled Space fails this test and gets no unconditional focus.
+/// True when the active Space shows Ghostty *fullscreen*: an on-screen
+/// layer-0 Ghostty window whose bounds equal some display frame. That is
+/// the signature of Ghostty's own fullscreen Space, where taking focus
+/// cannot steal anything the user is interacting with.
+///
+/// Two earlier cuts failed on real geometry. Exclusivity ("no other
+/// layer-0 windows") broke on helper apps (hwatu-mac) that keep tiny
+/// join-all-Spaces windows, reading permanently false. Exact size match
+/// broke because Ghostty's fullscreen Space is *two* windows (a 32px tab
+/// bar plus the content view), neither display-sized alone. The robust
+/// signature is coverage: full-display-width Ghostty windows whose
+/// heights sum to (nearly) the display height.
 ///
 /// Returns nil when the window list is unavailable (no permission):
 /// callers must then fall back to the conservative gated path.
@@ -148,16 +155,27 @@ func activeSpaceIsGhosttyFullscreen() -> Bool? {
     guard let wins = CGWindowListCopyWindowInfo(
         [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
     ) as? [[String: Any]] else { return nil }
-    var sawGhostty = false
-    for win in wins {
-        guard (win[kCGWindowLayer as String] as? Int ?? 1) == 0 else { continue }
-        if (win[kCGWindowOwnerPID as String] as? Int32) == ghostty.processIdentifier {
-            sawGhostty = true
-        } else {
-            return false
+    for screen in NSScreen.screens {
+        let sw = screen.frame.size.width
+        let sh = screen.frame.size.height
+        var covered: CGFloat = 0
+        for win in wins {
+            guard (win[kCGWindowLayer as String] as? Int ?? 1) == 0,
+                  (win[kCGWindowOwnerPID as String] as? Int32) == ghostty.processIdentifier,
+                  let b = win[kCGWindowBounds as String] as? [String: CGFloat],
+                  let w = b["Width"], let h = b["Height"],
+                  abs(w - sw) < 2
+            else { continue }
+            covered += h
+        }
+        // Fullscreen: tab bar + content sum to the display height (99%+).
+        // A zoomed-but-not-fullscreen window also lands ~96%, which is
+        // acceptable: a Space visually owned by Ghostty wants its focus.
+        if covered >= sh * 0.9 {
+            return true
         }
     }
-    return sawGhostty
+    return false
 }
 
 /// Re-assert focus after Ghostty becomes active.
