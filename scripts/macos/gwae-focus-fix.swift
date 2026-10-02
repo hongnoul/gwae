@@ -100,21 +100,17 @@ func ghosttyOnActiveSpace() -> Bool {
 
 /// Re-assert focus after Ghostty becomes active.
 ///
-/// A Space swipe transition runs 300-600ms; asserting once at a fixed
-/// delay either lands mid-animation (too early to become key) or a
-/// single gate sample mid-flight reads "not on active Space" and stands
-/// down exactly when the repair was needed. So this polls: wait until
-/// Ghostty is frontmost *and* on the active Space, then assert, and
-/// keep asserting on an interval until the deadline. `focus` on an
-/// already-focused terminal is idempotent, so extra asserts are free.
+/// Exactly one assert per activation, never repeats. The `focus` verb
+/// *activates Ghostty*: every extra assert inside a window is another
+/// chance to fight the user mid-app-switch and steal focus back. A
+/// multi-assert poll loop did exactly that in practice. One late assert
+/// is enough for the main-but-not-key bug; a miss costs one click, a
+/// stolen focus costs trust.
 ///
-/// Abort rules, checked every tick: another app frontmost means the
-/// user moved on (stand down, never yank); deadline without the gates
-/// ever passing means the activation was transient.
-///
-/// Failures are always logged: a silent daemon with denied Automation
-/// permission looks identical to a working one, and the log is the only
-/// witness. Check `/tmp/gwae-focus-fix.log` when keys still drop.
+/// The assert waits out the Space transition (up to 1.2s) but fires at
+/// most once, and only when Ghostty is frontmost *and* on the active
+/// Space at that instant. Any other app becoming frontmost aborts
+/// permanently for this activation.
 func repairFocus() {
     repairLock.lock()
     if Date().timeIntervalSince(lastRepair) < 0.5 {
@@ -128,36 +124,36 @@ func repairFocus() {
     // stall the notification queue.
     DispatchQueue.global(qos: .userInitiated).async {
         if verbose { log("ghostty activated -> repair window open") }
-        let deadline = Date().addingTimeInterval(2.0)
-        var asserts = 0
-        var failures = 0
-        while Date() < deadline && asserts < 3 {
-            Thread.sleep(forTimeInterval: 0.10)
+        let deadline = Date().addingTimeInterval(1.2)
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.15)
             guard ghosttyIsFrontmost() else {
                 if verbose { log("stand down: another app is frontmost") }
                 return
             }
             guard ghosttyOnActiveSpace() else {
-                // Transition still in flight: the window has not reached
-                // the active Space yet. Keep waiting, do not stand down.
+                // Transition still in flight; keep waiting.
                 continue
             }
-            if ghosttyRefocus() {
-                asserts += 1
-                if verbose && asserts == 1 { log("focus asserted") }
-            } else {
-                failures += 1
+            // Settle pause, then re-check the user has not moved on in
+            // the meantime: the assert below activates Ghostty, so this
+            // is the last moment to stand down cheaply.
+            Thread.sleep(forTimeInterval: 0.15)
+            guard ghosttyIsFrontmost() && ghosttyOnActiveSpace() else {
+                if verbose { log("stand down: user moved during settle") }
+                return
             }
-            // Space out repeat asserts so the last one lands after the
-            // transition has fully settled.
-            Thread.sleep(forTimeInterval: 0.20)
+            if !ghosttyRefocus() {
+                lastErrLock.lock()
+                let detail = lastErr
+                lastErrLock.unlock()
+                log("warning: osascript focus failed (\(detail)); -1743 means grant Automation for gwae-focus-fix in System Settings > Privacy & Security > Automation")
+            } else if verbose {
+                log("focus asserted (single)")
+            }
+            return
         }
-        if asserts == 0 && failures >= 2 {
-            lastErrLock.lock()
-            let detail = lastErr
-            lastErrLock.unlock()
-            log("warning: osascript focus failed \(failures)x (\(detail)); -1743 means grant Automation for gwae-focus-fix in System Settings > Privacy & Security > Automation")
-        }
+        if verbose { log("repair window closed without assert") }
     }
 }
 
