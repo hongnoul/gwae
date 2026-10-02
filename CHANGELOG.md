@@ -60,6 +60,10 @@ changelog, updated per PR). The format is based on
   constantly. The repair now waits out the transition (max 1.2s), re-checks
   both gates across a settle pause, fires exactly one assert, and returns.
   A missed repair costs one click; repeated asserts are structurally gone.
+  The final race (an app switch in the 50-150ms between the daemon's gates
+  passing and osascript executing) is closed inside the AppleScript itself:
+  it re-reads the frontmost bundle id via System Events immediately before
+  the focus verb and returns `skip` unless Ghostty is still front.
 
 ## [1.7.0] - 2026-09-23
 
