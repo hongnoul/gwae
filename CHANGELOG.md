@@ -49,6 +49,18 @@ changelog, updated per PR). The format is based on
   TCC Automation denial (-1743) is distinguishable from a transient
   mid-transition error.
 
+- **One repair assert per activation: the daemon never fights the user.**
+  Two failure modes fell out of the gated repair in real use. First,
+  fixed-instant gates sampled the 300-600ms Space swipe mid-flight, read
+  "not on active Space", and stood down exactly when the repair was
+  needed, so returning to gwae still dropped keys. Second, the corrective
+  poll loop asserted up to three times per activation, and Ghostty's
+  `focus` verb *activates* Ghostty, so each repeat was a chance to steal
+  focus back from whatever the user had just switched to, and it did,
+  constantly. The repair now waits out the transition (max 1.2s), re-checks
+  both gates across a settle pause, fires exactly one assert, and returns.
+  A missed repair costs one click; repeated asserts are structurally gone.
+
 ## [1.7.0] - 2026-09-23
 
 ### Fixed
