@@ -5,7 +5,6 @@
   <img src="docs/assets/gwae.svg" alt="gwae" width="100" />
 </p>
 
-<p align="center"><strong>Lightweight, Lightspeed</strong></p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-white?labelColor=black" alt="MIT license" /></a>
@@ -24,7 +23,7 @@
 
 > Developed and tested on macOS only. Contributions for Windows are welcome.
 >
-> Linux users: I recommend [niri](https://github.com/YaLTeR/niri), the scrolling window manager that inspired gwae.
+> Linux: [niri](https://github.com/YaLTeR/niri) is the scrolling window manager that inspired gwae.
 
 ```bash
 curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash
@@ -36,7 +35,7 @@ or with Homebrew:
 brew install hongnoul/tap/gwae
 ```
 
-## Cool features
+## Features
 
 > Official docs are still WIP.
 
