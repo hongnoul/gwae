@@ -44,11 +44,24 @@ var lastErr = ""
 
 /// Ask Ghostty to re-focus its front terminal via AppleScript. Returns true
 /// when osascript exits 0.
+///
+/// The script re-checks frontmost *inside itself*, immediately before the
+/// focus verb: the daemon's Swift-side gates run ~50-150ms before osascript
+/// actually executes, and a fast app switch inside that race would
+/// otherwise be stolen from. exit 0 with "skip" output counts as success:
+/// standing down is a correct outcome, not a failure.
 @discardableResult
 func ghosttyRefocus() -> Bool {
+    let script = """
+    tell application "System Events"
+        set front_bid to bundle identifier of first process whose frontmost is true
+    end tell
+    if front_bid is not "\(ghosttyBundleID)" then return "skip"
+    tell application id "\(ghosttyBundleID)" to focus (focused terminal of selected tab of front window)
+    """
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-    p.arguments = ["-e", "tell application id \"\(ghosttyBundleID)\" to focus (focused terminal of selected tab of front window)"]
+    p.arguments = ["-e", script]
     p.standardOutput = Pipe()
     let errPipe = Pipe()
     p.standardError = errPipe
