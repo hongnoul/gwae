@@ -100,17 +100,17 @@ func ghosttyOnActiveSpace() -> Bool {
 
 /// Re-assert focus after Ghostty becomes active.
 ///
-/// This deliberately asserts unconditionally instead of probing key state
-/// first: macOS settles key-window state asynchronously, so an early probe
-/// often reports a transiently healthy window and the repair would be
-/// skipped exactly when it was needed. `focus` on the already-focused
-/// terminal is idempotent, so the correct move is to assert, wait out the
-/// Space transition, and assert again.
+/// A Space swipe transition runs 300-600ms; asserting once at a fixed
+/// delay either lands mid-animation (too early to become key) or a
+/// single gate sample mid-flight reads "not on active Space" and stands
+/// down exactly when the repair was needed. So this polls: wait until
+/// Ghostty is frontmost *and* on the active Space, then assert, and
+/// keep asserting on an interval until the deadline. `focus` on an
+/// already-focused terminal is idempotent, so extra asserts are free.
 ///
-/// Every assert is gated on Ghostty still being frontmost at that instant.
-/// The repair exists to fix a window that is active yet not key; the moment
-/// the user activates anything else, the premise is gone and the repair
-/// must stand down instead of stealing the Space back.
+/// Abort rules, checked every tick: another app frontmost means the
+/// user moved on (stand down, never yank); deadline without the gates
+/// ever passing means the activation was transient.
 ///
 /// Failures are always logged: a silent daemon with denied Automation
 /// permission looks identical to a working one, and the log is the only
@@ -124,26 +124,39 @@ func repairFocus() {
     lastRepair = Date()
     repairLock.unlock()
 
-    // Run off the main thread: this blocks on a subprocess and must not
+    // Run off the main thread: this blocks on subprocesses and must not
     // stall the notification queue.
     DispatchQueue.global(qos: .userInitiated).async {
-        if verbose { log("ghostty activated -> asserting focus") }
-        // Let macOS finish the Space transition before the first assert,
-        // otherwise the window is not yet on screen to become key.
-        Thread.sleep(forTimeInterval: 0.10)
-        guard ghosttyIsFrontmost() && ghosttyOnActiveSpace() else {
-            if verbose { log("stand down: ghostty not frontmost on the active space") }
-            return
+        if verbose { log("ghostty activated -> repair window open") }
+        let deadline = Date().addingTimeInterval(2.0)
+        var asserts = 0
+        var failures = 0
+        while Date() < deadline && asserts < 3 {
+            Thread.sleep(forTimeInterval: 0.10)
+            guard ghosttyIsFrontmost() else {
+                if verbose { log("stand down: another app is frontmost") }
+                return
+            }
+            guard ghosttyOnActiveSpace() else {
+                // Transition still in flight: the window has not reached
+                // the active Space yet. Keep waiting, do not stand down.
+                continue
+            }
+            if ghosttyRefocus() {
+                asserts += 1
+                if verbose && asserts == 1 { log("focus asserted") }
+            } else {
+                failures += 1
+            }
+            // Space out repeat asserts so the last one lands after the
+            // transition has fully settled.
+            Thread.sleep(forTimeInterval: 0.20)
         }
-        let first = ghosttyRefocus()
-        Thread.sleep(forTimeInterval: 0.15)
-        guard ghosttyIsFrontmost() && ghosttyOnActiveSpace() else { return }
-        let second = ghosttyRefocus()
-        if !first && !second {
+        if asserts == 0 && failures >= 2 {
             lastErrLock.lock()
             let detail = lastErr
             lastErrLock.unlock()
-            log("warning: osascript focus failed twice (\(detail)); -1743 means grant Automation for gwae-focus-fix in System Settings > Privacy & Security > Automation")
+            log("warning: osascript focus failed \(failures)x (\(detail)); -1743 means grant Automation for gwae-focus-fix in System Settings > Privacy & Security > Automation")
         }
     }
 }
