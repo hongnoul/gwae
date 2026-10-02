@@ -65,6 +65,19 @@ changelog, updated per PR). The format is based on
   it re-reads the frontmost bundle id via System Events immediately before
   the focus verb and returns `skip` unless Ghostty is still front.
 
+- **Swiping into gwae's Space focuses gwae, no click needed.** The repair
+  paths all gated on Ghostty being frontmost, but after a swipe into its
+  fullscreen Space macOS keeps the *previous* app frontmost until a click,
+  so the gates killed the repair in exactly the scenario the daemon existed
+  for; only cmd-tab returns ever repaired. Space changes now probe the
+  destination until the per-Space window list settles: when every layer-0
+  window belongs to Ghostty (the signature of its fullscreen Space),
+  Ghostty is activated and focused unconditionally, because that Space
+  holds nothing else to steal from. Every other destination leaves the
+  daemon inert, so other workspaces are untouchable by construction.
+  cmd-tab keeps the conservative gated assert; missing window-list
+  permission falls back to the gated path.
+
 ## [1.7.0] - 2026-09-23
 
 ### Fixed
