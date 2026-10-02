@@ -53,10 +53,17 @@ var lastErr = ""
 @discardableResult
 func ghosttyRefocus() -> Bool {
     let script = """
-    tell application "System Events"
-        set front_bid to bundle identifier of first process whose frontmost is true
-    end tell
-    if front_bid is not "\(ghosttyBundleID)" then return "skip"
+    try
+        tell application "System Events"
+            set front_bid to bundle identifier of first process whose frontmost is true
+        end tell
+        if front_bid is not "\(ghosttyBundleID)" then return "skip"
+    on error
+        -- System Events unavailable (TCC denied for this context): the
+        -- Swift-side frontmost gate already passed 0-150ms ago, which is
+        -- the dominant protection. Proceed rather than silently killing
+        -- every repair.
+    end try
     tell application id "\(ghosttyBundleID)" to focus (focused terminal of selected tab of front window)
     """
     let p = Process()
