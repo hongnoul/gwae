@@ -70,10 +70,12 @@ changelog, updated per PR). The format is based on
   fullscreen Space macOS keeps the *previous* app frontmost until a click,
   so the gates killed the repair in exactly the scenario the daemon existed
   for; only cmd-tab returns ever repaired. Space changes now probe the
-  destination until the per-Space window list settles: when every layer-0
-  window belongs to Ghostty (the signature of its fullscreen Space),
-  Ghostty is activated and focused unconditionally, because that Space
-  holds nothing else to steal from. Every other destination leaves the
+  destination until the per-Space window list settles: when full-width
+  Ghostty windows cover ≥90% of a display's height (the two-window
+  signature of its fullscreen Space — tab bar plus content view, robust
+  to helper apps' join-all-Spaces windows), Ghostty is activated and
+  focused unconditionally, because that Space holds nothing else to
+  steal from. Every other destination leaves the
   daemon inert, so other workspaces are untouchable by construction.
   cmd-tab keeps the conservative gated assert; missing window-list
   permission falls back to the gated path.
