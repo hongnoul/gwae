@@ -19,6 +19,34 @@ const QUIET_AFTER: Duration = Duration::from_secs(4);
 /// longer than this.
 const STARTUP_FALLBACK_GRACE: Duration = Duration::from_secs(5);
 
+/// Expand a leading `~` in each whitespace-separated word of a configured
+/// command.
+///
+/// Panes are spawned with `execvp`, not a shell, so a literal `~` argument
+/// would reach the program unexpanded and `startup_command = "yazi ~"` would
+/// open a directory named `~`. Only a leading `~` or `~/...` is touched; every
+/// other word is passed through byte for byte.
+fn expand_cmd_tildes(cmd: &str) -> String {
+    let home = crate::config::home_dir();
+    cmd.split_whitespace()
+        .map(|w| match (w == "~" || w.starts_with("~/"), &home) {
+            (true, Some(h)) => {
+                let rest = w.trim_start_matches('~').trim_start_matches('/');
+                // `join("")` would append a trailing separator, so a bare
+                // `~` is the home path itself.
+                if rest.is_empty() {
+                    h.clone()
+                } else {
+                    h.join(rest)
+                }
+            }
+            _ => std::path::PathBuf::from(w),
+        })
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Notice line for the `⌥+⇧+;` force-pick overlay, which always opens the
 /// picker instead of taking the fast path.
 ///
@@ -474,6 +502,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             crate::session::restore_cmd(rec)
         } else if i == 0 && !restoring {
             if initial.trim().is_empty() {
+                // A standing `startup_command` replaces the agent pane: the
+                // user asked for a tool in pane 1.1, so no harness is
+                // resolved and the pane is never marked as an agent.
+                if !cfg.startup_command.trim().is_empty() {
+                    expand_cmd_tildes(&cfg.startup_command)
+                } else {
                 first_is_agent = true;
                 match resolve_startup_cmd(&cfg.default_agent, &harness_state) {
                     Some(direct) => {
@@ -481,6 +515,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         direct
                     }
                     None => agent_gateway_cmd(),
+                }
                 }
             } else {
                 initial.clone()
@@ -533,7 +568,8 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     let mut chord_alt_until: Option<Instant> = None;
     let mut last_alt_held = false;
     // Startup-only cheat-sheet HUD: shown once at init, dismissed on first key.
-    let mut hud_active: bool = true;
+    // `startup_hud = false` opts out; `⌥+/` still toggles it later.
+    let mut hud_active: bool = cfg.startup_hud;
     // The ⌥-hold dashboard's geometry for the frame currently on screen, so a
     // click can be resolved against the tiles the user is actually looking at.
     // `None` whenever the panel is not up.
@@ -2465,6 +2501,22 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::theme::Palette;
+
+    /// `startup_command` is spawned via execvp, so a configured `~` must be
+    /// expanded here or `yazi ~` opens a directory literally named `~`.
+    #[test]
+    fn configured_command_tildes_expand_to_home() {
+        let home = crate::config::home_dir().unwrap();
+        let h = home.to_string_lossy();
+        assert_eq!(expand_cmd_tildes("yazi ~"), format!("yazi {h}"));
+        assert_eq!(
+            expand_cmd_tildes("yazi ~/git"),
+            format!("yazi {}", home.join("git").to_string_lossy())
+        );
+        // Not a leading tilde: passed through untouched.
+        assert_eq!(expand_cmd_tildes("echo a~b"), "echo a~b");
+        assert_eq!(expand_cmd_tildes("yazi"), "yazi");
+    }
 
     /// End-to-end acceptance for the quarter-pane overflow fix: four real PTY
     /// children, one per quarter column, rendered by `render_frame` at 342 cols

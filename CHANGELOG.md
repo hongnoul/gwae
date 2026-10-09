@@ -7,6 +7,14 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Added
+- **Two launch-time config keys: `startup_command` and `startup_hud`.**
+  `startup_command = "yazi ~"` makes pane 1.1 open a tool instead of the agent
+  harness/gateway, for sessions that start by looking around rather than by
+  prompting; the string is shell-split and a leading `~` expands, since panes
+  exec directly with no shell to do it. An explicit `gwae run <cmd>` and
+  session resurrection both still outrank it. `startup_hud = false` drops the
+  one-shot cheat-sheet flash at launch for users who already know the binds;
+  `⌥+/` still brings it up. Both default to today's behavior.
 - **Session resurrection (dev-gated): quit gwae, relaunch, get your session
   back.** With `GWAE_SESSION_RESTORE=1`, the layout tree, each pane's live
   working directory (libproc at save time, so a shell that `cd`-ed restores

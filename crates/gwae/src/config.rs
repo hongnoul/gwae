@@ -37,6 +37,10 @@ fn default_keep_awake() -> bool {
     false
 }
 
+fn default_startup_hud() -> bool {
+    true
+}
+
 fn no_agents() -> Vec<String> {
     Vec::new()
 }
@@ -83,6 +87,21 @@ pub struct Config {
     /// single quarter-width pane; the skeleton's placeholder boxes show the
     /// rest of the container).
     pub startup_panes: usize,
+    /// Command pane 1.1 runs at launch *instead of* the agent harness /
+    /// gateway. Empty (the default) keeps the agent pane. An explicit
+    /// `gwae run <cmd>` still wins, and session resurrection still wins,
+    /// since both are more specific than a standing preference.
+    ///
+    /// Set this when the first pane should be a tool rather than an agent,
+    /// e.g. `startup_command = "yazi ~"` for a file manager. The string is
+    /// shell-split (no shell is involved), so `~` is passed through to the
+    /// program; use an absolute path if the program does not expand it.
+    #[serde(default)]
+    pub startup_command: String,
+    /// Show the centered cheat-sheet HUD once at launch (default: true).
+    /// `false` starts with a clean screen; `⌥+/` still brings it up.
+    #[serde(default = "default_startup_hud")]
+    pub startup_hud: bool,
     /// Chrome color overrides, layered key by key on the enforced retro
     /// default (true-black panels, high-contrast functional colors). Every
     /// key accepts a 256-color index (`12`), a hex RGB string (`"#00ffff"`),
@@ -126,6 +145,8 @@ impl Default for Config {
             agent_dir: String::new(),
             agents_retired: Vec::new(),
             startup_panes: 1,
+            startup_command: String::new(),
+            startup_hud: default_startup_hud(),
             theme: ThemeConfig::default(),
             image_pane: ImagePane::default(),
             minimap: Minimap::default(),
@@ -543,6 +564,17 @@ mod tests {
         assert!(!default_keep_awake());
         assert!(parse("keep_awake = true").keep_awake);
         assert!(!parse("keep_awake = false").keep_awake);
+    }
+
+    #[test]
+    fn startup_command_and_hud_default_to_agent_pane_with_flash() {
+        // Defaults must keep the shipped behavior: pane 1.1 is the agent
+        // pane and the cheat-sheet flashes once. Only an explicit local
+        // config opts out.
+        assert_eq!(parse("").startup_command, "");
+        assert!(parse("").startup_hud);
+        assert_eq!(parse("startup_command = \"yazi ~\"").startup_command, "yazi ~");
+        assert!(!parse("startup_hud = false").startup_hud);
     }
 
     #[test]
