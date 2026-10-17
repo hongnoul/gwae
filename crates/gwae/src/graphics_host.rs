@@ -23,9 +23,20 @@ const MAX_HOST_BYTES: usize = 128 * 1024 * 1024;
 static NEXT_ID: AtomicU32 = AtomicU32::new(0x4700_0001);
 pub(crate) fn allocate() -> u32 {
     // A single process-wide namespace is essential: two panes routinely use i=1.
-    NEXT_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-        .expect("host image id namespace exhausted")
+    // Manual CAS loop instead of `fetch_update`: the method was renamed
+    // `try_update` on newer toolchains and deprecated under its old name,
+    // and the replacement does not exist on the MSRV, so neither spelling
+    // passes clippy -D warnings on both.
+    let mut current = NEXT_ID.load(Ordering::Relaxed);
+    loop {
+        let next = current
+            .checked_add(1)
+            .expect("host image id namespace exhausted");
+        match NEXT_ID.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return current,
+            Err(seen) => current = seen,
+        }
+    }
 }
 fn delete(buf: &mut Vec<u8>, id: u32) {
     buf.extend_from_slice(format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\").as_bytes());
