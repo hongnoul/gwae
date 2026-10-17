@@ -89,7 +89,9 @@ pub(crate) enum Cmd {
     /// once at startup. Any other key still dismisses it.
     ToggleHud,
     /// Toggle `keep_awake` (`⌥+w`): hold or release the macOS `caffeinate`
-    /// assertion that keeps idle/display sleep from freezing the panes.
+    /// assertion that keeps idle/system sleep from freezing the panes. The
+    /// display still sleeps as normal, so a static pane never sits lit for
+    /// hours (image retention).
     /// Resolved in the main loop (which owns the guard and the config), not
     /// here.
     ToggleKeepAwake,

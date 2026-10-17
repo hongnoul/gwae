@@ -6,6 +6,15 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **Keep-awake no longer forces the display to stay lit.** `⌥+w` now spawns
+  `caffeinate -i -m -s -w <pid>` without `-d`/`-u`: the system (and every
+  agent pane) stays awake, but the display sleeps on the user's normal
+  schedule. Holding a static TUI lit for hours caused visible image
+  retention on built-in panels; a dark display costs the agents nothing. The
+  flags are pinned in both directions by test so `-d`/`-u` cannot return by
+  accident.
+
 ### Added
 - **Two launch-time config keys: `startup_command` and `startup_hud`.**
   `startup_command = "yazi ~"` makes pane 1.1 open a tool instead of the agent

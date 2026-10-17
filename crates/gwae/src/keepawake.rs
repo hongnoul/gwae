@@ -2,15 +2,18 @@
 //!
 //! gwae is a single process with no daemon: when macOS sleeps, every pane
 //! (and every agent in it) freezes until wake. With `keep_awake = true` gwae
-//! holds a `caffeinate` assertion for its own lifetime, so idle and display
-//! sleep never pause a session you walked away from.
+//! holds a `caffeinate` assertion for its own lifetime, so idle sleep never
+//! pauses a session you walked away from. The *display* is deliberately left
+//! free to sleep: agents do not need a lit panel, and a static pane held on
+//! screen for hours causes image retention (the "burn-in" look). The system
+//! stays awake underneath the dark display.
 //!
 //! Honest limits, stated here because the `caffeinate(8)` man page buries
 //! them: this does **not** defeat lid-close sleep. A closed lid still sleeps
 //! the machine unless it is in clamshell mode (power + external display +
 //! external input) or sleep is disabled outright (`sudo pmset disablesleep
-//! 1`). What this buys is the common case: lid open, display asleep, agents
-//! still running in the morning.
+//! 1`). What this buys is the common case: lid open, display long asleep,
+//! agents still running in the morning.
 //!
 //! Shape: [`Guard`] spawns `caffeinate` with an assertion bound to our own
 //! pid and kills it on drop. The `-w` flag is the backstop: even if gwae is
@@ -131,7 +134,9 @@ fn spawn(enabled: bool) -> Option<Child> {
         .stderr(Stdio::null());
     match cmd.spawn() {
         Ok(c) => {
-            tracing::info!("keep-awake: holding idle/display sleep via caffeinate (pid {pid})");
+            tracing::info!(
+                "keep-awake: holding idle/system sleep via caffeinate (pid {pid}), display may sleep"
+            );
             Some(c)
         }
         Err(e) => {
@@ -141,16 +146,21 @@ fn spawn(enabled: bool) -> Option<Child> {
     }
 }
 
-/// The assertion flags for `pid`: no idle sleep, no display sleep, no disk
-/// sleep, no system sleep on AC, plus a user-activity declaration; `-w`
-/// binds the assertion's life to ours.
+/// The assertion flags for `pid`: no idle sleep (`-i`), no disk sleep
+/// (`-m`), no system sleep on AC (`-s`); `-w` binds the assertion's life to
+/// ours.
+///
+/// Deliberately absent: `-d` (prevent display sleep) and `-u` (declare user
+/// activity, which also lights the display). Agents run fine behind a dark
+/// panel, and holding a static TUI on screen for hours causes image
+/// retention. Letting the display sleep on the user's normal schedule is
+/// strictly better: same uptime for the agents, no lit static image, less
+/// battery.
 fn argv(pid: u32) -> Vec<String> {
     vec![
-        "-d".to_string(),
         "-i".to_string(),
         "-m".to_string(),
         "-s".to_string(),
-        "-u".to_string(),
         "-w".to_string(),
         pid.to_string(),
     ]
@@ -177,8 +187,8 @@ fn line_for(enabled: bool, avail: &Availability) -> String {
         };
     }
     match avail {
-        Availability::Ready => "on; caffeinate holds idle/display sleep while gwae runs \
-             (a closed lid still sleeps outside clamshell mode)"
+        Availability::Ready => "on; caffeinate holds idle/system sleep while gwae runs; \
+             the display sleeps as normal (a closed lid still sleeps outside clamshell mode)"
             .to_string(),
         Availability::WrongOs => "on, but this is macOS-only so it does nothing here".to_string(),
         Availability::OptedOut => {
@@ -214,8 +224,17 @@ mod tests {
         // one and the machine sleeps in a way the user explicitly asked it
         // not to. `-w` is the load-bearing one (no orphaned assertions).
         let a = argv(1234);
-        for flag in ["-d", "-i", "-m", "-s", "-u", "-w"] {
+        for flag in ["-i", "-m", "-s", "-w"] {
             assert!(a.contains(&flag.to_string()), "missing {flag}: {a:?}");
+        }
+        // And pinned in the other direction: `-d`/`-u` keep the display lit
+        // on a static image for hours, which causes image retention. They
+        // must never come back by accident.
+        for flag in ["-d", "-u"] {
+            assert!(
+                !a.contains(&flag.to_string()),
+                "{flag} forces the display awake and risks burn-in: {a:?}"
+            );
         }
         assert_eq!(a.last().map(|s| s.as_str()), Some("1234"));
     }

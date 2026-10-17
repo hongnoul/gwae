@@ -122,8 +122,10 @@ pub struct Config {
     /// no longer affects input latency. Valid range 1..50.
     #[serde(default = "default_input_poll_ms")]
     pub input_poll_ms: u64,
-    /// Hold a macOS `caffeinate` assertion while gwae runs, so idle and
-    /// display sleep never pause the panes. macOS-only by construction.
+    /// Hold a macOS `caffeinate` assertion while gwae runs, so idle/system
+    /// sleep never pauses the panes. The display still sleeps on its normal
+    /// schedule (no `-d`), so a static pane never sits lit for hours.
+    /// macOS-only by construction.
     /// Session-only: keep-awake always starts off at launch and only the
     /// `⌥+w` toggle turns it on; the file value is not read at startup and
     /// the toggle is not saved back.
