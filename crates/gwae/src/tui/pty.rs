@@ -363,6 +363,11 @@ pub(crate) fn kill_pane_tree(child: &mut PaneProc) {
 }
 
 /// Spawn a PTY running `cmd` at the given grid size, wiring a reader thread.
+/// `host_cols` is the full host viewport width (0 when unknown): exported as
+/// GWAE_HOST_COLS so pane programs that render to fit (pdfpane) can predict
+/// the column widths `cycle-width` will produce and pre-render for them
+/// before the first resize ever lands. A hint only: panes must still track
+/// SIGWINCH, and a host resize after spawn simply ages the hint.
 pub(crate) fn spawn_pane(
     id: PaneId,
     cmd: &str,
@@ -371,6 +376,7 @@ pub(crate) fn spawn_pane(
     tx: Sender<PaneMsg>,
     cwd: Option<&std::path::Path>,
     cell_pixels: CellPixels,
+    host_cols: u16,
 ) -> Result<PtyPane, String> {
     let pty = native_pty_system();
     let size = cell_pixels.pty_size(gw, gh);
@@ -398,6 +404,9 @@ pub(crate) fn spawn_pane(
     }
     cb.env("GWAE_PANE", id.to_string());
     cb.env("TERM", "xterm-256color");
+    if host_cols > 0 {
+        cb.env("GWAE_HOST_COLS", host_cols.to_string());
+    }
     let child = slave.spawn_command(cb).map_err(|e| format!("spawn: {e}"))?;
     drop(slave);
     // Register before anything else can fail: from here on, however gwae
@@ -758,7 +767,16 @@ pub(crate) fn sync_panes(
         } else {
             String::new()
         };
-        let pane = spawn_pane(pid, &cmd, size.cols, size.rows, tx.clone(), cwd, geometry.1)?;
+        let pane = spawn_pane(
+            pid,
+            &cmd,
+            size.cols,
+            size.rows,
+            tx.clone(),
+            cwd,
+            geometry.1,
+            geometry.0.cols,
+        )?;
         panes.insert(pid, pane);
         tracing::debug!(pid, "spawned pane");
     }

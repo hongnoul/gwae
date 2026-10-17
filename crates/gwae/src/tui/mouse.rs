@@ -430,7 +430,7 @@ mod tests {
             .unwrap();
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let (tx, _rx) = channel::<PaneMsg>();
-        let mut pane = spawn_pane(pid, "sleep 30", 80, 24, tx, None, CellPixels::default())
+        let mut pane = spawn_pane(pid, "sleep 30", 80, 24, tx, None, CellPixels::default(), 0)
             .expect("spawn pane");
         pane.grid.feed(b"hello world\r\nsecond line");
         panes.insert(pid, pane);

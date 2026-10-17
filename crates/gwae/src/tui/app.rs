@@ -543,6 +543,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             tx.clone(),
             pane_dir,
             cell_pixels,
+            cols,
         ) {
             Ok(p) => {
                 panes.insert(*pid, p);
@@ -2567,8 +2568,9 @@ mod tests {
                 "sh -c \"for i in $(seq 1 {w}); do printf '%s' {}; done; echo\"",
                 fills[i]
             );
-            let pane = spawn_pane(*pid, &cmd, w, rows, tx.clone(), None, CellPixels::default())
-                .expect("spawn pane");
+            let pane =
+                spawn_pane(*pid, &cmd, w, rows, tx.clone(), None, CellPixels::default(), 0)
+                    .expect("spawn pane");
             panes.insert(*pid, pane);
         }
         // Feed PTY output until every pane's first row is fully painted.
@@ -2682,6 +2684,7 @@ mod tests {
             tx.clone(),
             None,
             CellPixels::default(),
+            0,
         )
         .expect("spawn pane");
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
@@ -2766,6 +2769,7 @@ mod tests {
                 tx.clone(),
                 None,
                 CellPixels::default(),
+                0,
             )
             .expect("spawn pane");
             panes.insert(*pid, pane);
