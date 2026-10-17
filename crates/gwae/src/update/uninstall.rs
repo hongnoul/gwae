@@ -339,6 +339,9 @@ mod tests {
         assert_eq!(bins, sorted, "binaries sorted: {s:?}");
     }
 
+    // Asserts unix facts: the focus daemon (its binary, launchd plist) only
+    // rides along on unix sweeps, and the expected paths are unix-shaped.
+    #[cfg(unix)]
     #[test]
     fn sweep_without_owners_removes_directly() {
         let exe = PathBuf::from("/Users/x/.bun/bin/gwae");
