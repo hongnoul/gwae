@@ -457,8 +457,9 @@ impl Host {
         // retaining for hidden panes, and a stale list would point the
         // composer at a texture the budget may since have deleted.
         let live: std::collections::HashSet<u32> = self.textures.values().map(|t| t.id).collect();
-        self.prepare_cache
-            .retain(|_, (used, tiles)| *used == epoch && tiles.iter().all(|t| live.contains(&t.id)));
+        self.prepare_cache.retain(|_, (used, tiles)| {
+            *used == epoch && tiles.iter().all(|t| live.contains(&t.id))
+        });
     }
     pub fn clear(&mut self) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -504,8 +505,9 @@ impl Host {
             }
         });
         let ids: std::collections::HashSet<u32> = self.textures.values().map(|t| t.id).collect();
-        self.prepare_cache
-            .retain(|key, (_, tiles)| live.contains(&key.0) && tiles.iter().all(|t| ids.contains(&t.id)));
+        self.prepare_cache.retain(|key, (_, tiles)| {
+            live.contains(&key.0) && tiles.iter().all(|t| ids.contains(&t.id))
+        });
         buf
     }
 }
@@ -1222,4 +1224,3 @@ mod page_cost {
         );
     }
 }
-

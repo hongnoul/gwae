@@ -508,14 +508,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 if !cfg.startup_command.trim().is_empty() {
                     expand_cmd_tildes(&cfg.startup_command)
                 } else {
-                first_is_agent = true;
-                match resolve_startup_cmd(&cfg.default_agent, &harness_state) {
-                    Some(direct) => {
-                        first_agent_cmd = Some(direct.clone());
-                        direct
+                    first_is_agent = true;
+                    match resolve_startup_cmd(&cfg.default_agent, &harness_state) {
+                        Some(direct) => {
+                            first_agent_cmd = Some(direct.clone());
+                            direct
+                        }
+                        None => agent_gateway_cmd(),
                     }
-                    None => agent_gateway_cmd(),
-                }
                 }
             } else {
                 initial.clone()
@@ -1050,9 +1050,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // 2. Snapshot + save when changed: serialize the tiny state and
         //    write only when the bytes moved, so an idle session costs one
         //    string compare per tick and zero I/O.
-        if session_path.is_some()
-            && session_save_check.elapsed() >= crate::session::SAVE_POLL
-        {
+        if session_path.is_some() && session_save_check.elapsed() >= crate::session::SAVE_POLL {
             session_save_check = Instant::now();
             if let Ok(slot) = harness_slot.lock() {
                 if !slot.clients.is_empty() {

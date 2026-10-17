@@ -575,7 +575,10 @@ mod tests {
         // config opts out.
         assert_eq!(parse("").startup_command, "");
         assert!(parse("").startup_hud);
-        assert_eq!(parse("startup_command = \"yazi ~\"").startup_command, "yazi ~");
+        assert_eq!(
+            parse("startup_command = \"yazi ~\"").startup_command,
+            "yazi ~"
+        );
         assert!(!parse("startup_hud = false").startup_hud);
     }
 

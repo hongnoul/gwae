@@ -178,7 +178,13 @@ fn a_quit_session_resurrects_in_its_old_directory() {
     assert!(
         out.contains("proj-alpha"),
         "restored pane must open in the saved cwd; saw: {}",
-        out.chars().rev().take(2000).collect::<String>().chars().rev().collect::<String>()
+        out.chars()
+            .rev()
+            .take(2000)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>()
     );
     s2.force_quit();
     s2.wait_exit();

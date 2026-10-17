@@ -1318,7 +1318,9 @@ mod tests {
             host.begin();
             pane.legacy_images.begin_row();
             assert_eq!(
-                pane.legacy_images.cell(1, pane.grid.cell(0, 0), &mut host).ch,
+                pane.legacy_images
+                    .cell(1, pane.grid.cell(0, 0), &mut host)
+                    .ch,
                 ' '
             );
             assert!(
