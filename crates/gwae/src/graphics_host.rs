@@ -954,6 +954,48 @@ mod tests {
     }
 
     #[test]
+    fn rapid_bounce_redefers_and_dwell_eventually_heals() {
+        let mut host = Host::default();
+        let id = allocate();
+        host.begin();
+        assert!(host.show_legacy(1, id, 1, b"page", 8));
+        host.finish();
+        // Stale while hidden.
+        host.begin();
+        host.finish();
+        for t in host.legacy.values_mut() {
+            t.uploaded = Instant::now() - REFRESH;
+        }
+        // Bounce: reveal, hide, reveal, hide... each reveal frame must stay
+        // free, re-deferring the heal rather than uploading mid-bounce.
+        for _ in 0..3 {
+            host.begin(); // reveal frame
+            assert!(host.show_legacy(1, id, 1, b"page", 8));
+            host.finish();
+            assert!(host.pending.is_empty(), "bounce reveal uploaded");
+            host.begin(); // hidden frame
+            host.finish();
+            // simulate the deferral elapsing while hidden again
+            for t in host.legacy.values_mut() {
+                t.uploaded = Instant::now() - REFRESH;
+            }
+        }
+        // Dwell: reveal (deferred), stay visible until due, heal fires.
+        host.begin();
+        assert!(host.show_legacy(1, id, 1, b"page", 8));
+        host.finish();
+        assert!(host.pending.is_empty());
+        for t in host.legacy.values_mut() {
+            t.uploaded = Instant::now() - REFRESH;
+        }
+        assert!(host.refresh_due(), "dwelling pane must schedule the heal");
+        host.begin();
+        assert!(host.show_legacy(1, id, 1, b"page", 8));
+        host.finish();
+        assert_eq!(host.pending, b"page", "dwell heal must upload");
+    }
+
+    #[test]
     fn budget_evicts_least_recently_painted_hidden_texture_first() {
         let mut host = Host::default();
         let (old, new) = (allocate(), allocate());
@@ -1180,3 +1222,4 @@ mod page_cost {
         );
     }
 }
+
