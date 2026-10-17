@@ -10,6 +10,14 @@ use std::time::{Duration, Instant};
 
 pub const PLACEHOLDER: char = '\u{10eeee}';
 const REFRESH: Duration = Duration::from_secs(30);
+/// How long after a reveal the self-heal re-upload fires when the texture
+/// went refresh-stale while hidden. The reveal itself must stay free (that
+/// is the point of retaining hidden textures), but the 30s heal exists
+/// because a host can silently drop images; deferring the heal a few
+/// seconds puts the multi-MiB re-upload in an idle frame while the user is
+/// reading instead of inside the navigation paint, and bounds how long a
+/// genuinely dropped image stays blank after a reveal.
+const REVEAL_HEAL: Duration = Duration::from_secs(5);
 const MAX_RASTER: usize = 32 * 1024 * 1024;
 const MAX_HOST_BYTES: usize = 128 * 1024 * 1024;
 static NEXT_ID: AtomicU32 = AtomicU32::new(0x4700_0001);
@@ -324,9 +332,23 @@ impl Host {
                     }
                     let texture = self.textures.get_mut(&key).unwrap();
                     if texture.uploaded.elapsed() >= REFRESH {
-                        let rgba = raster(source, p, dx, dy, tw, th);
-                        upload(&mut self.pending, texture.id, &rgba, tw, th, cols, rows);
-                        texture.uploaded = Instant::now();
+                        // Freshly inserted textures carry the current epoch
+                        // (first upload is immediate); one painted last frame
+                        // went stale on screen (heal now, the host may have
+                        // dropped it). An OLDER epoch means this is a reveal
+                        // after a long hide: keep the reveal frame free and
+                        // reschedule the heal via `refresh_due` instead of
+                        // paying a multi-MiB re-upload inside the navigation
+                        // paint.
+                        if texture.epoch == self.epoch
+                            || texture.epoch.wrapping_add(1) == self.epoch
+                        {
+                            let rgba = raster(source, p, dx, dy, tw, th);
+                            upload(&mut self.pending, texture.id, &rgba, tw, th, cols, rows);
+                            texture.uploaded = Instant::now();
+                        } else {
+                            texture.uploaded = Instant::now() - REFRESH + REVEAL_HEAL;
+                        }
                     }
                     texture.epoch = self.epoch;
                     result.push(Tile {
@@ -376,10 +398,18 @@ impl Host {
             );
         }
         let entry = self.legacy.get_mut(&id).unwrap();
-        if entry.uploaded.elapsed() >= REFRESH || entry.revision != revision {
+        // A revision change is new content: upload now, whatever the epoch.
+        // A refresh-stale texture only uploads now if it was on screen (this
+        // or last epoch, including first insert); one that went stale while
+        // hidden defers its heal by REVEAL_HEAL so the reveal frame itself
+        // ships zero image bytes (see the native path above).
+        let visible = entry.epoch == self.epoch || entry.epoch.wrapping_add(1) == self.epoch;
+        if entry.revision != revision || (visible && entry.uploaded.elapsed() >= REFRESH) {
             self.pending.extend_from_slice(commands);
             entry.uploaded = Instant::now();
             entry.revision = revision;
+        } else if entry.uploaded.elapsed() >= REFRESH {
+            entry.uploaded = Instant::now() - REFRESH + REVEAL_HEAL;
         }
         entry.epoch = self.epoch;
         entry.pane = pane;
@@ -859,12 +889,68 @@ mod tests {
         host.begin();
         host.finish();
         assert!(!host.refresh_due());
-        // Reveal after the stale hide: the cached path re-uploads before
-        // serving tiles, healing a host that dropped the texture meanwhile.
+        // Reveal after the stale hide: the reveal frame itself stays free
+        // (that is the point of retention); the heal is deferred and
+        // scheduled through `refresh_due`, so a dropped image still recovers
+        // within REVEAL_HEAL instead of blocking the navigation paint.
+        host.begin();
+        host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        assert!(host.pending.is_empty());
+        assert!(!host.refresh_due());
+        // Once the deferral elapses the heal fires on the next paint.
+        for t in host.textures.values_mut() {
+            t.uploaded = Instant::now() - REFRESH;
+        }
+        assert!(host.refresh_due());
         host.begin();
         host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
         host.finish();
         assert!(!host.pending.is_empty());
+        assert!(!host.refresh_due());
+    }
+
+    #[test]
+    fn reveal_after_long_hide_ships_zero_bytes_and_schedules_the_heal() {
+        let mut host = Host::default();
+        let id = allocate();
+        host.begin();
+        assert!(host.show_legacy(1, id, 1, b"page", 8));
+        host.finish();
+        // Hidden for several frames; texture goes refresh-stale meanwhile.
+        host.begin();
+        host.finish();
+        host.begin();
+        host.finish();
+        for t in host.legacy.values_mut() {
+            t.uploaded = Instant::now() - REFRESH;
+        }
+        // Reveal: zero image bytes, heal deferred (uploaded was pushed
+        // forward so refresh_due stays quiet for REVEAL_HEAL).
+        host.begin();
+        assert!(host.show_legacy(1, id, 1, b"page", 8));
+        host.finish();
+        assert!(host.pending.is_empty());
+        assert!(!host.refresh_due());
+        // Deferral elapsed while still visible: the heal re-uploads.
+        for t in host.legacy.values_mut() {
+            t.uploaded = Instant::now() - REFRESH;
+        }
+        assert!(host.refresh_due());
+        host.begin();
+        assert!(host.show_legacy(1, id, 1, b"page", 8));
+        host.finish();
+        assert_eq!(host.pending, b"page");
+        // New content on reveal still uploads immediately: a revision bump
+        // is a page flip, not a heal, and must never show the old page.
+        host.begin();
+        host.finish();
+        host.begin();
+        host.finish();
+        host.begin();
+        assert!(host.show_legacy(1, id, 2, b"next", 8));
+        host.finish();
+        assert_eq!(host.pending, b"next");
     }
 
     #[test]

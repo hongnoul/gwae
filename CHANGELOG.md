@@ -20,7 +20,12 @@ changelog, updated per PR). The format is based on
   replaced source) still frees it immediately, closed panes are swept on
   reconciliation, and the 30s self-heal refresh now applies only to visible
   textures (a hidden one can't be re-uploaded, so flagging it would repaint
-  forever).
+  forever). A reveal whose texture went refresh-stale while hidden (the
+  common "read another strip for a minute, come back" pattern) also ships
+  zero image bytes: the self-heal re-upload is deferred ~5s into an idle
+  frame instead of landing inside the navigation paint, verified live
+  (reveal after a 35s hide: 0 uploads in the reveal frame, heal arrives
+  seconds later).
 - **Keep-awake no longer forces the display to stay lit.** `⌥+w` now spawns
   `caffeinate -i -m -s -w <pid>` without `-d`/`-u`: the system (and every
   agent pane) stays awake, but the display sleeps on the user's normal
