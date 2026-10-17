@@ -558,7 +558,9 @@ impl Legacy {
         self.previous.set(result);
         result
     }
-    pub fn cell(&self, mut cell: Cell, host: &mut Host) -> Cell {
+    /// `pane` is the owning pane's id, forwarded to the host so retained
+    /// textures know which pane proved them live (or stale) each frame.
+    pub fn cell(&self, pane: u64, mut cell: Cell, host: &mut Host) -> Cell {
         if cell.ch != PLACEHOLDER {
             self.previous.set(None);
             return cell;
@@ -573,6 +575,7 @@ impl Legacy {
         let pid = color_number(cell.style.underline_color);
         if !image.placements.iter().any(|p| pid == 0 || p.id == pid)
             || !host.show_legacy(
+                pane,
                 image.host_id,
                 image.revision,
                 &image.commands,
@@ -941,7 +944,7 @@ mod tests {
             let mut h = Host::default();
             l.accept(&apc(&format!("a=T,U=1,i=7,f=24,s=1,v=1,{extra}"), b"AQID"));
             assert!(l.images.is_empty(), "accepted {extra}");
-            assert_eq!(l.cell(mark(7, 0, 0), &mut h).ch, ' ');
+            assert_eq!(l.cell(1, mark(7, 0, 0), &mut h).ch, ' ');
             assert!(h.pending.is_empty());
         }
     }
@@ -1012,7 +1015,7 @@ mod tests {
         let mut host = Host::default();
         let mut cell = mark(7, 0, 0);
         cell.style.underline_color = CColor::Rgb(0, 0, 4);
-        assert_eq!(l.cell(cell, &mut host).ch, PLACEHOLDER);
+        assert_eq!(l.cell(1, cell, &mut host).ch, PLACEHOLDER);
         assert!(!host.pending.is_empty());
     }
 
@@ -1024,18 +1027,18 @@ mod tests {
         let old_id = l.images[&7].host_id;
         let old_revision = l.images[&7].revision;
         h.begin();
-        l.cell(mark(7, 0, 0), &mut h);
+        l.cell(1, mark(7, 0, 0), &mut h);
         assert!(!h.pending.is_empty());
         h.finish();
         h.begin();
-        l.cell(mark(7, 0, 0), &mut h);
+        l.cell(1, mark(7, 0, 0), &mut h);
         assert!(h.pending.is_empty());
         h.finish();
         l.accept(&apc("a=p,U=1,i=7,p=1,c=2,r=3", b""));
         assert!(l.images[&7].revision > old_revision);
         assert_eq!(l.images[&7].host_id, old_id);
         h.begin();
-        l.cell(mark(7, 0, 0), &mut h);
+        l.cell(1, mark(7, 0, 0), &mut h);
         assert!(!h.pending.is_empty());
         h.finish();
         rgb(&mut l, 7);
@@ -1092,7 +1095,7 @@ mod tests {
         assert!(h.pending.is_empty());
         let mut sparse = mark(id, 3, 1);
         sparse.combining = NO_COMBINING;
-        let mapped = l.cell(sparse, &mut h);
+        let mapped = l.cell(1, sparse, &mut h);
         assert_eq!(mapped.ch, PLACEHOLDER);
         assert_eq!(mapped.combining[0], DIACRITICS[3]);
         assert_eq!(mapped.combining[1], DIACRITICS[1]);
@@ -1100,15 +1103,15 @@ mod tests {
         mapped.push_codepoints(&mut glyph);
         assert_eq!(glyph.chars().count(), 4);
         sparse.combining[0] = DIACRITICS[3];
-        let mapped = l.cell(sparse, &mut h);
+        let mapped = l.cell(1, sparse, &mut h);
         assert_eq!(mapped.combining[1], DIACRITICS[2]);
         l.begin_row();
-        assert_eq!(l.cell(sparse, &mut h).ch, ' '); // High byte cannot inherit across rows.
+        assert_eq!(l.cell(1, sparse, &mut h).ch, ' '); // High byte cannot inherit across rows.
         rgb(&mut l, 7);
         l.begin_row();
-        assert_eq!(l.cell(sparse, &mut h).combining[1], DIACRITICS[0]);
+        assert_eq!(l.cell(1, sparse, &mut h).combining[1], DIACRITICS[0]);
         l.observe(Cell::default());
-        assert_eq!(l.cell(sparse, &mut h).combining[1], DIACRITICS[0]);
+        assert_eq!(l.cell(1, sparse, &mut h).combining[1], DIACRITICS[0]);
     }
 
     #[test]

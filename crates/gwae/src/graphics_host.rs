@@ -84,6 +84,9 @@ struct VirtualTexture {
     uploaded: Instant,
     revision: u64,
     bytes: usize,
+    /// Owning pane, for `finish()`'s painted-pane staleness rule. One legacy
+    /// transfer belongs to exactly one pane (host ids are never shared).
+    pane: u64,
 }
 /// Key for `Host::prepare_cache`: pane id, image-activity token, view rect
 /// (col, row, w, h), and cell pixel size (w, h).
@@ -99,23 +102,37 @@ pub struct Host {
     /// id plus the pane's image-activity token, view rect, and cell size, so
     /// a still image pane reuses its tiles without rewalking sources,
     /// resorting placements, or rebuilding tile rects every frame. Entries
-    /// are invalidated by token change, geometry change, `finish()` eviction,
-    /// or `clear()`.
-    prepare_cache: HashMap<PrepareKey, Vec<Tile>>,
+    /// are invalidated by token change, geometry change, or `clear()`, and
+    /// culled by `finish()` when unused for a frame or pointing at an
+    /// evicted texture. Each entry carries the epoch it last served, so a
+    /// hidden pane's entry (rebuildable in microseconds) never outlives its
+    /// frame while the expensive host textures are retained independently.
+    prepare_cache: HashMap<PrepareKey, (u64, Vec<Tile>)>,
+    /// Panes prepared this frame. `finish()` deletes stale textures only for
+    /// panes in this set: a painted pane that stopped using a texture proves
+    /// it dead (child delete, geometry change), while an unpainted pane's
+    /// textures are the hidden-strip cache and must survive the frame.
+    painted: std::collections::HashSet<u64>,
 }
 impl Host {
     pub fn refresh_due(&self) -> bool {
+        // Only textures painted in the previous frame are refresh
+        // candidates. A retained hidden texture cannot be re-uploaded until
+        // its pane is painted again (`prepare`/`show_legacy` own the upload),
+        // so counting it here would mark every frame dirty forever: a
+        // repaint busy-loop that never clears the condition.
         self.textures
             .values()
-            .any(|t| t.uploaded.elapsed() >= REFRESH)
+            .any(|t| t.epoch == self.epoch && t.uploaded.elapsed() >= REFRESH)
             || self
                 .legacy
                 .values()
-                .any(|t| t.uploaded.elapsed() >= REFRESH)
+                .any(|t| t.epoch == self.epoch && t.uploaded.elapsed() >= REFRESH)
     }
     pub fn begin(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
         self.pending.clear();
+        self.painted.clear();
     }
     fn budget(&mut self, required: usize) -> bool {
         if required > MAX_HOST_BYTES {
@@ -124,32 +141,42 @@ impl Host {
         if self.bytes + required <= MAX_HOST_BYTES {
             return true;
         }
-        // A replaced or hidden texture must not block its own successor until
-        // finish(), otherwise no later dirty frame may exist to retry it.
-        let old: Vec<_> = self
+        // Retained textures are a cache of hidden panes' images; evict the
+        // least recently painted first (its pane is the least likely to be
+        // revealed next). Entries touched this epoch are never victims: they
+        // back the frame being prepared right now, and a replaced or hidden
+        // texture must not block its own successor, otherwise no later dirty
+        // frame may exist to retry it.
+        enum Victim {
+            Native(Vec<u64>),
+            Legacy(u32),
+        }
+        let mut victims: Vec<(u64, Victim)> = self
             .textures
             .iter()
             .filter(|(_, t)| t.epoch != self.epoch)
-            .map(|(k, _)| k.clone())
+            .map(|(k, t)| (t.epoch, Victim::Native(k.clone())))
+            .chain(
+                self.legacy
+                    .iter()
+                    .filter(|(_, t)| t.epoch != self.epoch)
+                    .map(|(&id, t)| (t.epoch, Victim::Legacy(id))),
+            )
             .collect();
-        for key in old {
-            let t = self.textures.remove(&key).unwrap();
-            delete(&mut self.pending, t.id);
-            self.bytes -= t.bytes;
-            if self.bytes + required <= MAX_HOST_BYTES {
-                return true;
+        victims.sort_by_key(|&(epoch, _)| epoch);
+        for (_, victim) in victims {
+            match victim {
+                Victim::Native(key) => {
+                    let t = self.textures.remove(&key).unwrap();
+                    delete(&mut self.pending, t.id);
+                    self.bytes -= t.bytes;
+                }
+                Victim::Legacy(id) => {
+                    let t = self.legacy.remove(&id).unwrap();
+                    delete(&mut self.pending, id);
+                    self.bytes -= t.bytes;
+                }
             }
-        }
-        let old: Vec<_> = self
-            .legacy
-            .iter()
-            .filter(|(_, t)| t.epoch != self.epoch)
-            .map(|(&id, _)| id)
-            .collect();
-        for id in old {
-            let t = self.legacy.remove(&id).unwrap();
-            delete(&mut self.pending, id);
-            self.bytes -= t.bytes;
             if self.bytes + required <= MAX_HOST_BYTES {
                 return true;
             }
@@ -177,10 +204,28 @@ impl Host {
             return Vec::new();
         };
         let key = (pane, token, view.0, view.1, view.2, view.3, cell.0, cell.1);
-        if let Some(cached) = self.prepare_cache.get(&key) {
+        // The cached path skips `prepare`, which owns the REFRESH re-upload.
+        // A still pane served purely from this cache would leave `uploaded`
+        // stale forever while `refresh_due()` keeps marking frames dirty: a
+        // repaint loop that can never heal the host. When any backing texture
+        // is due, drop the entry and take the full path so it re-uploads.
+        let refresh = self.prepare_cache.get(&key).is_some_and(|(_, tiles)| {
+            tiles.iter().any(|tile| {
+                self.textures
+                    .values()
+                    .any(|t| t.id == tile.id && t.uploaded.elapsed() >= REFRESH)
+            })
+        });
+        if refresh {
+            self.prepare_cache.remove(&key);
+        }
+        if let Some((used, cached)) = self.prepare_cache.get_mut(&key) {
+            *used = self.epoch;
+            self.painted.insert(pane);
             let tiles = cached.clone();
             // Cached path must still mark textures live for this epoch, or
-            // `finish()` would delete textures backing a still-visible frame.
+            // budget eviction could reclaim textures backing a still-visible
+            // frame.
             for tile in &tiles {
                 for texture in self.textures.values_mut() {
                     if texture.id == tile.id {
@@ -192,7 +237,7 @@ impl Host {
             return tiles;
         }
         let tiles = self.prepare(pane, graphics, view, cell);
-        self.prepare_cache.insert(key, tiles.clone());
+        self.prepare_cache.insert(key, (self.epoch, tiles.clone()));
         tiles
     }
     pub fn prepare(
@@ -203,6 +248,7 @@ impl Host {
         cell: (u16, u16),
     ) -> Vec<Tile> {
         let mut result = Vec::new();
+        self.painted.insert(pane);
         if cell.0 == 0 || cell.1 == 0 {
             return result;
         }
@@ -298,6 +344,7 @@ impl Host {
     }
     pub(crate) fn show_legacy(
         &mut self,
+        pane: u64,
         id: u32,
         revision: u64,
         commands: &[u8],
@@ -324,6 +371,7 @@ impl Host {
                     uploaded: Instant::now() - REFRESH,
                     revision,
                     bytes: footprint,
+                    pane,
                 },
             );
         }
@@ -334,14 +382,29 @@ impl Host {
             entry.revision = revision;
         }
         entry.epoch = self.epoch;
+        entry.pane = pane;
         true
     }
     pub fn finish(&mut self) {
         let epoch = self.epoch;
+        // Staleness is judged per pane, not per frame. A pane that WAS
+        // painted this frame and did not use a texture has proven it dead
+        // (child delete, replaced source, geometry change): delete it, or a
+        // child's scoped delete would leave the host showing a ghost. A pane
+        // that was NOT painted (hidden strip, scrolled off, peeked) keeps its
+        // textures: they are the hidden-pane image cache that makes strip
+        // cycling cost zero image bytes on reveal. A full-pane page re-upload
+        // is megabytes of base64 through the single render thread plus a PNG
+        // decode in the host, so evicting on hide made every strip
+        // round-trip hitch the whole UI. Retention is bounded by
+        // MAX_HOST_BYTES: `budget()` reclaims the least recently painted
+        // textures first, and `clear()` drops everything on reset.
+        let painted = &self.painted;
         let buf = &mut self.pending;
         let bytes = &mut self.bytes;
-        self.textures.retain(|_, t| {
-            if t.epoch == epoch {
+        // Native texture keys carry the owning pane as their first element.
+        self.textures.retain(|key, t| {
+            if t.epoch == epoch || !painted.contains(&key[0]) {
                 true
             } else {
                 delete(buf, t.id);
@@ -350,7 +413,7 @@ impl Host {
             }
         });
         self.legacy.retain(|id, t| {
-            if t.epoch == epoch {
+            if t.epoch == epoch || !painted.contains(&t.pane) {
                 true
             } else {
                 delete(buf, *id);
@@ -358,12 +421,14 @@ impl Host {
                 false
             }
         });
-        // Phase 1: drop cached tile lists whose texture ids no longer exist
-        // (evicted by hide/budget). Without this a still pane would keep
-        // returning tiles that point at deleted host textures.
+        // Drop cached tile lists that were not served this frame or whose
+        // texture ids no longer exist (evicted by budget). Tile lists are
+        // rebuilt in microseconds, so unlike textures they are not worth
+        // retaining for hidden panes, and a stale list would point the
+        // composer at a texture the budget may since have deleted.
         let live: std::collections::HashSet<u32> = self.textures.values().map(|t| t.id).collect();
         self.prepare_cache
-            .retain(|_, tiles| tiles.iter().all(|t| live.contains(&t.id)));
+            .retain(|_, (used, tiles)| *used == epoch && tiles.iter().all(|t| live.contains(&t.id)));
     }
     pub fn clear(&mut self) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -378,6 +443,39 @@ impl Host {
         self.bytes = 0;
         self.pending.clear();
         self.prepare_cache.clear();
+        buf
+    }
+    /// Free retained textures whose pane no longer exists. With hidden-pane
+    /// retention a closed pane's textures would otherwise linger until budget
+    /// pressure; the caller sweeps this after pane reconciliation. Returns
+    /// the delete commands for the caller to write out directly (like
+    /// `clear()`): `pending` is cleared by the next `begin()`, so deletes
+    /// parked there between frames would be silently dropped.
+    #[must_use = "the delete commands must be written to the host"]
+    pub fn retain_panes(&mut self, live: &std::collections::HashSet<u64>) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let bytes = &mut self.bytes;
+        self.textures.retain(|key, t| {
+            if live.contains(&key[0]) {
+                true
+            } else {
+                delete(&mut buf, t.id);
+                *bytes -= t.bytes;
+                false
+            }
+        });
+        self.legacy.retain(|id, t| {
+            if live.contains(&t.pane) {
+                true
+            } else {
+                delete(&mut buf, *id);
+                *bytes -= t.bytes;
+                false
+            }
+        });
+        let ids: std::collections::HashSet<u32> = self.textures.values().map(|t| t.id).collect();
+        self.prepare_cache
+            .retain(|key, (_, tiles)| live.contains(&key.0) && tiles.iter().all(|t| ids.contains(&t.id)));
         buf
     }
 }
@@ -540,26 +638,29 @@ mod tests {
     }
 
     #[test]
-    fn cached_tiles_are_dropped_when_their_texture_is_evicted() {
+    fn hidden_textures_are_retained_and_reveal_is_free() {
         let g = scene("", &[1, 2, 3], (1, 1), (1, 1));
         let mut host = Host::default();
         host.begin();
         let first = host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
         host.finish();
         assert_eq!(first.len(), 1);
-        // Hide the image for an epoch so `finish()` deletes the texture.
+        // Hide the image for an epoch: the texture is retained (it is the
+        // hidden-pane cache), so no delete goes to the host, but the cheap
+        // tile list is culled (it is rebuilt in microseconds on reveal).
         host.begin();
         host.finish();
-        assert!(host.pending.starts_with(b"\x1b_Ga=d"));
-        // The cached tile list must be gone too: returning it would point the
-        // composer at a deleted host texture.
+        assert!(host.pending.is_empty());
         assert!(host.prepare_cache.is_empty());
-        // Re-preparing after eviction re-uploads under a fresh host id.
+        assert_eq!(host.bytes, 4);
+        // Revealing again reuses the retained texture: same host id, zero
+        // image bytes on the wire. This is what makes strip cycling with an
+        // image-heavy pane cheap.
         host.begin();
         let visible = host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
         host.finish();
-        assert_ne!(visible[0].id, first[0].id);
-        assert!(!host.pending.is_empty());
+        assert_eq!(visible[0].id, first[0].id);
+        assert!(host.pending.is_empty());
         // `clear()` drops textures and cache entries together.
         assert!(!host.clear().is_empty());
         assert!(host.prepare_cache.is_empty());
@@ -602,14 +703,13 @@ mod tests {
         let again = host.prepare(2, &g, (0, 0, 1, 1), (1, 1));
         host.finish();
         assert_eq!(again[0].id, second[0].id);
-        assert_eq!(
-            host.pending,
-            format!("\x1b_Ga=d,d=I,i={},q=2\x1b\\", first[0].id).into_bytes()
-        );
-        assert_eq!(
-            host.clear(),
-            format!("\x1b_Ga=d,d=I,i={},q=2\x1b\\", second[0].id).into_bytes()
-        );
+        // Pane 1's texture is hidden, not gone: retained under budget so a
+        // reveal costs nothing. `clear()` deletes both, each exactly once.
+        assert!(host.pending.is_empty());
+        let cleared = String::from_utf8(host.clear()).unwrap();
+        for id in [first[0].id, second[0].id] {
+            assert_eq!(cleared.matches(&format!("i={id},")).count(), 1);
+        }
         assert_eq!(host.bytes, 0);
         assert!(host.clear().is_empty());
     }
@@ -643,17 +743,28 @@ mod tests {
     }
 
     #[test]
-    fn hidden_images_release_host_storage_and_reveal_reuploads_local_source() {
+    fn budget_pressure_reclaims_hidden_textures_and_reveal_reuploads_local_source() {
         let g = scene("", &[1, 2, 3], (1, 1), (1, 1));
         let source = std::sync::Arc::clone(&g.source(1).unwrap().pixels);
         let mut host = Host::default();
         host.begin();
         let first = host.prepare(3, &g, (0, 0, 1, 1), (1, 1));
         host.finish();
+        // Hiding alone releases nothing: the texture is the hidden-pane cache.
         host.begin();
         host.finish();
-        assert_eq!(host.bytes, 0);
+        assert_eq!(host.bytes, 4);
+        assert!(host.pending.is_empty());
+        // Budget pressure while hidden reclaims it: the local source pixels
+        // stay owned by the pane, so a later reveal re-rasters and re-uploads
+        // from them under a fresh host id.
+        host.begin();
+        host.bytes = MAX_HOST_BYTES;
+        assert!(host.budget(4));
+        host.bytes -= MAX_HOST_BYTES - 4;
         assert!(String::from_utf8_lossy(&host.pending).contains(&format!("i={}", first[0].id)));
+        host.finish();
+        assert_eq!(host.bytes, 0);
         host.begin();
         let visible = host.prepare(3, &g, (0, 0, 1, 1), (1, 1));
         host.finish();
@@ -722,6 +833,108 @@ mod tests {
     }
 
     #[test]
+    fn refresh_due_ignores_hidden_textures_and_cached_hits_still_reupload() {
+        let g = scene("", &[1, 2, 3], (1, 1), (1, 1));
+        let mut host = Host::default();
+        host.begin();
+        host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        for t in host.textures.values_mut() {
+            t.uploaded = Instant::now() - REFRESH;
+        }
+        // Visible and due: refresh. The dirty frame serves from the prepare
+        // cache, which must not swallow the re-upload or `refresh_due` would
+        // keep marking frames dirty forever (a repaint busy-loop).
+        assert!(host.refresh_due());
+        host.begin();
+        host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        assert!(!host.pending.is_empty());
+        assert!(!host.refresh_due());
+        // Hidden and due: NOT a refresh. The texture cannot be re-uploaded
+        // until its pane paints again, so flagging it would busy-loop.
+        for t in host.textures.values_mut() {
+            t.uploaded = Instant::now() - REFRESH;
+        }
+        host.begin();
+        host.finish();
+        assert!(!host.refresh_due());
+        // Reveal after the stale hide: the cached path re-uploads before
+        // serving tiles, healing a host that dropped the texture meanwhile.
+        host.begin();
+        host.prepare_cached(7, Some(3), &g, (0, 0, 1, 1), (1, 1));
+        host.finish();
+        assert!(!host.pending.is_empty());
+    }
+
+    #[test]
+    fn budget_evicts_least_recently_painted_hidden_texture_first() {
+        let mut host = Host::default();
+        let (old, new) = (allocate(), allocate());
+        // Pane 1 painted long ago, pane 2 more recently, both now hidden.
+        host.begin();
+        assert!(host.show_legacy(1, old, 1, b"old", MAX_HOST_BYTES / 2));
+        host.begin();
+        assert!(host.show_legacy(2, new, 1, b"new", MAX_HOST_BYTES / 2));
+        host.begin();
+        host.finish();
+        assert_eq!(host.bytes, MAX_HOST_BYTES / 2 * 2);
+        // A newcomer needing half the budget must evict pane 1's texture
+        // (least recently painted), not pane 2's.
+        host.begin();
+        assert!(host.show_legacy(3, allocate(), 1, b"incoming", MAX_HOST_BYTES / 2));
+        let pending = String::from_utf8_lossy(&host.pending);
+        assert!(pending.contains(&format!("a=d,d=I,i={old}")));
+        assert!(!pending.contains(&format!("a=d,d=I,i={new}")));
+        assert!(host.legacy.contains_key(&new));
+        assert!(!host.legacy.contains_key(&old));
+    }
+
+    #[test]
+    fn painted_pane_that_dropped_a_texture_deletes_it_hidden_pane_keeps_it() {
+        let g = scene("", &[1, 2, 3], (1, 1), (1, 1));
+        let mut host = Host::default();
+        let legacy_id = allocate();
+        host.begin();
+        let tiles = host.prepare(1, &g, (0, 0, 1, 1), (1, 1));
+        assert!(host.show_legacy(2, legacy_id, 1, b"page", 8));
+        host.finish();
+        // Pane 1 paints again without its image (child deleted it): its
+        // texture is proven dead and freed. Pane 2 is hidden: retained.
+        host.begin();
+        let empty = Graphics::default();
+        assert!(host.prepare(1, &empty, (0, 0, 1, 1), (1, 1)).is_empty());
+        host.finish();
+        let pending = String::from_utf8_lossy(&host.pending);
+        assert!(pending.contains(&format!("a=d,d=I,i={}", tiles[0].id)));
+        assert!(!pending.contains(&format!("a=d,d=I,i={legacy_id}")));
+        assert!(host.legacy.contains_key(&legacy_id));
+        assert_eq!(host.bytes, 8);
+    }
+
+    #[test]
+    fn retain_panes_frees_closed_panes_and_returns_the_deletes() {
+        let g = scene("", &[1, 2, 3], (1, 1), (1, 1));
+        let mut host = Host::default();
+        let legacy_id = allocate();
+        host.begin();
+        let tiles = host.prepare_cached(1, Some(1), &g, (0, 0, 1, 1), (1, 1));
+        assert!(host.show_legacy(2, legacy_id, 1, b"page", 8));
+        host.finish();
+        // Pane 1 closed; pane 2 lives on.
+        let live = std::collections::HashSet::from([2u64]);
+        let deletes = String::from_utf8(host.retain_panes(&live)).unwrap();
+        assert!(deletes.contains(&format!("a=d,d=I,i={}", tiles[0].id)));
+        assert!(!deletes.contains(&format!("a=d,d=I,i={legacy_id}")));
+        assert!(host.textures.is_empty());
+        assert!(host.prepare_cache.is_empty());
+        assert!(host.legacy.contains_key(&legacy_id));
+        assert_eq!(host.bytes, 8);
+        // No-op when nothing closed.
+        assert!(host.retain_panes(&live).is_empty());
+    }
+
+    #[test]
     fn stale_budget_is_reclaimed_before_replacement_admission() {
         let g = scene("", &[1, 2, 3], (1, 1), (1, 1));
         let mut host = Host::default();
@@ -751,7 +964,7 @@ mod tests {
         let g = scene("", &[1, 2, 3], (1, 1), (1, 1));
         let mut host = Host::default();
         host.begin();
-        assert!(host.show_legacy(allocate(), 1, b"upload", MAX_HOST_BYTES));
+        assert!(host.show_legacy(1, allocate(), 1, b"upload", MAX_HOST_BYTES));
         assert!(host.prepare(1, &g, (0, 0, 1, 1), (1, 1)).is_empty());
         assert_eq!(host.bytes, MAX_HOST_BYTES);
         host.begin();
@@ -765,19 +978,19 @@ mod tests {
         let mut host = Host::default();
         let id = allocate();
         host.begin();
-        assert!(host.show_legacy(id, 1, b"one", 4));
+        assert!(host.show_legacy(1, id, 1, b"one", 4));
         host.finish();
         assert_eq!(host.pending, b"one");
         host.begin();
-        assert!(host.show_legacy(id, 1, b"one", 4));
+        assert!(host.show_legacy(1, id, 1, b"one", 4));
         host.finish();
         assert!(host.pending.is_empty());
         host.begin();
-        assert!(host.show_legacy(id, 2, b"two", 4));
+        assert!(host.show_legacy(1, id, 2, b"two", 4));
         host.finish();
         assert_eq!(host.pending, b"two");
         host.begin();
-        assert!(host.show_legacy(id, 3, b"three", 8));
+        assert!(host.show_legacy(1, id, 3, b"three", 8));
         host.finish();
         assert!(host.pending.ends_with(b"three"));
         assert_eq!(host.bytes, 8);

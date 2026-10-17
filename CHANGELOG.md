@@ -7,6 +7,20 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Changed
+- **Hidden panes keep their images in the host terminal; strip cycling no
+  longer re-uploads them.** The host image cache used to delete every texture
+  not painted in the current frame, so navigating away from a strip with an
+  image-heavy pane (a pdfpane textbook page is ~1 MiB of PNG, ~1.4 MiB of
+  base64) and back re-pushed the whole transfer through the single render
+  thread and forced the host terminal to re-decode it, hitching all pane
+  navigation both ways. Textures now persist across hides and reveals cost
+  zero image bytes. Memory in the host terminal stays bounded by the existing
+  128 MiB budget, now enforced as least-recently-painted-first eviction; a
+  pane that *is* painted and stopped referencing a texture (child delete,
+  replaced source) still frees it immediately, closed panes are swept on
+  reconciliation, and the 30s self-heal refresh now applies only to visible
+  textures (a hidden one can't be re-uploaded, so flagging it would repaint
+  forever).
 - **Keep-awake no longer forces the display to stay lit.** `⌥+w` now spawns
   `caffeinate -i -m -s -w <pid>` without `-d`/`-u`: the system (and every
   agent pane) stays awake, but the display sleeps on the user's normal

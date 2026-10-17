@@ -446,7 +446,7 @@ pub(crate) fn render_frame_with_images(
                 };
                 if !v.peek {
                     if let Some(host) = images.as_deref_mut() {
-                        cell = pane.legacy_images.cell(cell, host);
+                        cell = pane.legacy_images.cell(v.pid, cell, host);
                     } else if cell.ch == crate::graphics_host::PLACEHOLDER {
                         cell = Cell {
                             style: cell.style,

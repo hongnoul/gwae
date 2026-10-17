@@ -2452,6 +2452,18 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             ) {
                 tracing::error!("sync panes: {e}");
             }
+            // Closed panes leave retained (hidden-cache) textures behind in
+            // the host; free them now that the pane set is reconciled. The
+            // deletes are written directly: `pending` belongs to the frame
+            // cycle and is cleared by the next `begin()`.
+            if host_kitty_graphics {
+                let live: std::collections::HashSet<u64> = panes.keys().copied().collect();
+                let deletes = host_images.retain_panes(&live);
+                if !deletes.is_empty() {
+                    let _ = stdout.write_all(&deletes);
+                    let _ = stdout.flush();
+                }
+            }
         }
     }
 
