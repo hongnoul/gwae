@@ -177,7 +177,7 @@ fn startup_hud_defaults_to_showing_the_cheat_sheet() {
     // there, so a passing suppression test cannot be a false positive from
     // the HUD having been removed or renamed.
     let mut s = Session::start("startup_command = \"stub-tool\"\n");
-    let text = s.wait_for(15, |t| hud_showing(t));
+    let text = s.wait_for(15, hud_showing);
     assert!(
         hud_showing(&text),
         "default launch still flashes the cheat-sheet; got:\n{text:?}"
