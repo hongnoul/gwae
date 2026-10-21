@@ -106,8 +106,8 @@ fn only_latency_scopes_the_audit() {
         "retired knob must not be flagged:\n{out}"
     );
     assert!(
-        !out.contains("keep-awake"),
-        "scoped check stays scoped:\n{out}"
+        !out.contains("spawn dir") && !out.contains("updates:"),
+        "scoped check stays scoped to latency, no other stage lines:\n{out}"
     );
 }
 
