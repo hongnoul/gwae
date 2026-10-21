@@ -470,12 +470,16 @@ fn a_broken_new_binary_is_refused_and_the_session_survives() {
         any_running(MARKER),
         "and the pane's work must be untouched by a refused reload"
     );
-    let screen = s.screen();
+    // The refusal must be recorded, not silent. The screen is deliberately
+    // clean (no toasts, and logs are routed off the TTY so they can never
+    // corrupt a frame), so the record lives in the session log:
+    // HOME is the sandbox, so the log is under its XDG default state dir.
+    let log = s.dir.join(".local/state/gwae/gwae.log");
+    let logged = std::fs::read_to_string(&log).unwrap_or_default();
     assert!(
-        screen.contains("reload"),
-        "the refusal should say so on screen rather than failing silently; \
-         got tail: {:?}",
-        &screen[screen.len().saturating_sub(400)..]
+        logged.contains("reload"),
+        "the refusal should be recorded in {} rather than vanishing; got:\n{logged}",
+        log.display()
     );
 }
 

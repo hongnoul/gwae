@@ -33,13 +33,7 @@ use cli::{Cli, Command};
 use config::Config;
 
 fn main() {
-    // Logs go to stderr; `GWAE_LOG` controls the filter (tracing directive).
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("GWAE_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    init_tracing();
 
     let cli = Cli::parse();
     let cfg_path = Config::default_path();
@@ -48,6 +42,47 @@ fn main() {
     if let Err(code) = run(cli, cfg) {
         std::process::exit(code);
     }
+}
+
+/// Route logs where they cannot corrupt the screen.
+///
+/// When stderr is a TTY it is the same terminal the TUI paints, and any log
+/// line races the frame writer: a `tracing::info!` emitted mid-frame (the
+/// `⌥+w` caffeinate spawn was the repeat offender) lands between
+/// synchronized-update batches and leaves fragments like a stray `p` plus a
+/// newline on screen. So on a TTY the log goes to
+/// `$XDG_STATE_HOME/gwae/gwae.log` (truncated per run) instead. A piped
+/// stderr (CI, `gwae 2>err.log`) keeps plain stderr, and `GWAE_LOG`
+/// controls the filter either way.
+fn init_tracing() {
+    use std::io::IsTerminal;
+    let filter = || {
+        tracing_subscriber::EnvFilter::try_from_env("GWAE_LOG")
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    };
+    if std::io::stderr().is_terminal() {
+        if let Some(path) = update::state_dir().map(|d| d.join("gwae.log")) {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Ok(file) = std::fs::File::create(&path) {
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter())
+                    .with_writer(std::sync::Mutex::new(file))
+                    .with_ansi(false)
+                    .init();
+                return;
+            }
+        }
+        // No state dir and no file: swallowing logs beats corrupting the
+        // screen the user is looking at.
+        tracing_subscriber::fmt()
+            .with_env_filter(filter())
+            .with_writer(std::io::sink)
+            .init();
+        return;
+    }
+    tracing_subscriber::fmt().with_env_filter(filter()).init();
 }
 
 fn run(cli: Cli, cfg: Config) -> Result<(), i32> {

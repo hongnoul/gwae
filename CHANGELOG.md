@@ -7,6 +7,13 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Changed
+- **Logs can no longer corrupt the screen.** `tracing` output went to stderr,
+  which inside the TUI is the same terminal the frames are painted on; a log
+  line emitted mid-frame (the `⌥+w` caffeinate spawn was the repeat offender)
+  raced the synchronized-update writer and left fragments like a stray `p` on
+  screen. When stderr is a TTY the log now goes to
+  `$XDG_STATE_HOME/gwae/gwae.log` (truncated per run); a piped stderr keeps
+  the old behavior, and `GWAE_LOG` still controls the filter.
 - **The caffeinate badge adapts to narrow HUD panels.** On 1–2 pane layouts
   the hold-Option dashboard frame is narrower than the text badge, which used
   to vanish entirely. It now degrades to the `∑` glyph (the `⌥+w` bind's own

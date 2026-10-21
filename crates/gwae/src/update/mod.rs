@@ -77,5 +77,5 @@ pub const NO_CHECK_ENV: &str = "GWAE_NO_UPDATE_CHECK";
 pub const SOURCE_ENV: &str = "GWAE_UPDATE_SOURCE";
 
 pub use check::{doctor_line, run_upgrade, spawn_check};
-pub use source::{detect, probe, Source};
+pub use source::{detect, probe, state_dir, Source};
 pub use uninstall::run_uninstall;
