@@ -2488,7 +2488,7 @@ mod tests {
             let out = paint_dashboard(&layout, &facts, 100, 24);
             let text = screen_rows(&out, 100).join("\n");
             assert_eq!(
-                text.contains("keep-awake"),
+                text.contains("caffeinate"),
                 keep_awake,
                 "badge reads on the HUD frame iff awake:\n{text}"
             );
@@ -2497,15 +2497,18 @@ mod tests {
 
     #[test]
     fn keep_awake_badge_stamps_the_center_help_frame_only_while_awake() {
-        // Same promise for the startup / `⌥+/` help panel.
+        // Same promise for the startup / `⌥+/` help panel. The cheat-sheet
+        // body always names the ⌥+w bind ("caffeinate"), so the badge is
+        // the *second* occurrence: present iff the guard is active.
         let (cols, rows) = (80u16, 24u16);
         for keep_awake in [false, true] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
             draw_center_hud(&mut out, cols, rows, &pal_terminal(), keep_awake, false);
             let text: String = out.iter().map(|c| c.ch).collect();
+            let count = text.matches("caffeinate").count();
             assert_eq!(
-                text.contains("keep-awake"),
-                keep_awake,
+                count,
+                if keep_awake { 2 } else { 1 },
                 "badge reads on the help frame iff awake: {text:?}"
             );
         }
@@ -2523,7 +2526,7 @@ mod tests {
         let badge_w = badge.chars().count();
         let row = lines
             .iter()
-            .find(|l| l.contains("keep-awake"))
+            .find(|l| l.contains("caffeinate"))
             .expect("badge must stamp one row");
         // Char-based indexing: the rounded corners are multi-byte, so byte
         // offsets would misplace the expectation.
@@ -2531,7 +2534,7 @@ mod tests {
         let frame_start = chars.iter().position(|&c| c == '╭').unwrap();
         let frame_end = chars.iter().position(|&c| c == '╮').unwrap();
         let frame_w = frame_end - frame_start + 1;
-        let needle: Vec<char> = "keep-awake".chars().collect();
+        let needle: Vec<char> = "caffeinate".chars().collect();
         let start_char = chars
             .windows(needle.len())
             .position(|w| w == needle.as_slice())

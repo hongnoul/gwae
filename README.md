@@ -100,7 +100,7 @@ input, ✗ failed), then ⌥+g to jump to the neediest pane. Mention
 clicking a tile focuses it.
 8. Help and quit: show ⌥+/ (cheat sheet), ⌥+q (close pane),
 ⌥+Shift+q (quit; last pane exiting quits gwae). Mention ⌥+w
-(keep-awake) last.
+(caffeinate) last.
 9. Health: only now, have me type exit in panes until one shell is left,
 then run gwae doctor in it and confirm exit 0. If anything fails, run
 gwae init. Mention ~/.config/gwae/gwae.toml (all keys optional,

@@ -174,7 +174,7 @@ fn argv(pid: u32) -> Vec<String> {
 /// terminal colors are. It lives only on the HUD, so the palette itself —
 /// focus ring included — is never touched and toggling off restores every
 /// color exactly.
-pub const KEEP_AWAKE_BADGE: &str = " keep-awake ";
+pub const KEEP_AWAKE_BADGE: &str = " caffeinate ";
 
 /// The `gwae doctor` line against a described machine, so tests never
 /// depend on what happens to be installed on the one running them.
@@ -295,7 +295,7 @@ mod tests {
             "badge must be plain ASCII, got {KEEP_AWAKE_BADGE:?}"
         );
         assert!(
-            KEEP_AWAKE_BADGE.contains("keep-awake"),
+            KEEP_AWAKE_BADGE.contains("caffeinate"),
             "badge must name the state, got {KEEP_AWAKE_BADGE:?}"
         );
     }

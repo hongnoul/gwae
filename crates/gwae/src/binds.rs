@@ -280,7 +280,7 @@ pub const BINDS: &[Bind] = &[
         trigger: Trigger::Chord('w'),
         glyph: Some('\u{2211}'),
         group: Group::Panes,
-        desc: "keep awake",
+        desc: "caffeinate",
         effect: Effect::ToggleKeepAwake,
     },
     Bind {
