@@ -1949,27 +1949,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         dirty = true;
                                         continue;
                                     }
-                                    let is_swap = matches!(
-                                        a,
-                                        Action::MovePaneLeft
-                                            | Action::MovePaneRight
-                                            | Action::MovePaneUp
-                                            | Action::MovePaneDown
-                                    );
-                                    let before = is_swap.then(|| layout.clone());
                                     let _ = layout.apply(a, v, f);
-                                    // Every real pane swap redeals the
-                                    // background pals: the empty boxes reload
-                                    // to a fresh cast instead of sitting
-                                    // frozen on the launch shuffle. Focus,
-                                    // widths, and no-op moves (a swap pressed
-                                    // at the edge) leave the lineup alone.
-                                    if is_swap
-                                        && before
-                                            .is_some_and(|b| layout.pane_order() != b.pane_order())
-                                    {
-                                        super::empty_art::reshuffle();
-                                    }
                                     needs_sync = true;
                                     dirty = true;
                                     // A kill must paint before the next key is

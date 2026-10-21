@@ -630,8 +630,7 @@ pub(crate) fn render_frame_with_images(
             if placeholder {
                 // Interior only: the ring is painted from the canvas below,
                 // and clearing it here would also wipe the left neighbour's
-                // shared edge. A centered placeholder pal keeps the box from
-                // reading as broken; tiny boxes stay blank.
+                // shared edge. The interior stays blank.
                 for y in inset..boxr.h.saturating_sub(inset) {
                     let row = (boxr.y + y) as usize * cols as usize;
                     for x in inset..boxr.w.saturating_sub(inset) {
@@ -641,7 +640,6 @@ pub(crate) fn render_frame_with_images(
                         }
                     }
                 }
-                super::empty_art::paint(out, cols, boxr, ci, sk, background);
                 canvas.rect(boxr, color, prio, bold);
                 continue;
             }
@@ -1807,17 +1805,17 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn placeholder_boxes_carry_a_centered_pal_not_text() {
-        // Empty boxes are bare frames plus one monochrome sprite: their
-        // interiors carry the palette base, the art is half-block cells in
-        // the skeleton color, and there is no text of any kind. The only
-        // key help is the `⌥+/` cheat-sheet.
+    fn placeholder_boxes_are_blank_frames() {
+        // Empty boxes are bare frames: their interiors carry the palette
+        // base and there is no text or art of any kind. The only key help
+        // is the `⌥+/` cheat-sheet.
         let layout = Layout::new(2); // boxes 3 and 4 are empty
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         let cols: u16 = 80;
         let rows: u16 = 24;
         let dim = CColor::Idx(235);
         let skel = CColor::Rgb(0xff, 0xff, 0xff);
+        let _ = skel;
         let mut out = Vec::new();
         render_frame(
             &mut out,
@@ -1845,7 +1843,7 @@ pub(crate) mod tests {
                 }
             }
         }
-        // ... and carry no text of any kind: only frames and half-block art.
+        // ... and carry no text or art of any kind: only frames.
         let text: String = out.iter().map(|c| c.ch).collect();
         let non_frame: String = text
             .chars()
@@ -1853,9 +1851,6 @@ pub(crate) mod tests {
                 !matches!(
                     c,
                     ' ' | '\u{2800}'
-                        | '\u{2580}'
-                        | '\u{2584}'
-                        | '\u{2588}'
                         | '\u{2502}'
                         | '\u{2500}'
                         | '\u{256d}'
@@ -1872,25 +1867,13 @@ pub(crate) mod tests {
             .collect();
         assert!(
             non_frame.is_empty(),
-            "empty boxes must paint only frames and pixel art, got {non_frame:?}"
+            "empty boxes must paint only frames, got {non_frame:?}"
         );
-        // The art is really there: half-block cells in the skeleton color.
-        let art: Vec<_> = out
-            .iter()
-            .filter(|c| matches!(c.ch, '\u{2580}' | '\u{2584}' | '\u{2588}'))
-            .collect();
-        assert!(!art.is_empty(), "empty boxes must paint a sprite");
+        // No sprite art at any size.
+        let any = placeholder_rows(120, 24).join("\n");
         assert!(
-            art.iter().all(|c| c.style.fg == skel && c.style.bg == dim),
-            "sprite art must be skeleton ink on the box background"
-        );
-        // Tiny boxes degrade to blank: no room for a sprite with breathing room.
-        let small = placeholder_rows(30, 6).join("\n");
-        assert!(
-            !small.contains('\u{2580}')
-                && !small.contains('\u{2584}')
-                && !small.contains('\u{2588}'),
-            "tiny boxes must stay blank, got:\n{small}"
+            !any.contains('\u{2580}') && !any.contains('\u{2584}') && !any.contains('\u{2588}'),
+            "empty boxes must stay blank, got:\n{any}"
         );
     }
 
