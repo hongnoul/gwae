@@ -7,6 +7,10 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Changed
+- **Empty boxes are blank again.** The placeholder pal sprites (bot, invader,
+  ghost, cat, frog, crab, slime, dino) are removed entirely: empty skeleton
+  boxes now paint only their frame over the plain background, and pane swaps
+  no longer redeal any art.
 - **Hidden panes keep their images in the host terminal; strip cycling no
   longer re-uploads them.** The host image cache used to delete every texture
   not painted in the current frame, so navigating away from a strip with an
