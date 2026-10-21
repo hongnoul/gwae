@@ -304,4 +304,24 @@ mod tests {
             "badge must name the state, got {KEEP_AWAKE_BADGE:?}"
         );
     }
+
+    #[test]
+    fn narrow_badge_is_a_single_cheat_sheet_glyph() {
+        // The narrow fallback must fit a 1-pane dashboard frame (~9 cells),
+        // stay one glyph wide, and use the exact symbol the cheat sheet
+        // binds to ⌥+w so it is taught before it is shown alone.
+        assert!(
+            KEEP_AWAKE_BADGE_NARROW.chars().count() <= 4,
+            "narrow badge must stay tiny: {KEEP_AWAKE_BADGE_NARROW:?}"
+        );
+        assert!(
+            KEEP_AWAKE_BADGE_NARROW.contains('\u{2211}'),
+            "narrow badge must reuse the ⌥+w bind glyph: {KEEP_AWAKE_BADGE_NARROW:?}"
+        );
+        assert!(
+            KEEP_AWAKE_BADGE_NARROW.chars().count()
+                < KEEP_AWAKE_BADGE.chars().count(),
+            "narrow must actually be narrower than the text badge"
+        );
+    }
 }
