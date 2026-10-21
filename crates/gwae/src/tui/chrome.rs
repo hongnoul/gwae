@@ -106,44 +106,51 @@ pub(crate) enum BuildPill {
     Failed,
 }
 
-/// Stamp the keep-awake badge onto the top frame row of `rect`, centered
-/// inside the frame. Width-adaptive: the full
-/// [`crate::keepawake::KEEP_AWAKE_BADGE`] text when the frame can hold it,
-/// degrading to [`crate::keepawake::KEEP_AWAKE_BADGE_NARROW`] (the `∑`
-/// glyph the cheat sheet binds to `⌥+w`) on small panels (1–2 pane
-/// layouts), so the state never silently disappears. No-op only when even
-/// the glyph cannot fit, rather than ever painting a clipped fragment.
+/// Stamp [`crate::keepawake::KEEP_AWAKE_BADGE`] (the ☕ emoji) onto the top
+/// frame row of `rect`, centered inside the frame. The badge is 4 columns
+/// (☕ is double-width), so it fits even a 1-pane dashboard frame. Cell
+/// widths are set honestly (2 for the emoji, with a zero-width
+/// continuation cell) so the diff painter advances the host cursor
+/// correctly instead of shearing the frame row. No-op when the panel
+/// cannot hold the badge, rather than painting a clipped fragment.
 pub(crate) fn stamp_keep_awake_badge(
     out: &mut [Cell],
     cols: u16,
     rect: super::Rect,
     pal: &Palette,
 ) {
-    let full = crate::keepawake::KEEP_AWAKE_BADGE;
-    let narrow = crate::keepawake::KEEP_AWAKE_BADGE_NARROW;
-    let fits = |b: &str| {
-        let n = b.chars().count();
-        n > 0 && rect.w as usize > n + 2
-    };
-    let badge = if fits(full) {
-        full
-    } else if fits(narrow) {
-        narrow
-    } else {
-        return;
-    };
-    if rect.h == 0 {
+    use unicode_width::UnicodeWidthChar;
+    let badge = crate::keepawake::KEEP_AWAKE_BADGE;
+    let n: usize = badge.chars().map(|c| c.width().unwrap_or(1)).sum();
+    if n == 0 || rect.w as usize <= n + 2 || rect.h == 0 {
         return;
     }
-    let n = badge.chars().count();
     let y = rect.y as usize;
     let start = rect.x as usize + (rect.w as usize - n) / 2;
-    for (i, ch) in badge.chars().enumerate() {
-        let idx = y * cols as usize + start + i;
-        let Some(c) = out.get_mut(idx) else { continue };
-        c.ch = ch;
+    let mut x = start;
+    for ch in badge.chars() {
+        let w = ch.width().unwrap_or(1).max(1);
+        let idx = y * cols as usize + x;
+        let Some(c) = out.get_mut(idx) else { break };
+        *c = Cell {
+            ch,
+            width: w as u8,
+            ..*c
+        };
         c.style.fg = pal.accent;
         c.style.bold = true;
+        // Zero-width continuation cells for a wide glyph, so the painter
+        // skips them and the host cursor stays in step.
+        for k in 1..w {
+            if let Some(cc) = out.get_mut(idx + k) {
+                *cc = Cell {
+                    ch: ' ',
+                    width: 0,
+                    ..*cc
+                };
+            }
+        }
+        x += w;
     }
 }
 
@@ -2503,7 +2510,7 @@ mod tests {
             let out = paint_dashboard(&layout, &facts, 100, 24);
             let text = screen_rows(&out, 100).join("\n");
             assert_eq!(
-                text.contains("caffeinate"),
+                text.contains('☕'),
                 keep_awake,
                 "badge reads on the HUD frame iff awake:\n{text}"
             );
@@ -2512,67 +2519,64 @@ mod tests {
 
     #[test]
     fn keep_awake_badge_stamps_the_center_help_frame_only_while_awake() {
-        // Same promise for the startup / `⌥+/` help panel. The cheat-sheet
-        // body always names the ⌥+w bind ("caffeinate"), so the badge is
-        // the *second* occurrence: present iff the guard is active.
+        // Same promise for the startup / `⌥+/` help panel. The badge is the
+        // ☕ emoji, which the cheat-sheet body never contains, so presence is
+        // exactly the guard state.
         let (cols, rows) = (80u16, 24u16);
         for keep_awake in [false, true] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
             draw_center_hud(&mut out, cols, rows, &pal_terminal(), keep_awake, false);
             let text: String = out.iter().map(|c| c.ch).collect();
-            let count = text.matches("caffeinate").count();
             assert_eq!(
-                count,
-                if keep_awake { 2 } else { 1 },
+                text.contains('☕'),
+                keep_awake,
                 "badge reads on the help frame iff awake: {text:?}"
             );
         }
     }
 
     #[test]
-    fn keep_awake_badge_degrades_to_the_bind_glyph_on_narrow_panels() {
+    fn keep_awake_badge_fits_narrow_panels_and_skips_slivers() {
         // The bug this pins: a 1–2 pane dashboard panel is ~9–14 cells wide,
-        // narrower than the 12-char text badge, and the old stamp silently
-        // dropped the state. The ladder is: full text when it fits, the `∑`
-        // glyph (the ⌥+w bind's own symbol) when narrow, nothing only when
-        // even the glyph cannot fit.
+        // narrower than the old 12-char text badge, which silently dropped
+        // the state. The ☕ badge is 4 columns, so it must read on both wide
+        // and narrow panels, paint honest wide-cell widths (2 + a zero-width
+        // continuation), and vanish only on slivers.
         let (cols, rows) = (60u16, 10u16);
         let pal = pal_terminal();
-        let full = crate::keepawake::KEEP_AWAKE_BADGE.trim();
-        let glyph = crate::keepawake::KEEP_AWAKE_BADGE_NARROW.trim();
-        let stamp = |w: u16| -> String {
+        let stamp = |w: u16| -> Vec<Cell> {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
             let rect = Rect { x: 2, y: 1, w, h: 5 };
             stamp_keep_awake_badge(&mut out, cols, rect, &pal);
-            out[cols as usize..2 * cols as usize]
-                .iter()
-                .map(|c| c.ch)
-                .collect()
+            out[cols as usize..2 * cols as usize].to_vec()
         };
-        // Wide: the full text reads.
-        let wide = stamp(30);
-        assert!(wide.contains(full), "wide panel keeps the text: {wide:?}");
-        // Narrow (a 1-pane panel): the glyph reads, the text does not.
-        let narrow = stamp(10);
-        assert!(
-            narrow.contains(glyph) && !narrow.contains(full),
-            "narrow panel degrades to the glyph: {narrow:?}"
-        );
+        for w in [30u16, 10] {
+            let row = stamp(w);
+            let i = row
+                .iter()
+                .position(|c| c.ch == '☕')
+                .unwrap_or_else(|| panic!("☕ must read at width {w}"));
+            assert_eq!(row[i].width, 2, "emoji cell must be wide at width {w}");
+            assert_eq!(
+                row[i + 1].width,
+                0,
+                "wide glyph needs a zero-width continuation at width {w}"
+            );
+        }
         // Sliver: nothing is painted rather than a clipped fragment.
         let sliver = stamp(3);
         assert!(
-            sliver.trim_matches(['\0', ' ']).is_empty(),
-            "sliver paints nothing: {sliver:?}"
+            sliver.iter().all(|c| c.ch == '\0' || c.ch == ' '),
+            "sliver paints nothing"
         );
     }
 
     #[test]
     fn keep_awake_state_reads_on_a_one_pane_dashboard() {
         // End to end through the real dashboard paint: a 1-pane layout plans
-        // a panel too narrow for the 12-char text badge, which used to drop
-        // the state entirely. The glyph (or the text, if the plan ever
-        // widens) must read while the guard is active, and nothing
-        // caffeinate-ish reads while it is not.
+        // a panel too narrow for the old text badge, which used to drop the
+        // state entirely. The ☕ badge must read while the guard is active
+        // and never while it is not.
         let (layout, _) = dashboard_layout(1);
         for keep_awake in [false, true] {
             let facts = HudFacts {
@@ -2581,9 +2585,9 @@ mod tests {
             };
             let out = paint_dashboard(&layout, &facts, 100, 24);
             let text = screen_rows(&out, 100).join("\n");
-            let reads = text.contains("caffeinate") || text.contains('∑');
             assert_eq!(
-                reads, keep_awake,
+                text.contains('☕'),
+                keep_awake,
                 "state must read on a 1-pane dashboard iff awake:\n{text}"
             );
         }
@@ -2597,27 +2601,36 @@ mod tests {
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
         draw_center_hud(&mut out, cols, rows, &pal_terminal(), true, false);
         let lines = screen_rows(&out, cols);
-        let badge = crate::keepawake::KEEP_AWAKE_BADGE;
-        let badge_w = badge.chars().count();
         let row = lines
             .iter()
-            .find(|l| l.contains("caffeinate"))
+            .find(|l| l.contains('☕'))
             .expect("badge must stamp one row");
-        // Char-based indexing: the rounded corners are multi-byte, so byte
-        // offsets would misplace the expectation.
-        let chars: Vec<char> = row.chars().collect();
-        let frame_start = chars.iter().position(|&c| c == '╭').unwrap();
-        let frame_end = chars.iter().position(|&c| c == '╮').unwrap();
-        let frame_w = frame_end - frame_start + 1;
-        let needle: Vec<char> = "caffeinate".chars().collect();
-        let start_char = chars
-            .windows(needle.len())
-            .position(|w| w == needle.as_slice())
-            .expect("badge text must read in row chars");
-        let expected = frame_start + (frame_w - badge_w) / 2 + 1;
-        assert_eq!(
-            start_char, expected,
-            "badge must be centered on the top frame row:\n{row}"
+        // Column-based indexing: screen_rows collapses the wide emoji's
+        // continuation cell, so measure in display columns. ☕ must sit
+        // centered (within a cell) between the frame corners on their row.
+        use unicode_width::UnicodeWidthChar;
+        let mut col = 0usize;
+        let mut frame_start = None;
+        let mut frame_end = None;
+        let mut badge_col = None;
+        for ch in row.chars() {
+            match ch {
+                '╭' => frame_start = Some(col),
+                '╮' => frame_end = Some(col),
+                '☕' => badge_col = Some(col),
+                _ => {}
+            }
+            col += ch.width().unwrap_or(1);
+        }
+        let (fs, fe, bc) = (
+            frame_start.expect("top frame row has ╭"),
+            frame_end.expect("top frame row has ╮"),
+            badge_col.expect("☕ reads on the frame row"),
+        );
+        let center = fs + (fe - fs) / 2;
+        assert!(
+            bc.abs_diff(center) <= 2,
+            "badge must sit at the frame's horizontal center: col {bc}, center {center}:\n{row}"
         );
     }
 

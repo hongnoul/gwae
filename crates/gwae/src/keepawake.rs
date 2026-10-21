@@ -166,20 +166,17 @@ fn argv(pid: u32) -> Vec<String> {
     ]
 }
 
-/// Small text badge stamped onto the Option HUD chrome while the
+/// Small badge stamped onto the Option HUD chrome while the
 /// assertion is held.
 ///
 /// A fixed annotation rather than a palette key, because it is a *state*
-/// signal, not a taste: plain text that reads the same whatever the
-/// terminal colors are. It lives only on the HUD, so the palette itself —
-/// focus ring included — is never touched and toggling off restores every
-/// color exactly.
-pub const KEEP_AWAKE_BADGE: &str = " caffeinate ";
-
-/// Narrow fallback for panels too small to hold the full badge: the `∑`
-/// glyph the cheat sheet already shows next to `⌥+w`, so the symbol is
-/// taught before it is ever shown alone. Single-width, one cell of text.
-pub const KEEP_AWAKE_BADGE_NARROW: &str = " ∑ ";
+/// signal, not a taste: it reads the same whatever the terminal colors
+/// are. It lives only on the HUD, so the palette itself — focus ring
+/// included — is never touched and toggling off restores every color
+/// exactly. The coffee emoji names caffeinate without words and is narrow
+/// enough (4 columns with padding, ☕ itself is double-width) to fit even
+/// a 1-pane dashboard frame.
+pub const KEEP_AWAKE_BADGE: &str = " ☕ ";
 
 /// The `gwae doctor` line against a described machine, so tests never
 /// depend on what happens to be installed on the one running them.
@@ -289,39 +286,22 @@ mod tests {
 
     #[test]
     fn keep_awake_badge_is_small_plain_text() {
-        // The badge is stamped onto box-drawing chrome cell by cell, so it
-        // must be short and pure ASCII: no wide glyphs, no emoji, no art.
+        // The badge is stamped onto box-drawing chrome cell by cell. It must
+        // stay tiny enough for a 1-pane dashboard frame (~9 columns) and be
+        // the coffee emoji: the symbol for caffeinate, readable without
+        // words at any panel size.
+        use unicode_width::UnicodeWidthChar;
+        let cols: usize = KEEP_AWAKE_BADGE
+            .chars()
+            .map(|c| c.width().unwrap_or(1))
+            .sum();
         assert!(
-            KEEP_AWAKE_BADGE.chars().count() <= 24,
-            "badge must stay small: {KEEP_AWAKE_BADGE:?}"
+            cols <= 6,
+            "badge must fit a 1-pane frame: {KEEP_AWAKE_BADGE:?} is {cols} columns"
         );
         assert!(
-            KEEP_AWAKE_BADGE.is_ascii(),
-            "badge must be plain ASCII, got {KEEP_AWAKE_BADGE:?}"
-        );
-        assert!(
-            KEEP_AWAKE_BADGE.contains("caffeinate"),
-            "badge must name the state, got {KEEP_AWAKE_BADGE:?}"
-        );
-    }
-
-    #[test]
-    fn narrow_badge_is_a_single_cheat_sheet_glyph() {
-        // The narrow fallback must fit a 1-pane dashboard frame (~9 cells),
-        // stay one glyph wide, and use the exact symbol the cheat sheet
-        // binds to ⌥+w so it is taught before it is shown alone.
-        assert!(
-            KEEP_AWAKE_BADGE_NARROW.chars().count() <= 4,
-            "narrow badge must stay tiny: {KEEP_AWAKE_BADGE_NARROW:?}"
-        );
-        assert!(
-            KEEP_AWAKE_BADGE_NARROW.contains('\u{2211}'),
-            "narrow badge must reuse the ⌥+w bind glyph: {KEEP_AWAKE_BADGE_NARROW:?}"
-        );
-        assert!(
-            KEEP_AWAKE_BADGE_NARROW.chars().count()
-                < KEEP_AWAKE_BADGE.chars().count(),
-            "narrow must actually be narrower than the text badge"
+            KEEP_AWAKE_BADGE.contains('\u{2615}'),
+            "badge must be the coffee emoji, got {KEEP_AWAKE_BADGE:?}"
         );
     }
 }

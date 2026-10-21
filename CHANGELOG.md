@@ -14,10 +14,11 @@ changelog, updated per PR). The format is based on
   screen. When stderr is a TTY the log now goes to
   `$XDG_STATE_HOME/gwae/gwae.log` (truncated per run); a piped stderr keeps
   the old behavior, and `GWAE_LOG` still controls the filter.
-- **The caffeinate badge adapts to narrow HUD panels.** On 1–2 pane layouts
-  the hold-Option dashboard frame is narrower than the text badge, which used
-  to vanish entirely. It now degrades to the `∑` glyph (the `⌥+w` bind's own
-  cheat-sheet symbol) and disappears only when even the glyph cannot fit.
+- **The caffeinate indicator is the ☕ emoji.** The HUD/help-frame badge is
+  now a single coffee emoji instead of text: it names caffeinate without
+  words, fits even the narrow 1–2 pane dashboard frame where the old text
+  badge silently vanished, and paints honest wide-cell widths so the frame
+  row never shears. The `⌥+w` cheat-sheet row still reads `caffeinate`.
 - **On-screen keep-awake text now reads `caffeinate`.** The HUD/help-frame
   badge and the `⌥+w` cheat-sheet label name the mechanism directly. The
   `keep_awake` config key and internals are unchanged.
