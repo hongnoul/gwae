@@ -106,21 +106,36 @@ pub(crate) enum BuildPill {
     Failed,
 }
 
-/// Stamp [`crate::keepawake::KEEP_AWAKE_BADGE`] onto the top frame row of `rect`,
-/// centered inside the frame. No-op when the panel is too narrow to
-/// hold the badge, so small viewports degrade to the plain frame rather than
-/// a clipped fragment.
+/// Stamp the keep-awake badge onto the top frame row of `rect`, centered
+/// inside the frame. Width-adaptive: the full
+/// [`crate::keepawake::KEEP_AWAKE_BADGE`] text when the frame can hold it,
+/// degrading to [`crate::keepawake::KEEP_AWAKE_BADGE_NARROW`] (the `∑`
+/// glyph the cheat sheet binds to `⌥+w`) on small panels (1–2 pane
+/// layouts), so the state never silently disappears. No-op only when even
+/// the glyph cannot fit, rather than ever painting a clipped fragment.
 pub(crate) fn stamp_keep_awake_badge(
     out: &mut [Cell],
     cols: u16,
     rect: super::Rect,
     pal: &Palette,
 ) {
-    let badge = crate::keepawake::KEEP_AWAKE_BADGE;
-    let n = badge.chars().count();
-    if n == 0 || rect.w as usize <= n + 2 || rect.h == 0 {
+    let full = crate::keepawake::KEEP_AWAKE_BADGE;
+    let narrow = crate::keepawake::KEEP_AWAKE_BADGE_NARROW;
+    let fits = |b: &str| {
+        let n = b.chars().count();
+        n > 0 && rect.w as usize > n + 2
+    };
+    let badge = if fits(full) {
+        full
+    } else if fits(narrow) {
+        narrow
+    } else {
+        return;
+    };
+    if rect.h == 0 {
         return;
     }
+    let n = badge.chars().count();
     let y = rect.y as usize;
     let start = rect.x as usize + (rect.w as usize - n) / 2;
     for (i, ch) in badge.chars().enumerate() {
@@ -2510,6 +2525,66 @@ mod tests {
                 count,
                 if keep_awake { 2 } else { 1 },
                 "badge reads on the help frame iff awake: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keep_awake_badge_degrades_to_the_bind_glyph_on_narrow_panels() {
+        // The bug this pins: a 1–2 pane dashboard panel is ~9–14 cells wide,
+        // narrower than the 12-char text badge, and the old stamp silently
+        // dropped the state. The ladder is: full text when it fits, the `∑`
+        // glyph (the ⌥+w bind's own symbol) when narrow, nothing only when
+        // even the glyph cannot fit.
+        let (cols, rows) = (60u16, 10u16);
+        let pal = pal_terminal();
+        let full = crate::keepawake::KEEP_AWAKE_BADGE.trim();
+        let glyph = crate::keepawake::KEEP_AWAKE_BADGE_NARROW.trim();
+        let stamp = |w: u16| -> String {
+            let mut out = vec![Cell::default(); cols as usize * rows as usize];
+            let rect = Rect { x: 2, y: 1, w, h: 5 };
+            stamp_keep_awake_badge(&mut out, cols, rect, &pal);
+            out[cols as usize..2 * cols as usize]
+                .iter()
+                .map(|c| c.ch)
+                .collect()
+        };
+        // Wide: the full text reads.
+        let wide = stamp(30);
+        assert!(wide.contains(full), "wide panel keeps the text: {wide:?}");
+        // Narrow (a 1-pane panel): the glyph reads, the text does not.
+        let narrow = stamp(10);
+        assert!(
+            narrow.contains(glyph) && !narrow.contains(full),
+            "narrow panel degrades to the glyph: {narrow:?}"
+        );
+        // Sliver: nothing is painted rather than a clipped fragment.
+        let sliver = stamp(3);
+        assert!(
+            sliver.trim_matches(['\0', ' ']).is_empty(),
+            "sliver paints nothing: {sliver:?}"
+        );
+    }
+
+    #[test]
+    fn keep_awake_state_reads_on_a_one_pane_dashboard() {
+        // End to end through the real dashboard paint: a 1-pane layout plans
+        // a panel too narrow for the 12-char text badge, which used to drop
+        // the state entirely. The glyph (or the text, if the plan ever
+        // widens) must read while the guard is active, and nothing
+        // caffeinate-ish reads while it is not.
+        let (layout, _) = dashboard_layout(1);
+        for keep_awake in [false, true] {
+            let facts = HudFacts {
+                keep_awake,
+                ..HudFacts::default()
+            };
+            let out = paint_dashboard(&layout, &facts, 100, 24);
+            let text = screen_rows(&out, 100).join("\n");
+            let reads = text.contains("caffeinate") || text.contains('∑');
+            assert_eq!(
+                reads, keep_awake,
+                "state must read on a 1-pane dashboard iff awake:\n{text}"
             );
         }
     }

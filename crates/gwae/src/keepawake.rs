@@ -176,6 +176,11 @@ fn argv(pid: u32) -> Vec<String> {
 /// color exactly.
 pub const KEEP_AWAKE_BADGE: &str = " caffeinate ";
 
+/// Narrow fallback for panels too small to hold the full badge: the `∑`
+/// glyph the cheat sheet already shows next to `⌥+w`, so the symbol is
+/// taught before it is ever shown alone. Single-width, one cell of text.
+pub const KEEP_AWAKE_BADGE_NARROW: &str = " ∑ ";
+
 /// The `gwae doctor` line against a described machine, so tests never
 /// depend on what happens to be installed on the one running them.
 #[cfg(test)]
