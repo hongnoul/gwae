@@ -7,6 +7,12 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Changed
+- **Bottom-left toasts are gone.** The one-line bottom-left notes (config
+  reloaded/error, hot-reload failure, update notice, paste and drag-copy
+  confirmations, spawn-dir picks, keep-awake flips, agent-pick and dud-exit
+  hints, bad `agent_dir` warning) are removed entirely. Error-grade cases are
+  logged via tracing instead; the update check still runs for the cache
+  `gwae doctor` reads, and the HUD badge still carries keep-awake state.
 - **Empty boxes are blank again.** The placeholder pal sprites (bot, invader,
   ghost, cat, frog, crab, slime, dino) are removed entirely: empty skeleton
   boxes now paint only their frame over the plain background, and pane swaps

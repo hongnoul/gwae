@@ -362,9 +362,7 @@ fn drag_copies_on_release_then_native_paste_delivers_selected_text() {
     assert!(!s.dir.join("clipboard.calls").exists());
     s.send(mouse(0, 6, 'm').as_bytes());
     s.wait_for("release highlights and copies cells 1 through 6", |s| {
-        highlighted(s, 1..=6)
-            && s.file("clipboard") == b"LAIN_R"
-            && s.shown().contains("copied 1 line")
+        highlighted(s, 1..=6) && s.file("clipboard") == b"LAIN_R"
     });
     assert_eq!(s.file("clipboard.calls"), b"x");
     eprintln!("observed forward release copied LAIN_R and confirmed it in the pane");
@@ -397,7 +395,7 @@ fn drag_copies_on_release_then_native_paste_delivers_selected_text() {
     s.native_clipboard_paste();
     s.wait_for(
         "paste after selection delivers exactly the selected text",
-        |s| s.file("received-paste") == b"PLAIN_R" && s.shown().contains("pasted 1 line"),
+        |s| s.file("received-paste") == b"PLAIN_R",
     );
     assert_eq!(s.file("clipboard"), b"PLAIN_R");
     assert_eq!(s.file("clipboard.calls"), b"xx", "one copy per real drag");
@@ -419,7 +417,7 @@ fn drag_copies_multiline_unicode_without_padding_or_duplicate_wide_cells() {
     let expected = "ROW_ONE 日本語 é\nROW_TWO 끝";
     s.wait_for(
         "multiline Unicode copied exactly once without grid padding",
-        |s| s.file("clipboard") == expected.as_bytes() && s.shown().contains("copied 2 lines"),
+        |s| s.file("clipboard") == expected.as_bytes(),
     );
     s.native_clipboard_paste();
     s.wait_for(
@@ -437,7 +435,7 @@ fn drag_outside_the_pane_copies_to_its_edge_not_the_neighbor() {
     s.mouse(32, HOST.cols - 1, y, false);
     s.mouse(0, HOST.cols - 1, y, true);
     s.wait_for("off-pane release clamps to the owning pane", |s| {
-        s.file("clipboard") == b"AIN_READY" && s.shown().contains("copied 1 line")
+        s.file("clipboard") == b"AIN_READY"
     });
     assert_eq!(s.file("clipboard.calls"), b"x");
 }
@@ -449,9 +447,6 @@ fn empty_drag_does_not_replace_the_clipboard() {
     s.mouse(0, x, y + 3, false);
     s.mouse(32, x + 5, y + 3, false);
     s.mouse(0, x + 5, y + 3, true);
-    s.wait_for("blank selection reports nothing to copy", |s| {
-        s.shown().contains("nothing to copy")
-    });
     s.native_clipboard_paste();
     s.wait_for("blank selection leaves the old clipboard usable", |s| {
         s.file("received-paste") == b"keep-this"
@@ -479,7 +474,7 @@ fn child_owns_plain_drag_but_shift_drag_copies_even_if_shift_is_released_first()
     s.mouse(36, x + 4, y, false);
     s.mouse(0, x + 6, y, true); // Shift released before mouse-up.
     s.wait_for("gwae completes and copies its captured Shift drag", |s| {
-        s.file("clipboard") == b"MOUSE_R" && s.shown().contains("copied 1 line")
+        s.file("clipboard") == b"MOUSE_R"
     });
     s.send(b"!");
     let mut expected = forwarded.to_vec();
@@ -501,18 +496,13 @@ fn failed_or_stalled_native_copy_falls_back_without_claiming_confirmed_success()
         s.mouse(32, x + 4, y, false);
         s.mouse(0, x + 4, y, true);
         let sequence = b"\x1b]52;c;UExBSU4=\x07"; // PLAIN
-        s.wait_for(
-            "failed helper emits exact OSC 52 and unconfirmed feedback",
-            |s| {
-                s.raw.windows(sequence.len()).any(|w| w == sequence)
-                    && s.shown().contains("copy sent to terminal")
-            },
-        );
+        s.wait_for("failed helper emits exact OSC 52 fallback", |s| {
+            s.raw.windows(sequence.len()).any(|w| w == sequence)
+        });
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "stalled helper blocked the UI"
         );
-        assert!(!s.shown().contains("copied 1 line"));
         assert_eq!(s.file("clipboard"), b"old");
         s.send(b"still-responsive");
         s.wait_for("pane input resumes after native-copy failure", |s| {
@@ -537,17 +527,13 @@ fn ssh_copy_targets_the_host_terminal_without_touching_the_remote_clipboard() {
         let sequence = b"\x1b]52;c;UExBSU4=\x07";
         s.wait_for(
             "SSH selection requests the host clipboard instead of local helpers",
-            |s| {
-                s.raw.windows(sequence.len()).any(|w| w == sequence)
-                    && s.shown().contains("copy sent to terminal")
-            },
+            |s| s.raw.windows(sequence.len()).any(|w| w == sequence),
         );
         assert_eq!(s.file("clipboard"), b"remote-clipboard");
         assert!(
             !s.dir.join("clipboard.calls").exists(),
             "{key} must bypass pbcopy"
         );
-        assert!(!s.shown().contains("copied 1 line"));
         eprintln!(
             "observed {key}: exact host OSC 52 request, no remote helper or clipboard change"
         );
@@ -683,35 +669,28 @@ fn native_paste_in_directory_picker_only_updates_the_filter() {
 }
 
 #[test]
-fn native_paste_confirms_delivery_into_a_plain_pane() {
+fn native_paste_delivers_into_a_plain_pane() {
     let mut s = Session::start("hello-paste");
     s.native_clipboard_paste();
-    s.wait_for(
-        "plain clipboard bytes, rendered text, and confirmation",
-        |s| {
-            let shown = s.shown();
-            s.file("received-paste") == b"hello-paste"
-                && shown.contains("hello-paste")
-                && shown.contains("pasted 1 line")
-        },
-    );
+    s.wait_for("plain clipboard bytes and rendered text", |s| {
+        let shown = s.shown();
+        s.file("received-paste") == b"hello-paste" && shown.contains("hello-paste")
+    });
 }
 
 #[test]
-fn native_multiline_paste_confirms_delivery_and_warns_without_brackets() {
+fn native_multiline_paste_delivers_every_line() {
     // Actual newline, not the old literal backslash-n fixture. tee's exact
     // captured bytes also reject unwanted bracket markers or dropped lines.
     let mut s = Session::start("one\n\ntwo");
     s.native_clipboard_paste();
-    s.wait_for("both clipboard lines and multiline confirmation", |s| {
+    s.wait_for("both clipboard lines delivered", |s| {
         let shown = s.shown();
         s.file("received-paste") == b"one\n\ntwo"
             && shown.contains("one")
             && shown.contains("two")
-            && shown.contains("pasted 3 lines")
-            && shown.contains("newlines run")
     });
-    eprintln!("observed native paste: all 3 lines received, blank line preserved, unsupported-child warning shown");
+    eprintln!("observed native paste: all 3 lines received, blank line preserved");
 }
 
 #[test]

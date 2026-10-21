@@ -32,7 +32,7 @@ mod render;
 #[cfg(unix)]
 pub(crate) use chrome::BuildPill;
 pub(crate) use chrome::{
-    draw_center_hud, draw_toast_at, has_attention, hud_pane_at, paint_center_minimap,
+    draw_center_hud, has_attention, hud_pane_at, paint_center_minimap,
     plan_center_minimap, HudFacts, HudPlan,
 };
 pub(crate) use pickers::{
@@ -52,7 +52,7 @@ pub(crate) use config_io::perform_reload;
 pub(crate) use config_io::write_harness_dir;
 pub(crate) use input::{
     focused_pane, handle_key, is_alt_modifier, is_harness_scroll_chord, key_bytes,
-    layout_pane_count, paste_note, picker_paste_query, picker_step, smart_jump_target, Cmd,
+    layout_pane_count, picker_paste_query, picker_step, smart_jump_target, Cmd,
 };
 
 mod platform;
@@ -70,8 +70,7 @@ pub(crate) use pty::{
     PaneMsg, RepaintRestore,
 };
 pub(crate) use term::{
-    first_line, input_poll_interval, refresh_size, restore_terminal, CONFIG_POLL, NOTE_LINGER,
-    SIZE_POLL,
+    first_line, input_poll_interval, refresh_size, restore_terminal, CONFIG_POLL, SIZE_POLL,
 };
 #[cfg(unix)]
 pub(crate) use term::{re_enter_terminal, BINARY_SETTLE};

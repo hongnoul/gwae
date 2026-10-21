@@ -126,9 +126,6 @@ pub(crate) fn input_poll_interval(configured_ms: u64, since_activity: Duration) 
     Duration::from_millis(ms)
 }
 
-/// How long the reload note stays on screen.
-pub(crate) const NOTE_LINGER: Duration = Duration::from_millis(2500);
-
 /// The first line of a multi-line error, for one-line status display.
 pub(crate) fn first_line(s: &str) -> &str {
     s.lines().next().unwrap_or(s).trim()

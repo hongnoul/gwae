@@ -8,20 +8,6 @@ pub enum CopyOutcome {
     Unavailable,
 }
 
-impl CopyOutcome {
-    pub fn note(self, text: &str) -> String {
-        match self {
-            Self::Copied => {
-                let lines = text.lines().count().max(1);
-                format!("copied {lines} line{}", if lines == 1 { "" } else { "s" })
-            }
-            Self::SentToTerminal => "copy sent to terminal".into(),
-            Self::Empty => "nothing to copy".into(),
-            Self::Unavailable => "clipboard unavailable".into(),
-        }
-    }
-}
-
 /// Copy only in response to a user selection. Over SSH, local helpers would
 /// write the remote computer's clipboard, so use the host terminal instead.
 ///
@@ -176,9 +162,6 @@ mod tests {
         );
         assert_eq!(outcome, CopyOutcome::SentToTerminal);
         assert_eq!(output, b"\x1b]52;c;Zm9v\x07");
-        assert_eq!(outcome.note("foo"), "copy sent to terminal");
-        assert_eq!(CopyOutcome::Copied.note("foo"), "copied 1 line");
-        assert_eq!(CopyOutcome::Copied.note("foo\nbar"), "copied 2 lines");
     }
 
     #[test]
@@ -202,10 +185,6 @@ mod tests {
                 CopyOutcome::Unavailable
             );
         }
-        assert_eq!(
-            CopyOutcome::Unavailable.note("foo"),
-            "clipboard unavailable"
-        );
     }
 
     #[cfg(unix)]

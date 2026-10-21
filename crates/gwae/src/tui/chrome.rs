@@ -825,56 +825,6 @@ pub(crate) fn paint_center_minimap(
     }
 }
 
-/// Draw a one-line toast, optionally anchored to the bottom-left of a rect
-/// (a pane) instead of the bottom-left of the screen. A drag-copy note belongs
-/// to the pane the text came from, so with several panes on screen it is
-/// obvious which pane's selection was copied.
-///
-/// Used to report config reloads. It is a single row so it never covers a
-/// pane's working area meaningfully, and it sits on the terminal `surface` so
-/// it reads as chrome rather than as pane output.
-pub(crate) fn draw_toast_at(
-    out: &mut [Cell],
-    cols: u16,
-    rows: u16,
-    text: &str,
-    pal: &Palette,
-    ok: bool,
-    anchor: Option<Rect>,
-) {
-    if cols < 8 || rows == 0 {
-        return;
-    }
-    let body: Vec<char> = format!(" {text} ").chars().collect();
-    // Clip to the screen rather than wrapping: a toast is a hint, and a
-    // truncated hint is better than one that reflows the layout.
-    let (x0, y) = match anchor.filter(|r| r.w > 0 && r.h > 0) {
-        Some(r) => (
-            r.x.min(cols.saturating_sub(1)) as usize,
-            (r.y + r.h - 1).min(rows - 1) as usize,
-        ),
-        None => (0, (rows - 1) as usize),
-    };
-    let w = body.len().min((cols as usize).saturating_sub(x0));
-    // Errors use the failed tint so a broken config is not mistaken for a
-    // successful reload at a glance.
-    let fg = if ok { pal.text } else { pal.failed };
-    for (x, ch) in body.iter().take(w).enumerate() {
-        if let Some(c) = out.get_mut(y * cols as usize + x0 + x) {
-            *c = Cell {
-                ch: *ch,
-                style: gwae_term::Style {
-                    fg,
-                    bg: pal.surface,
-                    ..Default::default()
-                },
-                width: 1,
-                ..Default::default()
-            };
-        }
-    }
-}
-
 /// Center HUD: a concise cheat-sheet of every keybind, shown at startup and
 /// toggled with `⌥+/`. Persists until the next key press.
 ///
@@ -1306,44 +1256,6 @@ mod tests {
             idle: CColor::Idx(11),
             failed: CColor::Idx(9),
         }
-    }
-
-    #[test]
-    fn toast_anchors_to_pane_bottom_left() {
-        let (cols, rows) = (40u16, 10u16);
-        let mut frame = vec![Cell::default(); cols as usize * rows as usize];
-        let rect = Rect {
-            x: 20,
-            y: 2,
-            w: 20,
-            h: 5,
-        };
-        draw_toast_at(
-            &mut frame,
-            cols,
-            rows,
-            "copied 3 lines",
-            &Palette::default(),
-            true,
-            Some(rect),
-        );
-        let row: String = (0..cols)
-            .map(|x| frame[6 * cols as usize + x as usize].ch)
-            .collect();
-        assert!(row.trim_start().starts_with("copied 3 lines"), "{row:?}");
-        assert_eq!(row.find('c'), Some(21), "starts at the pane's left edge");
-        // Screen-anchored toasts still land on the last row at column 0.
-        let mut frame = vec![Cell::default(); cols as usize * rows as usize];
-        draw_toast_at(
-            &mut frame,
-            cols,
-            rows,
-            "hi",
-            &Palette::default(),
-            true,
-            None,
-        );
-        assert_eq!(frame[9 * cols as usize + 1].ch, 'h');
     }
 
     #[test]

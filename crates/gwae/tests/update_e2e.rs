@@ -400,21 +400,19 @@ fn the_check_writes_a_cache_so_the_next_session_stays_quiet() {
 }
 
 // ---------------------------------------------------------------------------
-// The notice on a running session
+// The background check on a running session
 // ---------------------------------------------------------------------------
 
-/// The last unproven link: a check that finds something must actually reach
-/// the user's eyes.
+/// The last unproven link: the background check must run in a real session.
 ///
 /// Everything above tests the subcommand, which only runs when someone
-/// already suspects there is an update. The startup notice is the path that
-/// tells the other 99% of users, and it crosses a background thread, a mutex,
-/// and the toast renderer - none of which a pure test can stand in for. So
-/// this drives a real gwae over a real PTY and looks for the text on the
-/// wire.
+/// already suspects there is an update. A running session starts the check
+/// on a background thread; its observable outcome is the cache file that
+/// `gwae doctor` reads back. So this drives a real gwae over a real PTY and
+/// waits for the cache to land on disk.
 #[test]
 #[cfg(unix)]
-fn a_running_session_shows_the_notice_and_names_the_command() {
+fn a_running_session_performs_the_check_and_writes_the_cache() {
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};
     use std::io::Read;
     use std::time::Duration;
@@ -456,35 +454,30 @@ fn a_running_session_shows_the_notice_and_names_the_command() {
         }
     });
 
-    // Read until the notice shows up or we run out of patience. The check is
-    // asynchronous by design, so this waits for content rather than for a
-    // fixed delay.
-    let mut seen = String::new();
+    // Drain output (keeping the PTY alive) until the cache lands or we run
+    // out of patience. The check is asynchronous by design, so this waits
+    // for the file rather than for a fixed delay.
+    let cache_path = dir.join("state/gwae/update.toml");
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while std::time::Instant::now() < deadline {
-        if let Ok(b) = rx.recv_timeout(Duration::from_millis(250)) {
-            seen.push_str(&String::from_utf8_lossy(&b));
-        }
-        if seen.contains("99.0.0") {
+        let _ = rx.recv_timeout(Duration::from_millis(250));
+        if std::fs::read_to_string(&cache_path)
+            .is_ok_and(|c| c.contains("99.0.0"))
+        {
             break;
         }
     }
     let _ = child.kill();
     let _ = child.wait();
 
-    // The toast is drawn into a cell grid, so the text arrives interleaved
-    // with SGR sequences; strip everything but the glyphs before matching.
-    let flat: String = seen
-        .chars()
-        .filter(|c| !c.is_control() && *c != '\u{1b}')
-        .collect();
+    let cache = std::fs::read_to_string(&cache_path)
+        .expect("a running session must record what the check found");
+    assert!(cache.contains("99.0.0"), "{cache}");
+    // And doctor reads it back, naming this machine's command.
+    let (out, _, _) = run(&dir, None, &["doctor"]);
     assert!(
-        flat.contains("99.0.0 is out"),
-        "the update notice never reached the screen; saw:\n{flat}"
-    );
-    assert!(
-        flat.contains("brew upgrade gwae"),
-        "the notice must name this machine's command; saw:\n{flat}"
+        out.contains("99.0.0 available"),
+        "doctor must report the session's cached finding:\n{out}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);

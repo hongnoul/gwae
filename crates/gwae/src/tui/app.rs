@@ -78,7 +78,7 @@ fn force_pick_notice(want: &str, last: &str, ordered: &[crate::agent::Found]) ->
 
 /// Spawn the harness chosen in the `⌥+;` overlay: apply the spawn-agent verb,
 /// mark the new pane as an agent pane running this exact command, remember
-/// the pick in the state file, and confirm with a one-line note.
+/// the pick in the state file.
 #[allow(clippy::too_many_arguments)]
 fn spawn_picked_harness(
     cmd: &str,
@@ -93,8 +93,6 @@ fn spawn_picked_harness(
     cfg: &Config,
     state: &mut crate::agent::HarnessState,
     state_path: Option<&std::path::Path>,
-    note: &mut Option<String>,
-    note_until: &mut Option<Instant>,
 ) {
     let v = Viewport::new(geometry.0.cols);
     let f = FollowScroll::default();
@@ -125,8 +123,6 @@ fn spawn_picked_harness(
     if let Some(path) = state_path {
         let _ = crate::agent::save_harness_state(path, state);
     }
-    *note = Some(format!("agent: {cmd} — ⌥+; goes straight there"));
-    *note_until = Some(Instant::now() + NOTE_LINGER);
 }
 
 /// Run the interactive TUI.
@@ -307,17 +303,18 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // A configured directory that does not exist is a typo worth surfacing:
     // the panes silently opening in `~` is exactly the confusion this
     // feature exists to remove.
-    let bad_dir: Option<String> = {
+    {
         let raw = cli_dir
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(cfg.spawn_dir());
         let fell_back = spawn_dir == crate::spawndir::inherited();
-        match (fell_back, raw.trim().is_empty()) {
-            (true, false) => crate::spawndir::check(raw).err(),
-            _ => None,
+        if fell_back && !raw.trim().is_empty() {
+            if let Err(e) = crate::spawndir::check(raw) {
+                tracing::warn!("agent_dir: {e}; panes opened in gwae's cwd");
+            }
         }
-    };
+    }
     // A hot reload hands the previous image's session over in a temp file
     // (see `crate::reload`). Taken before the default layout is built so the
     // adopted tree replaces it rather than racing it.
@@ -719,20 +716,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // Drives the adaptive input poll below: tight while in use, relaxed once
     // the whole screen has gone quiet.
     let mut last_activity = Instant::now();
-    // A bad `agent_dir` announces itself on the first frame; the panes have
-    // already opened in the inherited cwd by then, so this explains what the
-    // user is looking at rather than blocking anything.
-    let mut reload_note: Option<String> =
-        bad_dir.map(|e| format!("agent_dir: {e}; panes opened in gwae's cwd"));
-    let mut reload_note_until: Option<Instant> = reload_note
-        .as_ref()
-        .map(|_| Instant::now() + NOTE_LINGER * 2);
-    // Where the note is drawn: `None` = bottom-left of the screen,
-    // `Some(rect)` = bottom-left of that pane (drag-copy notes).
-    let mut reload_note_anchor: Option<Rect> = None;
-    // Whether the update notice still has to be shown. Latched false after
-    // one showing so a user who dismissed it is not told again this session.
-    let mut update_note_pending = true;
     // Spawn-directory picker (⌥+d): the candidate list, the typed filter, and
     // the highlighted row. Built when the picker opens rather than at startup
     // so a repo cloned mid-session shows up without a restart.
@@ -877,10 +860,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             panes.remove(&pid);
                             agent_panes.insert(pid);
                             needs_sync = true;
-                            reload_note =
-                                Some(format!("`{died}` exited immediately; pick an agent"));
-                            reload_note_anchor = None;
-                            reload_note_until = Some(Instant::now() + NOTE_LINGER * 2);
+                            tracing::warn!("`{died}` exited immediately; pick an agent");
                             dirty = true;
                             next_msg = rx.try_recv().ok();
                             continue;
@@ -1115,20 +1095,16 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                         cfg.adopt_appearance(new);
                         pal = cfg.palette();
                         keep_awake.refresh(cfg.keep_awake);
-                        reload_note_anchor = None;
-                        reload_note = Some("config reloaded".to_string());
                         dirty = true;
                     }
                     Err(e) => {
                         // Keep the running config: a half-written file (the
                         // editor saved mid-keystroke) must not blow away the
                         // running session.
-                        reload_note_anchor = None;
-                        reload_note = Some(format!("config error: {}", first_line(&e)));
+                        tracing::warn!("config error: {}", first_line(&e));
                         dirty = true;
                     }
                 }
-                reload_note_until = Some(Instant::now() + NOTE_LINGER);
             }
         }
         // Auto-rebuild (dev): sources changed -> build off the event
@@ -1331,10 +1307,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         break 'main;
                                     }
                                     last.clear();
-                                    reload_note_anchor = None;
-                                    reload_note =
-                                        Some(format!("hot reload failed: {}", first_line(&e)));
-                                    reload_note_until = Some(Instant::now() + NOTE_LINGER);
                                     dirty = true;
                                 }
                             }
@@ -1345,30 +1317,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         }
 
         // The background update check, if it found something. Taken (not
-        // read) so the notice is shown exactly once per session, and only
-        // when the screen is not already saying something else: an upgrade
-        // hint is the least urgent thing gwae ever has to say, so it yields
-        // to a config error or a paste note rather than stomping it.
-        if update_note_pending && reload_note.is_none() {
-            if let Some(text) = update_slot.lock().ok().and_then(|mut g| g.take()) {
-                update_note_pending = false;
-                reload_note_anchor = None;
-                reload_note = Some(text);
-                // Longer than a reload note: this one asks the reader to
-                // remember a command, not just to notice that a color
-                // changed.
-                reload_note_until = Some(Instant::now() + NOTE_LINGER * 3);
-                dirty = true;
-            }
-        }
-        // Expire the reload note so it does not sit on screen forever.
-        if let Some(t) = reload_note_until {
-            if Instant::now() >= t {
-                reload_note = None;
-                reload_note_until = None;
-                reload_note_anchor = None;
-                dirty = true;
-            }
+        // read) so it is logged exactly once per session. The check still
+        // runs for its side effect: it writes the daily cache that
+        // `gwae doctor` reads.
+        if let Some(text) = update_slot.lock().ok().and_then(|mut g| g.take()) {
+            tracing::info!("{text}");
         }
 
         // Handle the host terminal events forwarded by the input thread.
@@ -1412,17 +1365,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             }
                             continue;
                         }
-                        let anchor = focused_pane_views_with_chrome(
-                            &layout,
-                            cols,
-                            rows,
-                            0,
-                            true,
-                            chrome_rows(&cfg),
-                        )
-                        .iter()
-                        .find(|v| focused_pane(&layout).is_some_and(|pid| v.pid == pid))
-                        .map(|v| v.rect);
                         if let Some(p) = focused_pane(&layout).and_then(|pid| panes.get_mut(&pid)) {
                             // Re-frame for this child's current DECSET 2004
                             // state. Agent panes receive the same text event,
@@ -1431,19 +1373,13 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             let bytes = select::paste_bytes(&text, bracketed);
                             if !bytes.is_empty() {
                                 p.grid.scroll_to_bottom();
-                                let result =
+                                if let Err(e) =
                                     bytes.chunks(select::PASTE_CHUNK).try_for_each(|chunk| {
                                         p.writer.write_all(chunk).and_then(|()| p.writer.flush())
-                                    });
-                                reload_note = Some(match result {
-                                    Ok(()) => paste_note(&text, bracketed),
-                                    Err(e) => {
-                                        tracing::warn!("native paste: {e}");
-                                        format!("paste failed: {e}")
-                                    }
-                                });
-                                reload_note_anchor = anchor;
-                                reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                    })
+                                {
+                                    tracing::warn!("native paste: {e}");
+                                }
                             }
                         }
                     }
@@ -1589,26 +1525,13 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             if let Some((path, save)) = chosen {
                                 spawn_dir = Some(path.clone());
                                 let shown = crate::spawndir::tilde(&path);
-                                reload_note_anchor = None;
-                                reload_note = Some(if save {
-                                    match write_harness_dir(&cfg_path, &harness_for_save, &shown) {
-                                        Ok(()) => {
-                                            if harness_for_save.is_empty() {
-                                                format!("spawn dir: {shown} (saved to config)")
-                                            } else {
-                                                format!(
-                                                    "spawn dir [{harness_for_save}]: {shown} (saved to config)"
-                                                )
-                                            }
-                                        }
-                                        Err(e) => format!(
-                                            "spawn dir: {shown} (this session; save error: {e})"
-                                        ),
+                                if save {
+                                    if let Err(e) =
+                                        write_harness_dir(&cfg_path, &harness_for_save, &shown)
+                                    {
+                                        tracing::warn!("spawn dir save error: {e}");
                                     }
-                                } else {
-                                    format!("spawn dir: {shown} — new panes start here")
-                                });
-                                reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                }
                                 // A config write bumps the mtime; adopt it now so
                                 // the reload watcher does not report our own save
                                 // back to us as an external edit.
@@ -1692,8 +1615,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             &cfg,
                                             &mut harness_state,
                                             harness_state_path.as_deref(),
-                                            &mut reload_note,
-                                            &mut reload_note_until,
                                         );
                                     }
                                     HarnessChoice::Typed(cmd) => {
@@ -1710,8 +1631,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             &cfg,
                                             &mut harness_state,
                                             harness_state_path.as_deref(),
-                                            &mut reload_note,
-                                            &mut reload_note_until,
                                         );
                                     }
                                 }
@@ -1763,33 +1682,19 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     dirty = true;
                                 }
                                 Cmd::ToggleKeepAwake => {
-                                    // Visible toggle: the HUD badge carries the
-                                    // state while an overlay is up, but the
-                                    // toggle itself dismisses the HUD, so a
-                                    // bottom-left note confirms the flip.
-                                    if !cfg!(target_os = "macos") {
-                                        reload_note_anchor = None;
-                                        reload_note = Some("keep-awake is macOS-only".to_string());
-                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
-                                    } else {
+                                    // The HUD keep-awake badge carries the
+                                    // state; the toggle is a no-op off macOS.
+                                    if cfg!(target_os = "macos") {
                                         // Session-only: never persisted, and
                                         // always off again at next launch.
                                         cfg.keep_awake = !cfg.keep_awake;
                                         keep_awake.refresh(cfg.keep_awake);
-                                        reload_note_anchor = None;
-                                        reload_note = Some(if cfg.keep_awake {
-                                            if keep_awake.active() {
-                                                "keep-awake on for this session (off again at next launch)".to_string()
-                                            } else {
-                                                format!(
-                                                    "keep-awake on (this session), assertion not held ({})",
-                                                    crate::keepawake::availability_note()
-                                                )
-                                            }
-                                        } else {
-                                            "keep-awake off".to_string()
-                                        });
-                                        reload_note_until = Some(Instant::now() + NOTE_LINGER);
+                                        if cfg.keep_awake && !keep_awake.active() {
+                                            tracing::warn!(
+                                                "keep-awake on but assertion not held ({})",
+                                                crate::keepawake::availability_note()
+                                            );
+                                        }
                                     }
                                     dirty = true;
                                 }
@@ -2156,17 +2061,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                         .get(&s.pane)
                                                         .map(|p| select::selected_text(&p.grid, &s))
                                                         .unwrap_or_default();
-                                                    let outcome = select::copy_to_clipboard(
+                                                    let _ = select::copy_to_clipboard(
                                                         &text,
                                                         &mut stdout,
                                                     );
-                                                    reload_note_anchor = views
-                                                        .iter()
-                                                        .find(|v| v.pid == s.pane)
-                                                        .map(|v| v.rect);
-                                                    reload_note = Some(outcome.note(&text));
-                                                    reload_note_until =
-                                                        Some(Instant::now() + NOTE_LINGER);
                                                 }
                                                 None => selection = None,
                                             }
@@ -2386,10 +2284,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
             if let Some(pick) = &harness_pick {
                 draw_harness_picker(&mut frame, cols, rows, pick, &pal);
-            }
-            if let Some(note) = &reload_note {
-                let ok = !note.contains("error") && !note.starts_with("paste failed:");
-                draw_toast_at(&mut frame, cols, rows, note, &pal, ok, reload_note_anchor);
             }
             // Topmost: the destructive confirmation must never be obscured by
             // chrome that happens to be showing when the chord is pressed.

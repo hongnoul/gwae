@@ -460,30 +460,6 @@ pub(crate) fn picker_paste_query(text: &str) -> String {
         .to_string()
 }
 
-/// Native paste is the single route for both delivery and confirmation.
-///
-/// A multi-line paste is the case that used to run each line as its own
-/// command, so gwae says what it delivered. When the child never asked for
-/// bracketed paste (`bracketed` false) those newlines genuinely are Returns —
-/// nothing can prevent that, it is what the program asked for — so the toast
-/// says so rather than letting the user infer safety from silence.
-pub(crate) fn paste_note(text: &str, bracketed: bool) -> String {
-    // Native terminals often send CR-only text. Count the same logical
-    // lines for CR, LF, and CRLF, including preserved blank lines.
-    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    let lines = normalized.lines().count().max(1);
-    let summary = if lines == 1 {
-        "pasted 1 line".to_string()
-    } else {
-        format!("pasted {lines} lines")
-    };
-    if !bracketed && normalized.contains('\n') {
-        format!("{summary} · no bracket, newlines run")
-    } else {
-        summary
-    }
-}
-
 /// Pick the pane a smart-jump (`⌥+g`) should land on: the next pane, in
 /// layout order starting just past the focused one and wrapping, whose status
 /// needs the user. Priority: Failed beats Idle (attention);
@@ -1228,20 +1204,6 @@ mod tests {
             "bare v must reach the pane"
         );
         assert_eq!(key_bytes(&meta), b"\x1bv".to_vec());
-    }
-
-    #[test]
-    fn paste_note_confirms_single_line_and_warns_without_bracket() {
-        // The single native route reports completion and whether the child
-        // buffers newlines. Host CR-only text must not undercount the paste.
-        assert_eq!(paste_note("ls -la", true), "pasted 1 line");
-        assert_eq!(paste_note("a\nb\nc", true), "pasted 3 lines");
-        assert_eq!(paste_note("a\r\rb\r", true), "pasted 3 lines");
-        assert_eq!(paste_note("a\r\n\r\nb\r\n", true), "pasted 3 lines");
-        assert!(paste_note("a\rb\rc", false).contains("newlines run"));
-        assert!(paste_note("a\nb\nc", false).contains("newlines run"));
-        assert!(paste_note("ls\r", false).contains("newlines run"));
-        assert_eq!(paste_note("ls", false), "pasted 1 line");
     }
 
     #[test]

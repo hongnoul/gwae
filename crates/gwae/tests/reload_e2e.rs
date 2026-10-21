@@ -112,15 +112,21 @@ fn with_frames(body: &str) -> String {
 
 #[test]
 fn editing_the_config_reloads_the_running_session() {
-    // Save a behavior key, as a user editing their config would. The session
-    // must confirm without restarting.
+    // Save an appearance key, as a user editing their config would. The
+    // reload must take effect in the same process: the new accent reaches
+    // the wire without a restart.
     let s = Session::start("");
     let _ = s.drain(3);
-    s.write_config("startup_panes = 1\n");
+    let pid_before = s.child.process_id();
+    s.write_config("[theme]\naccent = \"#ff00ff\"\n");
     let after = s.drain(4);
     assert!(
-        after.contains("reloaded"),
-        "the running session should confirm the reload; got:\n{after:?}"
+        s.child.process_id() == pid_before,
+        "reload must not restart gwae itself"
+    );
+    assert!(
+        after.contains("38;2;255;0;255"),
+        "the edit should take effect live; got:\n{after:?}"
     );
     s.kill();
 }
@@ -128,30 +134,28 @@ fn editing_the_config_reloads_the_running_session() {
 #[test]
 fn retired_theme_keys_do_not_break_the_running_session() {
     // A retired `theme = "..."` preset name parses as "no overrides": no
-    // parse error, the session confirms the reload.
+    // parse error, and the session keeps reloading subsequent edits.
     let s = Session::start("");
     let _ = s.drain(3);
     s.write_config("theme = \"nord\"\n");
+    let _ = s.drain(4);
+    s.write_config("[theme]\naccent = \"#ff00ff\"\n");
     let after = s.drain(4);
     assert!(
-        after.contains("reloaded"),
-        "a retired theme key should reload cleanly; got:\n{after:?}"
+        after.contains("38;2;255;0;255"),
+        "a retired theme key must not wedge live reload; got:\n{after:?}"
     );
     s.kill();
 }
 
 #[test]
 fn theme_overrides_reload_the_running_session() {
-    // A `[theme]` edit repaints the chrome live: the session confirms and the
-    // new accent reaches the wire.
+    // A `[theme]` edit repaints the chrome live: the new accent reaches
+    // the wire.
     let s = Session::start("");
     let _ = s.drain(3);
     s.write_config("[theme]\naccent = \"#ff00ff\"\n");
     let after = s.drain(4);
-    assert!(
-        after.contains("reloaded"),
-        "a theme edit should confirm the reload; got:\n{after:?}"
-    );
     assert!(
         after.contains("38;2;255;0;255"),
         "the new accent should reach the wire; got:\n{after:?}"
@@ -167,15 +171,15 @@ fn the_panes_survive_a_reload() {
     let s = Session::start("");
     let _ = s.drain(3);
     let pid_before = s.child.process_id();
-    s.write_config("startup_panes = 1\n");
+    s.write_config("startup_panes = 1\n[theme]\naccent = \"#ff00ff\"\n");
     let after = s.drain(4);
     assert!(
         s.child.process_id() == pid_before,
         "reload must not restart gwae itself"
     );
     assert!(
-        after.contains("reloaded"),
-        "and it should still have confirmed the reload; got:\n{after:?}"
+        after.contains("38;2;255;0;255"),
+        "and the edit should still have taken effect; got:\n{after:?}"
     );
     s.kill();
 }
@@ -183,29 +187,19 @@ fn the_panes_survive_a_reload() {
 #[test]
 fn a_broken_edit_keeps_the_running_session() {
     // Editors save mid-keystroke, so gwae will inevitably read a
-    // half-written config. That must not blow away the running session.
+    // half-written config. That must not blow away the running session:
+    // a later valid save still reloads.
     let s = Session::start("startup_panes = 1\n");
     let _ = s.drain(3);
 
     s.write_config("startup_panes = 1\nthis is not valid toml <<<\n");
-    let after = s.drain(4);
+    let _ = s.drain(4);
 
-    assert!(
-        after.contains("config error"),
-        "the user should be told the config is broken; got:\n{after:?}"
-    );
-    s.kill();
-}
-
-#[test]
-fn a_successful_reload_is_confirmed_on_screen() {
-    let s = Session::start("");
-    let _ = s.drain(3);
-    s.write_config("startup_panes = 1\n");
+    s.write_config("startup_panes = 1\n[theme]\naccent = \"#ff00ff\"\n");
     let after = s.drain(4);
     assert!(
-        after.contains("reloaded"),
-        "the user should get confirmation their edit took effect; got:\n{after:?}"
+        after.contains("38;2;255;0;255"),
+        "the session should survive the broken edit and reload the fix; got:\n{after:?}"
     );
     s.kill();
 }
