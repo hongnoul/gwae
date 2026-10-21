@@ -155,6 +155,15 @@ impl Layout {
     /// viewport regardless of `strips`, so fewer `strips` than 4 leave the right
     /// side of the screen empty (uncovered background).
     pub fn new(strips: usize) -> Self {
+        let width = Width::Preset(crate::width::Preset::Quarter);
+        Layout::with_widths(&vec![width; strips])
+    }
+
+    /// Build a fresh layout with one single-pane column per entry of
+    /// `widths`, in order, focused on the first. This is the config-driven
+    /// launch shape (`[[startup_pane]]`): e.g. a quarter-width harness pane
+    /// followed by a half-width file manager.
+    pub fn with_widths(widths: &[Width]) -> Self {
         let mut layout = Layout {
             rows: Vec::new(),
             focus: Focus {
@@ -168,11 +177,10 @@ impl Layout {
             next_pane: 0,
         };
         let row = layout.new_row();
-        // A single strip of `n` panes, each 1/4 of the viewport.
-        let width = Width::Preset(crate::width::Preset::Quarter);
-        for _ in 0..strips {
+        // A single strip, one column per width, each holding one pane.
+        for width in widths {
             let pane = layout.alloc_pane();
-            layout.add_column(row, width, vec![pane]);
+            layout.add_column(row, *width, vec![pane]);
         }
         layout.focus.row = row;
         layout.focus.column = 0;
@@ -473,5 +481,35 @@ impl Layout {
             prev = end;
         }
         Some((out, live))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::width::Preset;
+
+    /// `with_widths` is the config-driven launch shape: one single-pane
+    /// column per width, in order, focused on the first. `new(n)` must stay
+    /// exactly the quarter-width special case of it.
+    #[test]
+    fn with_widths_builds_one_column_per_width_in_order() {
+        let l = Layout::with_widths(&[Width::Preset(Preset::Quarter), Width::Preset(Preset::Half)]);
+        assert_eq!(l.rows.len(), 1);
+        let cols = &l.rows[0].columns;
+        assert_eq!(cols.len(), 2);
+        assert_eq!(cols[0].width, Width::Preset(Preset::Quarter));
+        assert_eq!(cols[1].width, Width::Preset(Preset::Half));
+        assert_eq!(l.focus.column, 0);
+        // Pane ids are allocated in column order, so pane 1.1 is column 0.
+        assert_eq!(cols[0].panes[0], 0);
+        assert_eq!(cols[1].panes[0], 1);
+
+        let n = Layout::new(2);
+        let ncols = &n.rows[0].columns;
+        assert!(ncols
+            .iter()
+            .all(|c| c.width == Width::Preset(Preset::Quarter)));
+        assert_eq!(ncols.len(), 2);
     }
 }

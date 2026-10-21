@@ -45,6 +45,19 @@ fn no_agents() -> Vec<String> {
     Vec::new()
 }
 
+/// One entry of the `[[startup_pane]]` list: a launch-time column.
+///
+/// `width` takes anything `default_column_width` takes (a preset name, a
+/// fraction like `"1/2"`, or fixed cells). `command` is the program for the
+/// pane; empty keeps the slot's default (agent harness for pane 1.1, a shell
+/// for the rest).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct StartupPane {
+    pub width: Width,
+    pub command: String,
+}
+
 /// Image panes: `auto` promotes a pane to an image viewer once sustained
 /// native image commits prove it is one (e.g. tdf); `off` never promotes,
 /// keeping the classic text-grid path with inline tiles for minimalists.
@@ -87,6 +100,25 @@ pub struct Config {
     /// single quarter-width pane; the skeleton's placeholder boxes show the
     /// rest of the container).
     pub startup_panes: usize,
+    /// Explicit launch panes, each a single-pane column in order:
+    ///
+    /// ```toml
+    /// [[startup_pane]]
+    /// width = "quarter"   # the coding harness (empty command = agent pane)
+    ///
+    /// [[startup_pane]]
+    /// width = "half"
+    /// command = "yazi ~"
+    /// ```
+    ///
+    /// When present this beats `startup_panes` (count and widths both come
+    /// from here). A pane with an empty `command` keeps the default for its
+    /// slot: pane 1.1 resolves the agent harness/gateway, the rest open a
+    /// shell. `gwae run <cmd>` and session resurrection still win for the
+    /// panes they claim, since both are more specific than a standing
+    /// preference.
+    #[serde(rename = "startup_pane", default)]
+    pub startup_pane: Vec<StartupPane>,
     /// Command pane 1.1 runs at launch *instead of* the agent harness /
     /// gateway. Empty (the default) keeps the agent pane. An explicit
     /// `gwae run <cmd>` still wins, and session resurrection still wins,
@@ -148,6 +180,7 @@ impl Default for Config {
             agents_retired: Vec::new(),
             startup_panes: 1,
             startup_command: String::new(),
+            startup_pane: Vec::new(),
             startup_hud: default_startup_hud(),
             theme: ThemeConfig::default(),
             image_pane: ImagePane::default(),
@@ -191,12 +224,16 @@ impl Config {
     pub fn adopt_appearance(&mut self, new: Config) {
         let Config {
             startup_panes,
+            startup_pane,
             agent_dir,
             keep_awake,
             ..
         } = self.clone();
         *self = Config {
             startup_panes,
+            // Kept for the same reason as `startup_panes`: the launch panes
+            // already exist, so an edited list means nothing until relaunch.
+            startup_pane,
             // Kept: the running session may have overridden it via `--dir`
             // or `⌥+d`, and a config edit must not yank panes back to the
             // file's value.
@@ -586,6 +623,33 @@ mod tests {
     fn startup_panes_parses() {
         let cfg = parse("startup_panes = 2");
         assert_eq!(cfg.startup_panes, 2);
+    }
+
+    #[test]
+    fn startup_pane_list_parses_widths_and_commands() {
+        // The init-written default: a quarter harness pane (no command) and
+        // a half-width yazi pane. Both the widths and the commands must
+        // survive the round trip, or launch builds the wrong strip.
+        let cfg = parse(
+            "[[startup_pane]]\nwidth = \"quarter\"\n\n\
+             [[startup_pane]]\nwidth = \"half\"\ncommand = \"yazi ~\"\n",
+        );
+        assert_eq!(cfg.startup_pane.len(), 2);
+        assert_eq!(
+            cfg.startup_pane[0].width,
+            Width::Preset(gwae_layout::Preset::Quarter)
+        );
+        assert_eq!(cfg.startup_pane[0].command, "");
+        assert_eq!(
+            cfg.startup_pane[1].width,
+            Width::Preset(gwae_layout::Preset::Half)
+        );
+        assert_eq!(cfg.startup_pane[1].command, "yazi ~");
+        // Absent list stays empty so the `startup_panes` fallback applies.
+        assert!(parse("").startup_pane.is_empty());
+        // An entry with no width gets the default new-column width.
+        let cfg = parse("[[startup_pane]]\ncommand = \"htop\"\n");
+        assert_eq!(cfg.startup_pane[0].width, Width::DEFAULT);
     }
 
     #[test]

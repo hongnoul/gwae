@@ -183,3 +183,41 @@ fn startup_hud_defaults_to_showing_the_cheat_sheet() {
         "default launch still flashes the cheat-sheet; got:\n{text:?}"
     );
 }
+
+#[test]
+fn startup_pane_list_spawns_each_command_at_its_width() {
+    // The init-written shape, with stub commands in both slots so the test
+    // does not depend on which harnesses the host machine has installed:
+    // a quarter-width pane 1 and a half-width pane 2, each running its own
+    // command. Both tools must be on screen at once, the second strictly to
+    // the right of the first at the quarter boundary.
+    let mut s = Session::start(
+        "startup_hud = false\n\
+         [[startup_pane]]\n\
+         width = \"quarter\"\n\
+         command = \"stub-tool one\"\n\
+         \n\
+         [[startup_pane]]\n\
+         width = \"half\"\n\
+         command = \"stub-tool two\"\n",
+    );
+    let text = s.wait_for(15, |t| t.contains("ARGS=[one]") && t.contains("ARGS=[two]"));
+    assert!(
+        text.contains("ARGS=[one]") && text.contains("ARGS=[two]"),
+        "both startup_pane commands own their panes; got:\n{text:?}"
+    );
+    // Column geometry: at 140 cols a quarter pane starts near x=0 and the
+    // half pane starts near x=35. The stub banner prints at its pane's top
+    // left, so each banner's column is its pane's left edge (plus chrome).
+    let line = text
+        .lines()
+        .find(|l| l.contains("ARGS=[one]") && l.contains("ARGS=[two]"))
+        .expect("both banners paint on the same row");
+    let one = line.find("STUBTOOL ARGS=[one]").unwrap();
+    let two = line.find("STUBTOOL ARGS=[two]").unwrap();
+    assert!(
+        one < 4 && (30..45).contains(&two),
+        "quarter pane at the left edge, half pane at ~1/4 of 140 cols; \
+         got one at {one}, two at {two}:\n{line:?}"
+    );
+}

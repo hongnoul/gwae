@@ -336,6 +336,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         Some(h) => h.layout.clone(),
         None => match &restored {
             Some(s) if !s.layout.panes.is_empty() => s.layout.clone(),
+            // `[[startup_pane]]` names the launch columns (width + command);
+            // the older `startup_panes` count is the fallback shape.
+            _ if !cfg.startup_pane.is_empty() => {
+                Layout::with_widths(&cfg.startup_pane.iter().map(|p| p.width).collect::<Vec<_>>())
+            }
             _ => Layout::new(cfg.startup_panes.max(1)),
         },
     };
@@ -499,11 +504,19 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             crate::session::restore_cmd(rec)
         } else if i == 0 && !restoring {
             if initial.trim().is_empty() {
-                // A standing `startup_command` replaces the agent pane: the
+                // A standing launch command replaces the agent pane: the
                 // user asked for a tool in pane 1.1, so no harness is
                 // resolved and the pane is never marked as an agent.
-                if !cfg.startup_command.trim().is_empty() {
-                    expand_cmd_tildes(&cfg.startup_command)
+                // `[[startup_pane]]` names it per pane; the older
+                // `startup_command` scalar still works.
+                let standing = cfg
+                    .startup_pane
+                    .first()
+                    .map(|p| p.command.as_str())
+                    .filter(|c| !c.trim().is_empty())
+                    .unwrap_or(&cfg.startup_command);
+                if !standing.trim().is_empty() {
+                    expand_cmd_tildes(standing)
                 } else {
                     first_is_agent = true;
                     match resolve_startup_cmd(&cfg.default_agent, &harness_state) {
@@ -517,6 +530,15 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             } else {
                 initial.clone()
             }
+        } else if !restoring {
+            // Later `[[startup_pane]]` slots run their configured command;
+            // an empty one keeps the default shell.
+            cfg.startup_pane
+                .get(i)
+                .map(|p| p.command.as_str())
+                .filter(|c| !c.trim().is_empty())
+                .map(expand_cmd_tildes)
+                .unwrap_or_default()
         } else {
             String::new()
         };
@@ -2442,9 +2464,17 @@ mod tests {
                 "sh -c \"for i in $(seq 1 {w}); do printf '%s' {}; done; echo\"",
                 fills[i]
             );
-            let pane =
-                spawn_pane(*pid, &cmd, w, rows, tx.clone(), None, CellPixels::default(), 0)
-                    .expect("spawn pane");
+            let pane = spawn_pane(
+                *pid,
+                &cmd,
+                w,
+                rows,
+                tx.clone(),
+                None,
+                CellPixels::default(),
+                0,
+            )
+            .expect("spawn pane");
             panes.insert(*pid, pane);
         }
         // Feed PTY output until every pane's first row is fully painted.
