@@ -7,6 +7,9 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Changed
+- **On-screen keep-awake text now reads `caffeinate`.** The HUD/help-frame
+  badge and the `⌥+w` cheat-sheet label name the mechanism directly. The
+  `keep_awake` config key and internals are unchanged.
 - **Bottom-left toasts are gone.** The one-line bottom-left notes (config
   reloaded/error, hot-reload failure, update notice, paste and drag-copy
   confirmations, spawn-dir picks, keep-awake flips, agent-pick and dud-exit
