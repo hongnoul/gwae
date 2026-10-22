@@ -6,6 +6,18 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- **⌥ chords now work on non-US keyboard layouts.** The Option-glyph
+  fallback (`˙∆˚¬`…) only exists on the US layout: with Korean 2-Set (or
+  Cyrillic, Greek, …) active, macOS resolves Option+h to a bare `h`, so
+  every ⌥ bind silently died until the user switched back to English. The
+  native Option poll (`macos_option_held`) now re-tags bare printable ASCII
+  keys as Alt chords while the physical Option key is down, but only when
+  the re-tagged chord lands on a real gwae command — layouts that *type*
+  ASCII via Option (German ⌥+l = `@`) and IME output still pass through to
+  the pane untouched. Off macOS and under `GWAE_NO_NATIVE_MODIFIERS=1` the
+  poll reads false, so nothing changes there.
+
 ### Changed
 - **First run / `gwae init` no longer writes default launch panes.** The
   "panes" step that appended a quarter-width harness pane plus a half-width

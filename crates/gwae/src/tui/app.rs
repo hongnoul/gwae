@@ -1412,6 +1412,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     Ok(Event::Key(ke))
                         if matches!(ke.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                     {
+                        // Non-US layouts have no Option glyphs: macOS resolves
+                        // Option+h under Korean/Cyrillic/… to the bare base
+                        // letter, so the event is indistinguishable from a
+                        // plain `h`. The native modifier poll knows the
+                        // physical Option key is down; re-tag the event as an
+                        // Alt chord so every ⌥ bind works regardless of the
+                        // active input source. No-op when the terminal already
+                        // reported Alt, when the glyph fallback applies (the
+                        // glyphs are non-ASCII), and in tests/other platforms
+                        // (the poll reads false there).
+                        let ke = apply_native_option(&ke, native_modifiers && macos_option_held());
                         // The HUD persists until the next key press; ⌥+/ toggles
                         // it explicitly, so remember whether it was up before we
                         // dismiss it here.

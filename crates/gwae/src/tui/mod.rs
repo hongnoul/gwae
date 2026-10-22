@@ -51,8 +51,8 @@ mod input;
 pub(crate) use config_io::perform_reload;
 pub(crate) use config_io::write_harness_dir;
 pub(crate) use input::{
-    focused_pane, handle_key, is_alt_modifier, is_harness_scroll_chord, key_bytes,
-    layout_pane_count, picker_paste_query, picker_step, smart_jump_target, Cmd,
+    apply_native_option, focused_pane, handle_key, is_alt_modifier, is_harness_scroll_chord,
+    key_bytes, layout_pane_count, picker_paste_query, picker_step, smart_jump_target, Cmd,
 };
 
 mod platform;

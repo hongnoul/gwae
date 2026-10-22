@@ -41,6 +41,53 @@ pub(crate) fn logical_char(ev: &KeyEvent) -> Option<char> {
     }
 }
 
+/// Re-tag a key event as an Alt chord when the *physical* Option key is down.
+///
+/// The Option-glyph fallback (`˙∆˚¬`…) only exists on the US layout: with a
+/// non-Latin input source active (Korean 2-Set, Cyrillic, …) macOS resolves
+/// Option+h to the plain base letter `h`, byte-identical to typing `h`. The
+/// event carries no trace of Option, but the OS does: the native modifier
+/// poll (`macos_option_held`) reads the live flag state. When the poll says
+/// Option is physically held and the event is a bare printable ASCII char,
+/// the char gains the ALT bit so `handle_key`'s Meta path matches it,
+/// layout-blind.
+///
+/// Deliberately narrow:
+/// - Only bare printable ASCII. The US-layout Option glyphs are non-ASCII
+///   and already match without ALT; IME output (Hangul jamo, …) is
+///   non-ASCII too and must keep typing into the pane.
+/// - Never when ALT is already set (the terminal spoke for itself) or when
+///   CTRL is set (Ctrl+Option combos are unbound and belong to the pane).
+/// - Only when the re-tagged chord dispatches to a gwae command. European
+///   layouts use Option to *type* ASCII (German ⌥+l is `@`): those arrive as
+///   chars outside the bind set, the probe yields a pass-through, and the
+///   original event survives untouched.
+/// - `option_held` is false off macOS and under `GWAE_NO_NATIVE_MODIFIERS=1`,
+///   so tests and other platforms see an unchanged event.
+pub(crate) fn apply_native_option(ev: &KeyEvent, option_held: bool) -> KeyEvent {
+    if !option_held
+        || ev.modifiers.contains(KeyModifiers::ALT)
+        || ev.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        return *ev;
+    }
+    match ev.code {
+        KeyCode::Char(c) if c.is_ascii_graphic() => {
+            let mut cand = *ev;
+            cand.modifiers |= KeyModifiers::ALT;
+            // Probe the dispatcher: keep the re-tag only when it lands on a
+            // real command. A pass-through (`Cmd::Input`) means gwae has no
+            // claim on this chord, so the user was typing with Option as a
+            // layout-level modifier and the bytes must reach the pane as-is.
+            match handle_key(&cand) {
+                Some(Cmd::Input(_)) | None => *ev,
+                Some(_) => cand,
+            }
+        }
+        _ => *ev,
+    }
+}
+
 /// True when this event is the jcode-style transcript-scroll chord
 /// (Ctrl+Shift+J/K) that gwae otherwise claims for its own incremental
 /// history scroll (see `handle_key`).
@@ -541,6 +588,71 @@ mod tests {
         // Terminals that deliver Option as Meta send ESC+; -> Alt+;.
         let ev = KeyEvent::new(KeyCode::Char(';'), KeyModifiers::ALT);
         assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::SpawnAgent)));
+    }
+
+    // Non-US layouts (Korean 2-Set, Cyrillic, …) have no Option glyphs:
+    // macOS resolves Option+h to a bare 'h'. The native poll re-tags such
+    // events as Alt chords so ⌥ binds stay layout-independent.
+    #[test]
+    fn native_option_retags_bare_letters_into_alt_chords() {
+        let ev = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        let out = apply_native_option(&ev, true);
+        assert!(out.modifiers.contains(KeyModifiers::ALT));
+        assert_eq!(handle_key(&out), Some(Cmd::Act(Action::FocusLeft)));
+        // Shifted chord: Option+Shift+h arrives as a bare 'H'.
+        let ev = KeyEvent::new(KeyCode::Char('H'), KeyModifiers::NONE);
+        let out = apply_native_option(&ev, true);
+        assert_eq!(handle_key(&out), Some(Cmd::Act(Action::MovePaneLeft)));
+        // ⌥+; still spawns an agent when the layout eats the … glyph.
+        let ev = KeyEvent::new(KeyCode::Char(';'), KeyModifiers::NONE);
+        let out = apply_native_option(&ev, true);
+        assert_eq!(handle_key(&out), Some(Cmd::Act(Action::SpawnAgent)));
+    }
+
+    #[test]
+    fn native_option_is_inert_without_the_physical_hold() {
+        // Poll says Option is up: typing plain letters must stay typing.
+        let ev = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        assert_eq!(apply_native_option(&ev, false), ev);
+    }
+
+    #[test]
+    fn native_option_leaves_already_tagged_and_ctrl_events_alone() {
+        // The terminal reported Alt itself (Option-as-Meta): no double-tag.
+        let ev = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+        assert_eq!(apply_native_option(&ev, true), ev);
+        // Ctrl+Option combos are unbound and belong to the pane.
+        let ev = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL);
+        assert_eq!(apply_native_option(&ev, true), ev);
+    }
+
+    #[test]
+    fn native_option_passes_through_option_typed_text() {
+        // European layouts type ASCII *via* Option (German ⌥+l = '@'): the
+        // char arrives outside the bind set and must reach the pane as-is,
+        // not become a phantom chord.
+        let ev = KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE);
+        assert_eq!(apply_native_option(&ev, true), ev);
+        // IME output is non-ASCII (Hangul jamo): untouched.
+        let ev = KeyEvent::new(KeyCode::Char('\u{3157}'), KeyModifiers::NONE);
+        assert_eq!(apply_native_option(&ev, true), ev);
+        // US-layout glyphs already match without ALT and are non-ASCII, so
+        // the re-tag path never sees them; they still dispatch unchanged.
+        let ev = KeyEvent::new(KeyCode::Char('\u{2d9}'), KeyModifiers::NONE);
+        assert_eq!(apply_native_option(&ev, true), ev);
+        assert_eq!(handle_key(&ev), Some(Cmd::Act(Action::FocusLeft)));
+    }
+
+    #[test]
+    fn native_option_never_retags_destructive_passthroughs_silently() {
+        // ⌥+q is bound (kill pane): the retag applies — this is the chord the
+        // user pressed, the Korean layout just erased the œ glyph.
+        let ev = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        let out = apply_native_option(&ev, true);
+        assert_eq!(handle_key(&out), Some(Cmd::Act(Action::KillPane)));
+        // Unbound letters stay pane input even under the hold: ⌥+z types.
+        let ev = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE);
+        assert_eq!(apply_native_option(&ev, true), ev);
     }
 
     #[test]
