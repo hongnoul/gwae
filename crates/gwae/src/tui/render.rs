@@ -1102,7 +1102,12 @@ pub(crate) mod tests {
         if let Some(p) = panes.get_mut(&pid) {
             // Push enough lines through the 10-row grid to create history,
             // then scroll back one line.
-            feed_pane_output(p, b"1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10\r\n11\r\n12\r\n", true, true);
+            feed_pane_output(
+                p,
+                b"1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10\r\n11\r\n12\r\n",
+                true,
+                true,
+            );
             assert!(p.grid.scroll_by(1), "grid must have scrollback history");
         }
         let anchor = render_frame(
@@ -1431,17 +1436,30 @@ pub(crate) mod tests {
 
         // The verb itself: focus right peeks the quarter in.
         let scroll = layout
-            .apply(Action::FocusRight, Viewport::new(cols), FollowScroll::default())
+            .apply(
+                Action::FocusRight,
+                Viewport::new(cols),
+                FollowScroll::default(),
+            )
             .unwrap();
         assert!(scroll > 0, "must scroll to reveal the quarter");
         // Quantized: the scroll rests on a valid stop (col boundary or
         // right-aligned position), never between them.
         let stops = gwae_layout::scroll_stops(&layout, row, cols);
-        assert!(stops.contains(&scroll), "scroll {scroll} off-stop {stops:?}");
+        assert!(
+            stops.contains(&scroll),
+            "scroll {scroll} off-stop {stops:?}"
+        );
 
         let views = focused_pane_views(&layout, cols, rows, 0, true);
-        let qv = views.iter().find(|v| v.pid == q_pid).expect("quarter visible");
-        let fv = views.iter().find(|v| v.pid == full_pid).expect("full visible");
+        let qv = views
+            .iter()
+            .find(|v| v.pid == q_pid)
+            .expect("quarter visible");
+        let fv = views
+            .iter()
+            .find(|v| v.pid == full_pid)
+            .expect("full visible");
         // Quarter peeks in at the right edge, focused, not a peek sliver.
         assert!(!qv.peek);
         assert_eq!(qv.rect.x + qv.rect.w, cols - 1, "quarter flush right");
@@ -1460,11 +1478,18 @@ pub(crate) mod tests {
 
         // Walking back left restores the original scroll exactly.
         let back = layout
-            .apply(Action::FocusLeft, Viewport::new(cols), FollowScroll::default())
+            .apply(
+                Action::FocusLeft,
+                Viewport::new(cols),
+                FollowScroll::default(),
+            )
             .unwrap();
         assert_eq!(back, 0, "focus left returns to the strip origin");
         let views0 = focused_pane_views(&layout, cols, rows, 0, true);
-        assert!(views0.iter().all(|v| v.pid != q_pid), "quarter hidden again");
+        assert!(
+            views0.iter().all(|v| v.pid != q_pid),
+            "quarter hidden again"
+        );
         let fv0 = views0.iter().find(|v| v.pid == full_pid).unwrap();
         assert_eq!(fv0.rect.x, 1, "full pane back flush left (inset)");
         assert_eq!(fv0.col_x0, 0, "full pane unclipped again");
@@ -2196,7 +2221,10 @@ pub(crate) mod tests {
                 ],
                 &[80, 97, 142, 143],
             ),
-            (&[Width::Cells(47), Width::Preset(Preset::Half)], &[120, 143]),
+            (
+                &[Width::Cells(47), Width::Preset(Preset::Half)],
+                &[120, 143],
+            ),
         ];
         for (widths, viewports) in cases {
             for &cols in *viewports {

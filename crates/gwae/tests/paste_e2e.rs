@@ -686,9 +686,7 @@ fn native_multiline_paste_delivers_every_line() {
     s.native_clipboard_paste();
     s.wait_for("both clipboard lines delivered", |s| {
         let shown = s.shown();
-        s.file("received-paste") == b"one\n\ntwo"
-            && shown.contains("one")
-            && shown.contains("two")
+        s.file("received-paste") == b"one\n\ntwo" && shown.contains("one") && shown.contains("two")
     });
     eprintln!("observed native paste: all 3 lines received, blank line preserved");
 }

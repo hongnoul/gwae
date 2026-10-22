@@ -32,8 +32,8 @@ mod render;
 #[cfg(unix)]
 pub(crate) use chrome::BuildPill;
 pub(crate) use chrome::{
-    draw_center_hud, has_attention, hud_pane_at, paint_center_minimap,
-    plan_center_minimap, HudFacts, HudPlan,
+    draw_center_hud, has_attention, hud_pane_at, paint_center_minimap, plan_center_minimap,
+    HudFacts, HudPlan,
 };
 pub(crate) use pickers::{
     draw_dir_picker, draw_harness_picker, draw_quit_confirm, DirPicker, HarnessChoice,

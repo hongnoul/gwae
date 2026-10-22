@@ -537,7 +537,10 @@ fn an_agent_spawned_after_a_cd_opens_in_the_focused_cwd() {
     s.send(format!("cd '{}' && touch '{}'\r", repo.display(), moved.display()).as_bytes());
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !moved.try_exists().unwrap_or(false) {
-        assert!(std::time::Instant::now() < deadline, "cd handshake timed out");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "cd handshake timed out"
+        );
         std::thread::sleep(Duration::from_millis(100));
     }
     s.send(b"\x1b;");
@@ -564,19 +567,16 @@ fn the_focused_cwd_follow_is_opt_in() {
     let repo = root.join("moved-repo");
     std::fs::create_dir_all(&repo).unwrap();
     let script = probe_script(&root, "where");
-    let mut s = Session::start(
-        &root,
-        "default_agent = \"/bin/sh\"\n",
-        "sh",
-        &root,
-        &[],
-    );
+    let mut s = Session::start(&root, "default_agent = \"/bin/sh\"\n", "sh", &root, &[]);
     let _ = s.drain();
     let moved = root.join("moved-ok");
     s.send(format!("cd '{}' && touch '{}'\r", repo.display(), moved.display()).as_bytes());
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !moved.try_exists().unwrap_or(false) {
-        assert!(std::time::Instant::now() < deadline, "cd handshake timed out");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "cd handshake timed out"
+        );
         std::thread::sleep(Duration::from_millis(100));
     }
     s.send(b"\x1b;");

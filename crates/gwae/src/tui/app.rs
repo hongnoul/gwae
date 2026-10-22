@@ -186,10 +186,7 @@ fn focused_pane_cwd(
     }
     let pid = focused_pane(layout)?;
     let child = panes.get(&pid)?;
-    let cwd = child
-        .child
-        .process_id()
-        .and_then(crate::session::pid_cwd)?;
+    let cwd = child.child.process_id().and_then(crate::session::pid_cwd)?;
     if cwd.is_dir() {
         Some(cwd)
     } else {
@@ -1661,8 +1658,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 // spawn applies, so capture its cwd now: after
                                 // `layout.apply` the new pane owns focus and
                                 // there is no parent cwd left to read.
-                                let focused_cwd =
-                                    focused_pane_cwd(&layout, &panes, cfg.spawn_follows_focused_cwd());
+                                let focused_cwd = focused_pane_cwd(
+                                    &layout,
+                                    &panes,
+                                    cfg.spawn_follows_focused_cwd(),
+                                );
                                 match choice {
                                     HarnessChoice::Shell => {
                                         let v = Viewport::new(cols);

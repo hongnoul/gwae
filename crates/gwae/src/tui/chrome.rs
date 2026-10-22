@@ -2546,7 +2546,12 @@ mod tests {
         let pal = pal_terminal();
         let stamp = |w: u16| -> Vec<Cell> {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
-            let rect = Rect { x: 2, y: 1, w, h: 5 };
+            let rect = Rect {
+                x: 2,
+                y: 1,
+                w,
+                h: 5,
+            };
             stamp_keep_awake_badge(&mut out, cols, rect, &pal);
             out[cols as usize..2 * cols as usize].to_vec()
         };

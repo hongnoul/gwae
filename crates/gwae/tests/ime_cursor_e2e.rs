@@ -210,7 +210,8 @@ fn host_cursor_parks_on_the_focused_panes_typing_position() {
         (col, row)
     };
     assert_eq!(
-        got, expect,
+        got,
+        expect,
         "host cursor must park at the typing position (after the prompt), \
          not wherever the last diff run finished\nhost screen:\n{}",
         s.screen.visible_text()

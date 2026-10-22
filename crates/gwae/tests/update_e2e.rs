@@ -461,9 +461,7 @@ fn a_running_session_performs_the_check_and_writes_the_cache() {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while std::time::Instant::now() < deadline {
         let _ = rx.recv_timeout(Duration::from_millis(250));
-        if std::fs::read_to_string(&cache_path)
-            .is_ok_and(|c| c.contains("99.0.0"))
-        {
+        if std::fs::read_to_string(&cache_path).is_ok_and(|c| c.contains("99.0.0")) {
             break;
         }
     }

@@ -749,7 +749,10 @@ fn focusing_right_from_a_full_pane_peeks_the_next_pane() {
     let mut layout = layout_with_widths(&[Width::Preset(Preset::Full), Width::DEFAULT]);
     let vp = Viewport::new(120);
     let scroll = layout.apply(Action::FocusRight, vp, follow()).unwrap();
-    assert!(scroll > 0, "quarter pane is past the right edge; must scroll");
+    assert!(
+        scroll > 0,
+        "quarter pane is past the right edge; must scroll"
+    );
     let (_s, e) = layout.focused_range(vp.cols).unwrap();
     assert!(
         e as i32 <= scroll + vp.cols as i32,
@@ -757,10 +760,7 @@ fn focusing_right_from_a_full_pane_peeks_the_next_pane() {
     );
     // The quarter peeks in from the right: most of the full pane is still
     // on screen instead of being scrolled out entirely.
-    let full_end = layout
-        .column_x_ranges(layout.focus.row, vp.cols)
-        .unwrap()[0]
-        .1 as i32;
+    let full_end = layout.column_x_ranges(layout.focus.row, vp.cols).unwrap()[0].1 as i32;
     assert!(
         full_end - scroll > vp.cols as i32 / 2,
         "full pane hurled off-screen (full_end={full_end}, scroll={scroll})"
