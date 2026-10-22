@@ -291,7 +291,7 @@ pub(crate) fn render_frame(
     pal: &Palette,
     mm: &crate::config::Minimap,
     selection: Option<&Selection<PaneId>>,
-) {
+) -> Option<(u16, u16)> {
     render_frame_with_images(
         out,
         layout,
@@ -303,7 +303,7 @@ pub(crate) fn render_frame(
         mm,
         selection,
         None,
-    );
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -318,7 +318,7 @@ pub(crate) fn render_frame_with_images(
     mm: &crate::config::Minimap,
     selection: Option<&Selection<PaneId>>,
     mut images: Option<&mut crate::graphics_host::Host>,
-) {
+) -> Option<(u16, u16)> {
     // Every chrome color in this function comes from the palette; the
     // skeleton frame color is just `pal.overlay`, kept in a local so the
     // `Option`-shaped call sites below read the same as they used to.
@@ -701,6 +701,16 @@ pub(crate) fn render_frame_with_images(
     // video on top of the pane's own cell so it reads exactly like the native
     // terminal cursor. Only when the emulator's cursor is visible and live
     // (not scrolled back) and not covered by chrome.
+    //
+    // The *host* cursor also matters even though it is hidden: OS input
+    // methods (Hangul, Japanese, Chinese, dead-key accents) anchor their
+    // preedit overlay and candidate window to the host terminal's real cursor
+    // cell, and screen readers speak the cell under it. Return the focused
+    // cursor's screen position (even when the pane asked to hide it, since
+    // preedit anchors regardless) so the caller can park the real cursor
+    // there after painting; otherwise the host draws the composing text
+    // wherever the last diff run left the cursor, smearing the right edge of
+    // the screen.
     if let Some((sx, sy, hide)) = focused_cursor_abs {
         if !hide && sy < rows {
             let idx = sy as usize * cols as usize + sx as usize;
@@ -715,6 +725,7 @@ pub(crate) fn render_frame_with_images(
             }
         }
     }
+    focused_cursor_abs.and_then(|(sx, sy, _)| (sy < rows && sx < cols).then_some((sx, sy)))
 }
 
 /// Write one frame glyph into `out[idx]` in `color` on a default background.
@@ -1012,6 +1023,92 @@ pub(crate) mod tests {
             mode: crate::config::MinimapMode::Overlay,
             ..Default::default()
         }
+    }
+
+    /// The renderer must report the focused pane's cursor in *screen* cells so
+    /// the host cursor can be parked there. OS input methods (Hangul,
+    /// Japanese, Chinese, dead-key accents) anchor their preedit overlay to
+    /// the host terminal's real cursor: without this anchor the composing
+    /// text paints wherever the last diff run ended, which was the "IME breaks
+    /// the right edge of gwae" bug.
+    /// (`PaneIo::Inherited` / `PaneProc::Adopted` are unix-only reload arms.)
+    #[cfg(unix)]
+    #[test]
+    fn renderer_reports_focused_cursor_in_screen_cells_for_ime_anchor() {
+        use crate::tui::pty::{feed_pane_output, PaneIo, PaneProc, PtyPane};
+        use gwae_layout::Width;
+        let mut layout = Layout::new(1);
+        let row = layout.focus.row;
+        if let Some(r) = layout.row_mut(row) {
+            r.columns.clear();
+        }
+        let pid = layout.alloc_pane();
+        layout.add_column(row, Width::Cells(40), vec![pid]);
+        let grid = gwae_term::Vt100Grid::new(gwae_term::Size { cols: 38, rows: 10 });
+        let mut pane = PtyPane {
+            master: PaneIo::Inherited(-1),
+            writer: Box::new(std::io::sink()),
+            child: PaneProc::Adopted(None),
+            grid,
+            pty_size: crate::geometry::CellPixels {
+                width: 8,
+                height: 16,
+            }
+            .pty_size(38, 10),
+            alive: true,
+            last_output: std::time::Instant::now(),
+            saw_osc133: false,
+            graphics_stream: Default::default(),
+            graphics: Default::default(),
+            legacy_images: Default::default(),
+            image_activity: None,
+            image_view: None,
+            promote_streak: 0,
+        };
+        // Park the emulator cursor at a known cell: row 3, col 5 (0-based)
+        // after printing a prompt there.
+        feed_pane_output(&mut pane, b"\x1b[4;4Hab", true, true);
+        assert_eq!(pane.grid.cursor_position(), (3, 5));
+        let mut panes = HashMap::from([(pid, pane)]);
+        let mut out = Vec::new();
+        let anchor = render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            80,
+            14,
+            0,
+            &Palette::default(),
+            &no_map(),
+            None,
+        );
+        // The pane content rect is inset 1 cell for the frame and 1 chrome
+        // row on top, so grid (row 3, col 5) lands at screen (x=1+5, y=1+3).
+        assert_eq!(
+            anchor,
+            Some((6, 4)),
+            "focused cursor must map to screen cells for the IME anchor"
+        );
+        // Scrolled back from live, the cursor is history: no anchor, so a
+        // stale preedit position is never advertised.
+        if let Some(p) = panes.get_mut(&pid) {
+            // Push enough lines through the 10-row grid to create history,
+            // then scroll back one line.
+            feed_pane_output(p, b"1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10\r\n11\r\n12\r\n", true, true);
+            assert!(p.grid.scroll_by(1), "grid must have scrollback history");
+        }
+        let anchor = render_frame(
+            &mut out,
+            &layout,
+            &mut panes,
+            80,
+            14,
+            0,
+            &Palette::default(),
+            &no_map(),
+            None,
+        );
+        assert_eq!(anchor, None, "scrollback must not anchor the IME cursor");
     }
 
     /// Promoted image pane without a host image channel: the frame must say

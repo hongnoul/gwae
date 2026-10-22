@@ -576,6 +576,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     }
     let mut frame: Vec<Cell> = Vec::new();
     let mut last: Vec<Cell> = Vec::new();
+    // Where the real (hidden) host cursor was parked last frame. The IME
+    // preedit anchor (see the park write below) only needs a repaint when the
+    // focused cursor cell actually moved.
+    let mut host_cursor_parked: Option<(u16, u16)> = None;
     let mut buf: Vec<u8> = Vec::new();
     let mut host_images = crate::graphics_host::Host::default();
     let mut dirty = true;
@@ -2280,7 +2284,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         }
         if dirty {
             host_images.begin();
-            render_frame_with_images(
+            let host_cursor = render_frame_with_images(
                 &mut frame,
                 &layout,
                 &mut panes,
@@ -2314,7 +2318,18 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             }
             buf.clear();
             paint(&mut buf, &frame, &last, cols, rows);
-            if !buf.is_empty() || !host_images.pending.is_empty() {
+            // Park the real (hidden) host cursor on the focused pane's cursor
+            // cell — the same cursor contract tmux honors. OS input methods
+            // (Hangul, Japanese, Chinese, dead-key accents) anchor the preedit
+            // overlay and the candidate window to the host terminal's actual
+            // cursor position, and screen readers speak the cell under it,
+            // none of which can see what gwae paints. Without this, composing
+            // text renders wherever the last diff run finished (usually the
+            // right edge), breaking the frame and hiding composition from the
+            // typist. Chrome overlays (HUD, pickers, quit confirm) capture
+            // keys anyway, so anchoring under them is harmless.
+            let park = host_cursor.filter(|&p| Some(p) != host_cursor_parked);
+            if !buf.is_empty() || !host_images.pending.is_empty() || park.is_some() {
                 // Synchronized update (ESC[?2026h/l): the host terminal holds
                 // the screen and applies the whole frame atomically, so a
                 // repaint can never be displayed half-drawn (visible shearing
@@ -2323,6 +2338,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 let _ = stdout.write_all(b"\x1b[?2026h");
                 let _ = stdout.write_all(&host_images.pending);
                 let _ = stdout.write_all(&buf);
+                if let Some((sx, sy)) = host_cursor {
+                    let _ = stdout.write_all(format!("\x1b[{};{}H", sy + 1, sx + 1).as_bytes());
+                    host_cursor_parked = Some((sx, sy));
+                } else {
+                    host_cursor_parked = None;
+                }
                 let _ = stdout.write_all(b"\x1b[?2026l");
                 let _ = stdout.flush();
                 last = frame.clone();

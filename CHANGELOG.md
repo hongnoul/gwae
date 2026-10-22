@@ -92,6 +92,19 @@ changelog, updated per PR). The format is based on
   `GWAE_DEV_RELOAD`.
 
 ### Fixed
+- **IME preedit (Hangul, Japanese, Chinese, dead keys) now renders at the
+  typing position, not the screen edge.** OS input methods anchor the
+  composing text and candidate window to the host terminal's *real* cursor,
+  but gwae hides that cursor and left it wherever the last diff run finished,
+  so composition painted over the right side of the screen and the typed
+  character only appeared after the full commit round-trip. Each frame now
+  parks the hidden host cursor on the focused pane's cursor cell (inside the
+  synchronized update, so no flicker), which puts the preedit overlay exactly
+  where you are typing — the same cursor contract tmux honors, so anything
+  else cursor-anchored (screen readers, emoji/dictation pickers) lands right
+  too. Covered by
+  `renderer_reports_focused_cursor_in_screen_cells_for_ime_anchor` and the
+  real-binary `ime_cursor_e2e` acceptance test.
 - **Native Ghostty fullscreen keeps keystrokes via a rekey daemon.**
   The `focus` stage recommended non-native fullscreen, which surrenders the
   fullscreen Space, swipe, and animations. A new Swift LaunchAgent
