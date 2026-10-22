@@ -351,6 +351,19 @@ fn preset_width() -> impl Strategy<Value = Width> {
     ]
 }
 
+/// Mixed widths including the overflow-heavy ones: Full, 3/4, 2/3, fixed cells.
+fn mixed_width() -> impl Strategy<Value = Width> {
+    prop_oneof![
+        Just(Width::Preset(Preset::Full)),
+        Just(Width::Preset(Preset::ThreeQuarters)),
+        Just(Width::Preset(Preset::TwoThirds)),
+        Just(Width::Preset(Preset::Half)),
+        Just(Width::Preset(Preset::Third)),
+        Just(Width::Preset(Preset::Quarter)),
+        (1u16..200).prop_map(Width::Cells),
+    ]
+}
+
 proptest! {
     #[test]
     fn column_ranges_tile_without_drift(
@@ -507,6 +520,32 @@ proptest! {
         for a in actions {
             let _ = layout.apply(a, view(), follow());
             assert_scrolls_on_stops(&layout, view(), &format!("after {a:?}"));
+        }
+    }
+
+    #[test]
+    fn scroll_is_quantized_for_mixed_widths(
+        widths in prop::collection::vec(mixed_width(), 1..6),
+        walks in 0..6usize,
+        cols in 40u16..400,
+    ) {
+        // Focus-walk a strip of mixed widths (presets incl. Full, fixed
+        // cells): every stop the walk rests on must be a valid quantized
+        // stop, and the focused column must be fully revealed whenever it
+        // fits the viewport.
+        let mut layout = layout_with_widths(&widths);
+        let vp = Viewport::new(cols);
+        for i in 0..walks {
+            let action = if i % 2 == 0 { Action::FocusRight } else { Action::FocusLeft };
+            let _ = layout.apply(action, vp, follow());
+            assert_scrolls_on_stops(&layout, vp, &format!("mixed {widths:?} walk {i} cols {cols}"));
+            if let Some((s, e)) = layout.focused_range(vp.cols) {
+                let scroll = layout.focused_row().unwrap().scroll_x;
+                if e - s <= cols as u32 {
+                    prop_assert!(s as i32 >= scroll && e as i32 <= scroll + cols as i32,
+                        "focused col {s}..{e} clipped at scroll {scroll} (cols={cols})");
+                }
+            }
         }
     }
 
