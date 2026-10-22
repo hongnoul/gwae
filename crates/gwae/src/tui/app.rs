@@ -2476,11 +2476,20 @@ mod tests {
             .expect("ranges for the four-quarter row");
         assert_eq!(ranges.last().unwrap().1, cols as u32);
 
-        // Spawn one real child per pane, each filling a line with its letter.
+        // Spawn one real child per pane at its *logical grid* width (what
+        // the PTY will be told), each filling a line with its letter.
+        let views = focused_pane_views(&layout, cols, rows, 0, true);
+        let grid_w = |i: usize| {
+            views
+                .iter()
+                .find(|v| v.col == i)
+                .map(|v| v.grid_cols)
+                .expect("view for column")
+        };
         let (tx, rx) = channel::<PaneMsg>();
         let mut panes: HashMap<PaneId, PtyPane> = HashMap::new();
         for (i, pid) in pids.iter().enumerate() {
-            let w = (ranges[i].1 - ranges[i].0) as u16;
+            let w = grid_w(i);
             let cmd = format!(
                 "sh -c \"for i in $(seq 1 {w}); do printf '%s' {}; done; echo\"",
                 fills[i]
@@ -2502,7 +2511,7 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
             let done = pids.iter().enumerate().all(|(i, pid)| {
-                let w = (ranges[i].1 - ranges[i].0) as u16;
+                let w = grid_w(i);
                 panes
                     .get(pid)
                     .map(|p| p.grid.cell(w.saturating_sub(1), 0).ch == fills[i])
@@ -2534,12 +2543,18 @@ mod tests {
             &crate::config::Minimap::default(),
             None,
         );
-        // The first content row shows each pane's letter across its column's
-        // interior: the frame owns the boundary cells, content never bleeds past
-        // them, and the rightmost column reaches the screen edge.
+        // The first content row shows each pane's letter across its grid
+        // width starting inside the frame: the frame owns the boundary cells,
+        // content never bleeds past them, every grid cell is actually
+        // paintable on screen, and the rightmost column reaches the edge.
         let row1 = cols as usize; // screen row 1: the first content row
-        for (i, (s, e)) in ranges.iter().enumerate() {
-            for x in (*s + 1)..(*e - 1) {
+        for (i, v) in views.iter().enumerate() {
+            assert!(
+                v.grid_cols <= v.rect.w,
+                "pane {} grid wider than its paintable rect",
+                fills[i]
+            );
+            for x in v.rect.x..v.rect.x + v.grid_cols {
                 assert_eq!(
                     out[row1 + x as usize].ch,
                     fills[i],
@@ -2563,11 +2578,11 @@ mod tests {
         }
     }
 
-    /// Live-PTy proof that pane 4's content overflows at its logical width
-    /// rather than wrapping early: a widened last column keeps a 39-cell grid
-    /// (80 cols, half width, 1-cell left frame inset), so a 39-char line fills
-    /// exactly one emulator row instead of wrapping at the 38-cell visible
-    /// rect the old clamped sizing produced.
+    /// Live-PTY proof that pane 4 wraps exactly at its paintable width: a
+    /// widened last column gets a 38-cell grid (80 cols, half width, minus
+    /// both frame cells), so a 38-char line fills exactly one emulator row.
+    /// The old 39-cell sizing wrapped one cell past the visible rect and the
+    /// 39th character of every soft-wrapped line vanished under the frame.
     // Spawns a real `sh` in a PTY: unix-only (Windows has no sh, and
     // the spawn hangs the suite rather than failing fast).
     #[cfg(unix)]
@@ -2595,9 +2610,15 @@ mod tests {
         }
         let views = focused_pane_views(&layout, cols, rows, 0, true);
         let v = views.iter().find(|v| v.col == 3).unwrap();
-        assert_eq!(v.grid_cols, 39, "pane 4 keeps its logical grid width");
+        assert_eq!(v.grid_cols, 38, "pane 4 keeps its logical grid width");
+        assert!(
+            v.grid_cols <= v.rect.w,
+            "every grid column must be paintable: grid {} vs rect {}",
+            v.grid_cols,
+            v.rect.w
+        );
 
-        // Print exactly 39 chars with no trailing newline, then check the
+        // Print exactly 38 chars with no trailing newline, then check the
         // emulator wrapped (or not) at the live grid width.
         let (tx, rx) = channel::<PaneMsg>();
         let cmd = format!("sh -c \"printf '%s' {}\"", "D".repeat(v.grid_cols as usize));
@@ -2642,7 +2663,7 @@ mod tests {
         assert_eq!(
             p.grid.cell(v.grid_cols.saturating_sub(1), 0).ch,
             'D',
-            "39-char line fills the logical row without wrapping early"
+            "38-char line fills the logical row without wrapping early"
         );
         assert_eq!(
             p.grid.cell(0, 1).ch,

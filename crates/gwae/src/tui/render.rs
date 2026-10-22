@@ -64,9 +64,17 @@ pub(crate) fn column_grid_sizes(
     chrome_rows: u16,
 ) -> impl Iterator<Item = GridSize> {
     let b = u16::from(inset);
-    let cols = width
-        .cells(viewport.cols)
-        .saturating_sub(b)
+    // Guaranteed-visible width, independent of scroll stop and rounding
+    // phase. The column box comes from round-half-up *boundaries* of the
+    // twelfths accumulator (`column_x_ranges`), so a fractional-width box
+    // can land one cell narrower than `Width::cells`'s ceil: floor is the
+    // box width every stop can honor. Content then gives up both frame
+    // cells (its own left inset and the shared right frame): the rightmost
+    // on-screen column pulls its right frame in by one, and sizing the PTY
+    // to the ceiling made programs wrap one cell past the paintable rect,
+    // hiding the last character of every soft-wrapped line under the frame.
+    let cols = ((width.twelfths(viewport.cols) / 12) as u16)
+        .saturating_sub(2 * b)
         .max(content_width)
         .max(2);
     let inner_h = viewport
@@ -1357,12 +1365,11 @@ pub(crate) mod tests {
 
     #[test]
     fn widened_last_pane_overflows_instead_of_shrinking() {
-        // Widening pane 1 to half keeps its 40-cell grid (the frame shares
-        // the boundary with pane 2, so content overflows past the edge).
-        // Widening pane 4 must behave the same: its grid keeps the full
-        // logical width even though its right frame pulls in by one to stay
-        // on screen. Before the fix the grid was clamped to the visible
-        // rect, so pane 4 shrank while pane 1 overflowed.
+        // Widening pane 1 and widening pane 4 must produce the same logical
+        // grid width: the PTY size is a function of the column width alone,
+        // never of which scroll stop or viewport clip the pane happens to
+        // be painted at. (Pane 4's right frame pulls in by one to stay on
+        // screen; its grid must not shrink relative to pane 1's for that.)
         use gwae_layout::{Preset, Width};
         let cols: u16 = 80;
         let rows: u16 = 10;
@@ -1391,9 +1398,12 @@ pub(crate) mod tests {
             widths[&0], widths[&3],
             "pane 1 and pane 4 must keep the same grid width when widened"
         );
-        // Half of 80 is 40; minus the 1-cell left frame inset (the right
-        // frame is shared with the neighbour, so content runs up to it).
-        assert_eq!(widths[&3], 40 - 1, "widened pane keeps its logical width");
+        // Half of 80 is 40; minus both frame cells (own left inset plus the
+        // right frame, which for the rightmost on-screen column pulls in to
+        // the last screen cell). Sizing to 40-1 made the PTY wrap one cell
+        // past pane 4's paintable rect, hiding the last character of every
+        // soft-wrapped line under the frame.
+        assert_eq!(widths[&3], 40 - 2, "widened pane keeps its logical width");
     }
 
     #[test]
@@ -1830,11 +1840,11 @@ pub(crate) mod tests {
             assert_eq!(v.rect.x + v.rect.w, frame_x, "content ends inside frame");
             assert_eq!(v.rect.y, 1, "content below the top frame row");
             assert_eq!(v.rect.y + v.rect.h, rows - 1, "content above bottom row");
-            // Emulator geometry matches the logical column width: every
-            // column but the last shows its whole grid, while the last
-            // column's grid extends one cell past the screen edge (its right
-            // frame pulls in, but its content overflows like pane 1 does).
-            let logical_w = (*e as i32 - (*s as i32 + 1)).max(0) as u16;
+            // Emulator geometry is the guaranteed-visible width: the column
+            // box minus both frame cells, so every grid column stays
+            // paintable even when this column is rightmost on screen and
+            // its right frame pulls in by one.
+            let logical_w = (*e as i32 - *s as i32 - 2).max(0) as u16;
             assert_eq!(v.grid_cols, logical_w);
             assert_eq!(v.grid_rows, v.rect.h);
         }
@@ -2042,7 +2052,6 @@ pub(crate) mod tests {
                                 );
                             }
                             assert!(v.grid_cols >= content_width.max(2));
-                            assert!(v.grid_cols >= v.col_x0 + v.rect.w);
                         }
                     }
                     assert_eq!(sizes.len(), 8, "visit every pane");
@@ -2060,15 +2069,15 @@ pub(crate) mod tests {
         };
         assert_eq!(
             sizes(Width::DEFAULT, 1, 142, 30, 0),
-            vec![GridSize { cols: 35, rows: 26 }]
+            vec![GridSize { cols: 33, rows: 26 }]
         );
         assert_eq!(
             sizes(Width::DEFAULT, 1, 160, 30, 0),
-            vec![GridSize { cols: 39, rows: 26 }]
+            vec![GridSize { cols: 38, rows: 26 }]
         );
         assert_eq!(
             sizes(Width::Cells(50), 1, 142, 30, 0),
-            vec![GridSize { cols: 49, rows: 26 }]
+            vec![GridSize { cols: 48, rows: 26 }]
         );
         assert_eq!(
             sizes(Width::DEFAULT, 1, 142, 30, 120),
@@ -2094,6 +2103,68 @@ pub(crate) mod tests {
         assert!(sizes(Width::DEFAULT, 30, 142, 30, 0)
             .iter()
             .all(|s| s.rows == 0));
+    }
+
+    #[test]
+    fn every_grid_column_of_a_fully_visible_pane_is_paintable() {
+        // Regression for the hidden last character before a soft wrap: the
+        // pane's PTY width (grid_cols) decides where programs wrap, so any
+        // grid column the renderer cannot paint silently swallows the last
+        // character of every wrapped line. The old sizing used ceil-rounded
+        // `Width::cells` minus only the left inset, leaving 1-2 grid columns
+        // under the right frame for the rightmost column (whose frame pulls
+        // in to the last screen cell) and for fractional boundary stops.
+        use gwae_layout::Preset;
+        let cases: &[(&[Width], &[u16])] = &[
+            // The reported case: one full-width harness pane.
+            (&[Width::Preset(Preset::Full)], &[79, 80, 81, 120, 342]),
+            // Four quarters, including widths not divisible by 4.
+            (
+                &[Width::Preset(Preset::Quarter); 4],
+                &[80, 120, 341, 342, 343],
+            ),
+            // Mixed fractions whose twelfths hit every rounding phase.
+            (
+                &[
+                    Width::Preset(Preset::Third),
+                    Width::Preset(Preset::Quarter),
+                    Width::Preset(Preset::Quarter),
+                ],
+                &[80, 97, 142, 143],
+            ),
+            (&[Width::Cells(47), Width::Preset(Preset::Half)], &[120, 143]),
+        ];
+        for (widths, viewports) in cases {
+            for &cols in *viewports {
+                let mut layout = Layout::new(1);
+                if let Some(r) = layout.row_mut(layout.focus.row) {
+                    r.columns.clear();
+                }
+                let row = layout.focus.row;
+                for w in *widths {
+                    let p = layout.alloc_pane();
+                    layout.add_column(row, *w, vec![p]);
+                }
+                let boxes = layout.column_x_ranges(row, cols).unwrap();
+                let views = focused_pane_views(&layout, cols, 24, 0, true);
+                for v in &views {
+                    // Only fully visible columns: a column clipped by the
+                    // viewport edge legitimately shows fewer cells than its
+                    // (scroll-invariant) grid.
+                    if boxes[v.col].1 > cols as u32 {
+                        continue;
+                    }
+                    assert!(
+                        v.grid_cols <= v.rect.w,
+                        "pane in col {} wraps at {} but can only paint {} \
+                         (widths={widths:?}, cols={cols})",
+                        v.col,
+                        v.grid_cols,
+                        v.rect.w
+                    );
+                }
+            }
+        }
     }
 
     #[test]
