@@ -93,7 +93,6 @@ pub fn ensure(cfg_path: &Path, force: bool) -> Config {
     }
     if !std::io::stdin().is_terminal() {
         let _ = crate::latency::save_input_poll(cfg_path, 1);
-        let _ = write_default_panes(cfg_path);
         return Config::load(cfg_path);
     }
 
@@ -104,11 +103,8 @@ pub fn ensure(cfg_path: &Path, force: bool) -> Config {
         sty.dim("· one-time setup in this terminal")
     );
 
-    sty.step(1, 2, "agent");
+    sty.step(1, 1, "agent");
     agent_step(cfg_path, &sty);
-
-    sty.step(2, 2, "panes");
-    panes_step(cfg_path, &sty);
 
     tune_latency_silently(cfg_path);
 
@@ -191,75 +187,6 @@ fn remember(state: &mut HarnessState, path: Option<&Path>, cmd: &str, known: boo
     state.record_pick(cmd, known);
     if let Some(p) = path {
         let _ = crate::agent::save_harness_state(p, state);
-    }
-}
-
-/// The default launch shape: a quarter-width coding-harness pane, then a
-/// half-width `yazi` file-manager pane. Written once by first run / `gwae
-/// init`; a config that already says anything about launch panes
-/// (`startup_pane`, `startup_command`, `startup_panes`) is left alone, so
-/// re-running init never clobbers a tuned layout.
-fn panes_step(cfg_path: &Path, sty: &Style) {
-    match write_default_panes(cfg_path) {
-        PanesOutcome::Written => sty.done(&format!(
-            "panes: harness (¼) + yazi (½) {}",
-            sty.dim("— edit [[startup_pane]] in gwae.toml to change")
-        )),
-        PanesOutcome::AlreadyConfigured => sty.done(&format!(
-            "panes: keeping your configured launch panes {}",
-            sty.dim("(startup_pane / startup_command set)")
-        )),
-        PanesOutcome::NoYazi => sty.done(&format!(
-            "panes: harness (¼) only {}",
-            sty.dim("— install yazi for the half-width file pane")
-        )),
-    }
-}
-
-enum PanesOutcome {
-    Written,
-    AlreadyConfigured,
-    NoYazi,
-}
-
-/// Append the default `[[startup_pane]]` tables when the config has no
-/// launch-pane opinion yet. Comment-preserving by construction: appends only.
-fn write_default_panes(cfg_path: &Path) -> PanesOutcome {
-    let text = std::fs::read_to_string(cfg_path).unwrap_or_default();
-    let configured = text.lines().map(str::trim_start).any(|l| {
-        l.starts_with("[[startup_pane]]")
-            || l.starts_with("startup_command")
-            || l.starts_with("startup_panes")
-    });
-    if configured {
-        return PanesOutcome::AlreadyConfigured;
-    }
-    if crate::agent::which("yazi").is_none() {
-        return PanesOutcome::NoYazi;
-    }
-    let mut next = text;
-    if !next.is_empty() && !next.ends_with('\n') {
-        next.push('\n');
-    }
-    if !next.is_empty() {
-        next.push('\n');
-    }
-    next.push_str(
-        "# Launch panes, left to right. Pane 1 with no command is the coding\n\
-         # harness (the ⌥+; agent); later panes run their command (else a shell).\n\
-         [[startup_pane]]\n\
-         width = \"quarter\"\n\
-         \n\
-         [[startup_pane]]\n\
-         width = \"half\"\n\
-         command = \"yazi ~\"\n",
-    );
-    if let Some(dir) = cfg_path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    match std::fs::write(cfg_path, next) {
-        Ok(()) => PanesOutcome::Written,
-        Err(_) => PanesOutcome::AlreadyConfigured,
     }
 }
 
@@ -408,64 +335,6 @@ mod tests {
     #[test]
     fn missing_file_is_a_first_run() {
         assert!(is_first_run(Path::new("/definitely/not/here/gwae.toml")));
-    }
-
-    /// The default-panes write must be guarded by any existing launch-pane
-    /// opinion: `startup_pane`, `startup_command`, or `startup_panes` each
-    /// block it, so re-running `gwae init` never clobbers a tuned layout.
-    #[test]
-    fn default_panes_respect_an_existing_launch_opinion() {
-        let dir = std::env::temp_dir().join(format!(
-            "gwae-firstrun-panes-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.subsec_nanos())
-                .unwrap_or(0)
-        ));
-        let _ = std::fs::create_dir_all(&dir);
-        let p = dir.join("gwae.toml");
-        for existing in [
-            "startup_command = \"htop\"\n",
-            "startup_panes = 3\n",
-            "[[startup_pane]]\nwidth = \"half\"\n",
-        ] {
-            std::fs::write(&p, existing).unwrap();
-            assert!(matches!(
-                write_default_panes(&p),
-                PanesOutcome::AlreadyConfigured
-            ));
-            assert_eq!(std::fs::read_to_string(&p).unwrap(), existing);
-        }
-        // A fresh config gains the default pair exactly once (when yazi is
-        // installed; without it the step reports instead of writing).
-        std::fs::write(&p, "").unwrap();
-        match write_default_panes(&p) {
-            PanesOutcome::Written => {
-                let text = std::fs::read_to_string(&p).unwrap();
-                assert_eq!(text.matches("[[startup_pane]]").count(), 2);
-                assert!(text.contains("width = \"quarter\""));
-                assert!(text.contains("width = \"half\""));
-                assert!(text.contains("command = \"yazi ~\""));
-                // The written file must parse as a real config with the
-                // intended widths, or init has corrupted the user's file.
-                let cfg = crate::config::Config::load(&p);
-                assert_eq!(cfg.startup_pane.len(), 2);
-                // Idempotent: the second run sees the opinion and stops.
-                assert!(matches!(
-                    write_default_panes(&p),
-                    PanesOutcome::AlreadyConfigured
-                ));
-                assert_eq!(std::fs::read_to_string(&p).unwrap(), text);
-            }
-            PanesOutcome::NoYazi => {
-                assert_eq!(std::fs::read_to_string(&p).unwrap(), "");
-            }
-            PanesOutcome::AlreadyConfigured => {
-                panic!("an empty config is not configured");
-            }
-        }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -7,6 +7,11 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Changed
+- **First run / `gwae init` no longer writes default launch panes.** The
+  "panes" step that appended a quarter-width harness pane plus a half-width
+  `yazi ~` pane to a fresh config is gone: a new machine starts with just the
+  single default pane, and `[[startup_pane]]` / `startup_command` remain
+  purely opt-in keys you add by hand.
 - **Logs can no longer corrupt the screen.** `tracing` output went to stderr,
   which inside the TUI is the same terminal the frames are painted on; a log
   line emitted mid-frame (the `⌥+w` caffeinate spawn was the repeat offender)
