@@ -1407,6 +1407,70 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn full_pane_then_quarter_focus_right_peeks_at_the_right_edge() {
+        // End-to-end through the public interfaces: the ⌥+l verb moves focus
+        // via layout.apply, then the real paint path (focused_pane_views)
+        // must show the quarter pane fully on screen at the right edge while
+        // most of the full pane stays visible -- not hurled off-screen as the
+        // old left-boundary-only stops did.
+        use gwae_layout::{Action, Preset, Viewport, Width};
+        let (cols, rows) = (120u16, 30u16);
+        let mut layout = Layout::new(1);
+        if let Some(r) = layout.row_mut(layout.focus.row) {
+            r.columns.clear();
+        }
+        let row = layout.focus.row;
+        let full_pid = layout.alloc_pane();
+        layout.add_column(row, Width::Preset(Preset::Full), vec![full_pid]);
+        let q_pid = layout.alloc_pane();
+        layout.add_column(row, Width::DEFAULT, vec![q_pid]);
+
+        // Before the focus move the quarter is entirely off-screen.
+        let pre = focused_pane_views(&layout, cols, rows, 0, true);
+        assert!(pre.iter().all(|v| v.pid != q_pid), "quarter starts hidden");
+
+        // The verb itself: focus right peeks the quarter in.
+        let scroll = layout
+            .apply(Action::FocusRight, Viewport::new(cols), FollowScroll::default())
+            .unwrap();
+        assert!(scroll > 0, "must scroll to reveal the quarter");
+        // Quantized: the scroll rests on a valid stop (col boundary or
+        // right-aligned position), never between them.
+        let stops = gwae_layout::scroll_stops(&layout, row, cols);
+        assert!(stops.contains(&scroll), "scroll {scroll} off-stop {stops:?}");
+
+        let views = focused_pane_views(&layout, cols, rows, 0, true);
+        let qv = views.iter().find(|v| v.pid == q_pid).expect("quarter visible");
+        let fv = views.iter().find(|v| v.pid == full_pid).expect("full visible");
+        // Quarter peeks in at the right edge, focused, not a peek sliver.
+        assert!(!qv.peek);
+        assert_eq!(qv.rect.x + qv.rect.w, cols - 1, "quarter flush right");
+        // Most of the full pane survives: over half the viewport.
+        assert!(
+            fv.rect.w > cols / 2,
+            "full pane hurled off-screen (w={})",
+            fv.rect.w
+        );
+        // The full pane keeps its stable logical grid width (Full at 120,
+        // minus both frame cells), never resized by the scroll.
+        assert_eq!(fv.grid_cols, cols - 2);
+        // And the emulated grid slice starts where the clip says: the left
+        // part of the full pane is off-screen, so col_x0 advances.
+        assert!(fv.col_x0 > 0, "full pane clipped on the left");
+
+        // Walking back left restores the original scroll exactly.
+        let back = layout
+            .apply(Action::FocusLeft, Viewport::new(cols), FollowScroll::default())
+            .unwrap();
+        assert_eq!(back, 0, "focus left returns to the strip origin");
+        let views0 = focused_pane_views(&layout, cols, rows, 0, true);
+        assert!(views0.iter().all(|v| v.pid != q_pid), "quarter hidden again");
+        let fv0 = views0.iter().find(|v| v.pid == full_pid).unwrap();
+        assert_eq!(fv0.rect.x, 1, "full pane back flush left (inset)");
+        assert_eq!(fv0.col_x0, 0, "full pane unclipped again");
+    }
+
+    #[test]
     fn peek_sliver_replaces_squished_neighbour_with_a_faded_hint() {
         use gwae_layout::{Preset, Viewport, Width};
         // Force a sliver by placing scroll between stops: immediate neighbour
