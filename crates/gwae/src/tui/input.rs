@@ -1187,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn option_v_is_unbound_and_belongs_to_the_child() {
+    fn unbound_esc_v_belongs_to_the_child() {
         // Only the host's native paste event triggers gwae paste handling.
         // Unbound chords and literal Unicode retain ordinary pane semantics.
         let meta = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT);

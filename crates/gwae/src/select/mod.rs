@@ -6,7 +6,7 @@
 //! Native clipboard helpers are preferred, with OSC 52 for remote terminals.
 //! The host terminal owns clipboard reads. Native paste (Cmd+V or the host's
 //! equivalent) arrives as text, encoded here for the child's bracketed-paste
-//! mode. There is no separate Option+V shortcut or second clipboard read.
+//! mode. gwae never reads the clipboard for paste itself.
 
 mod clipboard;
 mod paste;

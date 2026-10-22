@@ -27,7 +27,7 @@ const HOST: Size = Size {
     cols: 120,
 };
 const TIMEOUT: Duration = Duration::from_secs(15);
-const OPT_V: &[u8] = b"\x1bv";
+const ESC_V: &[u8] = b"\x1bv";
 const OPT_Q: &[u8] = b"\x1bQ";
 const FISH_BARRIER: &[u8] = b"\x07";
 
@@ -694,9 +694,9 @@ fn native_multiline_paste_delivers_every_line() {
 }
 
 #[test]
-fn option_v_is_no_longer_a_gwae_clipboard_shortcut() {
+fn unbound_esc_v_reaches_the_child_without_a_clipboard_read() {
     let mut s = Session::start("MUST_NOT_PASTE");
-    s.send(OPT_V);
+    s.send(ESC_V);
     s.send("√PASTE_DONE".as_bytes());
     s.wait_for("unbound keys delivered to child", |s| {
         s.file("received-paste").ends_with(b"PASTE_DONE")
@@ -706,7 +706,7 @@ fn option_v_is_no_longer_a_gwae_clipboard_shortcut() {
         s.file("clipboard.reads").is_empty(),
         "gwae must not read the clipboard"
     );
-    eprintln!("observed Option+V removal: ESC+v and literal √ reach the child, clipboard reads=0");
+    eprintln!("observed unbound chords: ESC+v and literal √ reach the child, clipboard reads=0");
 }
 
 #[test]
@@ -716,7 +716,7 @@ fn native_paste_is_the_only_advertised_paste_shortcut() {
         s.shown().contains("Cmd+V")
     });
     assert!(!s.shown().contains("⌥+v"), "{}", s.shown());
-    eprintln!("observed paste UI: Cmd+V advertised, Option+V absent");
+    eprintln!("observed paste UI: Cmd+V is the only advertised paste shortcut");
 }
 
 #[test]
