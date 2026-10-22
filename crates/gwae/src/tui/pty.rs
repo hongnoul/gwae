@@ -368,6 +368,7 @@ pub(crate) fn kill_pane_tree(child: &mut PaneProc) {
 /// the column widths `cycle-width` will produce and pre-render for them
 /// before the first resize ever lands. A hint only: panes must still track
 /// SIGWINCH, and a host resize after spawn simply ages the hint.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_pane(
     id: PaneId,
     cmd: &str,
