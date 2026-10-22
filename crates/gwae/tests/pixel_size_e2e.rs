@@ -61,7 +61,11 @@ fn dimensions(size: PtySize) -> String {
 
 fn inner(host: PtySize, divisor: u16) -> PtySize {
     let rows = host.rows - 2;
-    let cols = host.cols.div_ceil(divisor) - 1;
+    // fc08d63: the grid is the guaranteed-visible width, a function of the
+    // column width alone: floor of the twelfths ratio minus both frame cells
+    // (own left inset plus the shared/pulled-in right frame). The old
+    // ceil-minus-one sizing wrapped one cell past the paintable rect.
+    let cols = host.cols / divisor - 2;
     PtySize {
         rows,
         cols,
@@ -511,7 +515,7 @@ fn initial_child_ioctl_and_fragmented_coalesced_queries_match_pane_pixels() {
     let size = inner(HOST, 4);
     // Concrete non-square cell metrics catch width/height transposition and
     // accidentally returning the full host's dimensions.
-    assert_eq!(dimensions(size), "28 29 232 448");
+    assert_eq!(dimensions(size), "28 28 224 448");
     for mode in ["pixels", "fragmented", "coalesced", "status"] {
         session.query(0, mode, size);
     }

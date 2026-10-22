@@ -328,7 +328,10 @@ fn pty_size(size: Size) -> PtySize {
 fn inner(host: Size, divisor: u16) -> Size {
     Size {
         rows: host.rows - 2,
-        cols: host.cols.div_ceil(divisor) - 1,
+        // fc08d63: the grid is the guaranteed-visible width, floor of the
+        // ratio minus both frame cells (the old ceil-minus-one sizing
+        // wrapped one cell past the paintable rect).
+        cols: host.cols / divisor - 2,
     }
 }
 
