@@ -711,7 +711,7 @@ fn focusing_right_from_a_full_pane_peeks_the_next_pane() {
     let vp = Viewport::new(120);
     let scroll = layout.apply(Action::FocusRight, vp, follow()).unwrap();
     assert!(scroll > 0, "quarter pane is past the right edge; must scroll");
-    let (s, e) = layout.focused_range(vp.cols).unwrap();
+    let (_s, e) = layout.focused_range(vp.cols).unwrap();
     assert!(
         e as i32 <= scroll + vp.cols as i32,
         "focused quarter not fully revealed"
