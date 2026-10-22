@@ -9,11 +9,11 @@ class Gwae < Formula
   license "MIT"
 
   if Hardware::CPU.arm?
-    url "https://github.com/hongnoul/gwae/releases/download/v1.7.0/gwae-aarch64-apple-darwin.tar.gz"
-    sha256 "9336ac38fb4d104fbb5b529951a222e8cbd75aedcb6d9670e267aec8e7aa02f5"
+    url "https://github.com/hongnoul/gwae/releases/download/v1.8.0/gwae-aarch64-apple-darwin.tar.gz"
+    sha256 "1f1646a44edaaac0ab7878564c1163e94ca3eb2baafd46418f8a1134252d7298"
   else
-    url "https://github.com/hongnoul/gwae/releases/download/v1.7.0/gwae-x86_64-apple-darwin.tar.gz"
-    sha256 "ca3ee873b6a9cd06a7881732a5a6ac590cf750db801cbea7ab0a17a9f3398edc"
+    url "https://github.com/hongnoul/gwae/releases/download/v1.8.0/gwae-x86_64-apple-darwin.tar.gz"
+    sha256 "68d9a1a918eb48af3a60e65394df4439f4b8cb1ed8a7af20fb481ceffd95ae94"
   end
 
   def install
