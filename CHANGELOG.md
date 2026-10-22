@@ -7,6 +7,14 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Fixed
+- **Focusing right past a full-width pane peeks the next pane in instead of
+  hurling it off-screen.** ⌥+l from a 100%-width column onto the quarter pane
+  beside it used to jump the scroll to the quarter's left boundary — a whole
+  viewport away — leaving the full pane entirely out of view. Scroll stops
+  now also include every column's right-aligned position (that column pinned
+  to the right viewport edge), so the nearest stop that reveals the focused
+  column peeks it in from the right while keeping most of the previous pane
+  on screen.
 - **⌥ chords now work on non-US keyboard layouts.** The Option-glyph
   fallback (`˙∆˚¬`…) only exists on the US layout: with Korean 2-Set (or
   Cyrillic, Greek, …) active, macOS resolves Option+h to a bare `h`, so

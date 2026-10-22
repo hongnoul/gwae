@@ -2,10 +2,18 @@
 //!
 //! A viewport is the window `[scroll_x, scroll_x + cols)` onto the focused
 //! row. Scrolling is *quantized*: `scroll_x` only ever rests on a column's
-//! left boundary (or on `max_scroll`, the end stop that pins the last column
-//! to the right edge). Every scroll state therefore starts painting a column
-//! exactly at x=0, so identical grids render identically regardless of how
-//! the viewport got there: no partial-column slivers, no margin drift.
+//! left boundary or on a column's *right-aligned* position (`end - cols`,
+//! which pins that column to the right viewport edge; `max_scroll` is the
+//! last column's). Left stops start painting a column exactly at x=0;
+//! right stops clip the anchor column on the left by a fixed amount, which
+//! `Layout::visible_column_x_ranges` re-anchors so identical grids still
+//! render identically: no arbitrary partial-column slivers, no margin drift.
+//!
+//! Right-aligned stops are what keep focus movement *minimal*: focusing a
+//! column that begins past the viewport (e.g. a quarter pane to the right of
+//! a full-width pane) scrolls just enough to peek it in at the right edge
+//! instead of jumping to the next left boundary, which could be a whole
+//! viewport away and hurl the previous pane off-screen.
 //!
 //! After a focus change we pick the *nearest valid stop* that fully reveals
 //! the focused column, which preserves the minimal-movement "niri feel" while
@@ -48,9 +56,11 @@ impl Viewport {
 }
 
 /// The valid quantized scroll positions ("stops") for `row`: every column's
-/// left boundary within `[0, max_scroll]`, plus `max_scroll` itself so the
-/// strip can always pin its last column to the right viewport edge. Sorted
-/// ascending, always non-empty (at least `[0]`).
+/// left boundary and every column's right-aligned position (`end - cols`,
+/// pinning that column to the right viewport edge), all within
+/// `[0, max_scroll]`. The last column's right-aligned stop *is* `max_scroll`,
+/// so the strip can always pin its end flush to the right edge. Sorted
+/// ascending, deduplicated, always non-empty (at least `[0]`).
 pub fn scroll_stops(layout: &Layout, row: RowId, viewport_cols: u16) -> Vec<i32> {
     let ranges = layout
         .column_x_ranges(row, viewport_cols)
@@ -58,17 +68,22 @@ pub fn scroll_stops(layout: &Layout, row: RowId, viewport_cols: u16) -> Vec<i32>
     let vw = viewport_cols.max(1) as i32;
     let total = ranges.last().map(|r| r.1 as i32).unwrap_or(0);
     let max_scroll = (total - vw).max(0);
-    let mut stops: Vec<i32> = ranges
-        .iter()
-        .map(|(s, _)| *s as i32)
-        .filter(|s| *s <= max_scroll)
-        .collect();
-    if stops.last() != Some(&max_scroll) {
-        stops.push(max_scroll);
+    let mut stops: Vec<i32> = Vec::with_capacity(ranges.len() * 2);
+    for (s, e) in &ranges {
+        let left = *s as i32;
+        if left <= max_scroll {
+            stops.push(left);
+        }
+        let right = *e as i32 - vw;
+        if right > 0 && right <= max_scroll {
+            stops.push(right);
+        }
     }
     if stops.is_empty() {
         stops.push(0);
     }
+    stops.sort_unstable();
+    stops.dedup();
     stops
 }
 

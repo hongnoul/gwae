@@ -700,6 +700,37 @@ fn column_focus_clamps_when_the_stack_shrinks() {
 }
 
 #[test]
+fn focusing_right_from_a_full_pane_peeks_the_next_pane() {
+    // Regression: with a full-width focused column followed by a quarter
+    // column, focusing right used to jump scroll to the quarter's left
+    // boundary (= the full column's width), hurling the full pane entirely
+    // off-screen. The nearest revealing stop is now the quarter's
+    // right-aligned position, which peeks it in at the right viewport edge
+    // while keeping most of the full pane on screen.
+    let mut layout = layout_with_widths(&[Width::Preset(Preset::Full), Width::DEFAULT]);
+    let vp = Viewport::new(120);
+    let scroll = layout.apply(Action::FocusRight, vp, follow()).unwrap();
+    assert!(scroll > 0, "quarter pane is past the right edge; must scroll");
+    let (s, e) = layout.focused_range(vp.cols).unwrap();
+    assert!(
+        e as i32 <= scroll + vp.cols as i32,
+        "focused quarter not fully revealed"
+    );
+    // The quarter peeks in from the right: most of the full pane is still
+    // on screen instead of being scrolled out entirely.
+    let full_end = layout
+        .column_x_ranges(layout.focus.row, vp.cols)
+        .unwrap()[0]
+        .1 as i32;
+    assert!(
+        full_end - scroll > vp.cols as i32 / 2,
+        "full pane hurled off-screen (full_end={full_end}, scroll={scroll})"
+    );
+    // And it rests on a valid quantized stop.
+    assert_scrolls_on_stops(&layout, vp, "full->quarter focus right");
+}
+
+#[test]
 fn cycle_width_scrolls_rightmost_column_into_view() {
     // Regression: widening the rightmost visible column used to leave the
     // scroll stale, so the new width only showed up after a focus change.
