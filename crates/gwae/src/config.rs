@@ -90,6 +90,17 @@ pub struct Config {
     /// `agent_dir = "~/git"` works as written. A path that does not exist is
     /// ignored with a warning rather than breaking pane spawn.
     pub agent_dir: String,
+    /// Spawn agent panes from the focused pane's working directory instead
+    /// of `agent_dir`. Off by default: with it on, `cd`-ing a pane anywhere
+    /// and pressing `⌥+;` puts the new harness in that directory, which
+    /// makes a "work on several repos in one strip" session one-keystroke
+    /// per repo. Falls back to the ordinary resolution (`agent_dir`,
+    /// `--dir`, the `⌥+d` pick) whenever the focused pane's cwd cannot be
+    /// read, so a fresh pane or a dead pid changes nothing. The same rule
+    /// applies to the `⌥+⇧+;` picker spawns and to a plain `⌥+b` shell
+    /// split from a pane.
+    #[serde(default)]
+    pub spawn_in_focused_cwd: bool,
     /// Retired: extra agent names once came from an `agents` list. They now
     /// come from the picker itself: any typed command that resolves is
     /// remembered in the state file. The key still parses so old configs load.
@@ -177,6 +188,7 @@ impl Default for Config {
             default_column_width: Width::DEFAULT,
             default_agent: String::new(),
             agent_dir: String::new(),
+            spawn_in_focused_cwd: false,
             agents_retired: Vec::new(),
             startup_panes: 1,
             startup_command: String::new(),
@@ -249,6 +261,11 @@ impl Config {
     /// Directory new panes start in: `agent_dir`, or "" when unset.
     pub fn spawn_dir(&self) -> &str {
         &self.agent_dir
+    }
+
+    /// Whether agent spawns follow the focused pane's cwd (see the field).
+    pub fn spawn_follows_focused_cwd(&self) -> bool {
+        self.spawn_in_focused_cwd
     }
 
     /// Load config from `path`, falling back to defaults if the file is
@@ -674,6 +691,16 @@ mod tests {
         // so old configs naming it must still load.
         let cfg = parse("agents = [\"zz\"]\ndefault_agent = \"claude\"\n");
         assert_eq!(cfg.default_agent, "claude");
+    }
+
+    #[test]
+    fn spawn_in_focused_cwd_defaults_off_and_parses_true() {
+        // Default keeps the shipped behavior (every pane opens in the spawn
+        // dir); opting in is explicit.
+        assert!(!parse("").spawn_in_focused_cwd);
+        assert!(!Config::default().spawn_in_focused_cwd);
+        assert!(parse("spawn_in_focused_cwd = true").spawn_in_focused_cwd);
+        assert!(!parse("spawn_in_focused_cwd = false").spawn_in_focused_cwd);
     }
 
     #[test]

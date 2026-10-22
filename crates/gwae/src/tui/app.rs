@@ -90,6 +90,7 @@ fn spawn_picked_harness(
     tx: &std::sync::mpsc::Sender<PaneMsg>,
     geometry: (GridSize, CellPixels),
     cwd: Option<&std::path::Path>,
+    focused_cwd: Option<&std::path::Path>,
     cfg: &Config,
     state: &mut crate::agent::HarnessState,
     state_path: Option<&std::path::Path>,
@@ -115,6 +116,7 @@ fn spawn_picked_harness(
         agent_panes,
         agent_cmds,
         cwd,
+        focused_cwd,
         cfg,
     ) {
         tracing::error!("sync panes: {e}");
@@ -162,6 +164,36 @@ fn snapshot_session(
         panes: records,
         spawn_dir: spawn_dir.map(|p| p.to_path_buf()),
         keep_awake,
+    }
+}
+
+/// The focused pane's live working directory, for `spawn_in_focused_cwd`.
+///
+/// Read from the child's root process (the same libproc read the session
+/// snapshot uses), so a shell that `cd`-ed reports where it *is*. Returned
+/// only when the config opts in, a pane is focused, its pid still exists,
+/// and its cwd still resolves to an existing directory; every other case
+/// yields `None` and the spawn falls back to the ordinary spawn-dir
+/// resolution. One-shot by construction: the value is captured at the
+/// keystroke and consumed by the sync that spawns the pane.
+fn focused_pane_cwd(
+    layout: &Layout,
+    panes: &HashMap<PaneId, PtyPane>,
+    enabled: bool,
+) -> Option<std::path::PathBuf> {
+    if !enabled {
+        return None;
+    }
+    let pid = focused_pane(layout)?;
+    let child = panes.get(&pid)?;
+    let cwd = child
+        .child
+        .process_id()
+        .and_then(crate::session::pid_cwd)?;
+    if cwd.is_dir() {
+        Some(cwd)
+    } else {
+        None
     }
 }
 
@@ -766,6 +798,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // (~3-5 ms). The spawned child's first output wakes the loop again via
     // the channel and fills the frame in.
     let mut needs_sync = false;
+    // One-shot cwd for the next deferred sync's agent spawn: the focused
+    // pane's directory captured at the `⌥+;` press (see
+    // `focused_pane_cwd`). Consumed and cleared by the sync that spawns the
+    // pane, so ordinary shell splits keep the plain spawn-dir behavior.
+    let mut pending_focused_cwd: Option<std::path::PathBuf> = None;
     // Host terminal events forwarded by the input thread, not yet handled.
     // Lives outside the loop because a `break 'drain` (e.g. per-kill frames
     // under a held ⌥+q) must keep the remaining queued events for the next
@@ -1620,6 +1657,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 harness_pick = None;
                             }
                             if let Some(choice) = chosen {
+                                // The focused pane is the *old* focus until the
+                                // spawn applies, so capture its cwd now: after
+                                // `layout.apply` the new pane owns focus and
+                                // there is no parent cwd left to read.
+                                let focused_cwd =
+                                    focused_pane_cwd(&layout, &panes, cfg.spawn_follows_focused_cwd());
                                 match choice {
                                     HarnessChoice::Shell => {
                                         let v = Viewport::new(cols);
@@ -1633,6 +1676,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             &agent_panes,
                                             &agent_cmds,
                                             spawn_dir.as_deref(),
+                                            focused_cwd.as_deref(),
                                             &cfg,
                                         ) {
                                             tracing::error!("sync panes: {e}");
@@ -1649,6 +1693,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             &tx,
                                             (GridSize { cols, rows }, cell_pixels),
                                             spawn_dir.as_deref(),
+                                            focused_cwd.as_deref(),
                                             &cfg,
                                             &mut harness_state,
                                             harness_state_path.as_deref(),
@@ -1665,6 +1710,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             &tx,
                                             (GridSize { cols, rows }, cell_pixels),
                                             spawn_dir.as_deref(),
+                                            focused_cwd.as_deref(),
                                             &cfg,
                                             &mut harness_state,
                                             harness_state_path.as_deref(),
@@ -1839,6 +1885,14 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         ) {
                                             crate::agent::Plan::Configured(cmd)
                                             | crate::agent::Plan::Auto(cmd) => {
+                                                // Capture before the apply: the
+                                                // new pane owns focus afterwards,
+                                                // and its cwd is not born yet.
+                                                let focused_cwd = focused_pane_cwd(
+                                                    &layout,
+                                                    &panes,
+                                                    cfg.spawn_follows_focused_cwd(),
+                                                );
                                                 let _ = layout.apply(a, v, f);
                                                 if let Some(pid) = focused_pane(&layout) {
                                                     agent_panes.insert(pid);
@@ -1847,6 +1901,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                         lp.status = PaneStatus::Running;
                                                     }
                                                 }
+                                                pending_focused_cwd = focused_cwd;
                                                 needs_sync = true;
                                             }
                                             crate::agent::Plan::Missing { want, found } => {
@@ -2375,10 +2430,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 &agent_panes,
                 &agent_cmds,
                 spawn_dir.as_deref(),
+                pending_focused_cwd.as_deref(),
                 &cfg,
             ) {
                 tracing::error!("sync panes: {e}");
             }
+            pending_focused_cwd = None;
             // Closed panes leave retained (hidden-cache) textures behind in
             // the host; free them now that the pane set is reconciled. The
             // deletes are written directly: `pending` belongs to the frame

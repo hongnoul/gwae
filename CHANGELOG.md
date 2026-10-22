@@ -85,6 +85,16 @@ changelog, updated per PR). The format is based on
   accident.
 
 ### Added
+- **`spawn_in_focused_cwd` config key: agent spawns can follow the focused
+  pane's working directory.** Off by default (`agent_dir` keeps winning).
+  With `spawn_in_focused_cwd = true`, a `⌥+;` fast spawn, an `⌥+⇧+;` picker
+  spawn, and a plain `⌥+b` shell split all start the new pane in the
+  focused pane's *live* cwd (libproc, so a shell that `cd`-ed reports where
+  it is, not where it was born). The `⌥+d` session pick and the config
+  value stay untouched: the override is per-spawn, and whenever the focused
+  pane's cwd cannot be read the ordinary spawn-dir resolution applies.
+  The single-strip case is unchanged by construction (the focused pane's
+  cwd only differs from the spawn dir once some pane has moved).
 - **Two launch-time config keys: `startup_command` and `startup_hud`.**
   `startup_command = "yazi ~"` makes pane 1.1 open a tool instead of the agent
   harness/gateway, for sessions that start by looking around rather than by

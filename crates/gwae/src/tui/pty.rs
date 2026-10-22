@@ -722,6 +722,13 @@ pub(crate) fn pane_grid_sizes(
 }
 
 /// Kill any pane whose id is no longer in the layout, and spawn missing ones.
+///
+/// `focused_cwd` is a one-shot spawn directory that outranks `cwd` for the
+/// panes spawned *by this call* (existing panes are never touched): it is
+/// the focused pane's live working directory, captured when the user
+/// pressed `⌥+;`, so the new harness opens where the work is. The session
+/// `spawn_dir` stays untouched — the next spawn with no readable cwd
+/// falls back to it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_panes(
     layout: &mut Layout,
@@ -731,6 +738,7 @@ pub(crate) fn sync_panes(
     agent_panes: &HashSet<PaneId>,
     agent_cmds: &HashMap<PaneId, String>,
     cwd: Option<&std::path::Path>,
+    focused_cwd: Option<&std::path::Path>,
     cfg: &Config,
 ) -> Result<(), String> {
     let mut wanted: Vec<PaneId> = Vec::new();
@@ -773,7 +781,7 @@ pub(crate) fn sync_panes(
             size.cols,
             size.rows,
             tx.clone(),
-            cwd,
+            focused_cwd.or(cwd),
             geometry.1,
             geometry.0.cols,
         )?;

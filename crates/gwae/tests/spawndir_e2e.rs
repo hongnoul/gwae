@@ -30,7 +30,7 @@ struct Session {
 /// project directories the case needs.
 fn temp_root() -> PathBuf {
     static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
+    let dir = std::path::Path::new("/tmp").to_path_buf().join(format!(
         "gwae-spawndir-e2e-{}-{}",
         std::process::id(),
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
@@ -502,6 +502,94 @@ fn native_paste_puts_a_path_into_the_picker_filter() {
     assert!(
         !out.contains("ignored-second-line"),
         "only the first path belongs in the filter: {out}"
+    );
+    s.kill();
+}
+
+/// `spawn_in_focused_cwd = true` pins the whole contract this feature
+/// exists for: a harness spawned from a pane that moved elsewhere opens in
+/// *that* directory, not the spawn dir. The first pane is a live shell,
+/// cd-s to a marked tree (the way a human ends up somewhere specific),
+/// presses `\u{23}+;`, and the new agent pane's `pwd` file is the verdict.
+#[test]
+fn an_agent_spawned_after_a_cd_opens_in_the_focused_cwd() {
+    let root = temp_root();
+    let repo = root.join("focused-repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let script = probe_script(&root, "where");
+    let mut s = Session::start(
+        &root,
+        // `/bin/sh` as the default harness keeps `\u{23}+;` on the direct-spawn
+        // fast path (no picker), and a bare shell is a plain agent pane whose
+        // cwd can be changed by typing.
+        "default_agent = \"/bin/sh\"\nspawn_in_focused_cwd = true\n",
+        // A bare shell first pane: it must process the cd below (a
+        // non-interactive command like `sleep` ignores stdin).
+        "sh",
+        &root,
+        &[],
+    );
+    let _ = s.drain();
+    // Move the focused shell to the repo, then *prove* the cd happened
+    // before spawning: a blind drain would race the child's read of the
+    // chord and the verdict would describe an old cwd.
+    let moved = root.join("moved-ok");
+    s.send(format!("cd '{}' && touch '{}'\r", repo.display(), moved.display()).as_bytes());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !moved.try_exists().unwrap_or(false) {
+        assert!(std::time::Instant::now() < deadline, "cd handshake timed out");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    s.send(b"\x1b;");
+    let _ = s.drain();
+    // The new pane runs the harness (`/bin/sh` here); ask it where it is.
+    s.send(format!("'{}' &\r", script.display()).as_bytes());
+    let got = probe_result(&root, "where");
+    assert!(
+        !got.is_empty(),
+        "the spawned harness pane must run the probe"
+    );
+    assert!(
+        got.ends_with("focused-repo"),
+        "with spawn_in_focused_cwd the new harness must open in the focused pane's cwd; got {got:?}"
+    );
+    s.kill();
+}
+
+/// Without the opt-in, a cd-ed focused pane must not hijack the spawn dir:
+/// `\u{23}+;` keeps opening panes in the ordinary spawn-dir resolution.
+#[test]
+fn the_focused_cwd_follow_is_opt_in() {
+    let root = temp_root();
+    let repo = root.join("moved-repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let script = probe_script(&root, "where");
+    let mut s = Session::start(
+        &root,
+        "default_agent = \"/bin/sh\"\n",
+        "sh",
+        &root,
+        &[],
+    );
+    let _ = s.drain();
+    let moved = root.join("moved-ok");
+    s.send(format!("cd '{}' && touch '{}'\r", repo.display(), moved.display()).as_bytes());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !moved.try_exists().unwrap_or(false) {
+        assert!(std::time::Instant::now() < deadline, "cd handshake timed out");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    s.send(b"\x1b;");
+    let _ = s.drain();
+    s.send(format!("'{}' &\r", script.display()).as_bytes());
+    let got = probe_result(&root, "where");
+    assert!(
+        !got.is_empty(),
+        "the spawned harness pane must run the probe"
+    );
+    assert!(
+        !got.ends_with("moved-repo"),
+        "without the opt-in the spawn dir must keep winning; got {got:?}"
     );
     s.kill();
 }
