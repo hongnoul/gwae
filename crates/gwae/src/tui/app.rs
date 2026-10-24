@@ -379,6 +379,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         if h.spawn_dir.is_some() {
             spawn_dir = h.spawn_dir.clone();
         }
+        // Keep-awake is session-only, and a hot reload is the same session:
+        // re-take the assertion the old image dropped just before its exec.
+        if h.keep_awake {
+            cfg.keep_awake = true;
+            keep_awake.refresh(true);
+        }
     }
     // Same memory rule for a resurrected session's ⌥+d choice, but only
     // when the directory still exists: a deleted tree falls back to the
@@ -1349,6 +1355,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 &agent_panes,
                                 spawn_dir.as_deref(),
                                 boot,
+                                cfg.keep_awake,
                             ) {
                                 // `Ok` is uninhabited: the process is gone.
                                 Ok(never) => match never {},

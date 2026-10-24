@@ -8,17 +8,32 @@
 //! screen for hours causes image retention (the "burn-in" look). The system
 //! stays awake underneath the dark display.
 //!
-//! Honest limits, stated here because the `caffeinate(8)` man page buries
-//! them: this does **not** defeat lid-close sleep. A closed lid still sleeps
-//! the machine unless it is in clamshell mode (power + external display +
-//! external input) or sleep is disabled outright (`sudo pmset disablesleep
-//! 1`). What this buys is the common case: lid open, display long asleep,
-//! agents still running in the morning.
+//! Why `caffeinate` alone is not enough on a laptop: its `-s` (no system
+//! sleep) is honored **only on AC power**, and `-i` (no idle sleep) does
+//! nothing about the lid. So unplugged, closing the lid put the Mac into
+//! `Clamshell Sleep` with the assertion still held (seen in `pmset -g log`
+//! as `Entering Sleep state due to 'Clamshell Sleep' ... Using Batt`), and
+//! every agent froze until the lid opened again.
+//!
+//! The lid half is covered by [`lid`]: the kernel's clamshell-sleep
+//! override (`IOPMrootDomain` user-client selector
+//! `kPMSetClamshellSleepState`, the same switch powerd flips for clamshell
+//! mode). It needs no root and no entitlement. The kernel still forces sleep
+//! on low battery and thermal emergencies, so a hot bag is not left
+//! running. Opt out with [`NO_LID_ENV`] to keep the old "lid close sleeps"
+//! behavior.
 //!
 //! Shape: [`Guard`] spawns `caffeinate` with an assertion bound to our own
 //! pid and kills it on drop. The `-w` flag is the backstop: even if gwae is
 //! SIGKILLed and the drop never runs, the assertion dies with the pid it was
 //! waiting on, so no orphan can hold the machine awake forever.
+//!
+//! The lid override is a kernel flag, not an assertion, so nothing clears it
+//! automatically when its setter dies. It is therefore held by a separate
+//! helper process (`gwae __lid-awake <pid>`, see [`run_lid_helper`]) that
+//! watches gwae the way `caffeinate -w` does: when gwae exits, however it
+//! exits, the helper clears the override and leaves. gwae clears it too on
+//! every orderly release, in case the helper itself was killed.
 
 use std::process::{Child, Command, Stdio};
 
@@ -26,9 +41,17 @@ use std::process::{Child, Command, Stdio};
 /// setups and for tests that must never spawn `caffeinate`.
 pub const SKIP_ENV: &str = "GWAE_NO_KEEP_AWAKE";
 
-/// Owns the `caffeinate` child while gwae runs.
+/// Setting this keeps the idle/system assertion but leaves lid-close sleep
+/// alone: closing the lid sleeps the Mac exactly as it would without gwae.
+pub const NO_LID_ENV: &str = "GWAE_KEEP_AWAKE_NO_LID";
+
+/// The hidden subcommand gwae re-executes itself as to hold the lid override.
+pub const LID_HELPER_ARG: &str = "__lid-awake";
+
+/// Owns the `caffeinate` child (and the lid-override helper) while gwae runs.
 pub struct Guard {
     child: Option<Child>,
+    lid: Option<Child>,
 }
 
 impl Guard {
@@ -36,9 +59,11 @@ impl Guard {
     /// panics and never blocks: a missing `caffeinate` is a warning, not an
     /// error, because the session is perfectly usable while it sleeps.
     pub fn acquire(enabled: bool) -> Guard {
-        Guard {
-            child: spawn(enabled),
-        }
+        let child = spawn(enabled);
+        // The lid override rides on the assertion: never hold one without
+        // the other, so the HUD badge (which reads `active`) stays honest.
+        let lid = if child.is_some() { spawn_lid() } else { None };
+        Guard { child, lid }
     }
 
     /// Reconcile with a (possibly live-reloaded) config. Returns whether
@@ -48,6 +73,15 @@ impl Guard {
         if want == self.active() {
             return false;
         }
+        // Release the old guard *before* acquiring: its lid cleanup clears
+        // the shared kernel flag, and must not land after a new helper set it.
+        drop(std::mem::replace(
+            self,
+            Guard {
+                child: None,
+                lid: None,
+            },
+        ));
         *self = Guard::acquire(enabled);
         true
     }
@@ -67,6 +101,7 @@ impl Guard {
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
         }
+        stop_lid(self.lid.take());
     }
 }
 
@@ -78,6 +113,217 @@ impl Drop for Guard {
             let _ = c.kill();
             let _ = c.wait();
         }
+        stop_lid(self.lid.take());
+    }
+}
+
+/// Whether the lid override is wanted at all on this machine and session.
+fn lid_wanted() -> bool {
+    cfg!(target_os = "macos") && std::env::var_os(NO_LID_ENV).is_none()
+}
+
+/// Start the lid-override helper: this same binary, re-executed as
+/// [`LID_HELPER_ARG`] and bound to our pid. Best effort: a failure is a log
+/// line, and the idle/system assertion still holds on its own.
+fn spawn_lid() -> Option<Child> {
+    if !lid_wanted() {
+        return None;
+    }
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("keep-awake: lid override unavailable (no own path: {e})");
+            return None;
+        }
+    };
+    let mut cmd = Command::new(exe);
+    cmd.arg(LID_HELPER_ARG).arg(std::process::id().to_string());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    match cmd.spawn() {
+        Ok(c) => {
+            tracing::info!(
+                "keep-awake: lid-close sleep overridden (helper pid {})",
+                c.id()
+            );
+            Some(c)
+        }
+        Err(e) => {
+            tracing::warn!("keep-awake: could not start lid helper: {e}");
+            None
+        }
+    }
+}
+
+/// Stop the helper (SIGTERM, not SIGKILL: a killed helper cannot clean up)
+/// and clear the override here too, in case the helper was already gone.
+///
+/// Never blocks the render loop: the helper's last act is always a clear,
+/// even if it was mid-reassert when the signal landed, so the final state
+/// is "off" regardless of ordering. The child is reaped on a side thread.
+fn stop_lid(child: Option<Child>) {
+    let Some(mut c) = child else {
+        return;
+    };
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(c.id() as libc::pid_t, libc::SIGTERM);
+    }
+    let _ = lid::set_override(false);
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match c.try_wait() {
+                Ok(Some(_)) | Err(_) => return,
+                Ok(None) if std::time::Instant::now() >= deadline => {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                    let _ = lid::set_override(false);
+                    return;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
+            }
+        }
+    });
+}
+
+/// Set by the helper's signal handler; polled by its loop.
+#[cfg(unix)]
+static LID_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn on_lid_signal(_: libc::c_int) {
+    LID_STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Body of `gwae __lid-awake <pid>`: hold the lid override while `parent`
+/// lives, then clear it. Returns the process exit code.
+///
+/// Re-asserted every second because powerd shares the same kernel bit and
+/// clears it after some power events (it re-evaluates clamshell state after
+/// a wake), and so does another gwae instance releasing its own guard; a
+/// stale clear would otherwise let the next lid close sleep.
+pub fn run_lid_helper(parent: u32) -> i32 {
+    #[cfg(unix)]
+    unsafe {
+        let h = on_lid_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        libc::signal(libc::SIGTERM, h);
+        libc::signal(libc::SIGINT, h);
+        libc::signal(libc::SIGHUP, h);
+    }
+    if let Err(e) = lid::set_override(true) {
+        eprintln!("gwae: lid override failed: {e}");
+        return 1;
+    }
+    const TICK: std::time::Duration = std::time::Duration::from_millis(100);
+    const REASSERT: std::time::Duration = std::time::Duration::from_secs(1);
+    let mut last = std::time::Instant::now();
+    while parent_alive(parent) && !lid_stop_requested() {
+        if last.elapsed() >= REASSERT {
+            let _ = lid::set_override(true);
+            last = std::time::Instant::now();
+        }
+        std::thread::sleep(TICK);
+    }
+    let _ = lid::set_override(false);
+    0
+}
+
+fn lid_stop_requested() -> bool {
+    #[cfg(unix)]
+    {
+        LID_STOP.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// The helper is gwae's direct child, so reparenting means gwae is gone,
+/// even when the pid has already been reused by something else.
+fn parent_alive(parent: u32) -> bool {
+    #[cfg(unix)]
+    {
+        (unsafe { libc::getppid() }) as u32 == parent
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = parent;
+        false
+    }
+}
+
+/// The kernel's clamshell-sleep override, via the `IOPMrootDomain` user
+/// client. Off macOS every call is a no-op error.
+pub mod lid {
+    /// Ask the kernel to skip (`true`) or resume (`false`) lid-close sleep.
+    #[cfg(target_os = "macos")]
+    pub fn set_override(disable: bool) -> Result<(), String> {
+        use std::ffi::{c_char, c_void};
+        type MachPort = u32;
+        type KernReturn = i32;
+        // `IOPMLibDefs.h`: kPMSetClamshellSleepState.
+        const K_PM_SET_CLAMSHELL_SLEEP_STATE: u32 = 12;
+        #[link(name = "IOKit", kind = "framework")]
+        extern "C" {
+            static mach_task_self_: MachPort;
+            fn IOServiceMatching(name: *const c_char) -> *mut c_void;
+            fn IOServiceGetMatchingService(main_port: MachPort, matching: *mut c_void) -> MachPort;
+            fn IOServiceOpen(
+                service: MachPort,
+                owning_task: MachPort,
+                kind: u32,
+                connect: *mut MachPort,
+            ) -> KernReturn;
+            fn IOServiceClose(connect: MachPort) -> KernReturn;
+            fn IOObjectRelease(object: MachPort) -> KernReturn;
+            fn IOConnectCallScalarMethod(
+                connection: MachPort,
+                selector: u32,
+                input: *const u64,
+                input_cnt: u32,
+                output: *mut u64,
+                output_cnt: *mut u32,
+            ) -> KernReturn;
+        }
+        unsafe {
+            // `IOServiceGetMatchingService` consumes the matching dict.
+            let matching = IOServiceMatching(c"IOPMrootDomain".as_ptr());
+            if matching.is_null() {
+                return Err("IOServiceMatching failed".into());
+            }
+            let service = IOServiceGetMatchingService(0, matching);
+            if service == 0 {
+                return Err("IOPMrootDomain not found".into());
+            }
+            let mut connect: MachPort = 0;
+            let kr = IOServiceOpen(service, mach_task_self_, 0, &mut connect);
+            IOObjectRelease(service);
+            if kr != 0 {
+                return Err(format!("IOServiceOpen: {kr:#x}"));
+            }
+            let input = [u64::from(disable)];
+            let kr = IOConnectCallScalarMethod(
+                connect,
+                K_PM_SET_CLAMSHELL_SLEEP_STATE,
+                input.as_ptr(),
+                1,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            IOServiceClose(connect);
+            if kr != 0 {
+                return Err(format!("kPMSetClamshellSleepState: {kr:#x}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn set_override(_disable: bool) -> Result<(), String> {
+        Err("macOS only".into())
     }
 }
 
@@ -189,8 +435,9 @@ fn line_for(enabled: bool, avail: &Availability) -> String {
         };
     }
     match avail {
-        Availability::Ready => "on; caffeinate holds idle/system sleep while gwae runs; \
-             the display sleeps as normal (a closed lid still sleeps outside clamshell mode)"
+        Availability::Ready => "on; caffeinate holds idle/system sleep while gwae runs, \
+             and lid-close sleep is overridden so a closed lid on battery keeps running; \
+             the display sleeps as normal"
             .to_string(),
         Availability::WrongOs => "on, but this is macOS-only so it does nothing here".to_string(),
         Availability::OptedOut => {
@@ -208,6 +455,33 @@ mod tests {
     fn disabled_never_spawns() {
         let g = Guard::acquire(false);
         assert!(!g.active(), "a disabled guard must hold nothing");
+        assert!(g.lid.is_none(), "no lid helper without the assertion");
+    }
+
+    #[test]
+    fn ready_doctor_line_promises_the_lid_on_battery() {
+        // The bug this guards: `-s` is AC-only and `-i` ignores the lid, so
+        // unplugged + lid closed slept with keep-awake on. The doctor line
+        // must now say the lid is covered, not repeat the old caveat.
+        let ready = line_for(true, &Availability::Ready);
+        assert!(ready.contains("lid"), "{ready}");
+        assert!(ready.contains("battery"), "{ready}");
+        assert!(!ready.contains("still sleeps"), "{ready}");
+    }
+
+    #[test]
+    fn parent_check_rejects_a_pid_that_is_not_ours() {
+        // pid 1 is never the parent of a test process.
+        assert!(!parent_alive(1));
+        #[cfg(unix)]
+        assert!(parent_alive(unsafe { libc::getppid() } as u32));
+    }
+
+    #[test]
+    fn helper_arg_is_hidden_by_construction() {
+        // Leading underscores keep it from colliding with a real subcommand
+        // and mark it internal; clap never sees it (main dispatches first).
+        assert!(LID_HELPER_ARG.starts_with("__"));
     }
 
     #[test]

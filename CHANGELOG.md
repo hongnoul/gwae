@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file (keep-a-
 changelog, updated per PR). The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **⌥+w keep-awake now holds on battery, lid closed included.** The
+  `caffeinate -i -m -s` assertion only covered idle sleep: `-s` is honored
+  on AC power alone, and nothing in `caffeinate` touches the lid. So
+  unplugged, closing the lid still put the Mac into Clamshell Sleep with
+  the ☕ badge lit, and every agent froze until the lid opened. Keep-awake
+  now also sets the kernel's clamshell-sleep override (no sudo), held by
+  a small `gwae __lid-awake` helper bound to gwae's pid that clears it
+  the instant gwae exits, however it exits. The kernel still forces sleep
+  on low battery and thermal emergencies. `GWAE_KEEP_AWAKE_NO_LID=1`
+  restores the old lid behavior.
+- **A hot reload no longer drops keep-awake.** The old image released the
+  assertion before its exec and the new image always started with it
+  off; the state now rides the handover.
+
 ## [1.8.0] - 2026-10-22
 
 ### Fixed

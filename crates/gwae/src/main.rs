@@ -33,6 +33,19 @@ use cli::{Cli, Command};
 use config::Config;
 
 fn main() {
+    // The keep-awake lid helper is this binary re-executed by the TUI, not a
+    // user command: dispatched before clap (so it stays out of `--help`)
+    // and before tracing (so it never truncates the TUI's `gwae.log`).
+    {
+        let mut args = std::env::args().skip(1);
+        if args.next().as_deref() == Some(keepawake::LID_HELPER_ARG) {
+            let parent = args.next().and_then(|p| p.parse::<u32>().ok());
+            std::process::exit(match parent {
+                Some(pid) => keepawake::run_lid_helper(pid),
+                None => 2,
+            });
+        }
+    }
     init_tracing();
 
     let cli = Cli::parse();

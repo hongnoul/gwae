@@ -348,6 +348,11 @@ pub struct Handover {
     /// to attention across a reload. Defaults to 0 for old handovers.
     #[serde(default)]
     pub boot_ago_ms: u64,
+    /// Whether `⌥+w` keep-awake was on. The old image drops its assertion
+    /// before the exec, so without this a reload silently let the Mac
+    /// sleep again. Defaults to off for old handovers.
+    #[serde(default)]
+    pub keep_awake: bool,
 }
 
 impl Handover {
@@ -635,6 +640,7 @@ mod tests {
             spawn_dir: Some(PathBuf::from("/tmp")),
             from: PathBuf::from("/usr/local/bin/gwae"),
             boot_ago_ms: 0,
+            keep_awake: true,
         }
     }
 

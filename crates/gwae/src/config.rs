@@ -172,9 +172,9 @@ pub struct Config {
     /// Session-only: keep-awake always starts off at launch and only the
     /// `⌥+w` toggle turns it on; the file value is not read at startup and
     /// the toggle is not saved back.
-    /// Note the honest limit: a closed
-    /// lid still sleeps outside clamshell mode (power + external
-    /// display + external input).
+    /// Lid-close sleep is overridden too (on battery as well as AC), via a
+    /// helper that clears the override the moment gwae exits; set
+    /// `GWAE_KEEP_AWAKE_NO_LID=1` to let a closed lid sleep as normal.
     #[serde(default = "default_keep_awake")]
     pub keep_awake: bool,
     /// Staying current: whether gwae checks for new releases, and how it is
