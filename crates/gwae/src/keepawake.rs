@@ -138,6 +138,15 @@ fn spawn_lid() -> Option<Child> {
     };
     let mut cmd = Command::new(exe);
     cmd.arg(LID_HELPER_ARG).arg(std::process::id().to_string());
+    // Own process group: a group-wide SIGKILL aimed at gwae (`kill -9 -<pgid>`,
+    // a terminal tearing down its job) must not take the helper with it,
+    // because a SIGKILLed helper cannot clear the flag. The helper instead
+    // outlives gwae for up to one tick, sees it is gone, clears, and exits.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
