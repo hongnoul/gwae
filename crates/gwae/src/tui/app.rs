@@ -801,10 +801,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // (~3-5 ms). The spawned child's first output wakes the loop again via
     // the channel and fills the frame in.
     let mut needs_sync = false;
-    // One-shot cwd for the next deferred sync's agent spawn: the focused
-    // pane's directory captured at the `⌥+;` press (see
+    // One-shot cwd for the next deferred sync's spawn: the focused pane's
+    // directory captured at the `⌥+;`, `⌥+b`, or `⌥+Enter` press (see
     // `focused_pane_cwd`). Consumed and cleared by the sync that spawns the
-    // pane, so ordinary shell splits keep the plain spawn-dir behavior.
+    // pane. An empty (new) strip has no focused pane, so it stays `None`
+    // and the pane opens in the ordinary spawn dir.
     let mut pending_focused_cwd: Option<std::path::PathBuf> = None;
     // Host terminal events forwarded by the input thread, not yet handled.
     // Lives outside the loop because a `break 'drain` (e.g. per-kill frames
@@ -1952,6 +1953,17 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         }
                                         dirty = true;
                                         continue;
+                                    }
+                                    // A shell split (⌥+b) or a new column
+                                    // (⌥+Enter) lands in the focused strip, so
+                                    // it follows the focused pane's cwd too.
+                                    // Captured before the apply moves focus.
+                                    if matches!(a, Action::SplitBelow | Action::NewColumn) {
+                                        pending_focused_cwd = focused_pane_cwd(
+                                            &layout,
+                                            &panes,
+                                            cfg.spawn_follows_focused_cwd(),
+                                        );
                                     }
                                     let _ = layout.apply(a, v, f);
                                     needs_sync = true;

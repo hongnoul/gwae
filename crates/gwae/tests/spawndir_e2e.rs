@@ -593,3 +593,36 @@ fn the_focused_cwd_follow_is_opt_in() {
     );
     s.kill();
 }
+
+/// A plain `\u{2325}+b` shell split stays in the focused strip, so with the
+/// opt-in it opens in the focused pane's cwd too, not the session spawn dir.
+#[test]
+fn a_shell_split_after_a_cd_opens_in_the_focused_cwd() {
+    let root = temp_root();
+    let repo = root.join("split-repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let script = probe_script(&root, "where");
+    let mut s = Session::start(&root, "spawn_in_focused_cwd = true\n", "sh", &root, &[]);
+    let _ = s.drain();
+    let moved = root.join("moved-ok");
+    s.send(format!("cd '{}' && touch '{}'\r", repo.display(), moved.display()).as_bytes());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !moved.try_exists().unwrap_or(false) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "cd handshake timed out"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // ⌥+b: the split pane runs `$SHELL` (`/bin/sh` here).
+    s.send(b"\x1bb");
+    let _ = s.drain();
+    s.send(format!("'{}' &\r", script.display()).as_bytes());
+    let got = probe_result(&root, "where");
+    assert!(!got.is_empty(), "the split shell pane must run the probe");
+    assert!(
+        got.ends_with("split-repo"),
+        "with spawn_in_focused_cwd a shell split must open in the focused pane's cwd; got {got:?}"
+    );
+    s.kill();
+}

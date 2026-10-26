@@ -7,6 +7,12 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Fixed
+- **`spawn_in_focused_cwd` now covers `⌥+b` and `⌥+Enter` too.** 1.8.0
+  documented the shell split as following the focused pane's cwd, but only
+  `⌥+;` and the `⌥+⇧+;` picker captured it: a split below or a new column
+  still opened in the session spawn dir. Every spawn into the focused strip
+  now follows the focused pane, while a pane in a fresh empty strip (no
+  focused pane to follow) keeps the ordinary spawn-dir resolution.
 - **⌥+w keep-awake now holds on battery, lid closed included.** The
   `caffeinate -i -m -s` assertion only covered idle sleep: `-s` is honored
   on AC power alone, and nothing in `caffeinate` touches the lid. So
