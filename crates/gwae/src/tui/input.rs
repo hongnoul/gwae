@@ -925,6 +925,8 @@ mod tests {
             Cmd::Act(Action::ClosePane(1)),
             Cmd::Quit,
             Cmd::ToggleHud,
+            // A held ⌥+w flipping back off would silently undo keep-awake.
+            Cmd::ToggleKeepAwake,
         ] {
             assert!(!cmd.is_repeatable(), "{cmd:?} must not repeat");
         }
