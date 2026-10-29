@@ -1137,6 +1137,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 }
             }
         }
+        if keep_awake.tick() {
+            dirty = true;
+        }
         // Live config reload. Editing the config file repaints the running
         // session, so a config edit is a save away rather than a restart:
         // restarting would kill every pane, which is exactly what someone
@@ -1400,6 +1403,15 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // frames) leaves the remainder queued for the next iteration.
         if !pending_input.is_empty() {
             last_activity = Instant::now();
+            // Real user input (not a resize or focus report) extends the
+            // keep-awake display hold, so the screen does not go dark (and
+            // lock) while someone is reading or typing.
+            if pending_input
+                .iter()
+                .any(|e| matches!(e, Event::Key(_) | Event::Mouse(_) | Event::Paste(_)))
+            {
+                keep_awake.touch();
+            }
             'drain: loop {
                 let ev: std::io::Result<Event> = match pending_input.pop_front() {
                     Some(ev) => Ok(ev),
@@ -1780,6 +1792,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                         // always off again at next launch.
                                         cfg.keep_awake = !cfg.keep_awake;
                                         keep_awake.refresh(cfg.keep_awake);
+                                        // The press that turned it on is
+                                        // activity too: start the display hold.
+                                        keep_awake.touch();
                                         if cfg.keep_awake && !keep_awake.active() {
                                             tracing::warn!(
                                                 "keep-awake on but assertion not held ({})",

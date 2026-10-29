@@ -3,10 +3,15 @@
 //! gwae is a single process with no daemon: when macOS sleeps, every pane
 //! (and every agent in it) freezes until wake. With `keep_awake = true` gwae
 //! holds a `caffeinate` assertion for its own lifetime, so idle sleep never
-//! pauses a session you walked away from. The *display* is deliberately left
-//! free to sleep: agents do not need a lit panel, and a static pane held on
-//! screen for hours causes image retention (the "burn-in" look). The system
-//! stays awake underneath the dark display.
+//! pauses a session you walked away from. The *display* is held lit only
+//! while you are using gwae: every keystroke, click or paste extends a
+//! bounded hold (30 minutes by default, see [`DISPLAY_MINUTES_ENV`]). With a
+//! short `displaysleep` and an immediate screen lock, letting the display go
+//! on the stock schedule locked the Mac mid-read, which looked exactly like
+//! keep-awake not working. Once you stop touching gwae the hold lapses and
+//! the display sleeps on its normal schedule, so a static pane is never held
+//! lit overnight (image retention, the "burn-in" look). The system stays
+//! awake underneath the dark display either way.
 //!
 //! Why `caffeinate` alone is not enough on a laptop: its `-s` (no system
 //! sleep) is honored **only on AC power**, and `-i` (no idle sleep) does
@@ -48,10 +53,26 @@ pub const NO_LID_ENV: &str = "GWAE_KEEP_AWAKE_NO_LID";
 /// The hidden subcommand gwae re-executes itself as to hold the lid override.
 pub const LID_HELPER_ARG: &str = "__lid-awake";
 
+/// Minutes the display is held lit after the last input to gwae while
+/// keep-awake is on. `0` restores the old "display sleeps on the normal
+/// pmset schedule" behavior.
+pub const DISPLAY_MINUTES_ENV: &str = "GWAE_KEEP_AWAKE_DISPLAY_MINUTES";
+
+/// Default display hold. Long enough to read an agent's output without
+/// touching the keyboard (the stock 2-minute `displaysleep` dropped the
+/// screen, and with it an immediate screen lock, mid-read, which made
+/// keep-awake look broken). Short enough that a session left overnight
+/// still goes dark, so a static TUI is never held lit for hours.
+const DEFAULT_DISPLAY_MINUTES: u64 = 30;
+
 /// Owns the `caffeinate` child (and the lid-override helper) while gwae runs.
 pub struct Guard {
     child: Option<Child>,
     lid: Option<Child>,
+    /// A second `caffeinate -d` holding the display lit, alive only until
+    /// `display_until`. Refreshed by [`Guard::touch`] on user input.
+    display: Option<Child>,
+    display_until: Option<std::time::Instant>,
 }
 
 impl Guard {
@@ -63,7 +84,48 @@ impl Guard {
         // The lid override rides on the assertion: never hold one without
         // the other, so the HUD badge (which reads `active`) stays honest.
         let lid = if child.is_some() { spawn_lid() } else { None };
-        Guard { child, lid }
+        Guard {
+            child,
+            lid,
+            display: None,
+            display_until: None,
+        }
+    }
+
+    /// The user just did something in gwae: keep the display lit for the
+    /// hold window from now. No-op while keep-awake is off. Cheap enough to
+    /// call per input batch: it only spawns when no display hold is alive.
+    pub fn touch(&mut self) {
+        if !self.active() {
+            return;
+        }
+        let Some(hold) = display_hold() else {
+            return;
+        };
+        self.display_until = Some(std::time::Instant::now() + hold);
+        if self.display.is_none() {
+            self.display = spawn_display();
+        }
+    }
+
+    /// Let the display go once the hold window has lapsed. Call once per
+    /// loop iteration. Returns whether the hold was just released.
+    pub fn tick(&mut self) -> bool {
+        match self.display_until {
+            Some(t) if std::time::Instant::now() >= t => {
+                self.display_until = None;
+                stop_child(self.display.take());
+                tracing::info!("keep-awake: display hold lapsed, display may sleep");
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the display is currently held lit.
+    #[cfg(test)]
+    fn display_held(&self) -> bool {
+        self.display.is_some()
     }
 
     /// Reconcile with a (possibly live-reloaded) config. Returns whether
@@ -80,6 +142,8 @@ impl Guard {
             Guard {
                 child: None,
                 lid: None,
+                display: None,
+                display_until: None,
             },
         ));
         *self = Guard::acquire(enabled);
@@ -101,6 +165,10 @@ impl Guard {
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
         }
+        if let Some(mut c) = self.display.take() {
+            let _ = c.kill();
+        }
+        self.display_until = None;
         stop_lid(self.lid.take());
     }
 }
@@ -113,8 +181,54 @@ impl Drop for Guard {
             let _ = c.kill();
             let _ = c.wait();
         }
+        stop_child(self.display.take());
         stop_lid(self.lid.take());
     }
+}
+
+/// Kill and reap a child. Failure means it already exited, which is the goal.
+fn stop_child(child: Option<Child>) {
+    if let Some(mut c) = child {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+}
+
+/// The display hold window, or `None` when [`DISPLAY_MINUTES_ENV`] is `0`.
+fn display_hold() -> Option<std::time::Duration> {
+    let minutes = parse_display_minutes(std::env::var(DISPLAY_MINUTES_ENV).ok().as_deref());
+    (minutes > 0).then(|| std::time::Duration::from_secs(minutes * 60))
+}
+
+/// Unset or unparsable falls back to the default rather than disabling:
+/// a typo must not silently bring back the mid-read screen lock.
+fn parse_display_minutes(raw: Option<&str>) -> u64 {
+    raw.and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_DISPLAY_MINUTES)
+}
+
+fn spawn_display() -> Option<Child> {
+    let mut cmd = Command::new("caffeinate");
+    cmd.args(display_argv(std::process::id()));
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    match cmd.spawn() {
+        Ok(c) => {
+            tracing::info!("keep-awake: holding the display while you are active");
+            Some(c)
+        }
+        Err(e) => {
+            tracing::warn!("keep-awake: could not hold the display: {e}");
+            None
+        }
+    }
+}
+
+/// Display hold flags: `-d` only, bound to our pid with `-w`. Never `-u`
+/// (declaring user activity would wake a display the user let sleep).
+fn display_argv(pid: u32) -> Vec<String> {
+    vec!["-d".to_string(), "-w".to_string(), pid.to_string()]
 }
 
 /// Whether the lid override is wanted at all on this machine and session.
@@ -446,7 +560,7 @@ fn line_for(enabled: bool, avail: &Availability) -> String {
     match avail {
         Availability::Ready => "on; caffeinate holds idle/system sleep while gwae runs, \
              and lid-close sleep is overridden so a closed lid on battery keeps running; \
-             the display sleeps as normal"
+             the display stays lit while you use gwae and sleeps after a quiet spell"
             .to_string(),
         Availability::WrongOs => "on, but this is macOS-only so it does nothing here".to_string(),
         Availability::OptedOut => {
@@ -465,6 +579,45 @@ mod tests {
         let g = Guard::acquire(false);
         assert!(!g.active(), "a disabled guard must hold nothing");
         assert!(g.lid.is_none(), "no lid helper without the assertion");
+    }
+
+    #[test]
+    fn display_hold_is_bounded_and_never_declares_activity() {
+        // `-d` keeps the panel lit only while the hold child lives; `-u`
+        // would wake a display the user already let sleep. `-w` ties it to
+        // our pid so a SIGKILLed gwae never leaves the screen lit.
+        let a = display_argv(42);
+        assert!(a.contains(&"-d".to_string()), "{a:?}");
+        assert!(a.contains(&"-w".to_string()), "{a:?}");
+        assert!(!a.contains(&"-u".to_string()), "{a:?}");
+        assert!(
+            !a.contains(&"-t".to_string()),
+            "gwae owns the timeout: {a:?}"
+        );
+        assert_eq!(a.last().map(|s| s.as_str()), Some("42"));
+        // The default must lapse well before "overnight": the burn-in fix
+        // depends on an unattended session going dark.
+        const { assert!(DEFAULT_DISPLAY_MINUTES > 2 && DEFAULT_DISPLAY_MINUTES <= 60) };
+    }
+
+    #[test]
+    fn display_minutes_env_parses_and_falls_back() {
+        assert_eq!(parse_display_minutes(None), DEFAULT_DISPLAY_MINUTES);
+        assert_eq!(parse_display_minutes(Some("0")), 0, "0 opts out");
+        assert_eq!(parse_display_minutes(Some(" 5 ")), 5);
+        assert_eq!(
+            parse_display_minutes(Some("ten")),
+            DEFAULT_DISPLAY_MINUTES,
+            "a typo must not silently disable the hold"
+        );
+    }
+
+    #[test]
+    fn touch_without_keep_awake_holds_nothing() {
+        let mut g = Guard::acquire(false);
+        g.touch();
+        assert!(!g.display_held(), "no display hold while keep-awake is off");
+        assert!(!g.tick());
     }
 
     #[test]

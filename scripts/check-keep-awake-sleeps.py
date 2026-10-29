@@ -35,6 +35,18 @@ SLEEP = re.compile(
 )
 
 
+DIED = re.compile(
+    TS + r" [-+]\d{4} Assertions\s+PID (\d+)\(caffeinate\) (?:ClientDied|Released) "
+)
+
+
+def live_caffeinates():
+    out = subprocess.run(
+        ["pgrep", "-x", "caffeinate"], capture_output=True, text=True, check=False
+    ).stdout
+    return set(out.split())
+
+
 def parse(ts):
     return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
 
@@ -50,6 +62,7 @@ def main(argv):
         ["pmset", "-g", "log"], capture_output=True, text=True, check=False
     ).stdout
     windows = {}  # pid -> (start, end); end None while still held
+    last_seen = {}
     sleeps = []
     for line in log.splitlines():
         m = END.match(line) or HELD.match(line)
@@ -60,12 +73,28 @@ def main(argv):
             )
             start = at - age
             ended = END.match(line) is not None
+            last_seen[pid] = at
             prev = windows.get(pid)
             windows[pid] = (min(start, prev[0]) if prev else start, at if ended else None)
             continue
         m = SLEEP.match(line)
         if m:
             sleeps.append((parse(m.group(1)), m.group(2), m.group(3)))
+    # pmset logs ClientDied for one assertion type per kill, often not the
+    # PreventDiskIdle one, so a window can lack an END line. Only call it
+    # held when that caffeinate pid is actually alive right now; otherwise
+    # it ended at its last sighting (pid 32792 on 10-24 died after 1s yet
+    # used to read as "held" for days and swallowed every later sleep).
+    for line in log.splitlines():
+        m = DIED.match(line)
+        if m and m.group(2) in windows and windows[m.group(2)][1] is None:
+            at = parse(m.group(1))
+            if at >= windows[m.group(2)][0]:  # pids get reused
+                windows[m.group(2)] = (windows[m.group(2)][0], at)
+    live = live_caffeinates()
+    for pid, (start, end) in list(windows.items()):
+        if end is None and pid not in live:
+            windows[pid] = (start, last_seen.get(pid, start))
     now = datetime.now()
     bad = 0
     for pid, (start, end) in sorted(windows.items(), key=lambda kv: kv[1][0]):

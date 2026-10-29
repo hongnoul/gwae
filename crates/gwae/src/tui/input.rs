@@ -160,6 +160,9 @@ impl Cmd {
                 | Cmd::Act(Action::ClosePane(_))
                 | Cmd::Quit
                 | Cmd::ToggleHud
+                // A held ⌥+w must not flip keep-awake on and off again on
+                // the repeat, leaving it silently in the wrong state.
+                | Cmd::ToggleKeepAwake
         )
     }
 }

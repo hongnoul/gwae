@@ -7,6 +7,21 @@ changelog, updated per PR). The format is based on
 ## [Unreleased]
 
 ### Fixed
+- **⌥+w keep-awake no longer lets the screen lock while you are using it.**
+  The system assertion held, but the display was left on the stock
+  `displaysleep` schedule (2 minutes here), and with an immediate screen
+  lock the Mac locked mid-read, which looked exactly like keep-awake not
+  working. Keep-awake now also holds the display lit while you use gwae:
+  every keystroke, click or paste extends a 30-minute hold, after which the
+  display sleeps as before, so an unattended session still goes dark
+  overnight (no burn-in). `GWAE_KEEP_AWAKE_DISPLAY_MINUTES` changes the
+  window, `0` restores the old behavior. A held ⌥+w no longer flips the
+  toggle back on auto-repeat.
+- **`scripts/check-keep-awake-sleeps.py` no longer reports false failures.**
+  A caffeinate whose PreventDiskIdle death was not logged read as "held"
+  forever, so every later sleep (keep-awake off) counted as a failure.
+  Windows now end at the logged death, or at last sighting when that pid
+  is no longer alive.
 - **`spawn_in_focused_cwd` now covers `⌥+b` and `⌥+Enter` too.** 1.8.0
   documented the shell split as following the focused pane's cwd, but only
   `⌥+;` and the `⌥+⇧+;` picker captured it: a split below or a new column
