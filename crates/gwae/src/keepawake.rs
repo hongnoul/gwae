@@ -503,9 +503,7 @@ fn spawn(enabled: bool) -> Option<Child> {
         .stderr(Stdio::null());
     match cmd.spawn() {
         Ok(c) => {
-            tracing::info!(
-                "keep-awake: holding idle/system sleep via caffeinate (pid {pid}), display may sleep"
-            );
+            tracing::info!("keep-awake: holding idle/system sleep via caffeinate (pid {pid})");
             Some(c)
         }
         Err(e) => {

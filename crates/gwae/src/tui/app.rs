@@ -384,6 +384,9 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         if h.keep_awake {
             cfg.keep_awake = true;
             keep_awake.refresh(true);
+            // A reload lands while someone is working: keep the display
+            // hold the old image had, rather than waiting for a keystroke.
+            keep_awake.touch();
         }
     }
     // Same memory rule for a resurrected session's ⌥+d choice, but only
