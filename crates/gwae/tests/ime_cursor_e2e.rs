@@ -60,7 +60,6 @@ impl Session {
         std::fs::write(
             dir.join("gwae/gwae.toml"),
             "default_column_width = \"quarter\"\nstartup_panes = 1\n\
-             keep_awake = false\n\
              [minimap]\nshow = false\n\
              [update]\ncheck = false\n",
         )
@@ -94,7 +93,6 @@ impl Session {
         cmd.env("GWAE_KITTY_KEYBOARD", "0");
         cmd.env("GWAE_KITTY_GRAPHICS", "0");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
-        cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.arg("run");
         cmd.arg("/bin/sh ime-helper.sh");
         let child = pair

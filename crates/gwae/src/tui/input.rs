@@ -135,13 +135,6 @@ pub(crate) enum Cmd {
     /// Toggle the centered cheat-sheet HUD (`⌥+/`), the same overlay shown
     /// once at startup. Any other key still dismisses it.
     ToggleHud,
-    /// Toggle `keep_awake` (`⌥+w`): hold or release the macOS `caffeinate`
-    /// assertion that keeps idle/system sleep from freezing the panes. The
-    /// display still sleeps as normal, so a static pane never sits lit for
-    /// hours (image retention).
-    /// Resolved in the main loop (which owns the guard and the config), not
-    /// here.
-    ToggleKeepAwake,
     Quit,
     None,
 }
@@ -160,9 +153,6 @@ impl Cmd {
                 | Cmd::Act(Action::ClosePane(_))
                 | Cmd::Quit
                 | Cmd::ToggleHud
-                // A held ⌥+w must not flip keep-awake on and off again on
-                // the repeat, leaving it silently in the wrong state.
-                | Cmd::ToggleKeepAwake
         )
     }
 }
@@ -325,7 +315,6 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             Char('\u{a9}') => return Some(Cmd::SmartJump),              // © (Option+g)
             Char('\u{192}') => return Some(Cmd::Act(Action::ToggleFullWidth)), // ƒ (Option+f)
             Char('\u{2202}') => return Some(Cmd::DirPick),              // ∂ (Option+d)
-            Char('\u{2211}') => return Some(Cmd::ToggleKeepAwake),      // ∑ (Option+w)
             Char('\u{222b}') => return Some(Cmd::Act(Action::SplitBelow)), // ∫ (Option+b)
             Char('\u{f7}') => return Some(Cmd::ToggleHud),              // ÷ (Option+/)
             _ => {}
@@ -424,7 +413,6 @@ pub(crate) fn handle_key(ev: &KeyEvent) -> Option<Cmd> {
             }
             'g' => return Some(Cmd::SmartJump),
             'd' => return Some(Cmd::DirPick),
-            'w' => return Some(Cmd::ToggleKeepAwake),
             '/' | '?' => return Some(Cmd::ToggleHud),
             _ => None,
         };
@@ -925,8 +913,6 @@ mod tests {
             Cmd::Act(Action::ClosePane(1)),
             Cmd::Quit,
             Cmd::ToggleHud,
-            // A held ⌥+w flipping back off would silently undo keep-awake.
-            Cmd::ToggleKeepAwake,
         ] {
             assert!(!cmd.is_repeatable(), "{cmd:?} must not repeat");
         }
@@ -1180,7 +1166,6 @@ mod tests {
                 Effect::DirPick => Cmd::DirPick,
                 Effect::ForcePick => Cmd::ForcePick,
                 Effect::ToggleHud => Cmd::ToggleHud,
-                Effect::ToggleKeepAwake => Cmd::ToggleKeepAwake,
                 Effect::Quit => Cmd::Quit,
                 Effect::ScrollBack(n) => Cmd::ScrollBack(n),
                 Effect::Unverifiable => return None,
@@ -1283,24 +1268,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn keep_awake_toggle_reaches_the_main_loop_on_both_paths() {
-        // Option-as-Meta path and the macOS glyph path must both decode as
-        // the toggle: the cross-check test covers the BINDS entry, but this
-        // pins the exact events so a dispatcher refactor cannot silently turn
-        // ⌥+w into pane input.
-        let meta = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
-        assert_eq!(handle_key(&meta), Some(Cmd::ToggleKeepAwake));
-        let glyph = KeyEvent::new(KeyCode::Char('\u{2211}'), KeyModifiers::NONE);
-        assert_eq!(handle_key(&glyph), Some(Cmd::ToggleKeepAwake));
-        // ...while a bare `w` still types into the pane.
-        let bare = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE);
-        assert!(
-            matches!(handle_key(&bare), Some(Cmd::Input(_))),
-            "bare w must reach the pane"
-        );
     }
 
     #[test]

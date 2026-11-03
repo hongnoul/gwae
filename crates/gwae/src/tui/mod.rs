@@ -101,19 +101,3 @@ pub(crate) struct Rect {
     pub(crate) w: u16,
     pub(crate) h: u16,
 }
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn keep_awake_badge_shows_only_while_the_guard_is_active() {
-        // The state signal is a text badge on the Option HUD, never a
-        // palette change: toggling off must mean plain chrome everywhere.
-        let off = crate::keepawake::Guard::acquire(false);
-        assert!(!off.active(), "a disabled guard holds no assertion");
-        assert!(
-            !crate::keepawake::KEEP_AWAKE_BADGE.is_empty(),
-            "the active badge must exist to stamp onto the HUD"
-        );
-    }
-}

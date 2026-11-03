@@ -84,9 +84,6 @@ pub struct SessionState {
     /// The `⌥+d` spawn directory in force, so the choice survives.
     #[serde(default)]
     pub spawn_dir: Option<PathBuf>,
-    /// Whether `⌥+w` keep-awake was held, re-asserted on restore.
-    #[serde(default)]
-    pub keep_awake: bool,
 }
 
 /// Where the session file lives. Mirrors `agent::harness_state_path`:
@@ -261,7 +258,6 @@ mod tests {
             layout: gwae_layout::Layout::default(),
             panes: vec![rec(Some("jcode"), Some("sid"), true)],
             spawn_dir: Some(PathBuf::from("/tmp")),
-            keep_awake: true,
         };
         let json = serialize(&state).unwrap();
         save_serialized(&path, &json).unwrap();

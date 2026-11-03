@@ -80,9 +80,6 @@ pub(crate) struct HudFacts {
     /// How long each pane has been silent (used to age attention tiles).
     #[allow(dead_code)]
     pub(crate) quiet: HashMap<PaneId, Duration>,
-    /// Whether the `caffeinate` assertion is held: stamps the keep-awake
-    /// badge onto the HUD frame so the state reads without leaving the overlay.
-    pub(crate) keep_awake: bool,
     /// Whether this is a dev session (`GWAE_DEV_RELOAD=1`): stamps DEV onto
     /// the bottom HUD frame row. Stable sessions render a plain frame.
     pub(crate) dev: bool,
@@ -106,54 +103,6 @@ pub(crate) enum BuildPill {
     Failed,
 }
 
-/// Stamp [`crate::keepawake::KEEP_AWAKE_BADGE`] (the ☕ emoji) onto the top
-/// frame row of `rect`, centered inside the frame. The badge is 4 columns
-/// (☕ is double-width), so it fits even a 1-pane dashboard frame. Cell
-/// widths are set honestly (2 for the emoji, with a zero-width
-/// continuation cell) so the diff painter advances the host cursor
-/// correctly instead of shearing the frame row. No-op when the panel
-/// cannot hold the badge, rather than painting a clipped fragment.
-pub(crate) fn stamp_keep_awake_badge(
-    out: &mut [Cell],
-    cols: u16,
-    rect: super::Rect,
-    pal: &Palette,
-) {
-    use unicode_width::UnicodeWidthChar;
-    let badge = crate::keepawake::KEEP_AWAKE_BADGE;
-    let n: usize = badge.chars().map(|c| c.width().unwrap_or(1)).sum();
-    if n == 0 || rect.w as usize <= n + 2 || rect.h == 0 {
-        return;
-    }
-    let y = rect.y as usize;
-    let start = rect.x as usize + (rect.w as usize - n) / 2;
-    let mut x = start;
-    for ch in badge.chars() {
-        let w = ch.width().unwrap_or(1).max(1);
-        let idx = y * cols as usize + x;
-        let Some(c) = out.get_mut(idx) else { break };
-        *c = Cell {
-            ch,
-            width: w as u8,
-            ..*c
-        };
-        c.style.fg = pal.accent;
-        c.style.bold = true;
-        // Zero-width continuation cells for a wide glyph, so the painter
-        // skips them and the host cursor stays in step.
-        for k in 1..w {
-            if let Some(cc) = out.get_mut(idx + k) {
-                *cc = Cell {
-                    ch: ' ',
-                    width: 0,
-                    ..*cc
-                };
-            }
-        }
-        x += w;
-    }
-}
-
 /// Stamp [`crate::reload::DEV_BADGE`] onto the bottom frame row of `rect`,
 /// centered inside the frame. Dev-only: stable sessions never call this, so
 /// their frame stays plain box-drawing. No-op when the panel is too narrow
@@ -175,9 +124,8 @@ pub(crate) fn stamp_dev_badge(out: &mut [Cell], cols: u16, rect: super::Rect, pa
     }
 }
 
-/// Stamp the dev autobuild pill onto the top frame row of `rect`. Centered
-/// when the keep-awake badge is absent; shifted right of center only while
-/// keep-awake owns the center, so the two never collide. Dim by design:
+/// Stamp the dev autobuild pill onto the top frame row of `rect`, centered
+/// inside the frame. Dim by design:
 /// the build is background work and the panes keep showing the last good
 /// image. No-op when the panel is too narrow.
 pub(crate) fn stamp_build_pill(
@@ -186,7 +134,6 @@ pub(crate) fn stamp_build_pill(
     rect: super::Rect,
     pal: &Palette,
     pill: BuildPill,
-    keep_awake: bool,
 ) {
     let badge: &str = match pill {
         BuildPill::Building => " building… ",
@@ -199,12 +146,7 @@ pub(crate) fn stamp_build_pill(
         return;
     }
     let y = rect.y as usize;
-    // Centered by default: right-of-center only to dodge keep-awake.
-    let start = if keep_awake {
-        rect.x as usize + (rect.w as usize * 3 / 4).saturating_sub(n / 2)
-    } else {
-        rect.x as usize + (rect.w as usize - n) / 2
-    };
+    let start = rect.x as usize + (rect.w as usize - n) / 2;
     for (i, ch) in badge.chars().enumerate() {
         let idx = y * cols as usize + start + i;
         let Some(c) = out.get_mut(idx) else { continue };
@@ -833,14 +775,11 @@ pub(crate) fn paint_center_minimap(
             }
         }
     }
-    if facts.keep_awake {
-        stamp_keep_awake_badge(out, cols, plan.rect, pal);
-    }
     if facts.dev {
         stamp_dev_badge(out, cols, plan.rect, pal);
     }
     if let Some(pill) = facts.build {
-        stamp_build_pill(out, cols, plan.rect, pal, pill, facts.keep_awake);
+        stamp_build_pill(out, cols, plan.rect, pal, pill);
     }
     if let Some(held) = facts.held.as_deref() {
         stamp_held_note(out, cols, plan.rect, pal, held);
@@ -858,7 +797,6 @@ pub(crate) fn draw_center_hud(
     cols: u16,
     rows: u16,
     pal: &Palette,
-    keep_awake: bool,
     dev: bool,
 ) {
     let focus_color = pal.accent;
@@ -979,9 +917,6 @@ pub(crate) fn draw_center_hud(
         h: bh as u16,
     };
     draw_focus_frame(out, cols, rect, focus_color, true);
-    if keep_awake {
-        stamp_keep_awake_badge(out, cols, rect, pal);
-    }
     if dev {
         stamp_dev_badge(out, cols, rect, pal);
     }
@@ -1508,7 +1443,7 @@ mod tests {
         for (what, draw) in [("hud", 0), ("center minimap", 1)] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
             if draw == 0 {
-                draw_center_hud(&mut out, cols, rows, &term, false, false);
+                draw_center_hud(&mut out, cols, rows, &term, false);
             } else {
                 let mm = crate::config::Minimap {
                     mode: crate::config::MinimapMode::Off,
@@ -2261,7 +2196,7 @@ mod tests {
         let rows: u16 = 24;
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
         let frame_color = CColor::Rgb(0x74, 0xc7, 0xec);
-        draw_center_hud(&mut out, cols, rows, &pal_accent(frame_color), false, false);
+        draw_center_hud(&mut out, cols, rows, &pal_accent(frame_color), false);
         let has_frame = out
             .iter()
             .any(|c| c.ch == '╭' || c.ch == '╮' || c.ch == '╰' || c.ch == '╯');
@@ -2300,7 +2235,6 @@ mod tests {
             cols,
             rows,
             &pal_accent(frame_color),
-            false,
             false,
         );
         let all2: Vec<String> = (0..rows)
@@ -2345,7 +2279,7 @@ mod tests {
         );
         // Tiny viewport: nothing painted.
         let mut tiny = vec![Cell::default(); 10 * 4];
-        draw_center_hud(&mut tiny, 10, 4, &pal_accent(frame_color), false, false);
+        draw_center_hud(&mut tiny, 10, 4, &pal_accent(frame_color), false);
         assert!(
             tiny.iter().all(|c| c.ch == ' '),
             "tiny viewport draws no HUD"
@@ -2396,7 +2330,7 @@ mod tests {
             BuildPill::Failed,
         ] {
             let mut out = vec![Cell::default(); 60 * 8];
-            stamp_build_pill(&mut out, 60, rect, &pal, pill, false);
+            stamp_build_pill(&mut out, 60, rect, &pal, pill);
             let row: String = out[0..60].iter().map(|c| c.ch).collect();
             let expect = match pill {
                 BuildPill::Building => "building",
@@ -2405,7 +2339,7 @@ mod tests {
                 BuildPill::Failed => "build failed",
             };
             assert!(row.contains(expect), "{pill:?} stamps, got {row:?}");
-            // No keep-awake: the pill reads centered on the frame row.
+            // The pill reads centered on the frame row.
             let badge_len = match pill {
                 BuildPill::Building => " building… ".chars().count(),
                 BuildPill::Linking => " linking… ".chars().count(),
@@ -2416,21 +2350,7 @@ mod tests {
             assert_eq!(
                 start,
                 (60 - badge_len) / 2,
-                "{pill:?} must center without keep-awake, got {row:?}"
-            );
-            // Keep-awake owns the center: the pill dodges right of center.
-            let mut dodged = vec![Cell::default(); 60 * 8];
-            stamp_build_pill(&mut dodged, 60, rect, &pal, pill, true);
-            let drow: String = dodged[0..60].iter().map(|c| c.ch).collect();
-            let dstart = drow.find(expect).unwrap() - 1;
-            assert_eq!(
-                dstart,
-                (60usize * 3 / 4).saturating_sub(badge_len / 2),
-                "{pill:?} must dodge keep-awake, got {drow:?}"
-            );
-            assert!(
-                dstart > start,
-                "{pill:?} dodged start must sit right of center, got {drow:?}"
+                "{pill:?} must center, got {row:?}"
             );
         }
         // Held note reads on its own row and degrades on tiny frames.
@@ -2450,7 +2370,6 @@ mod tests {
             },
             &pal,
             BuildPill::Building,
-            false,
         );
         assert!(tiny.iter().all(|c| c.ch == ' '), "tiny frame stays clean");
     }
@@ -2497,153 +2416,9 @@ mod tests {
     }
 
     #[test]
-    fn keep_awake_badge_stamps_the_dashboard_frame_only_while_awake() {
-        // The keep-awake state reads on the Option HUD chrome: the badge is
-        // stamped onto the panel frame while the guard is active, and the
-        // frame is plain box-drawing when it is not.
-        let (layout, _) = dashboard_layout(4);
-        for keep_awake in [false, true] {
-            let facts = HudFacts {
-                keep_awake,
-                ..HudFacts::default()
-            };
-            let out = paint_dashboard(&layout, &facts, 100, 24);
-            let text = screen_rows(&out, 100).join("\n");
-            assert_eq!(
-                text.contains('☕'),
-                keep_awake,
-                "badge reads on the HUD frame iff awake:\n{text}"
-            );
-        }
-    }
-
-    #[test]
-    fn keep_awake_badge_stamps_the_center_help_frame_only_while_awake() {
-        // Same promise for the startup / `⌥+/` help panel. The badge is the
-        // ☕ emoji, which the cheat-sheet body never contains, so presence is
-        // exactly the guard state.
-        let (cols, rows) = (80u16, 24u16);
-        for keep_awake in [false, true] {
-            let mut out = vec![Cell::default(); cols as usize * rows as usize];
-            draw_center_hud(&mut out, cols, rows, &pal_terminal(), keep_awake, false);
-            let text: String = out.iter().map(|c| c.ch).collect();
-            assert_eq!(
-                text.contains('☕'),
-                keep_awake,
-                "badge reads on the help frame iff awake: {text:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn keep_awake_badge_fits_narrow_panels_and_skips_slivers() {
-        // The bug this pins: a 1–2 pane dashboard panel is ~9–14 cells wide,
-        // narrower than the old 12-char text badge, which silently dropped
-        // the state. The ☕ badge is 4 columns, so it must read on both wide
-        // and narrow panels, paint honest wide-cell widths (2 + a zero-width
-        // continuation), and vanish only on slivers.
-        let (cols, rows) = (60u16, 10u16);
-        let pal = pal_terminal();
-        let stamp = |w: u16| -> Vec<Cell> {
-            let mut out = vec![Cell::default(); cols as usize * rows as usize];
-            let rect = Rect {
-                x: 2,
-                y: 1,
-                w,
-                h: 5,
-            };
-            stamp_keep_awake_badge(&mut out, cols, rect, &pal);
-            out[cols as usize..2 * cols as usize].to_vec()
-        };
-        for w in [30u16, 10] {
-            let row = stamp(w);
-            let i = row
-                .iter()
-                .position(|c| c.ch == '☕')
-                .unwrap_or_else(|| panic!("☕ must read at width {w}"));
-            assert_eq!(row[i].width, 2, "emoji cell must be wide at width {w}");
-            assert_eq!(
-                row[i + 1].width,
-                0,
-                "wide glyph needs a zero-width continuation at width {w}"
-            );
-        }
-        // Sliver: nothing is painted rather than a clipped fragment.
-        let sliver = stamp(3);
-        assert!(
-            sliver.iter().all(|c| c.ch == '\0' || c.ch == ' '),
-            "sliver paints nothing"
-        );
-    }
-
-    #[test]
-    fn keep_awake_state_reads_on_a_one_pane_dashboard() {
-        // End to end through the real dashboard paint: a 1-pane layout plans
-        // a panel too narrow for the old text badge, which used to drop the
-        // state entirely. The ☕ badge must read while the guard is active
-        // and never while it is not.
-        let (layout, _) = dashboard_layout(1);
-        for keep_awake in [false, true] {
-            let facts = HudFacts {
-                keep_awake,
-                ..HudFacts::default()
-            };
-            let out = paint_dashboard(&layout, &facts, 100, 24);
-            let text = screen_rows(&out, 100).join("\n");
-            assert_eq!(
-                text.contains('☕'),
-                keep_awake,
-                "state must read on a 1-pane dashboard iff awake:\n{text}"
-            );
-        }
-    }
-
-    #[test]
-    fn keep_awake_badge_sits_top_center_of_the_help_frame() {
-        // The badge interrupts the top frame row at its horizontal center,
-        // not tucked into a corner.
-        let (cols, rows) = (80u16, 24u16);
-        let mut out = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(&mut out, cols, rows, &pal_terminal(), true, false);
-        let lines = screen_rows(&out, cols);
-        let row = lines
-            .iter()
-            .find(|l| l.contains('☕'))
-            .expect("badge must stamp one row");
-        // Column-based indexing: screen_rows collapses the wide emoji's
-        // continuation cell, so measure in display columns. ☕ must sit
-        // centered (within a cell) between the frame corners on their row.
-        use unicode_width::UnicodeWidthChar;
-        let mut col = 0usize;
-        let mut frame_start = None;
-        let mut frame_end = None;
-        let mut badge_col = None;
-        for ch in row.chars() {
-            match ch {
-                '╭' => frame_start = Some(col),
-                '╮' => frame_end = Some(col),
-                '☕' => badge_col = Some(col),
-                _ => {}
-            }
-            col += ch.width().unwrap_or(1);
-        }
-        let (fs, fe, bc) = (
-            frame_start.expect("top frame row has ╭"),
-            frame_end.expect("top frame row has ╮"),
-            badge_col.expect("☕ reads on the frame row"),
-        );
-        let center = fs + (fe - fs) / 2;
-        assert!(
-            bc.abs_diff(center) <= 2,
-            "badge must sit at the frame's horizontal center: col {bc}, center {center}:\n{row}"
-        );
-    }
-
-    #[test]
     fn dev_badge_stamps_the_dashboard_frame_only_in_dev() {
         // The dev tab reads DEV on the Option HUD chrome; the stable tab next
-        // to it renders a plain frame. Same stamp contract as keep-awake,
-        // gated on the dev session flag instead of the guard.
+        // to it renders a plain frame. Gated on the dev session flag.
         let (layout, _) = dashboard_layout(4);
         for dev in [false, true] {
             let facts = HudFacts {
@@ -2666,7 +2441,7 @@ mod tests {
         let (cols, rows) = (80u16, 24u16);
         for dev in [false, true] {
             let mut out = vec![Cell::default(); cols as usize * rows as usize];
-            draw_center_hud(&mut out, cols, rows, &pal_terminal(), false, dev);
+            draw_center_hud(&mut out, cols, rows, &pal_terminal(), dev);
             let text: String = out.iter().map(|c| c.ch).collect();
             assert_eq!(
                 text.contains("DEV"),
@@ -2678,11 +2453,10 @@ mod tests {
 
     #[test]
     fn dev_badge_sits_bottom_center_of_the_help_frame() {
-        // DEV interrupts the bottom frame row at its horizontal center,
-        // mirroring keep-awake on the top row.
+        // DEV interrupts the bottom frame row at its horizontal center.
         let (cols, rows) = (80u16, 24u16);
         let mut out = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(&mut out, cols, rows, &pal_terminal(), false, true);
+        draw_center_hud(&mut out, cols, rows, &pal_terminal(), true);
         let lines = screen_rows(&out, cols);
         let badge = crate::reload::DEV_BADGE;
         let badge_w = badge.chars().count();

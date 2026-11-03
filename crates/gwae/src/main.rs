@@ -15,7 +15,6 @@ mod graphics_host;
 mod graphics_legacy;
 mod graphics_stream;
 mod harness_status;
-mod keepawake;
 mod keys;
 mod latency;
 mod reap;
@@ -33,19 +32,6 @@ use cli::{Cli, Command};
 use config::Config;
 
 fn main() {
-    // The keep-awake lid helper is this binary re-executed by the TUI, not a
-    // user command: dispatched before clap (so it stays out of `--help`)
-    // and before tracing (so it never truncates the TUI's `gwae.log`).
-    {
-        let mut args = std::env::args().skip(1);
-        if args.next().as_deref() == Some(keepawake::LID_HELPER_ARG) {
-            let parent = args.next().and_then(|p| p.parse::<u32>().ok());
-            std::process::exit(match parent {
-                Some(pid) => keepawake::run_lid_helper(pid),
-                None => 2,
-            });
-        }
-    }
     init_tracing();
 
     let cli = Cli::parse();
@@ -60,8 +46,7 @@ fn main() {
 /// Route logs where they cannot corrupt the screen.
 ///
 /// When stderr is a TTY it is the same terminal the TUI paints, and any log
-/// line races the frame writer: a `tracing::info!` emitted mid-frame (the
-/// `⌥+w` caffeinate spawn was the repeat offender) lands between
+/// line races the frame writer: a `tracing::info!` emitted mid-frame lands between
 /// synchronized-update batches and leaves fragments like a stray `p` plus a
 /// newline on screen. So on a TTY the log goes to
 /// `$XDG_STATE_HOME/gwae/gwae.log` (truncated per run) instead. A piped

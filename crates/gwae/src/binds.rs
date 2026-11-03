@@ -66,8 +66,6 @@ pub enum Effect {
     ForcePick,
     /// Toggle the cheat-sheet HUD.
     ToggleHud,
-    /// Toggle the macOS keep-awake assertion.
-    ToggleKeepAwake,
     /// Quit gwae.
     Quit,
     /// Scroll the focused pane's history by this many rows (positive = back).
@@ -275,13 +273,6 @@ pub const BINDS: &[Bind] = &[
         group: Group::Panes,
         desc: "toggle help",
         effect: Effect::ToggleHud,
-    },
-    Bind {
-        trigger: Trigger::Chord('w'),
-        glyph: Some('\u{2211}'),
-        group: Group::Panes,
-        desc: "caffeinate",
-        effect: Effect::ToggleKeepAwake,
     },
     Bind {
         trigger: Trigger::EnterChord,

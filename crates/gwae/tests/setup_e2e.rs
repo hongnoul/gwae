@@ -26,7 +26,6 @@ fn setup(dir: &std::path::Path, args: &[&str]) -> (String, String, i32) {
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_gwae"));
     cmd.arg("setup").args(args).env("XDG_CONFIG_HOME", dir);
     // Never hold the Mac awake from a test.
-    cmd.env("GWAE_NO_KEEP_AWAKE", "1");
     // Deterministic PATH: no agent harnesses, no swiftc.
     cmd.env("PATH", "/bin:/usr/bin");
     let out = cmd.output().expect("run gwae setup");
@@ -128,7 +127,6 @@ fn doctor_contains_one_line_per_stage() {
     let dir = sandbox(None);
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_gwae"));
     cmd.arg("doctor").env("XDG_CONFIG_HOME", &dir);
-    cmd.env("GWAE_NO_KEEP_AWAKE", "1");
     cmd.env("PATH", "/bin:/usr/bin");
     let out = cmd.output().expect("run gwae doctor");
     assert!(out.status.success());

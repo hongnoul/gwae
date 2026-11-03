@@ -6,41 +6,19 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Removed
+- **The `⌥+w` caffeinate / keep-awake feature is gone.** The toggle, the
+  ☕ HUD badge, the lid helper, the `keep_awake` config key and the
+  `GWAE_KEEP_AWAKE_*` env vars are removed. gwae no longer affects system
+  or display sleep. An old `keep_awake` line in `gwae.toml` is ignored.
+
 ### Fixed
-- **⌥+w keep-awake no longer lets the screen lock while you are using it.**
-  The system assertion held, but the display was left on the stock
-  `displaysleep` schedule (2 minutes here), and with an immediate screen
-  lock the Mac locked mid-read, which looked exactly like keep-awake not
-  working. Keep-awake now also holds the display lit while you use gwae:
-  every keystroke, click or paste extends a 30-minute hold, after which the
-  display sleeps as before, so an unattended session still goes dark
-  overnight (no burn-in). `GWAE_KEEP_AWAKE_DISPLAY_MINUTES` changes the
-  window, `0` restores the old behavior. A held ⌥+w no longer flips the
-  toggle back on auto-repeat.
-- **`scripts/check-keep-awake-sleeps.py` no longer reports false failures.**
-  A caffeinate whose PreventDiskIdle death was not logged read as "held"
-  forever, so every later sleep (keep-awake off) counted as a failure.
-  Windows now end at the logged death, or at last sighting when that pid
-  is no longer alive.
 - **`spawn_in_focused_cwd` now covers `⌥+b` and `⌥+Enter` too.** 1.8.0
   documented the shell split as following the focused pane's cwd, but only
   `⌥+;` and the `⌥+⇧+;` picker captured it: a split below or a new column
   still opened in the session spawn dir. Every spawn into the focused strip
   now follows the focused pane, while a pane in a fresh empty strip (no
   focused pane to follow) keeps the ordinary spawn-dir resolution.
-- **⌥+w keep-awake now holds on battery, lid closed included.** The
-  `caffeinate -i -m -s` assertion only covered idle sleep: `-s` is honored
-  on AC power alone, and nothing in `caffeinate` touches the lid. So
-  unplugged, closing the lid still put the Mac into Clamshell Sleep with
-  the ☕ badge lit, and every agent froze until the lid opened. Keep-awake
-  now also sets the kernel's clamshell-sleep override (no sudo), held by
-  a small `gwae __lid-awake` helper bound to gwae's pid that clears it
-  the instant gwae exits, however it exits. The kernel still forces sleep
-  on low battery and thermal emergencies. `GWAE_KEEP_AWAKE_NO_LID=1`
-  restores the old lid behavior.
-- **A hot reload no longer drops keep-awake.** The old image released the
-  assertion before its exec and the new image always started with it
-  off; the state now rides the handover.
 
 ## [1.8.0] - 2026-10-22
 
@@ -72,25 +50,16 @@ changelog, updated per PR). The format is based on
   purely opt-in keys you add by hand.
 - **Logs can no longer corrupt the screen.** `tracing` output went to stderr,
   which inside the TUI is the same terminal the frames are painted on; a log
-  line emitted mid-frame (the `⌥+w` caffeinate spawn was the repeat offender)
-  raced the synchronized-update writer and left fragments like a stray `p` on
+  line emitted mid-frame raced the synchronized-update writer and left fragments like a stray `p` on
   screen. When stderr is a TTY the log now goes to
   `$XDG_STATE_HOME/gwae/gwae.log` (truncated per run); a piped stderr keeps
   the old behavior, and `GWAE_LOG` still controls the filter.
-- **The caffeinate indicator is the ☕ emoji.** The HUD/help-frame badge is
-  now a single coffee emoji instead of text: it names caffeinate without
-  words, fits even the narrow 1–2 pane dashboard frame where the old text
-  badge silently vanished, and paints honest wide-cell widths so the frame
-  row never shears. The `⌥+w` cheat-sheet row still reads `caffeinate`.
-- **On-screen keep-awake text now reads `caffeinate`.** The HUD/help-frame
-  badge and the `⌥+w` cheat-sheet label name the mechanism directly. The
-  `keep_awake` config key and internals are unchanged.
 - **Bottom-left toasts are gone.** The one-line bottom-left notes (config
   reloaded/error, hot-reload failure, update notice, paste and drag-copy
-  confirmations, spawn-dir picks, keep-awake flips, agent-pick and dud-exit
+  confirmations, spawn-dir picks, agent-pick and dud-exit
   hints, bad `agent_dir` warning) are removed entirely. Error-grade cases are
   logged via tracing instead; the update check still runs for the cache
-  `gwae doctor` reads, and the HUD badge still carries keep-awake state.
+  `gwae doctor` reads.
 - **Empty boxes are blank again.** The placeholder pal sprites (bot, invader,
   ghost, cat, frog, crab, slime, dino) are removed entirely: empty skeleton
   boxes now paint only their frame over the plain background, and pane swaps
@@ -114,13 +83,6 @@ changelog, updated per PR). The format is based on
   frame instead of landing inside the navigation paint, verified live
   (reveal after a 35s hide: 0 uploads in the reveal frame, heal arrives
   seconds later).
-- **Keep-awake no longer forces the display to stay lit.** `⌥+w` now spawns
-  `caffeinate -i -m -s -w <pid>` without `-d`/`-u`: the system (and every
-  agent pane) stays awake, but the display sleeps on the user's normal
-  schedule. Holding a static TUI lit for hours caused visible image
-  retention on built-in panels; a dark display costs the agents nothing. The
-  flags are pinned in both directions by test so `-d`/`-u` cannot return by
-  accident.
 
 ### Added
 - **`spawn_in_focused_cwd` config key: agent spawns can follow the focused
@@ -144,7 +106,7 @@ changelog, updated per PR). The format is based on
 - **Session resurrection (dev-gated): quit gwae, relaunch, get your session
   back.** With `GWAE_SESSION_RESTORE=1`, the layout tree, each pane's live
   working directory (libproc at save time, so a shell that `cd`-ed restores
-  where it *is*), the `⌥+d` spawn dir, and keep-awake are continuously
+  where it *is*), and the `⌥+d` spawn dir are continuously
   snapshotted to `$XDG_STATE_HOME/gwae/session.json` (atomic temp+rename,
   written only when the bytes changed). A cold launch rebuilds the strip:
   shells respawn in their old cwd, and jcode panes respawn on their *exact*
@@ -257,12 +219,10 @@ changelog, updated per PR). The format is based on
 
 ### Fixed
 - **A done agent no longer paints `Running` forever.** A finished jcode client keeps emitting maintenance output (periodic redraws, ambient notification toasts), which the output-activity heuristic mistook for work. gwae now polls the jcode daemon's `clients:map` on a background thread every 3s and reconciles heuristic tiles against it in both directions: a `Running` tile whose session reports settled demotes to `Idle`, and a quiet `Idle` tile whose session is still generating holds at `Running` instead of flapping to attention mid-turn. Panes the daemon covers skip the heuristic entirely, so the two never fight over a frame. Only `Running`/`Idle` tiles are touched, so real `Done`/`Failed`/OSC 133 facts still win; panes the daemon does not know (no title match, no daemon, stale snapshot) keep the heuristic. Set `GWAE_NO_HARNESS_STATUS=1` to disable the poll.
-- **`⌥+w` confirms the keep-awake flip.** The toggle used to flip silently with no on-screen feedback, so a press that dismissed the HUD read as broken. It now shows a one-line note (`keep-awake on/off`, saved or session-only) and names the blocker when the assertion cannot be held.
 - **The Option-hold dashboard appears with a lone pane.** Holding `⌥` with a single pane used to paint nothing; it now shows a one-tile dashboard with its tally, so the hold always answers where focus is.
 
 ### Changed
 - **Installer output is modern and pipe-clean.** `install.sh` shows a bold banner, green `✓`/red `✗` status marks, past-tense confirmations, and curl's progress bar for the download, all gated on a tty (`NO_COLOR` and `TERM=dumb` respected), so `curl | bash` looks polished while redirected runs stay byte-plain for grep.
-- **Keep-awake is off by default.** Fresh runs let the Mac sleep as normal. Opt in with `keep_awake = true` or `⌥+w`. `GWAE_NO_KEEP_AWAKE=1` still forces it off.
 - **The spatial dashboard follows focus past `max_rows`.** The centered `⌥` panel and the corner `overlay` used to pin the first rows, stranding focus past line 6 with no tile. Both now window around the focused strip (centered in the middle, pinned at the ends), with cut strips counted (`⋯ +N↑`/`↓` on the panel, `+N↑`/`+N↓` in the overlay summary). Click-to-focus and the overlay chevron track the window.
 - **Plain panes claim no status.** Non-agent PTY panes (shells, TUIs) paint a neutral `·` tile, count in the dashboard total with no tally segment, and never trigger attention or smart-jump. `Running` is now asserted only on evidence: an OSC 133 `C` marker or output from a known agent pane. Shells with real OSC 133 integration still report real status.
 - **True HMR in `make dev`.** With `WATCH=1` (default), the dev session watches its own sources and rebuilds itself: a dim `building…` pill reads on the HUD frame while the panes keep showing the last good image. Only a clean, signed, loadable binary triggers the exec; failures stay invisible with the error held for the `⌥+/` overlay. The exec prefers a quiet window (300ms silence or 2s max), and 3 reloads in 60s pins the last good image with a `reload held` note. Set `WATCH=0` for the old manual `make dev-build` flow.
@@ -271,7 +231,7 @@ changelog, updated per PR). The format is based on
 - **First run configures in the native terminal.** The very first `gwae` launch (no config file yet) runs a one-time setup on stdin/stdout at full terminal width before the TUI opens: the `⌥+;` agent pick (full-width picker, no cramped pane) and the latency knob. `gwae init` runs the same flow on demand. Non-tty sessions skip every prompt, so scripts and CI never block. The flow prints step headers, green `✓` completions, and yellow `!` action lines, honoring `NO_COLOR`, `TERM=dumb`, and non-tty output with plain text.
 - **`gwae uninstall` removes what the installer put down.** Homebrew installs defer to `brew uninstall`; curl and unknown installs remove the binary, the receipt, and the PATH profile lines the installer wrote, printing the plan first (`--yes` skips the prompt).
 - **Curl installer is back as the Homebrew fallback.** `curl -fsSL https://hongnoul.github.io/gwae/install.sh | bash` installs the macOS bottle to `~/.local/bin` with required checksum verification, ad-hoc signing, an atomic install, a guarded PATH snippet for your shell profile (zsh, bash, fish), and the exact one-line export that activates it in the current terminal. Re-running it is the upgrade: `gwae upgrade` on a curl install prints the pinned re-run command. Homebrew stays the primary install.
-- **DEV badge on the Option HUD in dev sessions.** With `GWAE_DEV_RELOAD=1`, the centered HUD and dashboard stamp `DEV` on the bottom frame row (mirroring keep-awake on top), so the dev tab is visually distinct from a stable tab. Stable sessions render a plain frame.
+- **DEV badge on the Option HUD in dev sessions.** With `GWAE_DEV_RELOAD=1`, the centered HUD and dashboard stamp `DEV` on the bottom frame row, so the dev tab is visually distinct from a stable tab. Stable sessions render a plain frame.
 - **Placeholder pals.** Empty skeleton boxes paint one centered monochrome sprite (bot, invader, ghost, cat) in half-block cells instead of staying blank. The art is deterministic per box position, uses only the skeleton palette color, carries no text, and tiny boxes stay blank.
 - **Vim-style picker navigation.** The spawn-dir (`⌥+d`) and agent (`⌥+;`) pickers move with `⌃`/`⌥`+`j`/`k` (and `⌃`/`⌥`+`n`/`p`) in addition to arrows. Bare `j`/`k` still filter, since paths contain both.
 - **`⌥+Shift+;` always asks.** The chord now opens the harness picker every time, ignoring `default_agent`, the remembered pick, and the lone-install fast path that `⌥+;` takes. The add-pane-to-bottom strip spawn is removed completely: the pick lands in a normal pane. The overlay names a live override (it still wins for the next `⌥+;`), and the pick is remembered in the state file like any other.
@@ -289,8 +249,6 @@ changelog, updated per PR). The format is based on
 - **Homebrew is the absolute source of truth for deployments.** `brew install hongnoul/tap/gwae` is the one supported install and `brew upgrade gwae` the one supported upgrade. Releases build the two macOS bottles only and bump the tap. The repo is macOS-only: every shortcut, clipboard path, and doc assumes Option on a Mac.
 - **Retro chrome is enforced.** gwae paints its own colors instead of inheriting the terminal scheme: true-black panels with high-contrast functional colors (white focus, blue running, amber idle, green done, red failed, white text). Focus tiles keep an underline on top of the fill, so focus never depends on color alone.
 - **Manual `[theme]` overrides, no picker.** Any chrome key (`base`, `surface`, `overlay`, `accent`, `text`, `label`, `running`, `idle`, `done`, `failed`) can be overridden with a 256-color index, a hex RGB string, or `"default"` for the terminal's own color. Unset keys keep retro, a save repaints the running session, and retired preset names parse as "no overrides".
-- **Keep-awake is on by default.** The Mac stays up while gwae runs with no onboarding question. Opt out with `keep_awake = false`, `⌥+w`, or `GWAE_NO_KEEP_AWAKE=1`. Teardown is unchanged: exiting gwae still kills every pane process and releases the assertion.
-- **Keep-awake shows a text badge, not a red ring.** While the `caffeinate` assertion is held a small `keep-awake` badge is stamped on the Option HUD frame (hold Option to see it) instead of recoloring the focus ring. The palette is never touched, so toggling `⌥+w` off restores every color exactly.
 
 ### Removed
 - **Windows and Linux support.** No Windows zip, no Linux bottles, no scoop bucket, no AUR, no nix flake, no install scripts. Old configs spelling `windows` / `scoop` / `winget` / `zip` as the update source resolve to `unknown` so detection runs instead. Old binaries keep running but get no updates.
@@ -342,7 +300,6 @@ changelog, updated per PR). The format is based on
 
 ### Added
 - **Setup asks the harness first.** Onboarding leads with the Agent harness question (built from what is actually on `PATH`, capped at nine so digit shortcuts stay unambiguous), so a user who bails after two questions has still picked their harness and their colors. The agent gateway no longer asks twice: on a fresh machine it hands the first pick to onboarding and execs what onboarding saved.
-- **Keep the Mac awake while agents work (`⌥+w`, `keep_awake`).** Holds an idle/display sleep assertion via `caffeinate` so long agent runs are not frozen by sleep; the focus ring turns red while active. Offered once during onboarding (macOS only, off by default), toggled live with `⌥+w`.
 - **Scroll pane history like jcode.** `Ctrl+Shift+J/K` and the mouse wheel scroll the focused pane's scrollback, with the offset clamped on resize and feed. CapsLock no longer fakes the scroll chord, and `Ctrl+Shift` still reaches kitty-aware inner panes (jcode scroll vs prompt preserved).
 - **Centered `⌥`-hold dashboard with a status tally.** The hold panel leads with which agent needs you (glyph + digit + pane title, idle/failed age) above the keybinds, with proportional strip widths and single-pane key hints.
 

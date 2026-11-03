@@ -142,7 +142,6 @@ fn snapshot_session(
     agent_cmds: &HashMap<PaneId, String>,
     resume_ids: &HashMap<PaneId, String>,
     spawn_dir: Option<&std::path::Path>,
-    keep_awake: bool,
 ) -> crate::session::SessionState {
     let mut ids: Vec<PaneId> = layout.panes.keys().copied().collect();
     ids.sort_unstable();
@@ -163,7 +162,6 @@ fn snapshot_session(
         layout: layout.clone(),
         panes: records,
         spawn_dir: spawn_dir.map(|p| p.to_path_buf()),
-        keep_awake,
     }
 }
 
@@ -214,11 +212,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // the abnormal exits too, not just ⌥+Shift+q.
     crate::reap::install();
     let _reap_guard = crate::reap::Guard;
-    // Keep-awake always starts off: the machine sleeps as normal unless the
-    // user presses ⌥+w in this session. The config file's `keep_awake` is
-    // ignored at startup and the toggle is never persisted.
-    cfg.keep_awake = false;
-    let mut keep_awake = crate::keepawake::Guard::acquire(false);
     enable_raw_mode().map_err(|e| {
         eprintln!("raw mode: {e}");
         1
@@ -379,15 +372,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         if h.spawn_dir.is_some() {
             spawn_dir = h.spawn_dir.clone();
         }
-        // Keep-awake is session-only, and a hot reload is the same session:
-        // re-take the assertion the old image dropped just before its exec.
-        if h.keep_awake {
-            cfg.keep_awake = true;
-            keep_awake.refresh(true);
-            // A reload lands while someone is working: keep the display
-            // hold the old image had, rather than waiting for a keystroke.
-            keep_awake.touch();
-        }
     }
     // Same memory rule for a resurrected session's ⌥+d choice, but only
     // when the directory still exists: a deleted tree falls back to the
@@ -397,13 +381,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             if dir.is_dir() {
                 spawn_dir = Some(dir.clone());
             }
-        }
-        if s.keep_awake {
-            // Through `cfg.keep_awake`, not just the guard: the config
-            // reload path refreshes the guard from the flag, so a guard
-            // the flag disagrees with would drop on the next config edit.
-            cfg.keep_awake = true;
-            keep_awake.refresh(true);
         }
     }
     // Clock continuity: adopted panes start their `last_output` at
@@ -1127,7 +1104,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 &agent_cmds,
                 &session_resume_ids,
                 spawn_dir.as_deref(),
-                cfg.keep_awake,
             );
             if let (Some(path), Some(json)) =
                 (session_path.as_deref(), crate::session::serialize(&snap))
@@ -1139,9 +1115,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     }
                 }
             }
-        }
-        if keep_awake.tick() {
-            dirty = true;
         }
         // Live config reload. Editing the config file repaints the running
         // session, so a config edit is a save away rather than a restart:
@@ -1161,13 +1134,10 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     Ok(new) => {
                         // Keep the panes and their harnesses exactly as they
                         // are; only adopt what is re-read every frame.
-                        // The keep-awake guard follows silently: no
-                        // bottom-left toast, the HUD keep-awake badge carries it.
                         // The palette is re-read too, so a `[theme]` edit
                         // repaints the chrome on the next frame.
                         cfg.adopt_appearance(new);
                         pal = cfg.palette();
-                        keep_awake.refresh(cfg.keep_awake);
                         dirty = true;
                     }
                     Err(e) => {
@@ -1352,17 +1322,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             tracing::info!("hot reload: binary changed, execing new image");
                             let _ = stdout.write_all(&host_images.clear());
                             restore_terminal(&mut stdout, kitty_keyboard);
-                            // Drop the sleep assertion before the exec: the new image
-                            // acquires its own guard at startup, and the old
-                            // `caffeinate` (bound with `-w` to this pid) exits with us.
-                            keep_awake.release();
                             match perform_reload(
                                 &layout,
                                 &panes,
                                 &agent_panes,
                                 spawn_dir.as_deref(),
                                 boot,
-                                cfg.keep_awake,
                             ) {
                                 // `Ok` is uninhabited: the process is gone.
                                 Ok(never) => match never {},
@@ -1371,11 +1336,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     // and still owns every pane. Put the screen back
                                     // and carry on rather than dying with them.
                                     tracing::error!("hot reload failed: {e}");
-                                    // Re-acquire the sleep assertion we released
-                                    // before the exec: this image is still the
-                                    // session, so it keeps the promise the config
-                                    // makes.
-                                    keep_awake.refresh(cfg.keep_awake);
                                     if let Err(e) = re_enter_terminal(&mut stdout) {
                                         tracing::error!("restore after failed reload: {e}");
                                         break 'main;
@@ -1406,15 +1366,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // frames) leaves the remainder queued for the next iteration.
         if !pending_input.is_empty() {
             last_activity = Instant::now();
-            // Real user input (not a resize or focus report) extends the
-            // keep-awake display hold, so the screen does not go dark (and
-            // lock) while someone is reading or typing.
-            if pending_input
-                .iter()
-                .any(|e| matches!(e, Event::Key(_) | Event::Mouse(_) | Event::Paste(_)))
-            {
-                keep_awake.touch();
-            }
             'drain: loop {
                 let ev: std::io::Result<Event> = match pending_input.pop_front() {
                     Some(ev) => Ok(ev),
@@ -1785,26 +1736,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 }
                                 Cmd::ToggleHud => {
                                     hud_active = !hud_was_active;
-                                    dirty = true;
-                                }
-                                Cmd::ToggleKeepAwake => {
-                                    // The HUD keep-awake badge carries the
-                                    // state; the toggle is a no-op off macOS.
-                                    if cfg!(target_os = "macos") {
-                                        // Session-only: never persisted, and
-                                        // always off again at next launch.
-                                        cfg.keep_awake = !cfg.keep_awake;
-                                        keep_awake.refresh(cfg.keep_awake);
-                                        // The press that turned it on is
-                                        // activity too: start the display hold.
-                                        keep_awake.touch();
-                                        if cfg.keep_awake && !keep_awake.active() {
-                                            tracing::warn!(
-                                                "keep-awake on but assertion not held ({})",
-                                                crate::keepawake::availability_note()
-                                            );
-                                        }
-                                    }
                                     dirty = true;
                                 }
                                 Cmd::DirPick => {
@@ -2333,7 +2264,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
         // nothing for it.
         let hud_facts = if show_center_minimap && !show_hud {
             HudFacts {
-                keep_awake: keep_awake.active(),
                 dev: dev_mode,
                 build: {
                     #[cfg(unix)]
@@ -2401,7 +2331,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
             );
             host_images.finish();
             if show_hud {
-                draw_center_hud(&mut frame, cols, rows, &pal, keep_awake.active(), dev_mode);
+                draw_center_hud(&mut frame, cols, rows, &pal, dev_mode);
             }
             if show_center_minimap && !show_hud {
                 if let Some(plan) = &hud_plan {
@@ -2506,7 +2436,6 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                 &agent_cmds,
                 &session_resume_ids,
                 spawn_dir.as_deref(),
-                cfg.keep_awake,
             );
             if let Some(json) = crate::session::serialize(&snap) {
                 if let Err(e) = crate::session::save_serialized(path, &json) {

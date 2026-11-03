@@ -75,7 +75,6 @@ impl Session {
         cmd.env("PATH", format!("{}:/usr/bin:/bin", dir.display()));
         cmd.env("ENV", "/dev/null");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
-        cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_LOG", "off");
         cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
         let child = pair.slave.spawn_command(cmd).expect("spawn gwae");

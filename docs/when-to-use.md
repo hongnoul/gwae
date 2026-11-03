@@ -2,7 +2,7 @@
 
 - **Running several CLI coding agents at once** (Claude Code, Codex, Jcode): each agent keeps a full-width pane, the HUD shows who is running, idle, or failed, and ⌥+g jumps to whichever agent needs you.
 - **tmux panes keep shrinking into slivers**: gwae never shrinks a pane. The strip scrolls sideways infinitely instead, like niri does for desktop windows.
-- **Babysitting long jobs**: hold ⌥ for a live minimap of every pane's state, and ⌥+w keeps the Mac awake until the job lands.
+- **Babysitting long jobs**: hold ⌥ for a live minimap of every pane's state, and ⌥+g jumps to the one that needs you.
 - **You like niri and want that layout in the terminal on macOS.**
 
 Not for you if you need remote detach/reattach sessions over SSH: that is tmux's home turf, and gwae is local-first.

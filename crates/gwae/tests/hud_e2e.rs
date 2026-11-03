@@ -85,7 +85,6 @@ impl Session {
         cmd.env("PATH", "/usr/bin:/bin");
         cmd.env("ENV", "/dev/null");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
-        cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_LOG", "off");
         // The fixture exercises protocol chords, not the user's live keyboard.
         cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
@@ -535,7 +534,6 @@ fn spawn_with_double(status: &str, mode: &str, tag: &str) -> Session {
     cmd.env("GWAE_DOUBLE_MODE", mode);
     cmd.env("ENV", "/dev/null");
     cmd.env("GWAE_NO_UPDATE_CHECK", "1");
-    cmd.env("GWAE_NO_KEEP_AWAKE", "1");
     cmd.env("GWAE_LOG", "off");
     cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
     // No `run` arg: pane 1.1 boots the startup-harness path.

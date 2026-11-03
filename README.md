@@ -46,7 +46,6 @@ brew install hongnoul/tap/gwae
 | Hatchery | ⌥+d | Opens the spawn-directory picker to choose where the next pane process starts |
 | Agent&nbsp;selector | ⌥+Shift+; | Opens the harness picker to spawn a specific agent instead of your default choice |
 | Drag&nbsp;to&nbsp;copy | drag | Left-drag selects and copies on release via pbcopy with OSC 52 fallback for remote sessions |
-| Caffeinate | ⌥+w | Keeps the Mac awake while gwae runs, on battery and with the lid closed, so a long-running job never sleeps mid-task (the display stays lit while you use gwae and sleeps 30 minutes after your last input, `GWAE_KEEP_AWAKE_DISPLAY_MINUTES` to change, `0` for the stock schedule; set `GWAE_KEEP_AWAKE_NO_LID=1` to let a closed lid sleep) |
 
 **When to use gwae** (and [how it compares vs tmux and herdr](docs/when-to-use.md)): running several CLI coding agents at once, tmux panes shrinking into slivers, or wanting niri's scrolling layout in the terminal.
 
@@ -99,8 +98,7 @@ moving focus.
 input, ✗ failed), then ⌥+g to jump to the neediest pane. Mention
 clicking a tile focuses it.
 8. Help and quit: show ⌥+/ (cheat sheet), ⌥+q (close pane),
-⌥+Shift+q (quit; last pane exiting quits gwae). Mention ⌥+w
-(caffeinate) last.
+⌥+Shift+q (quit; last pane exiting quits gwae).
 9. Health: only now, have me type exit in panes until one shell is left,
 then run gwae doctor in it and confirm exit 0. If anything fails, run
 gwae init. Mention ~/.config/gwae/gwae.toml (all keys optional,

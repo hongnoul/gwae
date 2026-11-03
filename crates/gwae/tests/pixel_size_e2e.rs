@@ -292,7 +292,6 @@ impl Session {
             dir.join("gwae/gwae.toml"),
             format!(
                 "default_column_width = \"quarter\"\nstartup_panes = {panes}\n\
-                 keep_awake = false\n\
                  [minimap]\nshow = false\n\
                  [update]\ncheck = false\n"
             ),
@@ -344,7 +343,6 @@ impl Session {
         );
         cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
         cmd.env("GWAE_NO_UPDATE_CHECK", "1");
-        cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_PIXEL_HELPER", "1");
         cmd.env("GWAE_PIXEL_DIR", &dir);
         cmd.env("TMPDIR", &dir);

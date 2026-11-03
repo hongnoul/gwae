@@ -49,7 +49,6 @@ pub(crate) fn perform_reload(
     agent_panes: &HashSet<PaneId>,
     spawn_dir: Option<&std::path::Path>,
     boot: Instant,
-    keep_awake: bool,
 ) -> Result<std::convert::Infallible, String> {
     let exe = crate::reload::own_path()?;
     let mut handover_panes = Vec::new();
@@ -78,7 +77,6 @@ pub(crate) fn perform_reload(
         spawn_dir: spawn_dir.map(|p| p.to_path_buf()),
         from: exe.clone(),
         boot_ago_ms: boot.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        keep_awake,
     };
     crate::reload::exec_into(&exe, &handover)
 }

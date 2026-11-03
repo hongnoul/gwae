@@ -99,7 +99,6 @@ impl Session {
         std::fs::write(
             dir.join("gwae/gwae.toml"),
             "startup_panes = 1\ndefault_agent = \"jcode\"\ndefault_column_width = \"quarter\"\n\
-             keep_awake = false\n\
              [minimap]\nshow = false\n\
              [update]\ncheck = false\n",
         )
@@ -203,7 +202,6 @@ impl Session {
         // truncate the very file these tests assert on. No daemon exists
         // here anyway: opt out.
         cmd.env("GWAE_NO_HARNESS_STATUS", "1");
-        cmd.env("GWAE_NO_KEEP_AWAKE", "1");
         cmd.env("GWAE_NO_NATIVE_MODIFIERS", "1");
         cmd.env("GWAE_TEST_CLIPBOARD", dir.join("clipboard"));
         cmd.env("PATH", format!("{}:/usr/bin:/bin", bin.display()));

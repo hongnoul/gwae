@@ -33,10 +33,6 @@ pub fn home_dir() -> Option<PathBuf> {
     None
 }
 
-fn default_keep_awake() -> bool {
-    false
-}
-
 fn default_startup_hud() -> bool {
     true
 }
@@ -165,18 +161,6 @@ pub struct Config {
     /// no longer affects input latency. Valid range 1..50.
     #[serde(default = "default_input_poll_ms")]
     pub input_poll_ms: u64,
-    /// Hold a macOS `caffeinate` assertion while gwae runs, so idle/system
-    /// sleep never pauses the panes. The display still sleeps on its normal
-    /// schedule (no `-d`), so a static pane never sits lit for hours.
-    /// macOS-only by construction.
-    /// Session-only: keep-awake always starts off at launch and only the
-    /// `⌥+w` toggle turns it on; the file value is not read at startup and
-    /// the toggle is not saved back.
-    /// Lid-close sleep is overridden too (on battery as well as AC), via a
-    /// helper that clears the override the moment gwae exits; set
-    /// `GWAE_KEEP_AWAKE_NO_LID=1` to let a closed lid sleep as normal.
-    #[serde(default = "default_keep_awake")]
-    pub keep_awake: bool,
     /// Staying current: whether gwae checks for new releases, and how it is
     /// allowed to upgrade itself. See `docs/UPDATES.md`.
     pub update: Update,
@@ -198,7 +182,6 @@ impl Default for Config {
             image_pane: ImagePane::default(),
             minimap: Minimap::default(),
             input_poll_ms: default_input_poll_ms(),
-            keep_awake: default_keep_awake(),
             update: Update::default(),
         }
     }
@@ -238,7 +221,6 @@ impl Config {
             startup_panes,
             startup_pane,
             agent_dir,
-            keep_awake,
             ..
         } = self.clone();
         *self = Config {
@@ -250,9 +232,6 @@ impl Config {
             // or `⌥+d`, and a config edit must not yank panes back to the
             // file's value.
             agent_dir,
-            // Kept: keep-awake is session-only. It starts off every launch
-            // and only ⌥+w flips it, so a config edit must not turn it on.
-            keep_awake,
             ..new
         };
         // `startup_panes` stays pinned because it was consumed once at launch.
@@ -608,18 +587,6 @@ mod tests {
         assert_eq!(cfg.palette(), Palette::RETRO);
         let cfg = parse("[theme]\naccent = \"#ff0000\"\n");
         assert_eq!(cfg.palette().accent, CColor::Rgb(0xff, 0, 0));
-    }
-
-    #[test]
-    fn keep_awake_defaults_to_off_but_parses_true() {
-        // Fresh runs let the Mac sleep as normal; opting in is explicit
-        // (`keep_awake = true` or `⌥+w`). Both the omitted and the absent
-        // paths must agree, or init silently re-enables the assertion.
-        assert!(!parse("").keep_awake);
-        assert!(!Config::default().keep_awake);
-        assert!(!default_keep_awake());
-        assert!(parse("keep_awake = true").keep_awake);
-        assert!(!parse("keep_awake = false").keep_awake);
     }
 
     #[test]
