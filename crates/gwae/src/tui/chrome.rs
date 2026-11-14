@@ -792,13 +792,7 @@ pub(crate) fn paint_center_minimap(
 /// Attention (Idle/Failed panes) is deliberately *not* surfaced here: the
 /// ambient chrome already carries it (pane tints, right-edge strip ticks,
 /// minimap glyphs) and `⌥+g` jumps to the pane that wants you on demand.
-pub(crate) fn draw_center_hud(
-    out: &mut [Cell],
-    cols: u16,
-    rows: u16,
-    pal: &Palette,
-    dev: bool,
-) {
+pub(crate) fn draw_center_hud(out: &mut [Cell], cols: u16, rows: u16, pal: &Palette, dev: bool) {
     let focus_color = pal.accent;
     if cols < 30 || rows < 9 {
         return;
@@ -2230,13 +2224,7 @@ mod tests {
             layout.panes.get_mut(pid).unwrap().status = PaneStatus::Running;
         }
         let mut out2 = vec![Cell::default(); cols as usize * rows as usize];
-        draw_center_hud(
-            &mut out2,
-            cols,
-            rows,
-            &pal_accent(frame_color),
-            false,
-        );
+        draw_center_hud(&mut out2, cols, rows, &pal_accent(frame_color), false);
         let all2: Vec<String> = (0..rows)
             .map(|y| {
                 (0..cols)
