@@ -48,6 +48,11 @@ dev: dev-build
 ## `KEEP_CONFIG=1`) to install without touching the config.
 install: build $(if $(KEEP_CONFIG),,reset-config)
 	@dir="$${PREFIX:-}"; \
+	receipt="$${XDG_STATE_HOME:-$$HOME/.local/state}/gwae/install.toml"; \
+	if [ -z "$$dir" ] && [ -f "$$receipt" ]; then \
+		dir="$$(sed -n 's/^dir *= *"\(.*\)"$$/\1/p' "$$receipt" | head -1)"; \
+		[ -n "$$dir" ] && [ -d "$$dir" ] && [ -w "$$dir" ] || dir=""; \
+	fi; \
 	if [ -z "$$dir" ]; then \
 		for d in $$(printf '%s' "$$PATH" | tr ':' '\n'); do \
 			case "$$d" in *bin) \
@@ -67,7 +72,12 @@ install: build $(if $(KEEP_CONFIG),,reset-config)
 	echo "installed gwae -> $$dir/gwae (atomic: cp .new -> codesign -> mv)"; \
 	if [ -f "$${XDG_STATE_HOME:-$$HOME/.local/state}/gwae/install.toml" ]; then \
 		echo "note: kept existing install receipt (dev install does not claim the upgrade route)"; \
-	fi
+	fi; \
+	for other in $$HOME/.local/bin/gwae $$HOME/.cargo/bin/gwae $$HOME/.bun/bin/gwae /opt/homebrew/bin/gwae /usr/local/bin/gwae; do \
+		[ -f "$$other" ] && [ "$$other" != "$$dir/gwae" ] || continue; \
+		cmp -s "$$dir/gwae" "$$other" && continue; \
+		echo "warning: a different gwae is also at $$other; whichever comes first on your PATH wins (PREFIX=$$(dirname $$other) make install-keep to update it)"; \
+	done
 
 ## Install without clearing preferences.
 install-keep:
