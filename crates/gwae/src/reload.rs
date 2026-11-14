@@ -348,6 +348,11 @@ pub struct Handover {
     /// to attention across a reload. Defaults to 0 for old handovers.
     #[serde(default)]
     pub boot_ago_ms: u64,
+    /// The pane focused at the last `⌥+d` pick, if focus has not left it,
+    /// so a fresh pick keeps outranking that pane's cwd across the exec.
+    /// Defaults to `None` for old handovers.
+    #[serde(default)]
+    pub hatchery_owner: Option<u64>,
 }
 
 impl Handover {
@@ -635,6 +640,7 @@ mod tests {
             spawn_dir: Some(PathBuf::from("/tmp")),
             from: PathBuf::from("/usr/local/bin/gwae"),
             boot_ago_ms: 0,
+            hatchery_owner: Some(7),
         }
     }
 

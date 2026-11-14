@@ -6,6 +6,17 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **`spawn_in_focused_cwd` is now on by default.** New panes (`⌥+;`, the
+  `⌥+⇧+;` picker, `⌥+b`, `⌥+Enter`) open in the focused pane's live cwd.
+  The `⌥+d` spawn dir still applies when there is no focused pane to
+  follow (a fresh empty strip) or its cwd cannot be read. Set
+  `spawn_in_focused_cwd = false` for the old always-spawn-dir behavior.
+- **A fresh `⌥+d` pick wins until focus moves.** Picking a spawn dir and
+  then spawning from the same pane lands in the pick, not in that pane's
+  cwd. Once focus moves to any other pane, spawns follow the focused
+  pane's cwd again.
+
 ### Removed
 - **The `⌥+w` caffeinate / keep-awake feature is gone.** The toggle, the
   ☕ HUD badge, the lid helper, the `keep_awake` config key and the

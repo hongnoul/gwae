@@ -174,15 +174,25 @@ fn snapshot_session(
 /// yields `None` and the spawn falls back to the ordinary spawn-dir
 /// resolution. One-shot by construction: the value is captured at the
 /// keystroke and consumed by the sync that spawns the pane.
+///
+/// `hatchery_owner` is the pane that was focused when the spawn dir was last
+/// picked with `⌥+d`. While that pane still holds focus the fresh pick is
+/// the user's latest word on where panes go, so it outranks the pane's cwd
+/// and this returns `None`. Moving focus anywhere clears the owner (see the
+/// drain loop), after which panes follow the focused cwd again.
 fn focused_pane_cwd(
     layout: &Layout,
     panes: &HashMap<PaneId, PtyPane>,
     enabled: bool,
+    hatchery_owner: Option<PaneId>,
 ) -> Option<std::path::PathBuf> {
     if !enabled {
         return None;
     }
     let pid = focused_pane(layout)?;
+    if hatchery_owner == Some(pid) {
+        return None;
+    }
     let child = panes.get(&pid)?;
     let cwd = child.child.process_id().and_then(crate::session::pid_cwd)?;
     if cwd.is_dir() {
@@ -787,6 +797,11 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
     // pane. An empty (new) strip has no focused pane, so it stays `None`
     // and the pane opens in the ordinary spawn dir.
     let mut pending_focused_cwd: Option<std::path::PathBuf> = None;
+    // The pane focused when `⌥+d` last picked a spawn dir. Until focus
+    // leaves it, spawns use the pick rather than that pane's cwd (a pick is
+    // newer intent than wherever the pane happens to be). Cleared at the top
+    // of every input event once focus differs.
+    let mut hatchery_owner: Option<PaneId> = handover.as_ref().and_then(|h| h.hatchery_owner);
     // Host terminal events forwarded by the input thread, not yet handled.
     // Lives outside the loop because a `break 'drain` (e.g. per-kill frames
     // under a held ⌥+q) must keep the remaining queued events for the next
@@ -1327,6 +1342,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                 &panes,
                                 &agent_panes,
                                 spawn_dir.as_deref(),
+                                hatchery_owner,
                                 boot,
                             ) {
                                 // `Ok` is uninhabited: the process is gone.
@@ -1371,6 +1387,12 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                     Some(ev) => Ok(ev),
                     None => break 'drain,
                 };
+                // Focus moved since the ⌥+d pick (a nav chord, a click, a
+                // spawn, a close): the pick no longer outranks the focused
+                // pane's cwd.
+                if hatchery_owner.is_some() && hatchery_owner != focused_pane(&layout) {
+                    hatchery_owner = None;
+                }
                 match ev {
                     Ok(Event::Paste(text)) => {
                         // Native paste is data, never a sequence of keybinds.
@@ -1569,6 +1591,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                             }
                             if let Some((path, save)) = chosen {
                                 spawn_dir = Some(path.clone());
+                                hatchery_owner = focused_pane(&layout);
                                 let shown = crate::spawndir::tilde(&path);
                                 if save {
                                     if let Err(e) =
@@ -1636,6 +1659,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                     &layout,
                                     &panes,
                                     cfg.spawn_follows_focused_cwd(),
+                                    hatchery_owner,
                                 );
                                 match choice {
                                     HarnessChoice::Shell => {
@@ -1849,6 +1873,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                                     &layout,
                                                     &panes,
                                                     cfg.spawn_follows_focused_cwd(),
+                                                    hatchery_owner,
                                                 );
                                                 let _ = layout.apply(a, v, f);
                                                 if let Some(pid) = focused_pane(&layout) {
@@ -1912,6 +1937,7 @@ pub fn run_tui(command: Option<String>, cfg: Config, cli_dir: Option<String>) ->
                                             &layout,
                                             &panes,
                                             cfg.spawn_follows_focused_cwd(),
+                                            hatchery_owner,
                                         );
                                     }
                                     let _ = layout.apply(a, v, f);

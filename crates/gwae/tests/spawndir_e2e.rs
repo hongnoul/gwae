@@ -559,15 +559,21 @@ fn an_agent_spawned_after_a_cd_opens_in_the_focused_cwd() {
     s.kill();
 }
 
-/// Without the opt-in, a cd-ed focused pane must not hijack the spawn dir:
+/// With the opt-out, a cd-ed focused pane must not hijack the spawn dir:
 /// `\u{23}+;` keeps opening panes in the ordinary spawn-dir resolution.
 #[test]
-fn the_focused_cwd_follow_is_opt_in() {
+fn the_focused_cwd_follow_can_be_turned_off() {
     let root = temp_root();
     let repo = root.join("moved-repo");
     std::fs::create_dir_all(&repo).unwrap();
     let script = probe_script(&root, "where");
-    let mut s = Session::start(&root, "default_agent = \"/bin/sh\"\n", "sh", &root, &[]);
+    let mut s = Session::start(
+        &root,
+        "default_agent = \"/bin/sh\"\nspawn_in_focused_cwd = false\n",
+        "sh",
+        &root,
+        &[],
+    );
     let _ = s.drain();
     let moved = root.join("moved-ok");
     s.send(format!("cd '{}' && touch '{}'\r", repo.display(), moved.display()).as_bytes());
@@ -589,7 +595,7 @@ fn the_focused_cwd_follow_is_opt_in() {
     );
     assert!(
         !got.ends_with("moved-repo"),
-        "without the opt-in the spawn dir must keep winning; got {got:?}"
+        "without the opt-out the spawn dir must keep winning; got {got:?}"
     );
     s.kill();
 }
@@ -623,6 +629,56 @@ fn a_shell_split_after_a_cd_opens_in_the_focused_cwd() {
     assert!(
         got.ends_with("split-repo"),
         "with spawn_in_focused_cwd a shell split must open in the focused pane's cwd; got {got:?}"
+    );
+    s.kill();
+}
+
+/// A fresh `\u{2325}+d` pick outranks the focused pane's cwd until focus
+/// moves: pick, then spawn from the same pane, lands in the pick. Once focus
+/// leaves and comes back, the pane's own cwd wins again.
+#[test]
+fn a_fresh_hatchery_pick_beats_the_focused_cwd_until_focus_moves() {
+    let root = temp_root();
+    let repo = root.join("cd-repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(root.join("some/where/hatch-proj/.git")).unwrap();
+    let mut s = Session::start(&root, "", "sh", &root, &[]);
+    let _ = s.drain();
+    let moved = root.join("moved-ok");
+    s.send(format!("cd '{}' && touch '{}'\r", repo.display(), moved.display()).as_bytes());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !moved.try_exists().unwrap_or(false) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "cd handshake timed out"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Pick a spawn dir from the cd-ed pane, then spawn without moving focus.
+    s.send(OPT_D);
+    let _ = s.drain_until("hatch-proj", Duration::from_secs(8));
+    s.send(b"hatch-proj");
+    let _ = s.drain_until("hatch-proj", Duration::from_secs(8));
+    s.send(ENTER);
+    let _ = s.drain();
+    s.send(b"\x1b\r"); // ⌥+Enter: new column, focus moves to it
+    let _ = s.drain();
+    s.send(format!("pwd > {}\r", root.join("first").display()).as_bytes());
+    let got = probe_result(&root, "first");
+    assert!(
+        got.ends_with("hatch-proj"),
+        "a spawn right after the pick, from the same pane, must use the pick; got {got:?}"
+    );
+    // Focus back to the cd-ed pane: the pick no longer outranks its cwd.
+    s.send(b"\x1bh");
+    let _ = s.drain();
+    s.send(b"\x1b\r");
+    let _ = s.drain();
+    s.send(format!("pwd > {}\r", root.join("second").display()).as_bytes());
+    let got = probe_result(&root, "second");
+    assert!(
+        got.ends_with("cd-repo"),
+        "after focus moved, spawns follow the focused pane's cwd again; got {got:?}"
     );
     s.kill();
 }

@@ -48,6 +48,7 @@ pub(crate) fn perform_reload(
     panes: &HashMap<PaneId, PtyPane>,
     agent_panes: &HashSet<PaneId>,
     spawn_dir: Option<&std::path::Path>,
+    hatchery_owner: Option<PaneId>,
     boot: Instant,
 ) -> Result<std::convert::Infallible, String> {
     let exe = crate::reload::own_path()?;
@@ -77,6 +78,7 @@ pub(crate) fn perform_reload(
         spawn_dir: spawn_dir.map(|p| p.to_path_buf()),
         from: exe.clone(),
         boot_ago_ms: boot.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        hatchery_owner,
     };
     crate::reload::exec_into(&exe, &handover)
 }

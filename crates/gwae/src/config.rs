@@ -37,6 +37,10 @@ fn default_startup_hud() -> bool {
     true
 }
 
+fn default_spawn_in_focused_cwd() -> bool {
+    true
+}
+
 fn no_agents() -> Vec<String> {
     Vec::new()
 }
@@ -86,16 +90,18 @@ pub struct Config {
     /// `agent_dir = "~/git"` works as written. A path that does not exist is
     /// ignored with a warning rather than breaking pane spawn.
     pub agent_dir: String,
-    /// Spawn agent panes from the focused pane's working directory instead
-    /// of `agent_dir`. Off by default: with it on, `cd`-ing a pane anywhere
-    /// and pressing `⌥+;` puts the new harness in that directory, which
-    /// makes a "work on several repos in one strip" session one-keystroke
-    /// per repo. Falls back to the ordinary resolution (`agent_dir`,
-    /// `--dir`, the `⌥+d` pick) whenever the focused pane's cwd cannot be
-    /// read, so a fresh pane or a dead pid changes nothing. The same rule
-    /// applies to the `⌥+⇧+;` picker spawns and to a plain `⌥+b` shell
-    /// split from a pane.
-    #[serde(default)]
+    /// Spawn new panes from the focused pane's working directory instead
+    /// of `agent_dir`. On by default: `cd`-ing a pane anywhere and pressing
+    /// `⌥+;` puts the new harness in that directory, which makes a "work on
+    /// several repos in one strip" session one-keystroke per repo. Falls
+    /// back to the ordinary resolution (`agent_dir`, `--dir`, the `⌥+d`
+    /// pick) whenever the focused pane's cwd cannot be read, so a fresh
+    /// strip or a dead pid changes nothing. A fresh `⌥+d` pick also wins
+    /// until focus moves to another pane, so picking a directory and then
+    /// spawning from the same pane lands in the pick. The same rule applies
+    /// to the `⌥+⇧+;` picker spawns, `⌥+b` splits and `⌥+Enter` columns.
+    /// Set `false` to always use the spawn dir.
+    #[serde(default = "default_spawn_in_focused_cwd")]
     pub spawn_in_focused_cwd: bool,
     /// Retired: extra agent names once came from an `agents` list. They now
     /// come from the picker itself: any typed command that resolves is
@@ -172,7 +178,7 @@ impl Default for Config {
             default_column_width: Width::DEFAULT,
             default_agent: String::new(),
             agent_dir: String::new(),
-            spawn_in_focused_cwd: false,
+            spawn_in_focused_cwd: default_spawn_in_focused_cwd(),
             agents_retired: Vec::new(),
             startup_panes: 1,
             startup_command: String::new(),
@@ -661,11 +667,11 @@ mod tests {
     }
 
     #[test]
-    fn spawn_in_focused_cwd_defaults_off_and_parses_true() {
-        // Default keeps the shipped behavior (every pane opens in the spawn
-        // dir); opting in is explicit.
-        assert!(!parse("").spawn_in_focused_cwd);
-        assert!(!Config::default().spawn_in_focused_cwd);
+    fn spawn_in_focused_cwd_defaults_on_and_parses_false() {
+        // New panes follow the focused pane unless the config opts out.
+        assert!(parse("").spawn_in_focused_cwd);
+        assert!(parse("startup_hud = false").spawn_in_focused_cwd);
+        assert!(Config::default().spawn_in_focused_cwd);
         assert!(parse("spawn_in_focused_cwd = true").spawn_in_focused_cwd);
         assert!(!parse("spawn_in_focused_cwd = false").spawn_in_focused_cwd);
     }
