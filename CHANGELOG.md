@@ -6,6 +6,8 @@ changelog, updated per PR). The format is based on
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-23
+
 ### Changed
 - **`spawn_in_focused_cwd` is now on by default.** New panes (`⌥+;`, the
   `⌥+⇧+;` picker, `⌥+b`, `⌥+Enter`) open in the focused pane's live cwd.
@@ -16,6 +18,8 @@ changelog, updated per PR). The format is based on
   then spawning from the same pane lands in the pick, not in that pane's
   cwd. Once focus moves to any other pane, spawns follow the focused
   pane's cwd again.
+
+- **New demo recording and an inverted (white-on-black) logo.**
 
 ### Removed
 - **The `⌥+w` caffeinate / keep-awake feature is gone.** The toggle, the
