@@ -17,6 +17,8 @@
 
 <p align="center">Tested with <a href="https://github.com/ghostty-org/ghostty">Ghostty</a> and <a href="https://github.com/1jehuang/jcode">Jcode</a> on MacBook Pro M4</p>
 
+<p align="center"><b>Vision:</b> the most faithful infinite-scrolling desktop for parallel coding agents on a Mac. No VM required.</p>
+
 
 
 ## Install
